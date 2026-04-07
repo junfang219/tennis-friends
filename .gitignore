@@ -15,7 +15,17 @@
 
 # next.js
 /.next/
+".next 2"/
 /out/
+
+# database
+*.db
+*.db-journal
+prisma/dev.db
+prisma/dev.db-journal
+
+# claude
+.claude/
 
 # production
 /build
@@ -39,3 +49,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/src/generated/prisma
+
+# uploaded files
+/public/uploads/*
+!/public/uploads/.gitkeep

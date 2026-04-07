@@ -1,0 +1,200 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  passwordHash   String
+  name           String
+  bio            String   @default("")
+  skillLevel     String   @default("intermediate")
+  favoriteSurface String  @default("hard")
+  profileImageUrl String  @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  sentRequests     Friendship[] @relation("Requester")
+  receivedRequests Friendship[] @relation("Addressee")
+  posts            Post[]
+  likes            Like[]
+  ownedGroups      Group[]       @relation("GroupOwner")
+  groupMemberships GroupMember[]
+  sentMessages     Message[]     @relation("MessageSender")
+  receivedMessages Message[]     @relation("MessageReceiver")
+  groupMessages    GroupMessage[]
+  playRequests     PlayRequest[]
+  comments         Comment[]
+  hiddenPosts      HiddenPost[]
+  notifications    Notification[] @relation("NotificationRecipient")
+  notificationsActed Notification[] @relation("NotificationActor")
+}
+
+model Friendship {
+  id          String   @id @default(cuid())
+  requesterId String
+  addresseeId String
+  status      String   @default("PENDING")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  requester User @relation("Requester", fields: [requesterId], references: [id])
+  addressee User @relation("Addressee", fields: [addresseeId], references: [id])
+
+  @@unique([requesterId, addresseeId])
+}
+
+model Post {
+  id        String   @id @default(cuid())
+  content   String   @default("")
+  mediaUrl  String   @default("")
+  mediaType String   @default("")
+  postType  String   @default("regular")
+  playDate  String   @default("")
+  playTime  String   @default("")
+  courtLocation String @default("")
+  gameType  String   @default("")
+  playersNeeded    Int     @default(0)
+  playersConfirmed Int     @default(0)
+  courtBooked      Boolean @default(false)
+  isComplete       Boolean @default(false)
+  commentsDisabled Boolean @default(false)
+  manualPlayers    String  @default("")
+  authorId  String
+  createdAt DateTime @default(now())
+
+  author       User          @relation(fields: [authorId], references: [id])
+  likes        Like[]
+  postGroups   PostGroup[]
+  playRequests PlayRequest[]
+  comments     Comment[]
+  hiddenBy     HiddenPost[]
+}
+
+model Like {
+  id        String   @id @default(cuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([postId, userId])
+}
+
+model Group {
+  id        String   @id @default(cuid())
+  name      String
+  imageUrl  String   @default("")
+  ownerId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner         User           @relation("GroupOwner", fields: [ownerId], references: [id])
+  members       GroupMember[]
+  postGroups    PostGroup[]
+  groupMessages GroupMessage[]
+}
+
+model GroupMember {
+  id        String   @id @default(cuid())
+  groupId   String
+  userId    String
+  createdAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@unique([groupId, userId])
+}
+
+model PostGroup {
+  id      String @id @default(cuid())
+  postId  String
+  groupId String
+
+  post  Post  @relation(fields: [postId], references: [id], onDelete: Cascade)
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, groupId])
+}
+
+model Message {
+  id           String   @id @default(cuid())
+  content      String
+  senderId     String
+  receiverId   String
+  sharedPostId String   @default("")
+  createdAt    DateTime @default(now())
+
+  sender   User @relation("MessageSender", fields: [senderId], references: [id])
+  receiver User @relation("MessageReceiver", fields: [receiverId], references: [id])
+}
+
+model GroupMessage {
+  id        String   @id @default(cuid())
+  content   String
+  groupId   String
+  senderId  String
+  createdAt DateTime @default(now())
+
+  group  Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  sender User  @relation(fields: [senderId], references: [id])
+}
+
+model PlayRequest {
+  id        String   @id @default(cuid())
+  postId    String
+  userId    String
+  status    String   @default("PENDING")
+  note      String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([postId, userId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  content   String
+  postId    String
+  authorId  String
+  createdAt DateTime @default(now())
+
+  post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id])
+}
+
+model HiddenPost {
+  id     String @id @default(cuid())
+  userId String
+  postId String
+
+  user User @relation(fields: [userId], references: [id])
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String   // recipient
+  actorId     String   // who triggered it
+  type        String   // "comment" | "like" | "join_request" | "request_approved" | "request_rejected"
+  postId      String   @default("")
+  commentId   String   @default("")
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user  User @relation("NotificationRecipient", fields: [userId], references: [id])
+  actor User @relation("NotificationActor", fields: [actorId], references: [id])
+}
