@@ -21,18 +21,22 @@ type GroupOption = {
 
 export default function PostComposer({
   onPost,
+  hideProposeTeam = false,
 }: {
   onPost: (post: Record<string, unknown>) => void;
+  hideProposeTeam?: boolean;
 }) {
   const { data: session } = useSession();
   const [showModal, setShowModal] = useState(false);
   const [openWithFindPlayers, setOpenWithFindPlayers] = useState(false);
+  const [openWithProposeTeam, setOpenWithProposeTeam] = useState(false);
   const [placeholder] = useState(
     () => PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)]
   );
 
-  const openModal = (findPlayers = false) => {
+  const openModal = (findPlayers = false, proposeTeam = false) => {
     setOpenWithFindPlayers(findPlayers);
+    setOpenWithProposeTeam(proposeTeam);
     setShowModal(true);
   };
 
@@ -79,14 +83,32 @@ export default function PostComposer({
 
         {/* Find Players CTA */}
         <button
-          onClick={() => openModal(true)}
-          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-court-green to-court-green-light text-white font-semibold text-sm hover:from-court-green-light hover:to-court-green-soft transition-all"
+          onClick={() => openModal(true, false)}
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-court-green to-court-green-light text-white font-semibold text-sm hover:from-court-green-light hover:to-court-green-soft transition-all border-t border-court-green-pale/30"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
             <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
           </svg>
           Find Players for a Game
         </button>
+
+        {/* Propose Team CTA */}
+        {!hideProposeTeam && (
+        <button
+          onClick={() => openModal(false, true)}
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-clay to-clay-light text-white font-semibold text-sm hover:opacity-90 transition-all border-t border-court-green-pale/30"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
+            <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
+            <path d="M4 22h16" />
+            <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+            <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+            <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+          </svg>
+          Propose a Team
+        </button>
+        )}
       </div>
 
       {/* Full-screen modal composer — rendered via portal to escape all parent containers */}
@@ -95,11 +117,12 @@ export default function PostComposer({
           session={session}
           placeholder={placeholder}
           initialFindPlayers={openWithFindPlayers}
+          initialProposeTeam={openWithProposeTeam}
           onPost={(post) => {
             onPost(post);
             setShowModal(false);
           }}
-          onClose={() => { setShowModal(false); setOpenWithFindPlayers(false); }}
+          onClose={() => { setShowModal(false); setOpenWithFindPlayers(false); setOpenWithProposeTeam(false); }}
         />,
         document.body
       )}
@@ -113,12 +136,14 @@ function ComposerModal({
   session,
   placeholder,
   initialFindPlayers,
+  initialProposeTeam,
   onPost,
   onClose,
 }: {
   session: ReturnType<typeof useSession>["data"];
   placeholder: string;
   initialFindPlayers?: boolean;
+  initialProposeTeam?: boolean;
   onPost: (post: Record<string, unknown>) => void;
   onClose: () => void;
 }) {
@@ -144,6 +169,12 @@ function ComposerModal({
   const [gameType, setGameType] = useState("singles");
   const [playersNeeded, setPlayersNeeded] = useState(1);
   const [courtBooked, setCourtBooked] = useState(false);
+
+  // Propose Team fields
+  const [proposeTeam, setProposeTeam] = useState(initialProposeTeam || false);
+  const [teamName, setTeamName] = useState("");
+  const [teamPurpose, setTeamPurpose] = useState("");
+  const [teamSize, setTeamSize] = useState(4);
 
   useEffect(() => {
     fetch("/api/groups")
@@ -208,6 +239,8 @@ function ComposerModal({
 
   const canSubmit = findPlayers
     ? (playDate && playTime && courtLocation)
+    : proposeTeam
+    ? (teamName.trim() && teamPurpose.trim())
     : (content.trim() || mediaUrl);
 
   const handleSubmit = async () => {
@@ -234,6 +267,14 @@ function ComposerModal({
       }
     }
 
+    if (proposeTeam) {
+      body.postType = "propose_team";
+      body.courtLocation = teamName; // reuse courtLocation field for team name
+      body.gameType = "team";
+      body.playersNeeded = teamSize;
+      body.content = teamPurpose;
+    }
+
     const res = await fetch("/api/posts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -253,7 +294,7 @@ function ComposerModal({
       onClick={onClose}
     >
       <div
-        className="bg-white w-full sm:max-w-lg sm:rounded-2xl shadow-2xl animate-fade-in-up min-h-screen sm:min-h-0 sm:my-8 flex flex-col"
+        className="bg-white w-full sm:max-w-lg sm:rounded-2xl shadow-2xl min-h-screen sm:min-h-0 sm:my-8 flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -467,6 +508,60 @@ function ComposerModal({
               </label>
             </div>
           )}
+
+          {/* Propose Team form */}
+          {proposeTeam && (
+            <div className="bg-gradient-to-br from-clay/5 to-clay-light/10 border border-clay/30 rounded-xl p-4 mb-3">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-bold text-clay flex items-center gap-1.5">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
+                    <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
+                    <path d="M4 22h16" />
+                    <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+                    <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+                    <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+                  </svg>
+                  Propose a Team
+                </h4>
+                <button onClick={() => setProposeTeam(false)} className="text-xs text-gray-400 hover:text-red-500 transition-colors">Remove</button>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Team Name</label>
+                  <input
+                    type="text"
+                    value={teamName}
+                    onChange={(e) => setTeamName(e.target.value)}
+                    placeholder="e.g. Sunday Doubles Crew"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Team Purpose / Description</label>
+                  <textarea
+                    value={teamPurpose}
+                    onChange={(e) => setTeamPurpose(e.target.value)}
+                    placeholder="What's this team about? (e.g. weekly doubles practice, tournament prep, beginners welcome...)"
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white resize-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Members Needed</label>
+                  <select
+                    value={teamSize}
+                    onChange={(e) => setTeamSize(Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none"
+                  >
+                    {[2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20].map((n) => (
+                      <option key={n} value={n}>{n} members</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Add to post bar */}
@@ -501,20 +596,22 @@ function ComposerModal({
                 className="hidden"
               />
             </label>
-            <button
-              onClick={() => setFindPlayers(!findPlayers)}
-              className={`p-2 rounded-lg transition-colors ${
-                findPlayers
-                  ? "text-ball-yellow bg-court-green"
-                  : "text-orange-500 hover:bg-orange-50"
-              }`}
-              title="Find Players"
-            >
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                <circle cx="11" cy="11" r="8" />
-                <path d="M21 21l-4.35-4.35" />
-              </svg>
-            </button>
+            {!proposeTeam && (
+              <button
+                onClick={() => setFindPlayers(!findPlayers)}
+                className={`p-2 rounded-lg transition-colors ${
+                  findPlayers
+                    ? "text-ball-yellow bg-court-green"
+                    : "text-orange-500 hover:bg-orange-50"
+                }`}
+                title="Find Players"
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="M21 21l-4.35-4.35" />
+                </svg>
+              </button>
+            )}
             {groups.length > 0 && (
               <button
                 onClick={() => setShowAudiencePicker(true)}

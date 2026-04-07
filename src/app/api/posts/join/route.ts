@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   const { postId } = await request.json();
 
   const post = await prisma.post.findUnique({ where: { id: postId } });
-  if (!post || post.postType !== "find_players") {
+  if (!post || (post.postType !== "find_players" && post.postType !== "propose_team")) {
     return NextResponse.json({ error: "Invalid post" }, { status: 400 });
   }
 

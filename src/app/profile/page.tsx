@@ -211,6 +211,7 @@ export default function ProfilePage() {
         {!editing && (
           <div className="mt-6">
             <PostComposer
+              hideProposeTeam
               onPost={(post) => {
                 setProfile({
                   ...profile,

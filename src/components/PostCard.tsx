@@ -66,6 +66,8 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   const { data: session } = useSession();
   const isAuthor = session?.user?.id === post.author.id;
   const isFindPlayers = post.postType === "find_players";
+  const isProposeTeam = post.postType === "propose_team";
+  const isRecruiting = isFindPlayers || isProposeTeam;
 
   const [liked, setLiked] = useState(post.isLiked);
   const [likeCount, setLikeCount] = useState(post.likeCount);
@@ -339,24 +341,44 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
             </div>
           )}
 
+          {/* Propose Team badge */}
+          {isProposeTeam && (
+            <div className="mb-3">
+              <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide ${complete ? "bg-green-600 text-white" : "bg-clay text-white"}`}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
+                  <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
+                  <path d="M4 22h16" />
+                  <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+                </svg>
+                {complete ? "Team Formed" : "Recruiting Team"}
+              </span>
+              {liveCourtLocation && (
+                <h3 className="font-display text-xl font-bold text-gray-900 mt-2">{liveCourtLocation}</h3>
+              )}
+            </div>
+          )}
+
           {/* Text content */}
           {currentContent && (
             <p className="text-gray-700 text-[0.9375rem] leading-relaxed whitespace-pre-wrap pb-3">{currentContent}</p>
           )}
 
-          {/* Find Players details card */}
-          {isFindPlayers && (
-            <div className={`mb-3 border rounded-xl p-4 ${complete ? "bg-green-50/50 border-green-200" : "bg-gradient-to-br from-court-green/5 to-ball-yellow/10 border-court-green-pale/30"}`}>
+          {/* Find Players / Propose Team details card */}
+          {isRecruiting && (
+            <div className={`mb-3 border rounded-xl p-4 ${complete ? "bg-green-50/50 border-green-200" : isProposeTeam ? "bg-gradient-to-br from-clay/5 to-clay-light/10 border-clay/30" : "bg-gradient-to-br from-court-green/5 to-ball-yellow/10 border-court-green-pale/30"}`}>
+              {isFindPlayers && (
               <div className="grid grid-cols-2 gap-3">
                 {livePlayDate && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Date</p><p className="text-sm font-semibold text-gray-800">{livePlayDate}</p></div></div>)}
                 {livePlayTime && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Time</p><p className="text-sm font-semibold text-gray-800">{livePlayTime}</p></div></div>)}
                 {liveCourtLocation && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Court</p><p className="text-sm font-semibold text-gray-800">{liveCourtLocation}</p></div></div>)}
                 {liveGameType && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" />{liveGameType === "doubles" && <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />}</svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Type</p><p className="text-sm font-semibold text-gray-800 capitalize">{liveGameType}</p></div></div>)}
               </div>
+              )}
               <div className="mt-3 pt-3 border-t border-court-green-pale/20 flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-3 flex-wrap">
                   {liveCourtBooked && (<span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-green-100 text-green-700"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>Court Booked</span>)}
-                  {livePlayersNeeded && livePlayersNeeded > 0 && (<span className="text-sm text-gray-600"><span className="font-bold text-court-green">{confirmed}</span>/{livePlayersNeeded} players</span>)}
+                  {livePlayersNeeded && livePlayersNeeded > 0 && (<span className="text-sm text-gray-600"><span className={`font-bold ${isProposeTeam ? "text-clay" : "text-court-green"}`}>{confirmed}</span>/{livePlayersNeeded} {isProposeTeam ? "members" : "players"}</span>)}
                 </div>
 
                 {/* Players list — approved + manual */}
@@ -386,8 +408,8 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                 )}
 
                 {!isAuthor && !complete && !myRequest && (
-                  <button onClick={handleJoin} disabled={joining} className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-court-green px-3 py-1.5 rounded-lg hover:bg-court-green-light transition-colors disabled:opacity-50">
-                    {joining ? "..." : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>I&apos;m in!</>}
+                  <button onClick={handleJoin} disabled={joining} className={`inline-flex items-center gap-1.5 text-xs font-semibold text-white px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${isProposeTeam ? "bg-clay hover:opacity-90" : "bg-court-green hover:bg-court-green-light"}`}>
+                    {joining ? "..." : <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>{isProposeTeam ? "I'm interested" : "I'm in!"}</>}
                   </button>
                 )}
                 {!isAuthor && myRequest?.status === "PENDING" && (
@@ -1121,9 +1143,8 @@ function ManageRequestsModal({
                       setSavingManual(false);
                     }).catch(() => setSavingManual(false));
                   } else {
-                    // Has unfilled slots — show form to enter remaining player names
-                    const remaining = playersNeeded - approvedCount;
-                    setManualNames(Array(remaining).fill(""));
+                    // Has unfilled slots — start with 1 input, user can add more
+                    setManualNames([""]);
                     setShowMarkFullForm(true);
                   }
                 }}

@@ -64,7 +64,7 @@ export default function GroupsPage() {
     <div className="max-w-2xl mx-auto px-4 py-8">
       <div className="animate-fade-in-up">
         <h1 className="font-display text-2xl font-bold text-court-green mb-1">
-          Your Groups
+          Your Teams
         </h1>
         <p className="text-gray-500 text-sm mb-6">Organize your tennis circles</p>
       </div>
@@ -82,7 +82,7 @@ export default function GroupsPage() {
                 <line x1="5" y1="12" x2="19" y2="12" />
               </svg>
             </div>
-            <span className="font-semibold text-sm">Create a New Group</span>
+            <span className="font-semibold text-sm">Create a New Team</span>
           </button>
         )}
 
@@ -115,8 +115,8 @@ export default function GroupsPage() {
                 <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" strokeLinecap="round" />
               </svg>
             </div>
-            <h3 className="font-display text-lg font-bold text-gray-800 mb-2">No groups yet</h3>
-            <p className="text-gray-500 text-sm">Create a group to organize your tennis friends!</p>
+            <h3 className="font-display text-lg font-bold text-gray-800 mb-2">No teams yet</h3>
+            <p className="text-gray-500 text-sm">Create a team to organize your tennis friends!</p>
           </div>
         )}
 
@@ -198,9 +198,9 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 animate-fade-in-up">
-      <h3 className="font-display text-lg font-bold text-gray-800 mb-4">Create Group</h3>
+      <h3 className="font-display text-lg font-bold text-gray-800 mb-4">Create Team</h3>
       <div className="mb-4">
-        <label className="block text-sm font-semibold text-gray-700 mb-1.5">Group Name</label>
+        <label className="block text-sm font-semibold text-gray-700 mb-1.5">Team Name</label>
         <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm" placeholder="e.g. Saturday Doubles Crew" autoFocus />
       </div>
       <div className="mb-4">
@@ -223,7 +223,7 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
         )}
       </div>
       <div className="flex items-center gap-3">
-        <button onClick={handleCreate} disabled={!name.trim() || creating} className="btn-primary">{creating ? "Creating..." : "Create Group"}</button>
+        <button onClick={handleCreate} disabled={!name.trim() || creating} className="btn-primary">{creating ? "Creating..." : "Create Team"}</button>
         <button onClick={onCancel} className="btn-secondary">Cancel</button>
       </div>
     </div>
@@ -265,9 +265,9 @@ function EditGroupForm({ group, friends, onUpdated, onCancel }: { group: Group; 
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 animate-fade-in-up">
-      <h3 className="font-display text-lg font-bold text-gray-800 mb-4">Edit Group</h3>
+      <h3 className="font-display text-lg font-bold text-gray-800 mb-4">Edit Team</h3>
       <div className="mb-4">
-        <label className="block text-sm font-semibold text-gray-700 mb-1.5">Group Name</label>
+        <label className="block text-sm font-semibold text-gray-700 mb-1.5">Team Name</label>
         <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm" autoFocus />
       </div>
       <div className="mb-4">
@@ -295,7 +295,7 @@ function EditGroupForm({ group, friends, onUpdated, onCancel }: { group: Group; 
           <button onClick={onCancel} className="btn-secondary">Cancel</button>
         </div>
         {!confirmDelete ? (
-          <button onClick={() => setConfirmDelete(true)} className="text-xs text-gray-400 hover:text-red-500 transition-colors px-2 py-1">Delete Group</button>
+          <button onClick={() => setConfirmDelete(true)} className="text-xs text-gray-400 hover:text-red-500 transition-colors px-2 py-1">Delete Team</button>
         ) : (
           <div className="flex items-center gap-2">
             <span className="text-xs text-red-500">Sure?</span>

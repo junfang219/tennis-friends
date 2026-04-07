@@ -33,7 +33,7 @@ export default function HomePage() {
   const { data: session, status } = useSession();
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"find_players" | "social">("find_players");
+  const [tab, setTab] = useState<"find_players" | "propose_team" | "social">("find_players");
 
   useEffect(() => {
     if (status === "authenticated") {
@@ -108,6 +108,27 @@ export default function HomePage() {
             )}
           </button>
           <button
+            onClick={() => setTab("propose_team")}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+              tab === "propose_team"
+                ? "bg-clay text-white shadow-md"
+                : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={tab === "propose_team" ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
+              <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
+              <path d="M4 22h16" />
+              <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+            </svg>
+            Teams
+            {!loading && (
+              <span className={`text-xs px-2 py-0.5 rounded-full ${tab === "propose_team" ? "bg-white/20 text-white" : "bg-clay/20 text-clay"}`}>
+                {posts.filter((p) => p.postType === "propose_team" && !p.isComplete).length}
+              </span>
+            )}
+          </button>
+          <button
             onClick={() => setTab("social")}
             className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
               tab === "social"
@@ -121,7 +142,7 @@ export default function HomePage() {
             Social
             {!loading && (
               <span className={`text-xs px-2 py-0.5 rounded-full ${tab === "social" ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600"}`}>
-                {posts.filter((p) => p.postType !== "find_players").length}
+                {posts.filter((p) => p.postType !== "find_players" && p.postType !== "propose_team").length}
               </span>
             )}
           </button>
@@ -130,7 +151,9 @@ export default function HomePage() {
         {/* Filtered posts */}
         {(() => {
           const filtered = posts.filter((p) =>
-            tab === "find_players" ? p.postType === "find_players" : p.postType !== "find_players"
+            tab === "find_players" ? p.postType === "find_players"
+            : tab === "propose_team" ? p.postType === "propose_team"
+            : (p.postType !== "find_players" && p.postType !== "propose_team")
           );
 
           if (loading) {
@@ -165,12 +188,14 @@ export default function HomePage() {
                   )}
                 </div>
                 <h3 className="font-display text-xl font-bold text-gray-800 mb-2">
-                  {tab === "find_players" ? "No games posted yet" : "The court is quiet"}
+                  {tab === "find_players" ? "No games posted yet" :
+                   tab === "propose_team" ? "No teams being proposed" :
+                   "The court is quiet"}
                 </h3>
                 <p className="text-gray-500 text-sm max-w-xs mx-auto mb-6">
-                  {tab === "find_players"
-                    ? "Create a Find Players post to organize a game!"
-                    : "Share photos, videos, and updates with your tennis friends."}
+                  {tab === "find_players" ? "Create a Find Players post to organize a game!" :
+                   tab === "propose_team" ? "Propose a team to recruit interested players!" :
+                   "Share photos, videos, and updates with your tennis friends."}
                 </p>
               </div>
             );
