@@ -18,5 +18,14 @@ export async function POST(request: Request) {
 
   await prisma.friendship.delete({ where: { id: friendshipId } });
 
+  // Clean up the original friend_request notification (don't notify the requester)
+  await prisma.notification.deleteMany({
+    where: {
+      userId: session.user.id,
+      actorId: friendship.requesterId,
+      type: "friend_request",
+    },
+  });
+
   return NextResponse.json({ success: true });
 }

@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import PostCard from "@/components/PostCard";
+import EmojiPicker from "@/components/EmojiPicker";
 
 type Member = {
   id: string;
@@ -135,21 +136,68 @@ export default function GroupPage() {
                   </div>
                 )}
               </div>
-              <MembersButton members={group.members} />
+              <MembersButton
+                groupId={group.id}
+                ownerId={group.ownerId}
+                members={group.members}
+                currentUserId={session?.user?.id || ""}
+                onUpdate={(updated) => setGroup({ ...group, members: updated, _count: { members: updated.length } })}
+              />
             </div>
 
-            {/* Group Chat button */}
-            <div className="mt-4">
+            {/* Team actions */}
+            <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
               <Link
                 href={`/groups/${group.id}/chat`}
-                className="btn-primary inline-flex"
+                className="btn-primary flex items-center justify-center gap-1.5"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
                 </svg>
-                Group Chat
+                Chat
+              </Link>
+              <Link
+                href={`/groups/${group.id}/availability`}
+                className="btn-secondary flex items-center justify-center gap-1.5"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+                Availability
+              </Link>
+              <Link
+                href={`/groups/${group.id}/practice`}
+                className="btn-secondary flex items-center justify-center gap-1.5"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+                Practice
+              </Link>
+              <Link
+                href={`/groups/${group.id}/calendar`}
+                className="btn-secondary flex items-center justify-center gap-1.5"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                  <line x1="8" y1="14" x2="10" y2="14" />
+                  <line x1="14" y1="14" x2="16" y2="14" />
+                  <line x1="8" y1="18" x2="10" y2="18" />
+                  <line x1="14" y1="18" x2="16" y2="18" />
+                </svg>
+                Calendar
               </Link>
             </div>
+            <p className="text-[11px] text-gray-400 mt-1.5">
+              Team Chat also appears in your Friends → Chats inbox
+            </p>
           </div>
         </div>
       </div>
@@ -190,16 +238,126 @@ export default function GroupPage() {
 
 /* ────── Members button + modal ────── */
 
-function MembersButton({ members }: { members: Member[] }) {
+type FriendOption = { user: { id: string; name: string; profileImageUrl: string } };
+
+function MembersButton({
+  groupId,
+  ownerId,
+  members,
+  currentUserId,
+  onUpdate,
+}: {
+  groupId: string;
+  ownerId: string;
+  members: Member[];
+  currentUserId: string;
+  onUpdate: (members: Member[]) => void;
+}) {
   const [show, setShow] = useState(false);
+  const [mode, setMode] = useState<"view" | "edit">("view");
+  const [friends, setFriends] = useState<FriendOption[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [removed, setRemoved] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const isOwner = currentUserId === ownerId;
+  const memberIds = new Set(members.map((m) => m.user.id));
+
+  const openModal = () => {
+    setShow(true);
+    setMode("view");
+    setSelected(new Set());
+    setRemoved(new Set());
+    setSearch("");
+    setErrorMsg("");
+  };
+
+  const startEdit = async () => {
+    setMode("edit");
+    setErrorMsg("");
+    if (friends.length === 0) {
+      const res = await fetch("/api/friends");
+      if (res.ok) {
+        const data = await res.json();
+        setFriends(data.friends || []);
+      }
+    }
+  };
+
+  const toggleAdd = (userId: string) => {
+    if (memberIds.has(userId)) return; // already in team — handled by remove side
+    const next = new Set(selected);
+    if (next.has(userId)) next.delete(userId);
+    else next.add(userId);
+    setSelected(next);
+  };
+
+  const toggleRemove = (userId: string) => {
+    if (userId === ownerId) return; // can't remove owner
+    const next = new Set(removed);
+    if (next.has(userId)) next.delete(userId);
+    else next.add(userId);
+    setRemoved(next);
+  };
+
+  const saveChanges = async () => {
+    setSaving(true);
+    setErrorMsg("");
+    const body: Record<string, unknown> = { groupId };
+    if (selected.size > 0) body.addMemberIds = Array.from(selected);
+    if (isOwner && removed.size > 0) body.removeMemberIds = Array.from(removed);
+
+    const res = await fetch("/api/groups", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      onUpdate(updated.members);
+      setMode("view");
+      setSelected(new Set());
+      setRemoved(new Set());
+    } else {
+      const data = await res.json().catch(() => ({}));
+      setErrorMsg(data.error || "Failed to save changes");
+    }
+    setSaving(false);
+  };
+
+  const leaveTeam = async () => {
+    if (!confirm("Leave this team? You'll lose access to the team chat and feed.")) return;
+    const res = await fetch("/api/inbox/state", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "team", id: groupId, action: "leave" }),
+    });
+    if (res.ok) {
+      window.location.href = "/groups";
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "Failed to leave team");
+    }
+  };
+
+  // Friends not yet in the team — for non-owners these are the only ones they can add
+  const addableFriends = friends.filter(
+    (f) =>
+      !memberIds.has(f.user.id) &&
+      f.user.name.toLowerCase().includes(search.trim().toLowerCase())
+  );
+
+  const hasChanges = selected.size > 0 || (isOwner && removed.size > 0);
 
   return (
     <>
       <button
-        onClick={() => setShow(true)}
+        onClick={openModal}
         className="text-xs font-medium text-court-green-soft hover:text-court-green transition-colors"
       >
-        View all
+        Manage
       </button>
 
       {show && createPortal(
@@ -208,12 +366,12 @@ function MembersButton({ members }: { members: Member[] }) {
           onClick={() => setShow(false)}
         >
           <div
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in-up"
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in-up max-h-[90vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+            <div className="p-4 border-b border-gray-100 flex items-center justify-between shrink-0">
               <h3 className="font-display text-lg font-bold text-gray-800">
-                Members ({members.length})
+                {mode === "view" ? `Members (${members.length})` : isOwner ? "Edit Members" : "Add Members"}
               </h3>
               <button
                 onClick={() => setShow(false)}
@@ -225,22 +383,165 @@ function MembersButton({ members }: { members: Member[] }) {
                 </svg>
               </button>
             </div>
-            <div className="max-h-80 overflow-y-auto">
-              {members.map((m) => (
-                <Link
-                  key={m.id}
-                  href={`/profile/${m.user.id}`}
-                  onClick={() => setShow(false)}
-                  className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors"
-                >
-                  <Avatar name={m.user.name} image={m.user.profileImageUrl} size="md" />
-                  <div>
-                    <p className="text-sm font-semibold text-gray-800">{m.user.name}</p>
-                    <p className="text-xs text-gray-400">{SKILL_LABELS[m.user.skillLevel] || m.user.skillLevel}</p>
+
+            {mode === "view" ? (
+              <>
+                <div className="flex-1 overflow-y-auto">
+                  {members.map((m) => (
+                    <div
+                      key={m.id}
+                      className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors"
+                    >
+                      <Link href={`/profile/${m.user.id}`} onClick={() => setShow(false)}>
+                        <Avatar name={m.user.name} image={m.user.profileImageUrl} size="md" />
+                      </Link>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <Link
+                            href={`/profile/${m.user.id}`}
+                            onClick={() => setShow(false)}
+                            className="text-sm font-semibold text-gray-800 truncate"
+                          >
+                            {m.user.name}
+                          </Link>
+                          {m.user.id === ownerId && (
+                            <span className="text-[9px] font-bold tracking-wider text-court-green bg-court-green-pale/40 px-1.5 py-0.5 rounded uppercase">
+                              Creator
+                            </span>
+                          )}
+                          {m.user.id === currentUserId && (
+                            <span className="text-[9px] font-medium text-gray-400">(you)</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-400">{SKILL_LABELS[m.user.skillLevel] || m.user.skillLevel}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="p-4 border-t border-gray-100 flex gap-2 shrink-0">
+                  <button onClick={startEdit} className="btn-primary flex-1">
+                    {isOwner ? "Edit Members" : "Add Friends"}
+                  </button>
+                  {!isOwner && (
+                    <button onClick={leaveTeam} className="btn-danger">
+                      Leave
+                    </button>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="p-4 border-b border-gray-100 shrink-0">
+                  <div className="relative">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                      <circle cx="11" cy="11" r="8" />
+                      <path d="M21 21l-4.35-4.35" />
+                    </svg>
+                    <input
+                      type="text"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Search friends..."
+                      className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-court-green"
+                    />
                   </div>
-                </Link>
-              ))}
-            </div>
+                  <p className="text-[11px] text-gray-400 mt-2">
+                    {isOwner
+                      ? "As the creator, you can add new members or remove existing ones."
+                      : "You can add friends to the team. Only the creator can remove members."}
+                  </p>
+                </div>
+
+                <div className="flex-1 overflow-y-auto">
+                  {/* Existing members section (owner-only with remove checkboxes) */}
+                  {isOwner && (
+                    <>
+                      <div className="px-5 pt-3 pb-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                        Current members
+                      </div>
+                      {members
+                        .filter((m) => m.user.name.toLowerCase().includes(search.trim().toLowerCase()))
+                        .map((m) => {
+                          const isOwnerRow = m.user.id === ownerId;
+                          const willRemove = removed.has(m.user.id);
+                          return (
+                            <label
+                              key={m.id}
+                              className={`flex items-center gap-3 px-5 py-2.5 ${isOwnerRow ? "opacity-60" : "hover:bg-gray-50 cursor-pointer"}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={!willRemove}
+                                disabled={isOwnerRow}
+                                onChange={() => toggleRemove(m.user.id)}
+                                className="w-4 h-4 accent-court-green"
+                              />
+                              <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
+                              <span className={`text-sm font-medium flex-1 ${willRemove ? "line-through text-gray-400" : "text-gray-800"}`}>
+                                {m.user.name}
+                              </span>
+                              {isOwnerRow && (
+                                <span className="text-[9px] font-bold tracking-wider text-court-green">CREATOR</span>
+                              )}
+                            </label>
+                          );
+                        })}
+                    </>
+                  )}
+
+                  {/* Friends to add */}
+                  <div className="px-5 pt-3 pb-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                    Add from your friends
+                  </div>
+                  {addableFriends.length === 0 ? (
+                    <p className="text-sm text-gray-400 text-center py-4">
+                      {friends.length === 0
+                        ? "Loading friends..."
+                        : "All your friends are already in this team"}
+                    </p>
+                  ) : (
+                    addableFriends.map((f) => (
+                      <label
+                        key={f.user.id}
+                        className="flex items-center gap-3 px-5 py-2.5 hover:bg-gray-50 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected.has(f.user.id)}
+                          onChange={() => toggleAdd(f.user.id)}
+                          className="w-4 h-4 accent-court-green"
+                        />
+                        <Avatar name={f.user.name} image={f.user.profileImageUrl} size="sm" />
+                        <span className="text-sm font-medium text-gray-800">{f.user.name}</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+
+                {errorMsg && <p className="px-4 py-2 text-xs text-red-500 shrink-0">{errorMsg}</p>}
+
+                <div className="p-4 border-t border-gray-100 flex gap-2 shrink-0">
+                  <button
+                    onClick={() => {
+                      setMode("view");
+                      setSelected(new Set());
+                      setRemoved(new Set());
+                      setErrorMsg("");
+                    }}
+                    className="btn-secondary flex-1"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveChanges}
+                    disabled={!hasChanges || saving}
+                    className="btn-primary flex-1"
+                  >
+                    {saving ? "Saving..." : "Save"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>,
         document.body
@@ -323,8 +624,26 @@ function GroupComposerModal({
   const [mediaType, setMediaType] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const insertEmoji = (emoji: string) => {
+    const el = textareaRef.current;
+    if (!el) {
+      setContent((prev) => prev + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const next = el.value.slice(0, start) + emoji + el.value.slice(end);
+    setContent(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
 
   // Find Players
   const [findPlayers, setFindPlayers] = useState(false);
@@ -547,6 +866,7 @@ function GroupComposerModal({
               </svg>
               <input type="file" accept="video/mp4,video/webm,video/quicktime,video/mov" onChange={handleFileSelect} disabled={uploading} className="hidden" />
             </label>
+            <EmojiPicker open={emojiOpen} onOpenChange={setEmojiOpen} onSelect={insertEmoji} />
             <button
               onClick={() => setFindPlayers(!findPlayers)}
               className={`p-2 rounded-lg transition-colors ${findPlayers ? "text-ball-yellow bg-court-green" : "text-orange-500 hover:bg-orange-50"}`}

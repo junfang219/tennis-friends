@@ -19,18 +19,32 @@ export async function GET(
   }
 
   const { id } = await params;
+  const userId = session.user.id;
 
-  if (!(await verifyMembership(session.user.id, id))) {
+  const member = await prisma.groupMember.findUnique({
+    where: { groupId_userId: { groupId: id, userId } },
+  });
+  if (!member) {
     return NextResponse.json({ error: "Not a member" }, { status: 403 });
   }
+  const clearedAt = member.clearedAt || null;
 
   const messages = await prisma.groupMessage.findMany({
-    where: { groupId: id },
+    where: {
+      groupId: id,
+      ...(clearedAt ? { createdAt: { gt: clearedAt } } : {}),
+    },
     orderBy: { createdAt: "asc" },
     take: 200,
     include: {
       sender: { select: { id: true, name: true, profileImageUrl: true } },
     },
+  });
+
+  // Bump lastReadAt so the inbox unread count clears
+  await prisma.groupMember.update({
+    where: { groupId_userId: { groupId: id, userId } },
+    data: { lastReadAt: new Date() },
   });
 
   return NextResponse.json(messages);
@@ -51,15 +65,17 @@ export async function POST(
     return NextResponse.json({ error: "Not a member" }, { status: 403 });
   }
 
-  const { content } = await request.json();
+  const { content, mediaUrl, mediaType } = await request.json();
 
-  if (!content?.trim()) {
-    return NextResponse.json({ error: "Content required" }, { status: 400 });
+  if (!content?.trim() && !mediaUrl) {
+    return NextResponse.json({ error: "Content or media required" }, { status: 400 });
   }
 
   const message = await prisma.groupMessage.create({
     data: {
-      content: content.trim(),
+      content: (content || "").trim(),
+      mediaUrl: mediaUrl || "",
+      mediaType: mediaType || "",
       groupId: id,
       senderId: session.user.id,
     },

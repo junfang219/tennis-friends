@@ -21,5 +21,23 @@ export async function POST(request: Request) {
     data: { status: "ACCEPTED" },
   });
 
+  // Notify the original requester that they're now friends
+  await prisma.notification.create({
+    data: {
+      userId: friendship.requesterId,
+      actorId: session.user.id,
+      type: "friend_accepted",
+    },
+  });
+
+  // Clean up the original friend_request notification on the accepter's side
+  await prisma.notification.deleteMany({
+    where: {
+      userId: session.user.id,
+      actorId: friendship.requesterId,
+      type: "friend_request",
+    },
+  });
+
   return NextResponse.json(updated);
 }

@@ -40,6 +40,7 @@ type Post = {
   likeCount: number;
   isLiked: boolean;
   groups?: { id: string; name: string }[];
+  friendGroups?: { id: string; name: string }[];
 };
 
 type PlayRequest = {
@@ -108,6 +109,15 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   const [editGameType, setEditGameType] = useState(post.gameType || "singles");
   const [editPlayersNeeded, setEditPlayersNeeded] = useState(post.playersNeeded || 1);
   const [editCourtBooked, setEditCourtBooked] = useState(post.courtBooked || false);
+
+  // Audience editing
+  const [availableTeams, setAvailableTeams] = useState<{ id: string; name: string; _count?: { members: number } }[]>([]);
+  const [availableFriendGroups, setAvailableFriendGroups] = useState<{ id: string; name: string; _count?: { members: number } }[]>([]);
+  const [editSelectedTeamIds, setEditSelectedTeamIds] = useState<Set<string>>(new Set((post.groups || []).map((g) => g.id)));
+  const [editSelectedFriendGroupIds, setEditSelectedFriendGroupIds] = useState<Set<string>>(new Set((post.friendGroups || []).map((g) => g.id)));
+  const [showEditAudiencePicker, setShowEditAudiencePicker] = useState(false);
+  const [liveGroups, setLiveGroups] = useState<{ id: string; name: string }[]>(post.groups || []);
+  const [liveFriendGroups, setLiveFriendGroups] = useState<{ id: string; name: string }[]>(post.friendGroups || []);
 
   // Live display state for find-player fields
   const [livePlayDate, setLivePlayDate] = useState(post.playDate || "");
@@ -281,12 +291,26 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
               </Link>
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-xs text-gray-400">{timeAgo(post.createdAt)}</span>
-                {post.groups && post.groups.length > 0 && (
+                {liveGroups.length > 0 && (
+                  <>
+                    <span className="text-xs text-gray-300">·</span>
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-court-green-soft">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
+                        <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
+                        <path d="M4 22h16" />
+                        <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+                      </svg>
+                      {liveGroups.map((g) => g.name).join(", ")}
+                    </span>
+                  </>
+                )}
+                {liveFriendGroups.length > 0 && (
                   <>
                     <span className="text-xs text-gray-300">·</span>
                     <span className="inline-flex items-center gap-1 text-xs font-medium text-court-green-soft">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /></svg>
-                      {post.groups.map((g) => g.name).join(", ")}
+                      {liveFriendGroups.map((g) => g.name).join(", ")}
                     </span>
                   </>
                 )}
@@ -655,6 +679,10 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                   setEditGameType(liveGameType);
                   setEditPlayersNeeded(livePlayersNeeded);
                   setEditCourtBooked(liveCourtBooked);
+                  setEditSelectedTeamIds(new Set(liveGroups.map((g) => g.id)));
+                  setEditSelectedFriendGroupIds(new Set(liveFriendGroups.map((g) => g.id)));
+                  fetch("/api/groups").then((r) => r.json()).then((d) => setAvailableTeams(Array.isArray(d) ? d : []));
+                  fetch("/api/friend-groups").then((r) => r.json()).then((d) => setAvailableFriendGroups(Array.isArray(d) ? d : []));
                   setShowEditModal(true);
                 }}
                 className="w-full flex items-center gap-3 px-5 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
@@ -796,12 +824,45 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                   </label>
                 </div>
               )}
+
+              {/* Audience picker */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Audience</label>
+                <button
+                  type="button"
+                  onClick={() => setShowEditAudiencePicker(true)}
+                  className="w-full flex items-center justify-between gap-2 px-4 py-3 border border-gray-200 rounded-xl text-sm text-left bg-white hover:border-court-green-pale transition-colors"
+                >
+                  <span className="flex items-center gap-2 min-w-0 flex-1">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-court-green-soft shrink-0">
+                      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+                      <circle cx="9" cy="7" r="4" />
+                      <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
+                    </svg>
+                    <span className="font-medium text-gray-800 truncate">
+                      {(editSelectedTeamIds.size === 0 && editSelectedFriendGroupIds.size === 0)
+                        ? "All Friends"
+                        : [
+                            ...availableFriendGroups.filter((g) => editSelectedFriendGroupIds.has(g.id)).map((g) => g.name),
+                            ...availableTeams.filter((g) => editSelectedTeamIds.has(g.id)).map((g) => g.name),
+                          ].join(", ") || "All Friends"}
+                    </span>
+                  </span>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 shrink-0">
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+              </div>
             </div>
             <div className="px-5 pb-5">
               <button
                 onClick={async () => {
                   setSavingEdit(true);
-                  const body: Record<string, unknown> = { content: editContent };
+                  const body: Record<string, unknown> = {
+                    content: editContent,
+                    groupIds: Array.from(editSelectedTeamIds),
+                    friendGroupIds: Array.from(editSelectedFriendGroupIds),
+                  };
                   if (isFindPlayers) {
                     body.playDate = editPlayDate;
                     body.playTime = editPlayTime;
@@ -825,6 +886,11 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                       setLivePlayersNeeded(editPlayersNeeded);
                       setLiveCourtBooked(editCourtBooked);
                     }
+                    const newGroups = availableTeams.filter((g) => editSelectedTeamIds.has(g.id)).map((g) => ({ id: g.id, name: g.name }));
+                    const newFriendGroups = availableFriendGroups.filter((g) => editSelectedFriendGroupIds.has(g.id)).map((g) => ({ id: g.id, name: g.name }));
+                    setLiveGroups(newGroups);
+                    setLiveFriendGroups(newFriendGroups);
+                    onUpdate?.(post.id, { groups: newGroups, friendGroups: newFriendGroups, content: editContent });
                     setShowEditModal(false);
                   }
                   setSavingEdit(false);
@@ -834,6 +900,134 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
               >
                 {savingEdit ? "Saving..." : "Save Changes"}
               </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Edit audience picker sub-modal */}
+      {showEditAudiencePicker && createPortal(
+        <div
+          className="fixed inset-0 z-[1000] bg-black/40 flex items-center justify-center p-4"
+          onClick={(e) => { e.stopPropagation(); setShowEditAudiencePicker(false); }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="font-display text-lg font-bold text-gray-800">Post to</h3>
+              <button
+                onClick={() => setShowEditAudiencePicker(false)}
+                className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto">
+              <label className={`flex items-center gap-3 px-5 py-4 cursor-pointer transition-colors border-b border-gray-50 ${(editSelectedTeamIds.size === 0 && editSelectedFriendGroupIds.size === 0) ? "bg-court-green-soft/8" : "hover:bg-gray-50"}`}>
+                <input
+                  type="radio"
+                  checked={editSelectedTeamIds.size === 0 && editSelectedFriendGroupIds.size === 0}
+                  onChange={() => { setEditSelectedTeamIds(new Set()); setEditSelectedFriendGroupIds(new Set()); }}
+                  className="sr-only"
+                />
+                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${(editSelectedTeamIds.size === 0 && editSelectedFriendGroupIds.size === 0) ? "border-court-green bg-court-green" : "border-gray-300"}`}>
+                  {(editSelectedTeamIds.size === 0 && editSelectedFriendGroupIds.size === 0) && <div className="w-2 h-2 rounded-full bg-white" />}
+                </div>
+                <div className="w-9 h-9 rounded-xl bg-court-green-pale/30 flex items-center justify-center shrink-0">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-court-green-soft">
+                    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" strokeLinecap="round" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" strokeLinecap="round" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">All Friends</p>
+                  <p className="text-xs text-gray-400">Visible to all your friends</p>
+                </div>
+              </label>
+
+              {availableFriendGroups.length > 0 && (
+                <div className="px-5 pt-3 pb-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                  Friend Groups
+                </div>
+              )}
+              {availableFriendGroups.map((group) => {
+                const checked = editSelectedFriendGroupIds.has(group.id);
+                return (
+                  <label key={group.id} className={`flex items-center gap-3 px-5 py-3.5 cursor-pointer transition-colors ${checked ? "bg-court-green-soft/8" : "hover:bg-gray-50"}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        const next = new Set(editSelectedFriendGroupIds);
+                        if (next.has(group.id)) next.delete(group.id);
+                        else next.add(group.id);
+                        setEditSelectedFriendGroupIds(next);
+                      }}
+                      className="sr-only"
+                    />
+                    <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 ${checked ? "bg-court-green border-court-green" : "border-gray-300"}`}>
+                      {checked && (
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>
+                      )}
+                    </div>
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-ball-yellow to-court-green-light flex items-center justify-center text-court-green font-bold text-xs shrink-0">
+                      {group.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">{group.name}</p>
+                      {group._count && <p className="text-xs text-gray-400">{group._count.members} {group._count.members === 1 ? "member" : "members"}</p>}
+                    </div>
+                  </label>
+                );
+              })}
+
+              {availableTeams.length > 0 && (
+                <div className="px-5 pt-3 pb-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                  Teams
+                </div>
+              )}
+              {availableTeams.map((group) => {
+                const checked = editSelectedTeamIds.has(group.id);
+                return (
+                  <label key={group.id} className={`flex items-center gap-3 px-5 py-3.5 cursor-pointer transition-colors ${checked ? "bg-court-green-soft/8" : "hover:bg-gray-50"}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        const next = new Set(editSelectedTeamIds);
+                        if (next.has(group.id)) next.delete(group.id);
+                        else next.add(group.id);
+                        setEditSelectedTeamIds(next);
+                      }}
+                      className="sr-only"
+                    />
+                    <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 ${checked ? "bg-court-green border-court-green" : "border-gray-300"}`}>
+                      {checked && (
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>
+                      )}
+                    </div>
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-court-green to-court-green-soft flex items-center justify-center text-white font-bold text-xs shrink-0">
+                      {group.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">{group.name}</p>
+                      {group._count && <p className="text-xs text-gray-400">{group._count.members} members</p>}
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="p-4 border-t border-gray-100">
+              <button onClick={() => setShowEditAudiencePicker(false)} className="btn-primary w-full py-2.5">Done</button>
             </div>
           </div>
         </div>,

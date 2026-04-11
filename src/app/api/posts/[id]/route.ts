@@ -20,6 +20,7 @@ export async function GET(
       author: { select: { id: true, name: true, profileImageUrl: true } },
       likes: { where: { userId }, select: { id: true } },
       postGroups: { include: { group: { select: { id: true, name: true } } } },
+      postFriendGroups: { include: { friendGroup: { select: { id: true, name: true } } } },
       playRequests: { select: { id: true, status: true, note: true, userId: true, user: { select: { name: true } } } },
       _count: { select: { likes: true, comments: true, playRequests: { where: { status: "PENDING" } } } },
     },
@@ -58,6 +59,10 @@ export async function GET(
       ? post.manualPlayers
       : "",
     groups: post.postGroups.map((pg) => ({ id: pg.group.id, name: pg.group.name })),
+    // Friend groups are private — only the post author can see them
+    friendGroups: post.authorId === userId
+      ? post.postFriendGroups.map((pfg) => ({ id: pfg.friendGroup.id, name: pfg.friendGroup.name }))
+      : [],
   });
 }
 
@@ -113,10 +118,37 @@ export async function PATCH(
   if (body.isComplete !== undefined) updates.isComplete = body.isComplete;
   if (body.manualPlayers !== undefined) updates.manualPlayers = body.manualPlayers;
 
+  // Handle audience updates: replace post's targeted teams / friend groups
+  if (Array.isArray(body.groupIds)) {
+    await prisma.postGroup.deleteMany({ where: { postId: id } });
+    if (body.groupIds.length > 0) {
+      await prisma.postGroup.createMany({
+        data: body.groupIds.map((groupId: string) => ({ postId: id, groupId })),
+      });
+    }
+  }
+
+  if (Array.isArray(body.friendGroupIds)) {
+    await prisma.postFriendGroup.deleteMany({ where: { postId: id } });
+    if (body.friendGroupIds.length > 0) {
+      await prisma.postFriendGroup.createMany({
+        data: body.friendGroupIds.map((friendGroupId: string) => ({ postId: id, friendGroupId })),
+      });
+    }
+  }
+
   const updated = await prisma.post.update({
     where: { id },
     data: updates,
+    include: {
+      postGroups: { include: { group: { select: { id: true, name: true } } } },
+      postFriendGroups: { include: { friendGroup: { select: { id: true, name: true } } } },
+    },
   });
 
-  return NextResponse.json(updated);
+  return NextResponse.json({
+    ...updated,
+    groups: updated.postGroups.map((pg) => ({ id: pg.group.id, name: pg.group.name })),
+    friendGroups: updated.postFriendGroups.map((pfg) => ({ id: pfg.friendGroup.id, name: pfg.friendGroup.name })),
+  });
 }

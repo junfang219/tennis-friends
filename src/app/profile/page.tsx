@@ -29,6 +29,7 @@ type Post = {
   likeCount: number;
   isLiked: boolean;
   groups?: { id: string; name: string }[];
+  friendGroups?: { id: string; name: string }[];
 };
 
 type Profile = {

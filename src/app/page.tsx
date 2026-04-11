@@ -27,13 +27,24 @@ type Post = {
   likeCount: number;
   isLiked: boolean;
   groups?: { id: string; name: string }[];
+  friendGroups?: { id: string; name: string }[];
 };
 
 export default function HomePage() {
   const { data: session, status } = useSession();
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"find_players" | "propose_team" | "social">("find_players");
+  // null = show all categories; otherwise show only the selected category
+  const [activeFilter, setActiveFilter] = useState<"find_players" | "propose_team" | "social" | null>(null);
+
+  const toggleFilter = (key: "find_players" | "propose_team" | "social") => {
+    setActiveFilter(activeFilter === key ? null : key);
+  };
+
+  // Chip "active" state — only highlights the currently selected filter
+  const filters = {
+    has: (k: "find_players" | "propose_team" | "social") => activeFilter === k,
+  };
 
   useEffect(() => {
     if (status === "authenticated") {
@@ -87,35 +98,59 @@ export default function HomePage() {
           <PostComposer onPost={(post) => setPosts([post as Post, ...posts])} />
         </div>
 
-        {/* Tabs */}
-        <div className="flex gap-1 bg-white rounded-2xl p-1.5 shadow-sm border border-court-green-pale/20 animate-fade-in-up stagger-2">
+        {/* Filter chips */}
+        <div className="flex items-center gap-2 flex-wrap animate-fade-in-up stagger-2">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="22,3 2,3 10,12.46 10,19 14,21 14,12.46" />
+            </svg>
+            Filter:
+          </span>
           <button
-            onClick={() => setTab("find_players")}
-            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-              tab === "find_players"
-                ? "bg-court-green text-white shadow-md"
-                : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+            onClick={() => toggleFilter("social")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
+              filters.has("social")
+                ? "bg-court-green-soft text-white border-court-green-soft shadow-sm"
+                : "bg-white text-gray-500 border-gray-200 hover:border-court-green-pale"
             }`}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={tab === "find_players" ? 2.5 : 2} strokeLinecap="round">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21,15 16,10 5,21" />
+            </svg>
+            Social
+            {!loading && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${filters.has("social") ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600"}`}>
+                {posts.filter((p) => p.postType !== "find_players" && p.postType !== "propose_team").length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => toggleFilter("find_players")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
+              filters.has("find_players")
+                ? "bg-court-green text-white border-court-green shadow-sm"
+                : "bg-white text-gray-500 border-gray-200 hover:border-court-green-pale"
+            }`}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
               <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
             </svg>
             Find Players
             {!loading && (
-              <span className={`text-xs px-2 py-0.5 rounded-full ${tab === "find_players" ? "bg-white/20 text-white" : "bg-ball-yellow text-court-green"}`}>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${filters.has("find_players") ? "bg-white/20 text-white" : "bg-ball-yellow text-court-green"}`}>
                 {posts.filter((p) => p.postType === "find_players" && !p.isComplete).length}
               </span>
             )}
           </button>
           <button
-            onClick={() => setTab("propose_team")}
-            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-              tab === "propose_team"
-                ? "bg-clay text-white shadow-md"
-                : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+            onClick={() => toggleFilter("propose_team")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
+              filters.has("propose_team")
+                ? "bg-clay text-white border-clay shadow-sm"
+                : "bg-white text-gray-500 border-gray-200 hover:border-clay/50"
             }`}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={tab === "propose_team" ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
               <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
               <path d="M4 22h16" />
@@ -123,26 +158,28 @@ export default function HomePage() {
             </svg>
             Teams
             {!loading && (
-              <span className={`text-xs px-2 py-0.5 rounded-full ${tab === "propose_team" ? "bg-white/20 text-white" : "bg-clay/20 text-clay"}`}>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${filters.has("propose_team") ? "bg-white/20 text-white" : "bg-clay/20 text-clay"}`}>
                 {posts.filter((p) => p.postType === "propose_team" && !p.isComplete).length}
               </span>
             )}
           </button>
           <button
-            onClick={() => setTab("social")}
-            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-              tab === "social"
-                ? "bg-court-green text-white shadow-md"
-                : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+            onClick={() => setActiveFilter(null)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
+              activeFilter === null
+                ? "bg-gray-800 text-white border-gray-800 shadow-sm"
+                : "bg-white text-gray-500 border-gray-200 hover:border-gray-400"
             }`}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={tab === "social" ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21,15 16,10 5,21" />
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
             </svg>
-            Social
+            All
             {!loading && (
-              <span className={`text-xs px-2 py-0.5 rounded-full ${tab === "social" ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600"}`}>
-                {posts.filter((p) => p.postType !== "find_players" && p.postType !== "propose_team").length}
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeFilter === null ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600"}`}>
+                {posts.length}
               </span>
             )}
           </button>
@@ -150,11 +187,12 @@ export default function HomePage() {
 
         {/* Filtered posts */}
         {(() => {
-          const filtered = posts.filter((p) =>
-            tab === "find_players" ? p.postType === "find_players"
-            : tab === "propose_team" ? p.postType === "propose_team"
-            : (p.postType !== "find_players" && p.postType !== "propose_team")
-          );
+          const filtered = posts.filter((p) => {
+            if (activeFilter === null) return true;
+            if (activeFilter === "find_players") return p.postType === "find_players";
+            if (activeFilter === "propose_team") return p.postType === "propose_team";
+            return p.postType !== "find_players" && p.postType !== "propose_team";
+          });
 
           if (loading) {
             return (
@@ -179,23 +217,13 @@ export default function HomePage() {
             return (
               <div className="animate-fade-in-up text-center py-16 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
                 <div className="w-16 h-16 bg-ball-yellow/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                  {tab === "find_players" ? (
-                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-court-green-soft" strokeLinecap="round">
-                      <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
-                    </svg>
-                  ) : (
-                    <div className="w-8 h-8 rounded-full bg-ball-yellow animate-ball-bounce" />
-                  )}
+                  <div className="w-8 h-8 rounded-full bg-ball-yellow animate-ball-bounce" />
                 </div>
                 <h3 className="font-display text-xl font-bold text-gray-800 mb-2">
-                  {tab === "find_players" ? "No games posted yet" :
-                   tab === "propose_team" ? "No teams being proposed" :
-                   "The court is quiet"}
+                  The court is quiet
                 </h3>
                 <p className="text-gray-500 text-sm max-w-xs mx-auto mb-6">
-                  {tab === "find_players" ? "Create a Find Players post to organize a game!" :
-                   tab === "propose_team" ? "Propose a team to recruit interested players!" :
-                   "Share photos, videos, and updates with your tennis friends."}
+                  No posts match your filter. Try selecting more categories or create the first post!
                 </p>
               </div>
             );

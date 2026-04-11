@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 
@@ -24,17 +25,46 @@ type Group = {
 };
 
 export default function GroupsPage() {
+  const router = useRouter();
   const [groups, setGroups] = useState<Group[]>([]);
+  const [archivedGroups, setArchivedGroups] = useState<Group[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
+  const [swipedKey, setSwipedKey] = useState<string | null>(null);
   const [friends, setFriends] = useState<FriendEntry[]>([]);
   const [showCreate, setShowCreate] = useState(false);
-  const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadGroups = () => {
-    fetch("/api/groups").then((r) => r.json()).then((data) => {
-      setGroups(Array.isArray(data) ? data : []);
-      setLoading(false);
+    Promise.all([
+      fetch("/api/groups").then((r) => r.json()),
+      fetch("/api/groups?archived=true").then((r) => r.json()),
+    ])
+      .then(([active, arch]) => {
+        setGroups(Array.isArray(active) ? active : []);
+        setArchivedGroups(Array.isArray(arch) ? arch : []);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  };
+
+  const archiveTeam = async (groupId: string) => {
+    setSwipedKey(null);
+    await fetch("/api/groups", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupId, action: "archive" }),
     });
+    loadGroups();
+  };
+
+  const unarchiveTeam = async (groupId: string) => {
+    setSwipedKey(null);
+    await fetch("/api/groups", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupId, action: "unarchive" }),
+    });
+    loadGroups();
   };
 
   useEffect(() => {
@@ -71,7 +101,7 @@ export default function GroupsPage() {
 
       <div className="space-y-4">
         {/* Create group button */}
-        {!showCreate && !editingGroup && (
+        {!showCreate && (
           <button
             onClick={() => setShowCreate(true)}
             className="w-full bg-white rounded-2xl shadow-sm border-2 border-dashed border-court-green-pale/40 p-5 flex items-center justify-center gap-3 text-court-green-soft hover:border-court-green-soft hover:bg-court-green-soft/5 transition-all group animate-fade-in-up stagger-1"
@@ -95,18 +125,8 @@ export default function GroupsPage() {
           />
         )}
 
-        {/* Edit group form */}
-        {editingGroup && (
-          <EditGroupForm
-            group={editingGroup}
-            friends={friends}
-            onUpdated={() => { setEditingGroup(null); loadGroups(); }}
-            onCancel={() => setEditingGroup(null)}
-          />
-        )}
-
         {/* Groups list */}
-        {!showCreate && !editingGroup && groups.length === 0 && (
+        {!showCreate && groups.length === 0 && (
           <div className="animate-fade-in-up stagger-2 text-center py-16 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
             <div className="w-14 h-14 bg-ball-yellow/20 rounded-full flex items-center justify-center mx-auto mb-4">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-court-green-soft">
@@ -120,53 +140,289 @@ export default function GroupsPage() {
           </div>
         )}
 
-        {!showCreate && !editingGroup && groups.map((group, i) => (
-          <div
+        {!showCreate && groups.length > 0 && (
+          <p className="text-xs text-gray-400 px-1">
+            Tip: swipe left on a team to archive it.
+          </p>
+        )}
+
+        {!showCreate && groups.map((group) => (
+          <SwipeTeamRow
             key={group.id}
-            className={`animate-fade-in-up stagger-${Math.min(i + 2, 5)} bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden card-hover`}
+            rowKey={group.id}
+            swipedKey={swipedKey}
+            setSwipedKey={setSwipedKey}
+            onTap={() => router.push(`/groups/${group.id}`)}
+            actionLabel="Archive"
+            actionColor="bg-amber-500"
+            onAction={() => archiveTeam(group.id)}
+            actionIcon={
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="21 8 21 21 3 21 3 8" />
+                <rect x="1" y="3" width="22" height="5" />
+                <line x1="10" y1="12" x2="14" y2="12" />
+              </svg>
+            }
           >
-            <Link href={`/groups/${group.id}`} className="block p-5 pb-3">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-court-green to-court-green-soft flex items-center justify-center text-white font-bold text-sm shadow-md">
-                    {group.name.charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-gray-900 text-sm">{group.name}</h3>
-                    <p className="text-xs text-gray-400">{group._count.members} {group._count.members === 1 ? "member" : "members"}</p>
-                  </div>
-                </div>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-gray-300">
-                  <polyline points="9,18 15,12 9,6" />
-                </svg>
-              </div>
-              <div className="flex items-center -space-x-2">
-                {group.members.slice(0, 8).map((member) => (
-                  <div key={member.id} title={member.user.name}>
-                    <Avatar name={member.user.name} image={member.user.profileImageUrl} size="sm" />
-                  </div>
-                ))}
-                {group.members.length > 8 && (
-                  <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-xs font-semibold text-gray-500 ring-2 ring-white">
-                    +{group.members.length - 8}
-                  </div>
-                )}
-              </div>
-            </Link>
-            <div className="px-5 pb-3 flex items-center justify-end border-t border-gray-50 pt-2">
-              <button
-                onClick={(e) => { e.preventDefault(); setEditingGroup(group); }}
-                className="text-xs text-gray-400 hover:text-court-green transition-colors px-2 py-1 rounded-lg hover:bg-gray-50 flex items-center gap-1"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
-                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
-                </svg>
-                Edit
-              </button>
-            </div>
-          </div>
+            <TeamCardBody group={group} />
+          </SwipeTeamRow>
         ))}
+
+        {/* Archived Teams collapsible */}
+        {!showCreate && archivedGroups.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden">
+            <button
+              onClick={() => setShowArchived(!showArchived)}
+              className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-gray-500">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="21 8 21 21 3 21 3 8" />
+                    <rect x="1" y="3" width="22" height="5" />
+                    <line x1="10" y1="12" x2="14" y2="12" />
+                  </svg>
+                </div>
+                <div className="text-left">
+                  <p className="text-sm font-semibold text-gray-800">Archived Teams</p>
+                  <p className="text-xs text-gray-400">
+                    {archivedGroups.length} team{archivedGroups.length === 1 ? "" : "s"}
+                  </p>
+                </div>
+              </div>
+              <svg
+                className={`w-4 h-4 text-gray-400 transition-transform ${showArchived ? "rotate-180" : ""}`}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            {showArchived && (
+              <div className="border-t border-gray-100 p-3 space-y-3 bg-gray-50/50">
+                {archivedGroups.map((group) => (
+                  <SwipeTeamRow
+                    key={group.id}
+                    rowKey={`arch-${group.id}`}
+                    swipedKey={swipedKey}
+                    setSwipedKey={setSwipedKey}
+                    onTap={() => router.push(`/groups/${group.id}`)}
+                    actionLabel="Unarchive"
+                    actionColor="bg-court-green"
+                    onAction={() => unarchiveTeam(group.id)}
+                    actionIcon={
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="3 8 3 21 21 21 21 8" />
+                        <rect x="1" y="3" width="22" height="5" />
+                        <path d="M12 18V11" />
+                        <polyline points="9 14 12 11 15 14" />
+                      </svg>
+                    }
+                  >
+                    <TeamCardBody group={group} />
+                  </SwipeTeamRow>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ───────── Team card body (shared between active and archived lists) ───────── */
+function TeamCardBody({ group }: { group: Group }) {
+  return (
+    <div className="bg-white p-5 pb-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-court-green to-court-green-soft flex items-center justify-center text-white font-bold text-sm shadow-md">
+            {group.name.charAt(0).toUpperCase()}
+          </div>
+          <div className="min-w-0">
+            <h3 className="font-semibold text-gray-900 text-sm truncate">{group.name}</h3>
+            <p className="text-xs text-gray-400">
+              {group._count.members} {group._count.members === 1 ? "member" : "members"}
+            </p>
+            <p className="text-[11px] text-court-green-soft font-medium mt-0.5 inline-flex items-center gap-1">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" className="text-ball-yellow drop-shadow-sm">
+                <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" stroke="currentColor" strokeWidth="0.5" strokeLinejoin="round" />
+              </svg>
+              Captain · {group.owner.name}
+            </p>
+          </div>
+        </div>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-gray-300 shrink-0">
+          <polyline points="9,18 15,12 9,6" />
+        </svg>
+      </div>
+      <div className="flex items-center -space-x-2">
+        {group.members.slice(0, 8).map((member) => {
+          const isCaptain = member.user.id === group.ownerId;
+          return (
+            <div key={member.id} title={isCaptain ? `${member.user.name} (Captain)` : member.user.name} className="relative">
+              <Avatar name={member.user.name} image={member.user.profileImageUrl} size="sm" />
+              {isCaptain && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-ball-yellow flex items-center justify-center ring-2 ring-white shadow-sm">
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className="text-court-green">
+                    <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                  </svg>
+                </span>
+              )}
+            </div>
+          );
+        })}
+        {group.members.length > 8 && (
+          <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-xs font-semibold text-gray-500 ring-2 ring-white">
+            +{group.members.length - 8}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ───────── SwipeTeamRow ───────── */
+function SwipeTeamRow({
+  rowKey,
+  swipedKey,
+  setSwipedKey,
+  onTap,
+  actionLabel,
+  actionColor,
+  actionIcon,
+  onAction,
+  children,
+}: {
+  rowKey: string;
+  swipedKey: string | null;
+  setSwipedKey: (k: string | null) => void;
+  onTap: () => void;
+  actionLabel: string;
+  actionColor: string;
+  actionIcon: React.ReactNode;
+  onAction: () => void;
+  children: React.ReactNode;
+}) {
+  const ACTION_WIDTH = 96;
+  const OPEN_THRESHOLD = 50;
+  const swiped = swipedKey === rowKey;
+
+  const [dragX, setDragX] = useState(0);
+  const startXRef = useRef<number | null>(null);
+  const startOffsetRef = useRef(0);
+  const currentDragRef = useRef(0);
+  const draggingRef = useRef(false);
+  const movedRef = useRef(false);
+  const suppressClickRef = useRef(false);
+
+  const handleStart = (clientX: number) => {
+    startXRef.current = clientX;
+    startOffsetRef.current = swiped ? -ACTION_WIDTH : 0;
+    currentDragRef.current = startOffsetRef.current;
+    draggingRef.current = true;
+    movedRef.current = false;
+  };
+  const handleMove = (clientX: number) => {
+    if (!draggingRef.current || startXRef.current === null) return;
+    const delta = clientX - startXRef.current;
+    if (Math.abs(delta) > 5) movedRef.current = true;
+    const next = Math.max(-ACTION_WIDTH, Math.min(0, startOffsetRef.current + delta));
+    currentDragRef.current = next;
+    setDragX(next);
+  };
+  const handleEnd = () => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    const finalDrag = currentDragRef.current;
+    const wasSwiped = swiped;
+    const moved = movedRef.current;
+    startXRef.current = null;
+
+    if (moved) {
+      suppressClickRef.current = true;
+      setTimeout(() => { suppressClickRef.current = false; }, 350);
+    }
+
+    if (!moved) return;
+
+    if (wasSwiped) {
+      if (finalDrag > -ACTION_WIDTH + OPEN_THRESHOLD) {
+        setDragX(0);
+        setSwipedKey(null);
+      } else {
+        setDragX(-ACTION_WIDTH);
+      }
+    } else {
+      if (finalDrag < -OPEN_THRESHOLD) {
+        setDragX(-ACTION_WIDTH);
+        setSwipedKey(rowKey);
+      } else {
+        setDragX(0);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (swiped) setDragX(-ACTION_WIDTH);
+    else setDragX(0);
+  }, [swiped]);
+
+  const offset = draggingRef.current ? dragX : swiped ? -ACTION_WIDTH : 0;
+
+  return (
+    <div className="relative overflow-hidden rounded-2xl shadow-sm border border-court-green-pale/20 bg-white">
+      {/* Action button revealed by swipe */}
+      <div className="absolute inset-y-0 right-0 flex items-stretch" style={{ width: ACTION_WIDTH }}>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onAction(); }}
+          style={{ width: ACTION_WIDTH }}
+          className={`${actionColor} text-white text-[11px] font-semibold flex flex-col items-center justify-center gap-1`}
+        >
+          {actionIcon}
+          {actionLabel}
+        </button>
+      </div>
+
+      {/* Sliding card content */}
+      <div
+        className="relative bg-white"
+        style={{
+          transform: `translateX(${offset}px)`,
+          transition: draggingRef.current ? "none" : "transform 0.25s ease-out",
+          touchAction: "pan-y",
+        }}
+        onTouchStart={(e) => handleStart(e.touches[0].clientX)}
+        onTouchMove={(e) => handleMove(e.touches[0].clientX)}
+        onTouchEnd={handleEnd}
+        onTouchCancel={handleEnd}
+        onMouseDown={(e) => { handleStart(e.clientX); }}
+        onMouseMove={(e) => { if (draggingRef.current) handleMove(e.clientX); }}
+        onMouseUp={handleEnd}
+      >
+        <button
+          type="button"
+          onClick={(e) => {
+            if (suppressClickRef.current) {
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
+            if (swiped) {
+              setSwipedKey(null);
+              return;
+            }
+            onTap();
+          }}
+          className="w-full text-left card-hover"
+        >
+          {children}
+        </button>
       </div>
     </div>
   );
@@ -178,6 +434,7 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
   const [name, setName] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
+  const [search, setSearch] = useState("");
 
   const toggle = (id: string) => {
     const next = new Set(selectedIds);
@@ -196,6 +453,10 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
     } catch { setCreating(false); }
   };
 
+  const filteredFriends = friends.filter((f) =>
+    f.user.name.toLowerCase().includes(search.trim().toLowerCase())
+  );
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 animate-fade-in-up">
       <h3 className="font-display text-lg font-bold text-gray-800 mb-4">Create Team</h3>
@@ -206,20 +467,51 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
       <div className="mb-4">
         <label className="block text-sm font-semibold text-gray-700 mb-2">Select Friends ({selectedIds.size} selected)</label>
         {friends.length === 0 ? (
-          <p className="text-sm text-gray-400 py-4 text-center">No friends to add yet. You can still create the group and add members later.</p>
+          <p className="text-sm text-gray-400 py-4 text-center">No friends to add yet. You can still create the team and add members later.</p>
         ) : (
-          <div className="max-h-64 overflow-y-auto space-y-1 rounded-xl border border-gray-100 p-2">
-            {friends.map((f) => (
-              <label key={f.user.id} className={`flex items-center gap-3 p-2.5 rounded-xl cursor-pointer transition-all ${selectedIds.has(f.user.id) ? "bg-court-green-soft/10 ring-1 ring-court-green-soft/30" : "hover:bg-gray-50"}`}>
-                <input type="checkbox" checked={selectedIds.has(f.user.id)} onChange={() => toggle(f.user.id)} className="sr-only" />
-                <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all ${selectedIds.has(f.user.id) ? "bg-court-green border-court-green" : "border-gray-300"}`}>
-                  {selectedIds.has(f.user.id) && (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>)}
-                </div>
-                <Avatar name={f.user.name} image={f.user.profileImageUrl} size="sm" />
-                <span className="text-sm font-medium text-gray-800">{f.user.name}</span>
-              </label>
-            ))}
-          </div>
+          <>
+            <div className="relative mb-2">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                <circle cx="11" cy="11" r="8" />
+                <path d="M21 21l-4.35-4.35" />
+              </svg>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search friends..."
+                className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-court-green"
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-gray-500"
+                  aria-label="Clear search"
+                >
+                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              )}
+            </div>
+            <div className="max-h-64 overflow-y-auto space-y-1 rounded-xl border border-gray-100 p-2">
+              {filteredFriends.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-4">No matches for &quot;{search}&quot;</p>
+              ) : (
+                filteredFriends.map((f) => (
+                  <label key={f.user.id} className={`flex items-center gap-3 p-2.5 rounded-xl cursor-pointer transition-all ${selectedIds.has(f.user.id) ? "bg-court-green-soft/10 ring-1 ring-court-green-soft/30" : "hover:bg-gray-50"}`}>
+                    <input type="checkbox" checked={selectedIds.has(f.user.id)} onChange={() => toggle(f.user.id)} className="sr-only" />
+                    <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all ${selectedIds.has(f.user.id) ? "bg-court-green border-court-green" : "border-gray-300"}`}>
+                      {selectedIds.has(f.user.id) && (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>)}
+                    </div>
+                    <Avatar name={f.user.name} image={f.user.profileImageUrl} size="sm" />
+                    <span className="text-sm font-medium text-gray-800">{f.user.name}</span>
+                  </label>
+                ))
+              )}
+            </div>
+          </>
         )}
       </div>
       <div className="flex items-center gap-3">
@@ -230,80 +522,3 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
   );
 }
 
-/* ───────── Edit Group Form ───────── */
-
-function EditGroupForm({ group, friends, onUpdated, onCancel }: { group: Group; friends: FriendEntry[]; onUpdated: () => void; onCancel: () => void }) {
-  const [name, setName] = useState(group.name);
-  const currentMemberIds = new Set(group.members.map((m) => m.user.id));
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(currentMemberIds));
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-
-  const toggle = (id: string) => { if (id === group.ownerId) return; const next = new Set(selectedIds); if (next.has(id)) next.delete(id); else next.add(id); setSelectedIds(next); };
-
-  const handleSave = async () => {
-    if (!name.trim() || saving) return;
-    setSaving(true);
-    const addMemberIds = Array.from(selectedIds).filter((id) => !currentMemberIds.has(id));
-    const removeMemberIds = Array.from(currentMemberIds).filter((id) => !selectedIds.has(id));
-    await fetch("/api/groups", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ groupId: group.id, name: name !== group.name ? name : undefined, addMemberIds: addMemberIds.length ? addMemberIds : undefined, removeMemberIds: removeMemberIds.length ? removeMemberIds : undefined }) });
-    setSaving(false);
-    onUpdated();
-  };
-
-  const handleDelete = async () => {
-    setDeleting(true);
-    await fetch("/api/groups", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ groupId: group.id }) });
-    setDeleting(false);
-    onUpdated();
-  };
-
-  const allPeople = new Map<string, { id: string; name: string; profileImageUrl: string }>();
-  friends.forEach((f) => allPeople.set(f.user.id, f.user));
-  group.members.forEach((m) => allPeople.set(m.user.id, m.user));
-
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 animate-fade-in-up">
-      <h3 className="font-display text-lg font-bold text-gray-800 mb-4">Edit Team</h3>
-      <div className="mb-4">
-        <label className="block text-sm font-semibold text-gray-700 mb-1.5">Team Name</label>
-        <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm" autoFocus />
-      </div>
-      <div className="mb-4">
-        <label className="block text-sm font-semibold text-gray-700 mb-2">Members ({selectedIds.size})</label>
-        <div className="max-h-64 overflow-y-auto space-y-1 rounded-xl border border-gray-100 p-2">
-          {Array.from(allPeople.values()).map((person) => {
-            const isOwner = person.id === group.ownerId;
-            return (
-              <label key={person.id} className={`flex items-center gap-3 p-2.5 rounded-xl transition-all ${isOwner ? "opacity-70 cursor-default" : "cursor-pointer"} ${selectedIds.has(person.id) ? "bg-court-green-soft/10 ring-1 ring-court-green-soft/30" : "hover:bg-gray-50"}`}>
-                <input type="checkbox" checked={selectedIds.has(person.id)} onChange={() => toggle(person.id)} disabled={isOwner} className="sr-only" />
-                <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all ${selectedIds.has(person.id) ? "bg-court-green border-court-green" : "border-gray-300"}`}>
-                  {selectedIds.has(person.id) && (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>)}
-                </div>
-                <Avatar name={person.name} image={person.profileImageUrl} size="sm" />
-                <span className="text-sm font-medium text-gray-800 flex-1">{person.name}</span>
-                {isOwner && (<span className="text-xs text-court-green-soft bg-court-green-soft/10 px-2 py-0.5 rounded-full font-medium">Owner</span>)}
-              </label>
-            );
-          })}
-        </div>
-      </div>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={handleSave} disabled={!name.trim() || saving} className="btn-primary">{saving ? "Saving..." : "Save Changes"}</button>
-          <button onClick={onCancel} className="btn-secondary">Cancel</button>
-        </div>
-        {!confirmDelete ? (
-          <button onClick={() => setConfirmDelete(true)} className="text-xs text-gray-400 hover:text-red-500 transition-colors px-2 py-1">Delete Team</button>
-        ) : (
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-red-500">Sure?</span>
-            <button onClick={handleDelete} disabled={deleting} className="btn-danger btn-sm">{deleting ? "..." : "Delete"}</button>
-            <button onClick={() => setConfirmDelete(false)} className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1">No</button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}

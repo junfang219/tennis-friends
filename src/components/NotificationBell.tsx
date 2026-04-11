@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 import Avatar from "./Avatar";
 import PostCard from "./PostCard";
 
@@ -32,6 +33,8 @@ function notificationText(type: string) {
     case "join_request": return "wants to join your game";
     case "request_approved": return "approved your request to join";
     case "request_rejected": return "declined your request to join";
+    case "friend_request": return "sent you a friend request";
+    case "friend_accepted": return "accepted your friend request — you're now friends!";
     default: return "interacted with your post";
   }
 }
@@ -79,12 +82,34 @@ function notificationIcon(type: string) {
           </svg>
         </div>
       );
+    case "friend_request":
+      return (
+        <div className="w-6 h-6 rounded-full bg-court-green flex items-center justify-center">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-ball-yellow">
+            <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+            <circle cx="8.5" cy="7" r="4" />
+            <line x1="20" y1="8" x2="20" y2="14" />
+            <line x1="23" y1="11" x2="17" y2="11" />
+          </svg>
+        </div>
+      );
+    case "friend_accepted":
+      return (
+        <div className="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-green-600">
+            <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+            <circle cx="8.5" cy="7" r="4" />
+            <polyline points="17 11 19 13 23 9" />
+          </svg>
+        </div>
+      );
     default:
       return null;
   }
 }
 
 export default function NotificationBell() {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
@@ -110,6 +135,15 @@ export default function NotificationBell() {
       setOpenPost(null);
     }
     setLoadingPost(false);
+  };
+
+  const handleNotificationClick = (n: Notification) => {
+    if (n.type === "friend_request" || n.type === "friend_accepted") {
+      setOpen(false);
+      router.push(`/profile/${n.actor.id}`);
+      return;
+    }
+    if (n.postId) openPostModal(n.postId);
   };
 
   const loadNotifications = () => {
@@ -190,7 +224,7 @@ export default function NotificationBell() {
               notifications.map((n) => (
                 <button
                   key={n.id}
-                  onClick={() => openPostModal(n.postId)}
+                  onClick={() => handleNotificationClick(n)}
                   className={`w-full text-left flex items-start gap-3 px-4 py-3 hover:bg-gray-50 transition-colors ${
                     !n.read ? "bg-court-green-soft/5" : ""
                   }`}

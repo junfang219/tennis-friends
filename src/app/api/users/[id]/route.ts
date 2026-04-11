@@ -13,6 +13,37 @@ export async function GET(
 
   const { id } = await params;
 
+  // Block check — if either side has blocked, return a stub response
+  const block = await prisma.block.findFirst({
+    where: {
+      OR: [
+        { blockerId: session.user.id, blockedId: id },
+        { blockerId: id, blockedId: session.user.id },
+      ],
+    },
+  });
+  if (block) {
+    const blockedByMe = block.blockerId === session.user.id;
+    // Return a stub profile so the page can show a friendly blocked state
+    const stub = await prisma.user.findUnique({
+      where: { id },
+      select: { id: true, name: true, profileImageUrl: true },
+    });
+    return NextResponse.json({
+      ...stub,
+      isBlocked: true,
+      blockedByMe,
+      bio: "",
+      skillLevel: "",
+      favoriteSurface: "",
+      posts: [],
+      friendCount: 0,
+      friendshipId: null,
+      friendshipStatus: null,
+      isRequester: false,
+    });
+  }
+
   // Get groups the current user is a member of
   const userGroupMemberships = await prisma.groupMember.findMany({
     where: { userId: session.user.id },
@@ -113,5 +144,7 @@ export async function GET(
     friendshipId: friendship?.id || null,
     friendshipStatus: friendship?.status || null,
     isRequester: friendship?.requesterId === session.user.id,
+    isBlocked: false,
+    blockedByMe: false,
   });
 }

@@ -7,6 +7,7 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import PostCard from "@/components/PostCard";
+import EmojiPicker from "@/components/EmojiPicker";
 
 type SharedPost = {
   id: string;
@@ -28,6 +29,8 @@ type SharedPost = {
 type Message = {
   id: string;
   content: string;
+  mediaUrl?: string;
+  mediaType?: string;
   createdAt: string;
   senderId: string;
   sharedPostId?: string | null;
@@ -66,10 +69,55 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatUser, setChatUser] = useState<ChatUser | null>(null);
   const [input, setInput] = useState("");
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const [sending, setSending] = useState(false);
+  const [pendingMedia, setPendingMedia] = useState<{ url: string; type: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadError("");
+    setUploading(true);
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setUploadError(data.error || "Upload failed");
+      } else {
+        const data = await res.json();
+        setPendingMedia({ url: data.url, type: data.mediaType });
+      }
+    } catch {
+      setUploadError("Upload failed. Try again.");
+    }
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const insertEmoji = (emoji: string) => {
+    const el = inputRef.current;
+    if (!el) {
+      setInput((prev) => prev + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const next = el.value.slice(0, start) + emoji + el.value.slice(end);
+    setInput(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
 
   const userId = params.userId as string;
 
@@ -89,10 +137,22 @@ export default function ChatPage() {
       });
   };
 
+  const markRead = () => {
+    fetch("/api/messages/read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ otherId: userId }),
+    }).catch(() => {});
+  };
+
   useEffect(() => {
     loadMessages();
-    // Poll for new messages every 3 seconds
-    pollRef.current = setInterval(loadMessages, 3000);
+    markRead();
+    // Poll for new messages every 3 seconds; bump read on each poll so the badge clears
+    pollRef.current = setInterval(() => {
+      loadMessages();
+      markRead();
+    }, 3000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
@@ -105,19 +165,25 @@ export default function ChatPage() {
   }, [messages.length]);
 
   const handleSend = async () => {
-    if (!input.trim() || sending) return;
+    if ((!input.trim() && !pendingMedia) || sending || uploading) return;
     setSending(true);
 
     const res = await fetch("/api/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ receiverId: userId, content: input }),
+      body: JSON.stringify({
+        receiverId: userId,
+        content: input,
+        mediaUrl: pendingMedia?.url,
+        mediaType: pendingMedia?.type,
+      }),
     });
 
     if (res.ok) {
       const msg = await res.json();
       setMessages((prev) => [...prev, msg]);
       setInput("");
+      setPendingMedia(null);
       inputRef.current?.focus();
     }
     setSending(false);
@@ -127,6 +193,19 @@ export default function ChatPage() {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+  };
+
+  const clearHistory = async () => {
+    if (!confirm("Clear chat history? This only hides messages from your view; the other person still sees them.")) return;
+    const res = await fetch("/api/inbox/state", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "direct", id: userId, action: "clear" }),
+    });
+    if (res.ok) {
+      setMessages([]);
+      loadMessages();
     }
   };
 
@@ -155,13 +234,22 @@ export default function ChatPage() {
           </svg>
         </Link>
         {chatUser ? (
-          <Link href={`/profile/${chatUser.id}`} className="flex items-center gap-3 flex-1 min-w-0">
-            <Avatar name={chatUser.name} image={chatUser.profileImageUrl} size="md" />
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-900 truncate">{chatUser.name}</p>
-              <p className="text-xs text-court-green-soft">Tennis Friend</p>
-            </div>
-          </Link>
+          <>
+            <Link href={`/profile/${chatUser.id}`} className="flex items-center gap-3 flex-1 min-w-0">
+              <Avatar name={chatUser.name} image={chatUser.profileImageUrl} size="md" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-gray-900 truncate">{chatUser.name}</p>
+                <p className="text-xs text-court-green-soft">Tennis Friend</p>
+              </div>
+            </Link>
+            <button
+              onClick={clearHistory}
+              className="text-xs font-medium text-gray-500 hover:text-gray-700 px-2 py-1"
+              title="Clear chat history (your view only)"
+            >
+              Clear
+            </button>
+          </>
         ) : (
           <div className="flex items-center gap-3 flex-1">
             <div className="skeleton w-10 h-10 rounded-full" />
@@ -219,10 +307,23 @@ export default function ChatPage() {
                       <SharedPostCard post={msg.sharedPost} />
                     )}
 
+                    {/* Media attachment */}
+                    {msg.mediaUrl && (
+                      <div className={`rounded-2xl overflow-hidden shadow-sm ${msg.sharedPost ? "mt-1" : ""} ${isMe ? "ml-auto" : ""}`}>
+                        {msg.mediaType === "video" ? (
+                          <video src={msg.mediaUrl} controls className="max-w-full max-h-80 bg-black" />
+                        ) : (
+                          <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer">
+                            <img src={msg.mediaUrl} alt="" className="max-w-full max-h-80 object-cover" />
+                          </a>
+                        )}
+                      </div>
+                    )}
+
                     {/* Text message bubble */}
-                    {(msg.content || !msg.sharedPost) && (
+                    {(msg.content || (!msg.sharedPost && !msg.mediaUrl)) && (
                       <div
-                        className={`px-4 py-2.5 text-sm leading-relaxed ${msg.sharedPost ? "mt-1 " : ""}${
+                        className={`px-4 py-2.5 text-sm leading-relaxed ${msg.sharedPost || msg.mediaUrl ? "mt-1 " : ""}${
                           isMe
                             ? "bg-court-green text-white rounded-2xl rounded-br-md"
                             : "bg-white text-gray-800 rounded-2xl rounded-bl-md shadow-sm border border-gray-100"
@@ -235,6 +336,12 @@ export default function ChatPage() {
                         </p>
                       </div>
                     )}
+                    {/* Timestamp under media-only messages */}
+                    {msg.mediaUrl && !msg.content && !msg.sharedPost && (
+                      <p className={`text-[10px] mt-1 ${isMe ? "text-right text-gray-400" : "text-gray-400"}`}>
+                        {formatTime(msg.createdAt)}
+                      </p>
+                    )}
                   </div>
                 </div>
               );
@@ -246,7 +353,53 @@ export default function ChatPage() {
 
       {/* Input */}
       <div className="bg-white border-t border-gray-200 px-4 py-3 shrink-0">
+        {/* Pending media preview */}
+        {pendingMedia && (
+          <div className="mb-2 inline-flex items-start gap-2 bg-gray-100 rounded-xl p-2">
+            {pendingMedia.type === "image" ? (
+              <img src={pendingMedia.url} alt="" className="w-20 h-20 object-cover rounded-lg" />
+            ) : (
+              <video src={pendingMedia.url} className="w-20 h-20 object-cover rounded-lg bg-black" />
+            )}
+            <button
+              onClick={() => setPendingMedia(null)}
+              className="w-6 h-6 rounded-full bg-gray-700 hover:bg-gray-900 text-white flex items-center justify-center"
+              aria-label="Remove attachment"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        )}
+        {uploadError && <p className="text-xs text-red-500 mb-2">{uploadError}</p>}
         <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,video/mov"
+            onChange={handleFileSelect}
+            disabled={uploading}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="w-10 h-10 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700 flex items-center justify-center transition-colors disabled:opacity-40 shrink-0"
+            title="Attach photo or video"
+          >
+            {uploading ? (
+              <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
+                <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+              </svg>
+            )}
+          </button>
           <input
             ref={inputRef}
             type="text"
@@ -257,9 +410,10 @@ export default function ChatPage() {
             className="flex-1 px-4 py-2.5 border border-gray-200 rounded-full text-sm bg-surface/50 focus:bg-white transition-colors"
             autoFocus
           />
+          <EmojiPicker open={emojiOpen} onOpenChange={setEmojiOpen} onSelect={insertEmoji} />
           <button
             onClick={handleSend}
-            disabled={!input.trim() || sending}
+            disabled={(!input.trim() && !pendingMedia) || sending || uploading}
             className="w-10 h-10 rounded-full bg-court-green text-white flex items-center justify-center hover:bg-court-green-light transition-colors disabled:opacity-40 disabled:hover:bg-court-green shrink-0"
           >
             {sending ? (

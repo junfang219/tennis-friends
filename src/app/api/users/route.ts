@@ -11,10 +11,23 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const q = searchParams.get("q") || "";
 
+  // Exclude users blocked in either direction
+  const blocks = await prisma.block.findMany({
+    where: {
+      OR: [{ blockerId: session.user.id }, { blockedId: session.user.id }],
+    },
+  });
+  const blockedIds = Array.from(
+    new Set(
+      blocks.map((b) => (b.blockerId === session.user!.id ? b.blockedId : b.blockerId))
+    )
+  );
+
   const users = await prisma.user.findMany({
     where: {
       AND: [
         { id: { not: session.user.id } },
+        blockedIds.length > 0 ? { id: { notIn: blockedIds } } : {},
         q ? { name: { contains: q } } : {},
       ],
     },

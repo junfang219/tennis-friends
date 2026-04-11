@@ -29,12 +29,29 @@ export async function GET() {
   });
   const userGroupIds = userGroupMemberships.map((m) => m.groupId);
 
+  // Get friend group IDs the user is a member of
+  const userFriendGroupMemberships = await prisma.friendGroupMember.findMany({
+    where: { userId },
+    select: { friendGroupId: true },
+  });
+  const userFriendGroupIds = userFriendGroupMemberships.map((m) => m.friendGroupId);
+
   // Get hidden post IDs
   const hiddenPosts = await prisma.hiddenPost.findMany({
     where: { userId },
     select: { postId: true },
   });
   const hiddenPostIds = hiddenPosts.map((h) => h.postId);
+
+  // Get blocked user IDs (in either direction)
+  const blocks = await prisma.block.findMany({
+    where: {
+      OR: [{ blockerId: userId }, { blockedId: userId }],
+    },
+  });
+  const blockedUserIds = Array.from(
+    new Set(blocks.map((b) => (b.blockerId === userId ? b.blockedId : b.blockerId)))
+  );
 
   // Fetch posts:
   // 1. Own posts (always visible)
@@ -43,18 +60,28 @@ export async function GET() {
   const posts = await prisma.post.findMany({
     where: {
       id: hiddenPostIds.length > 0 ? { notIn: hiddenPostIds } : undefined,
+      // Hide posts from blocked users (in either direction)
+      ...(blockedUserIds.length > 0
+        ? { authorId: { notIn: blockedUserIds } }
+        : {}),
       OR: [
         // Own posts
         { authorId: userId },
-        // Friends' posts with no group targeting
+        // Friends' posts with no targeting (visible to all friends)
         {
           authorId: { in: friendIds },
           postGroups: { none: {} },
+          postFriendGroups: { none: {} },
         },
-        // Friends' posts targeted to groups I'm in
+        // Friends' posts targeted to teams I'm in
         {
           authorId: { in: friendIds },
           postGroups: { some: { groupId: { in: userGroupIds } } },
+        },
+        // Friends' posts targeted to friend groups I'm in
+        {
+          authorId: { in: friendIds },
+          postFriendGroups: { some: { friendGroupId: { in: userFriendGroupIds } } },
         },
       ],
     },
@@ -71,6 +98,11 @@ export async function GET() {
       postGroups: {
         include: {
           group: { select: { id: true, name: true } },
+        },
+      },
+      postFriendGroups: {
+        include: {
+          friendGroup: { select: { id: true, name: true } },
         },
       },
       playRequests: {
@@ -110,6 +142,10 @@ export async function GET() {
       ? post.manualPlayers
       : "",
     groups: post.postGroups.map((pg) => ({ id: pg.group.id, name: pg.group.name })),
+    // Friend groups are private — only the post author sees which friend group(s) the post was sent to
+    friendGroups: post.authorId === userId
+      ? post.postFriendGroups.map((pfg) => ({ id: pfg.friendGroup.id, name: pfg.friendGroup.name }))
+      : [],
   }));
 
   return NextResponse.json(formatted);
@@ -121,7 +157,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { content, mediaUrl, mediaType, groupIds, postType, playDate, playTime, courtLocation, gameType, playersNeeded, courtBooked } = await request.json();
+  const { content, mediaUrl, mediaType, groupIds, friendGroupIds, postType, playDate, playTime, courtLocation, gameType, playersNeeded, courtBooked } = await request.json();
 
   if (!content?.trim() && !mediaUrl && postType !== "find_players") {
     return NextResponse.json({ error: "Post must have text or media" }, { status: 400 });
@@ -146,6 +182,12 @@ export async function POST(request: Request) {
               create: groupIds.map((groupId: string) => ({ groupId })),
             }
           : undefined,
+      postFriendGroups:
+        friendGroupIds && friendGroupIds.length > 0
+          ? {
+              create: friendGroupIds.map((friendGroupId: string) => ({ friendGroupId })),
+            }
+          : undefined,
     },
     include: {
       author: { select: { id: true, name: true, profileImageUrl: true } },
@@ -153,6 +195,11 @@ export async function POST(request: Request) {
       postGroups: {
         include: {
           group: { select: { id: true, name: true } },
+        },
+      },
+      postFriendGroups: {
+        include: {
+          friendGroup: { select: { id: true, name: true } },
         },
       },
     },
@@ -181,5 +228,6 @@ export async function POST(request: Request) {
     likeId: null,
     myPlayRequest: null,
     groups: post.postGroups.map((pg) => ({ id: pg.group.id, name: pg.group.name })),
+    friendGroups: post.postFriendGroups.map((pfg) => ({ id: pfg.friendGroup.id, name: pfg.friendGroup.name })),
   });
 }

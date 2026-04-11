@@ -14,6 +14,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Cannot friend yourself" }, { status: 400 });
   }
 
+  // Refuse if either side has blocked the other
+  const block = await prisma.block.findFirst({
+    where: {
+      OR: [
+        { blockerId: session.user.id, blockedId: addresseeId },
+        { blockerId: addresseeId, blockedId: session.user.id },
+      ],
+    },
+  });
+  if (block) {
+    return NextResponse.json({ error: "You cannot send a friend request to this user" }, { status: 403 });
+  }
+
   const existing = await prisma.friendship.findFirst({
     where: {
       OR: [
@@ -29,6 +42,15 @@ export async function POST(request: Request) {
 
   const friendship = await prisma.friendship.create({
     data: { requesterId: session.user.id, addresseeId, status: "PENDING" },
+  });
+
+  // Notify the addressee that they have a new friend request
+  await prisma.notification.create({
+    data: {
+      userId: addresseeId,
+      actorId: session.user.id,
+      type: "friend_request",
+    },
   });
 
   return NextResponse.json(friendship);

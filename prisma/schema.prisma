@@ -33,6 +33,19 @@ model User {
   hiddenPosts      HiddenPost[]
   notifications    Notification[] @relation("NotificationRecipient")
   notificationsActed Notification[] @relation("NotificationActor")
+  ownedFriendGroups   FriendGroup[]       @relation("FriendGroupOwner")
+  friendGroupMemberships FriendGroupMember[]
+  createdChats       Chat[]            @relation("ChatCreator")
+  chatParticipations ChatParticipant[]
+  sentChatMessages   ChatMessage[]
+  directMessageReads DirectMessageRead[]
+  blocksMade         Block[]           @relation("Blocker")
+  blocksReceived     Block[]           @relation("Blocked")
+  matchAvailabilities MatchAvailability[]
+  proposedPractices   TeamPractice[]         @relation("PracticeCreator")
+  courtsAdded         Court[]                @relation("CourtAdder")
+  organizedBookings   Booking[]              @relation("BookingOrganizer")
+  bookingPlayers      BookingPlayer[]        @relation("BookingPlayerUser")
 }
 
 model Friendship {
@@ -71,6 +84,7 @@ model Post {
   author       User          @relation(fields: [authorId], references: [id])
   likes        Like[]
   postGroups   PostGroup[]
+  postFriendGroups PostFriendGroup[]
   playRequests PlayRequest[]
   comments     Comment[]
   hiddenBy     HiddenPost[]
@@ -100,13 +114,21 @@ model Group {
   members       GroupMember[]
   postGroups    PostGroup[]
   groupMessages GroupMessage[]
+  matches       TeamMatch[]
+  practices     TeamPractice[]
 }
 
 model GroupMember {
-  id        String   @id @default(cuid())
-  groupId   String
-  userId    String
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  groupId    String
+  userId     String
+  createdAt  DateTime @default(now())
+  lastReadAt DateTime @default(now())
+  muted      Boolean  @default(false)
+  pinnedAt   DateTime?
+  hiddenAt   DateTime?
+  clearedAt  DateTime?
+  archivedAt DateTime?
 
   group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
   user  User  @relation(fields: [userId], references: [id])
@@ -128,6 +150,8 @@ model PostGroup {
 model Message {
   id           String   @id @default(cuid())
   content      String
+  mediaUrl     String   @default("")
+  mediaType    String   @default("")
   senderId     String
   receiverId   String
   sharedPostId String   @default("")
@@ -140,6 +164,8 @@ model Message {
 model GroupMessage {
   id        String   @id @default(cuid())
   content   String
+  mediaUrl  String   @default("")
+  mediaType String   @default("")
   groupId   String
   senderId  String
   createdAt DateTime @default(now())
@@ -197,4 +223,231 @@ model Notification {
 
   user  User @relation("NotificationRecipient", fields: [userId], references: [id])
   actor User @relation("NotificationActor", fields: [actorId], references: [id])
+}
+
+model FriendGroup {
+  id        String   @id @default(cuid())
+  name      String
+  ownerId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner            User                @relation("FriendGroupOwner", fields: [ownerId], references: [id])
+  members          FriendGroupMember[]
+  postFriendGroups PostFriendGroup[]
+}
+
+model FriendGroupMember {
+  id            String   @id @default(cuid())
+  friendGroupId String
+  userId        String
+  createdAt     DateTime @default(now())
+
+  friendGroup FriendGroup @relation(fields: [friendGroupId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id])
+
+  @@unique([friendGroupId, userId])
+}
+
+model PostFriendGroup {
+  id            String @id @default(cuid())
+  postId        String
+  friendGroupId String
+
+  post        Post        @relation(fields: [postId], references: [id], onDelete: Cascade)
+  friendGroup FriendGroup @relation(fields: [friendGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, friendGroupId])
+}
+
+model Chat {
+  id        String   @id @default(cuid())
+  name      String   @default("")
+  creatorId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  creator      User              @relation("ChatCreator", fields: [creatorId], references: [id])
+  participants ChatParticipant[]
+  messages     ChatMessage[]
+}
+
+model ChatParticipant {
+  id         String   @id @default(cuid())
+  chatId     String
+  userId     String
+  joinedAt   DateTime @default(now())
+  lastReadAt DateTime @default(now())
+  muted      Boolean  @default(false)
+  pinnedAt   DateTime?
+  hiddenAt   DateTime?
+  clearedAt  DateTime?
+
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([chatId, userId])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  chatId    String
+  senderId  String
+  content   String
+  mediaUrl  String   @default("")
+  mediaType String   @default("")
+  createdAt DateTime @default(now())
+
+  chat   Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  sender User @relation(fields: [senderId], references: [id])
+}
+
+model Block {
+  id        String   @id @default(cuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id])
+  blocked User @relation("Blocked", fields: [blockedId], references: [id])
+
+  @@unique([blockerId, blockedId])
+}
+
+model DirectMessageRead {
+  id         String   @id @default(cuid())
+  userId     String   // the reader (recipient who opened the chat)
+  otherId    String   // the other party in the 1:1 conversation
+  lastReadAt DateTime @default(now())
+  muted      Boolean  @default(false)
+  pinnedAt   DateTime?
+  hiddenAt   DateTime?
+  clearedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, otherId])
+}
+
+model TeamMatch {
+  id        String   @id @default(cuid())
+  groupId   String
+  matchDate String
+  matchTime String   @default("")
+  location  String
+  notes     String   @default("")
+  createdAt DateTime @default(now())
+
+  group          Group               @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  availabilities MatchAvailability[]
+}
+
+model MatchAvailability {
+  id         String   @id @default(cuid())
+  matchId    String
+  userId     String
+  status     String   @default("")
+  matchTypes String   @default("")
+  lineupSlot String   @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  match TeamMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user  User      @relation(fields: [userId], references: [id])
+
+  @@unique([matchId, userId])
+}
+
+model TeamPractice {
+  id            String   @id @default(cuid())
+  groupId       String
+  creatorId     String
+  postId        String   @default("")
+  practiceDate  String
+  practiceTime  String   @default("")
+  location      String
+  playersNeeded Int      @default(0)
+  coach         String   @default("")
+  repeats       String   @default("")  // "" | "weekly" | "biweekly" | "monthly"
+  notes         String   @default("")
+  cancelled     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  creator User  @relation("PracticeCreator", fields: [creatorId], references: [id])
+}
+
+model Court {
+  id        String   @id @default(cuid())
+  name      String
+  lat       Float
+  lng       Float
+  notes     String   @default("")
+  addedById String
+  createdAt DateTime @default(now())
+
+  addedBy User @relation("CourtAdder", fields: [addedById], references: [id])
+
+  @@index([addedById])
+}
+
+model Venue {
+  id           String       @id @default(cuid())
+  name         String
+  address      String
+  latitude     Float
+  longitude    Float
+  neighborhood String       @default("")
+  amenities    String       @default("[]")
+  imageUrl     String       @default("")
+  activeNetId  String       @default("")
+  courts       VenueCourt[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model VenueCourt {
+  id           String    @id @default(cuid())
+  venueId      String
+  venue        Venue     @relation(fields: [venueId], references: [id])
+  courtNumber  Int
+  surface      String    @default("hard")
+  isLighted    Boolean   @default(false)
+  activeNetId  String    @default("")
+  bookings     Booking[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([venueId, courtNumber])
+}
+
+model Booking {
+  id           String          @id @default(cuid())
+  courtId      String
+  court        VenueCourt      @relation(fields: [courtId], references: [id])
+  organizerId  String
+  organizer    User            @relation("BookingOrganizer", fields: [organizerId], references: [id])
+  startTime    DateTime
+  endTime      DateTime
+  status       String          @default("pending")
+  activeNetUrl String          @default("")
+  players      BookingPlayer[]
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([courtId, startTime, endTime])
+}
+
+model BookingPlayer {
+  id        String   @id @default(cuid())
+  bookingId String
+  booking   Booking  @relation(fields: [bookingId], references: [id])
+  userId    String
+  user      User     @relation("BookingPlayerUser", fields: [userId], references: [id])
+  status    String   @default("invited")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([bookingId, userId])
 }

@@ -5,10 +5,13 @@ import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
+import EmojiPicker from "@/components/EmojiPicker";
 
 type Message = {
   id: string;
   content: string;
+  mediaUrl?: string;
+  mediaType?: string;
   createdAt: string;
   senderId: string;
   sender: { id: string; name: string; profileImageUrl: string };
@@ -46,11 +49,56 @@ export default function GroupChatPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [pendingMedia, setPendingMedia] = useState<{ url: string; type: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadError("");
+    setUploading(true);
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setUploadError(data.error || "Upload failed");
+      } else {
+        const data = await res.json();
+        setPendingMedia({ url: data.url, type: data.mediaType });
+      }
+    } catch {
+      setUploadError("Upload failed. Try again.");
+    }
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const groupId = params.id as string;
+
+  const insertEmoji = (emoji: string) => {
+    const el = inputRef.current;
+    if (!el) {
+      setInput((prev) => prev + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const next = el.value.slice(0, start) + emoji + el.value.slice(end);
+    setInput(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
 
   // Load group info
   useEffect(() => {
@@ -86,19 +134,24 @@ export default function GroupChatPage() {
   }, [messages.length]);
 
   const handleSend = async () => {
-    if (!input.trim() || sending) return;
+    if ((!input.trim() && !pendingMedia) || sending || uploading) return;
     setSending(true);
 
     const res = await fetch(`/api/groups/${groupId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: input }),
+      body: JSON.stringify({
+        content: input,
+        mediaUrl: pendingMedia?.url,
+        mediaType: pendingMedia?.type,
+      }),
     });
 
     if (res.ok) {
       const msg = await res.json();
       setMessages((prev) => [...prev, msg]);
       setInput("");
+      setPendingMedia(null);
       inputRef.current?.focus();
     }
     setSending(false);
@@ -213,24 +266,42 @@ export default function GroupChatPage() {
                     </div>
                   )}
 
-                  <div className={`max-w-[75%] ${isMe ? "" : ""}`}>
+                  <div className="max-w-[75%]">
                     {showName && (
                       <p className="text-[11px] font-medium text-court-green-soft ml-1 mb-0.5">
                         {msg.sender.name}
                       </p>
                     )}
-                    <div
-                      className={`px-4 py-2.5 text-sm leading-relaxed ${
-                        isMe
-                          ? "bg-court-green text-white rounded-2xl rounded-br-md"
-                          : "bg-white text-gray-800 rounded-2xl rounded-bl-md shadow-sm border border-gray-100"
-                      }`}
-                    >
-                      <p className="whitespace-pre-wrap break-words">{msg.content}</p>
-                      <p className={`text-[10px] mt-1 ${isMe ? "text-white/60" : "text-gray-400"}`}>
+                    {msg.mediaUrl && (
+                      <div className={`rounded-2xl overflow-hidden shadow-sm ${isMe ? "ml-auto" : ""}`}>
+                        {msg.mediaType === "video" ? (
+                          <video src={msg.mediaUrl} controls className="max-w-full max-h-80 bg-black" />
+                        ) : (
+                          <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer">
+                            <img src={msg.mediaUrl} alt="" className="max-w-full max-h-80 object-cover" />
+                          </a>
+                        )}
+                      </div>
+                    )}
+                    {msg.content && (
+                      <div
+                        className={`px-4 py-2.5 text-sm leading-relaxed ${msg.mediaUrl ? "mt-1 " : ""}${
+                          isMe
+                            ? "bg-court-green text-white rounded-2xl rounded-br-md"
+                            : "bg-white text-gray-800 rounded-2xl rounded-bl-md shadow-sm border border-gray-100"
+                        }`}
+                      >
+                        <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                        <p className={`text-[10px] mt-1 ${isMe ? "text-white/60" : "text-gray-400"}`}>
+                          {formatTime(msg.createdAt)}
+                        </p>
+                      </div>
+                    )}
+                    {msg.mediaUrl && !msg.content && (
+                      <p className={`text-[10px] mt-1 ${isMe ? "text-right" : ""} text-gray-400`}>
                         {formatTime(msg.createdAt)}
                       </p>
-                    </div>
+                    )}
                   </div>
                 </div>
               );
@@ -242,7 +313,52 @@ export default function GroupChatPage() {
 
       {/* Input */}
       <div className="bg-white border-t border-gray-200 px-4 py-3 shrink-0">
+        {pendingMedia && (
+          <div className="mb-2 inline-flex items-start gap-2 bg-gray-100 rounded-xl p-2">
+            {pendingMedia.type === "image" ? (
+              <img src={pendingMedia.url} alt="" className="w-20 h-20 object-cover rounded-lg" />
+            ) : (
+              <video src={pendingMedia.url} className="w-20 h-20 object-cover rounded-lg bg-black" />
+            )}
+            <button
+              onClick={() => setPendingMedia(null)}
+              className="w-6 h-6 rounded-full bg-gray-700 hover:bg-gray-900 text-white flex items-center justify-center"
+              aria-label="Remove attachment"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        )}
+        {uploadError && <p className="text-xs text-red-500 mb-2">{uploadError}</p>}
         <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,video/mov"
+            onChange={handleFileSelect}
+            disabled={uploading}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="w-10 h-10 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700 flex items-center justify-center transition-colors disabled:opacity-40 shrink-0"
+            title="Attach photo or video"
+          >
+            {uploading ? (
+              <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
+                <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+              </svg>
+            )}
+          </button>
           <input
             ref={inputRef}
             type="text"
@@ -253,9 +369,10 @@ export default function GroupChatPage() {
             className="flex-1 px-4 py-2.5 border border-gray-200 rounded-full text-sm bg-surface/50 focus:bg-white transition-colors"
             autoFocus
           />
+          <EmojiPicker open={emojiOpen} onOpenChange={setEmojiOpen} onSelect={insertEmoji} />
           <button
             onClick={handleSend}
-            disabled={!input.trim() || sending}
+            disabled={(!input.trim() && !pendingMedia) || sending || uploading}
             className="w-10 h-10 rounded-full bg-court-green text-white flex items-center justify-center hover:bg-court-green-light transition-colors disabled:opacity-40 disabled:hover:bg-court-green shrink-0"
           >
             {sending ? (

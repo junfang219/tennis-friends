@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import Avatar from "./Avatar";
 import NotificationBell from "./NotificationBell";
+import MessageBell from "./MessageBell";
 
 export default function Navbar() {
   const { data: session, status } = useSession();
@@ -18,6 +19,7 @@ export default function Navbar() {
     { href: "/", label: "Feed", icon: FeedIcon },
     { href: "/friends", label: "Friends", icon: FriendsIcon },
     { href: "/groups", label: "Teams", icon: GroupsIcon },
+    { href: "/courts", label: "Courts", icon: CourtsIcon },
     { href: "/calendar", label: "Calendar", icon: CalendarIcon },
     { href: "/search", label: "Discover", icon: SearchIcon },
   ];
@@ -64,6 +66,7 @@ export default function Navbar() {
           <div className="flex items-center gap-3">
             {status === "authenticated" && session?.user ? (
               <div className="flex items-center gap-3">
+                <MessageBell />
                 <NotificationBell />
                 <Link href="/profile" className="hidden sm:flex items-center gap-2 group">
                   <Avatar name={session.user.name || ""} image={session.user.image} size="sm" />
@@ -188,6 +191,15 @@ function ProfileIcon({ active }: { active: boolean }) {
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
       <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
       <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
+
+function CourtsIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
+      <circle cx="12" cy="10" r="3" />
     </svg>
   );
 }

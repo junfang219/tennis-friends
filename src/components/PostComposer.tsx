@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useSession } from "next-auth/react";
 import Avatar from "./Avatar";
+import EmojiPicker from "./EmojiPicker";
 
 const PLACEHOLDERS = [
   "Just finished a great match...",
@@ -81,34 +82,35 @@ export default function PostComposer({
           </div>
         </div>
 
-        {/* Find Players CTA */}
-        <button
-          onClick={() => openModal(true, false)}
-          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-court-green to-court-green-light text-white font-semibold text-sm hover:from-court-green-light hover:to-court-green-soft transition-all border-t border-court-green-pale/30"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-            <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
-          </svg>
-          Find Players for a Game
-        </button>
+        {/* CTA buttons row */}
+        <div className="flex border-t border-court-green-pale/30">
+          {/* Find Players CTA — primary, larger */}
+          <button
+            onClick={() => openModal(true, false)}
+            className={`flex items-center justify-center gap-2 px-3 py-3 bg-gradient-to-r from-court-green to-court-green-light text-white font-semibold text-xs sm:text-sm hover:from-court-green-light hover:to-court-green-soft transition-all ${hideProposeTeam ? "w-full" : "flex-[2]"}`}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="shrink-0">
+              <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
+            </svg>
+            Find Players for a Game
+          </button>
 
-        {/* Propose Team CTA */}
-        {!hideProposeTeam && (
-        <button
-          onClick={() => openModal(false, true)}
-          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-clay to-clay-light text-white font-semibold text-sm hover:opacity-90 transition-all border-t border-court-green-pale/30"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
-            <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
-            <path d="M4 22h16" />
-            <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
-            <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
-            <path d="M18 2H6v7a6 6 0 0012 0V2z" />
-          </svg>
-          Propose a Team
-        </button>
-        )}
+          {/* Propose Team CTA — secondary, smaller */}
+          {!hideProposeTeam && (
+            <button
+              onClick={() => openModal(false, true)}
+              className="flex-1 flex items-center justify-center gap-1.5 px-2 py-3 bg-gradient-to-r from-clay to-clay-light text-white font-semibold text-xs hover:opacity-90 transition-all border-l border-white/20"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
+                <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
+                <path d="M4 22h16" />
+                <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+              </svg>
+              Propose Team
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Full-screen modal composer — rendered via portal to escape all parent containers */}
@@ -159,7 +161,27 @@ function ComposerModal({
   // Audience
   const [groups, setGroups] = useState<GroupOption[]>([]);
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
+  const [friendGroups, setFriendGroups] = useState<GroupOption[]>([]);
+  const [selectedFriendGroupIds, setSelectedFriendGroupIds] = useState<Set<string>>(new Set());
   const [showAudiencePicker, setShowAudiencePicker] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+
+  const insertEmoji = (emoji: string) => {
+    const el = textareaRef.current;
+    if (!el) {
+      setContent((prev) => prev + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const next = el.value.slice(0, start) + emoji + el.value.slice(end);
+    setContent(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
 
   // Find Players
   const [findPlayers, setFindPlayers] = useState(initialFindPlayers || false);
@@ -180,6 +202,9 @@ function ComposerModal({
     fetch("/api/groups")
       .then((r) => r.json())
       .then((data) => setGroups(Array.isArray(data) ? data : []));
+    fetch("/api/friend-groups")
+      .then((r) => r.json())
+      .then((data) => setFriendGroups(Array.isArray(data) ? data : []));
   }, []);
 
   // Auto-focus textarea
@@ -200,9 +225,24 @@ function ComposerModal({
     setSelectedGroupIds(next);
   };
 
-  const audienceLabel = selectedGroupIds.size === 0
+  const toggleFriendGroup = (id: string) => {
+    const next = new Set(selectedFriendGroupIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedFriendGroupIds(next);
+  };
+
+  const selectAllFriends = () => {
+    setSelectedGroupIds(new Set());
+    setSelectedFriendGroupIds(new Set());
+  };
+
+  const audienceLabel = (selectedGroupIds.size === 0 && selectedFriendGroupIds.size === 0)
     ? "All Friends"
-    : groups.filter((g) => selectedGroupIds.has(g.id)).map((g) => g.name).join(", ");
+    : [
+        ...groups.filter((g) => selectedGroupIds.has(g.id)).map((g) => g.name),
+        ...friendGroups.filter((g) => selectedFriendGroupIds.has(g.id)).map((g) => g.name),
+      ].join(", ");
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -252,6 +292,7 @@ function ComposerModal({
       mediaUrl,
       mediaType,
       groupIds: selectedGroupIds.size > 0 ? Array.from(selectedGroupIds) : undefined,
+      friendGroupIds: selectedFriendGroupIds.size > 0 ? Array.from(selectedFriendGroupIds) : undefined,
     };
 
     if (findPlayers) {
@@ -596,6 +637,7 @@ function ComposerModal({
                 className="hidden"
               />
             </label>
+            <EmojiPicker open={emojiOpen} onOpenChange={setEmojiOpen} onSelect={insertEmoji} />
             {!proposeTeam && (
               <button
                 onClick={() => setFindPlayers(!findPlayers)}
@@ -675,10 +717,10 @@ function ComposerModal({
             </div>
 
             <div className="max-h-80 overflow-y-auto">
-              <label className={`flex items-center gap-3 px-5 py-4 cursor-pointer transition-colors border-b border-gray-50 ${selectedGroupIds.size === 0 ? "bg-court-green-soft/8" : "hover:bg-gray-50"}`}>
-                <input type="radio" checked={selectedGroupIds.size === 0} onChange={() => setSelectedGroupIds(new Set())} className="sr-only" />
-                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${selectedGroupIds.size === 0 ? "border-court-green bg-court-green" : "border-gray-300"}`}>
-                  {selectedGroupIds.size === 0 && <div className="w-2 h-2 rounded-full bg-white" />}
+              <label className={`flex items-center gap-3 px-5 py-4 cursor-pointer transition-colors border-b border-gray-50 ${(selectedGroupIds.size === 0 && selectedFriendGroupIds.size === 0) ? "bg-court-green-soft/8" : "hover:bg-gray-50"}`}>
+                <input type="radio" checked={selectedGroupIds.size === 0 && selectedFriendGroupIds.size === 0} onChange={selectAllFriends} className="sr-only" />
+                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${(selectedGroupIds.size === 0 && selectedFriendGroupIds.size === 0) ? "border-court-green bg-court-green" : "border-gray-300"}`}>
+                  {(selectedGroupIds.size === 0 && selectedFriendGroupIds.size === 0) && <div className="w-2 h-2 rounded-full bg-white" />}
                 </div>
                 <div className="w-9 h-9 rounded-xl bg-court-green-pale/30 flex items-center justify-center shrink-0">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-court-green-soft">
@@ -693,6 +735,34 @@ function ComposerModal({
                 </div>
               </label>
 
+              {friendGroups.length > 0 && (
+                <div className="px-5 pt-3 pb-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                  Friend Groups
+                </div>
+              )}
+              {friendGroups.map((group) => (
+                <label key={group.id} className={`flex items-center gap-3 px-5 py-3.5 cursor-pointer transition-colors ${selectedFriendGroupIds.has(group.id) ? "bg-court-green-soft/8" : "hover:bg-gray-50"}`}>
+                  <input type="checkbox" checked={selectedFriendGroupIds.has(group.id)} onChange={() => toggleFriendGroup(group.id)} className="sr-only" />
+                  <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 ${selectedFriendGroupIds.has(group.id) ? "bg-court-green border-court-green" : "border-gray-300"}`}>
+                    {selectedFriendGroupIds.has(group.id) && (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>
+                    )}
+                  </div>
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-ball-yellow to-court-green-light flex items-center justify-center text-court-green font-bold text-xs shrink-0">
+                    {group.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800 truncate">{group.name}</p>
+                    <p className="text-xs text-gray-400">{group._count.members} {group._count.members === 1 ? "member" : "members"}</p>
+                  </div>
+                </label>
+              ))}
+
+              {groups.length > 0 && (
+                <div className="px-5 pt-3 pb-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                  Teams
+                </div>
+              )}
               {groups.map((group) => (
                 <label key={group.id} className={`flex items-center gap-3 px-5 py-3.5 cursor-pointer transition-colors ${selectedGroupIds.has(group.id) ? "bg-court-green-soft/8" : "hover:bg-gray-50"}`}>
                   <input type="checkbox" checked={selectedGroupIds.has(group.id)} onChange={() => toggleGroup(group.id)} className="sr-only" />
