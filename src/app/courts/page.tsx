@@ -17,6 +17,14 @@ type CourtData = {
   source: "official" | "osm";
 };
 
+type GeocodeResult = {
+  displayName: string;
+  lat: number;
+  lon: number;
+  /** [south, north, west, east] — Nominatim's order is [south, north, west, east] as strings */
+  boundingBox?: [number, number, number, number];
+};
+
 const DEFAULT_CENTER: [number, number] = [47.6062, -122.3321]; // Seattle
 const DEFAULT_ZOOM = 12;
 const MIN_FETCH_ZOOM = 11;
@@ -70,8 +78,18 @@ export default function CourtsPage() {
   const [fetching, setFetching] = useState(false);
   const [zoomTooLow, setZoomTooLow] = useState(false);
 
-  // Seattle Parks side panel (open by default on desktop)
-  const [sidePanelOpen, setSidePanelOpen] = useState(true);
+  // Seattle Parks side panel (closed by default — user opens via button)
+  const [sidePanelOpen, setSidePanelOpen] = useState(false);
+
+  // Map search (Nominatim geocoder) — lets users type "Costa Mesa" or
+  // "Brooklyn" and pan the map there instead of dragging to find it.
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<GeocodeResult[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchAbortRef = useRef<AbortController | null>(null);
+  const searchBoxRef = useRef<HTMLDivElement>(null);
 
   // Iframe ref — used to detect and recover from cross-origin navigation
   // (e.g. after login, when ActiveNet redirects to an absolute activecommunities.com URL)
@@ -147,6 +165,106 @@ export default function CourtsPage() {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => runFetch(), 600);
   }, [runFetch]);
+
+  // ── Map search (Nominatim geocoder) ──────────────────────────────
+  // Debounced so we only hit Nominatim ~400ms after the user stops typing,
+  // respecting their acceptable-use policy (max 1 req/sec, no type-ahead).
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) {
+      setSearchResults([]);
+      setSearchOpen(false);
+      setSearchLoading(false);
+      return;
+    }
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    if (searchAbortRef.current) searchAbortRef.current.abort();
+    setSearchLoading(true);
+    searchDebounceRef.current = setTimeout(async () => {
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+      try {
+        const url =
+          "https://nominatim.openstreetmap.org/search?" +
+          "q=" +
+          encodeURIComponent(q) +
+          "&format=json&limit=5&addressdetails=0";
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error(`Nominatim ${res.status}`);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data: any[] = await res.json();
+        const parsed: GeocodeResult[] = data.map((r) => {
+          const bb = Array.isArray(r.boundingbox) && r.boundingbox.length === 4
+            ? ([
+                parseFloat(r.boundingbox[0]),
+                parseFloat(r.boundingbox[1]),
+                parseFloat(r.boundingbox[2]),
+                parseFloat(r.boundingbox[3]),
+              ] as [number, number, number, number])
+            : undefined;
+          return {
+            displayName: r.display_name || "",
+            lat: parseFloat(r.lat),
+            lon: parseFloat(r.lon),
+            boundingBox: bb,
+          };
+        }).filter((r) => !isNaN(r.lat) && !isNaN(r.lon));
+        setSearchResults(parsed);
+        setSearchOpen(parsed.length > 0);
+      } catch (err) {
+        if ((err as Error).name !== "AbortError") {
+          setSearchResults([]);
+          setSearchOpen(false);
+        }
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 400);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [searchQuery]);
+
+  // Click-outside dismiss for the search dropdown
+  useEffect(() => {
+    if (!searchOpen) return;
+    const onDocDown = (e: PointerEvent) => {
+      if (
+        searchBoxRef.current &&
+        !searchBoxRef.current.contains(e.target as Node)
+      ) {
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onDocDown);
+    return () => document.removeEventListener("pointerdown", onDocDown);
+  }, [searchOpen]);
+
+  const selectSearchResult = useCallback((r: GeocodeResult) => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    // Prefer fitBounds when Nominatim returns a bbox — better framing for
+    // cities. Fall back to setView with zoom 13 for points/POIs.
+    if (r.boundingBox) {
+      const [south, north, west, east] = r.boundingBox;
+      map.fitBounds([
+        [south, west],
+        [north, east],
+      ]);
+    } else {
+      map.setView([r.lat, r.lon], 13);
+    }
+    // Keep just the place name in the input; trim trailing ", CA, USA" etc.
+    const firstPart = r.displayName.split(",")[0].trim();
+    setSearchQuery(firstPart);
+    setSearchOpen(false);
+  }, []);
+
+  const clearSearch = useCallback(() => {
+    setSearchQuery("");
+    setSearchResults([]);
+    setSearchOpen(false);
+  }, []);
 
   // Initialize map
   useEffect(() => {
@@ -276,17 +394,46 @@ export default function CourtsPage() {
         >
           {sidePanelOpen && (
             <>
-              {/* Header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-court-green text-white flex-shrink-0">
-                <div className="min-w-0 flex-1">
-                  <h2 className="font-display font-bold text-sm truncate">Book on Seattle Parks</h2>
-                  <p className="text-[11px] text-white/70 truncate">
-                    Enter a date &amp; time, then tap a court to book
-                  </p>
+              {/* Header with iframe navigation (back / home / close) */}
+              <div className="flex items-center justify-between px-3 py-2.5 border-b border-gray-100 bg-court-green text-white flex-shrink-0">
+                {/* Left: iframe back + home */}
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {/* Back — goes to previous page inside the iframe */}
+                  <button
+                    onClick={() => {
+                      try { iframeRef.current?.contentWindow?.history.back(); } catch {}
+                    }}
+                    className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center"
+                    aria-label="Go back in Seattle Parks"
+                    title="Back"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <polyline points="15 18 9 12 15 6" />
+                    </svg>
+                  </button>
+                  {/* Home — reloads the search results page */}
+                  <button
+                    onClick={() => {
+                      if (iframeRef.current) iframeRef.current.src = SEATTLE_PROXY_URL;
+                    }}
+                    className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center"
+                    aria-label="Back to search results"
+                    title="Search results"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                      <polyline points="9 22 9 12 15 12 15 22" />
+                    </svg>
+                  </button>
                 </div>
+                {/* Center: title */}
+                <div className="min-w-0 flex-1 mx-2">
+                  <h2 className="font-display font-bold text-sm truncate text-center">Book on Seattle Parks</h2>
+                </div>
+                {/* Right: close panel */}
                 <button
                   onClick={() => setSidePanelOpen(false)}
-                  className="ml-3 w-7 h-7 rounded-full hover:bg-white/20 flex items-center justify-center flex-shrink-0"
+                  className="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center flex-shrink-0"
                   aria-label="Close Seattle Parks panel"
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -316,6 +463,99 @@ export default function CourtsPage() {
         <div className="relative flex-1 h-full min-w-0">
           <div ref={mapRef} className="absolute inset-0" />
 
+          {/* Map search — debounced Nominatim geocoder. Typing pans the map
+              to the selected result, which fires moveend → scheduleFetch,
+              so the courts auto-load for the new viewport. */}
+          <div
+            ref={searchBoxRef}
+            className="absolute top-4 left-4 z-[460] w-72 max-w-[calc(100%-2rem)]"
+          >
+            <div className="relative">
+              <svg
+                className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onFocus={() => {
+                  if (searchResults.length > 0) setSearchOpen(true);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setSearchOpen(false);
+                    (e.target as HTMLInputElement).blur();
+                  } else if (e.key === "Enter" && searchResults.length > 0) {
+                    selectSearchResult(searchResults[0]);
+                  }
+                }}
+                placeholder="Search city or place…"
+                aria-label="Search for a city or place"
+                className="w-full pl-9 pr-9 py-2 rounded-full bg-white shadow-md border border-gray-200 focus:border-court-green focus:outline-none focus:ring-2 focus:ring-court-green/20 text-sm"
+              />
+              {searchQuery && !searchLoading && (
+                <button
+                  onClick={clearSearch}
+                  aria-label="Clear search"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              )}
+              {searchLoading && (
+                <svg
+                  className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin w-4 h-4 text-court-green"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                >
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
+                  <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+              )}
+            </div>
+            {searchOpen && searchResults.length > 0 && (
+              <ul
+                role="listbox"
+                className="absolute top-full mt-1 left-0 right-0 bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden max-h-72 overflow-y-auto"
+              >
+                {searchResults.map((r) => (
+                  <li role="option" aria-selected="false" key={`${r.lat},${r.lon}`}>
+                    <button
+                      onClick={() => selectSearchResult(r)}
+                      className="w-full text-left px-3 py-2.5 hover:bg-court-green/5 text-xs text-gray-700 border-b border-gray-100 last:border-b-0 flex items-start gap-2"
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        className="mt-0.5 flex-shrink-0 text-court-green"
+                      >
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
+                        <circle cx="12" cy="10" r="3" />
+                      </svg>
+                      <span className="leading-snug">{r.displayName}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           {/* Loading overlay */}
           {!mapReady && (
             <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-[400]">
@@ -344,7 +584,7 @@ export default function CourtsPage() {
           {!sidePanelOpen && (
             <button
               onClick={() => setSidePanelOpen(true)}
-              className="absolute top-4 left-4 z-[450] flex items-center gap-2 px-3 py-2 bg-court-green text-white text-xs font-semibold rounded-lg shadow-lg hover:bg-court-green-light transition-colors"
+              className="absolute top-[60px] left-4 z-[450] flex items-center gap-2 px-3 py-2 bg-court-green text-white text-xs font-semibold rounded-lg shadow-lg hover:bg-court-green-light transition-colors"
               title="Open Seattle Parks booking"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">

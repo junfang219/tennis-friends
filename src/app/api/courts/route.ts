@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { CURATED_REGIONS, type BBox, type CuratedCourt } from "@/lib/courts-data";
 
 // ── Types ───────────────────────────────────────────────────────────
 type CourtResult = {
@@ -16,66 +17,67 @@ type CourtResult = {
   source: "official" | "osm";
 };
 
-// ── Seattle official court data (City of Seattle ArcGIS) ────────────
-const SEATTLE_BBOX = { south: 47.48, west: -122.46, north: 47.78, east: -122.22 };
+// Wrap a CuratedCourt into the API shape
+function curatedToResult(c: CuratedCourt): CourtResult {
+  return {
+    id: c.id,
+    type: "official",
+    osmId: 0,
+    lat: c.lat,
+    lng: c.lng,
+    name: c.name,
+    surface: c.surface,
+    lit: c.lit,
+    courts: c.courts,
+    address: c.address,
+    source: "official",
+  };
+}
 
-const SEATTLE_COURTS: CourtResult[] = [
-  { id: "sea-1",  name: "Madrona Playground",           lat: 47.6114, lng: -122.2901, courts: 2,  address: "3211 E Spring St" },
-  { id: "sea-2",  name: "Ravenna Park",                 lat: 47.6694, lng: -122.3029, courts: 2,  address: "5520 Ravenna Ave NE" },
-  { id: "sea-3",  name: "Solstice Park",                lat: 47.5365, lng: -122.3917, courts: 6,  address: "7400 Fauntleroy Way SW" },
-  { id: "sea-4",  name: "Hiawatha Playfield",           lat: 47.5790, lng: -122.3852, courts: 3,  address: "2700 California Ave SW" },
-  { id: "sea-5",  name: "Madison Park",                 lat: 47.6349, lng: -122.2781, courts: 2,  address: "E Madison St / E Howe St" },
-  { id: "sea-6",  name: "Magnolia Park",                lat: 47.6356, lng: -122.3975, courts: 2,  address: "1461 Magnolia Blvd W" },
-  { id: "sea-7",  name: "Kinnear Park",                 lat: 47.6263, lng: -122.3649, courts: 1,  address: "899 W Olympic Pl" },
-  { id: "sea-8",  name: "Rogers Playground",             lat: 47.6429, lng: -122.3254, courts: 2,  address: "Eastlake Ave E / E Roanoke St" },
-  { id: "sea-9",  name: "Pendleton Miller Playfield",   lat: 47.6208, lng: -122.3070, courts: 2,  address: "330 19th Ave E" },
-  { id: "sea-10", name: "Seward Park",                  lat: 47.5482, lng: -122.2576, courts: 2,  address: "5898 Lake Washington Blvd S" },
-  { id: "sea-11", name: "West Magnolia Playfield",      lat: 47.6410, lng: -122.4003, courts: 4,  address: "2518 34th Ave W" },
-  { id: "sea-12", name: "Wallingford Playfield",        lat: 47.6584, lng: -122.3365, courts: 2,  address: "4219 Wallingford Ave N" },
-  { id: "sea-13", name: "Bitter Lake Playfield",        lat: 47.7235, lng: -122.3498, courts: 4,  address: "13035 Linden Ave N" },
-  { id: "sea-14", name: "Brighton Playfield",           lat: 47.5479, lng: -122.2829, courts: 2,  address: "6000 39th Ave S" },
-  { id: "sea-15", name: "Sam Smith Park",               lat: 47.5900, lng: -122.2961, courts: 2,  address: "1400 Martin Luther King Jr Way S" },
-  { id: "sea-16", name: "Fred Hutchinson Playground",   lat: 47.5149, lng: -122.2604, courts: 2,  address: "S Norfolk St / 59th Ave S" },
-  { id: "sea-17", name: "Montlake Playfield",           lat: 47.6414, lng: -122.3104, courts: 2,  address: "6118 E Calhoun St" },
-  { id: "sea-18", name: "Mount Baker Park",             lat: 47.5796, lng: -122.2885, courts: 2,  address: "2521 Lake Park Dr S" },
-  { id: "sea-19", name: "Rainier Beach Playfield",      lat: 47.5240, lng: -122.2735, courts: 4,  address: "8802 Rainier Ave S" },
-  { id: "sea-20", name: "Highland Park Playground",     lat: 47.5268, lng: -122.3498, courts: 1,  address: "1100 SW Cloverdale St" },
-  { id: "sea-21", name: "Discovery Park",               lat: 47.6568, lng: -122.4048, courts: 2,  address: "3801 W Government Way" },
-  { id: "sea-22", name: "Warren G. Magnuson Park",      lat: 47.6814, lng: -122.2523, courts: 6,  address: "7400 Sand Point Way NE" },
-  { id: "sea-23", name: "Victory Heights Playground",   lat: 47.7059, lng: -122.3082, courts: 1,  address: "1737 NE 106th St" },
-  { id: "sea-24", name: "Green Lake Park (East)",       lat: 47.6815, lng: -122.3284, courts: 3,  address: "7201 E Green Lake Dr N" },
-  { id: "sea-25", name: "Alki Playground",              lat: 47.5792, lng: -122.4077, courts: 2,  address: "5817 SW Lander St" },
-  { id: "sea-26", name: "David Rodgers Park",           lat: 47.6448, lng: -122.3587, courts: 3,  address: "2800 1st Ave W" },
-  { id: "sea-27", name: "Leschi Park",                  lat: 47.6014, lng: -122.2877, courts: 1,  address: "201 Lakeside Ave S" },
-  { id: "sea-28", name: "Garfield Playfield",           lat: 47.6077, lng: -122.3003, courts: 2,  address: "23rd Ave / E Cherry St" },
-  { id: "sea-29", name: "Ravenna-Eckstein Park",        lat: 47.6764, lng: -122.3048, courts: 1,  address: "6535 Ravenna Ave NE" },
-  { id: "sea-30", name: "Beacon Hill Playground",       lat: 47.5868, lng: -122.3156, courts: 2,  address: "1902 13th Ave S" },
-  { id: "sea-31", name: "Laurelhurst Playfield",        lat: 47.6592, lng: -122.2789, courts: 4,  address: "4544 NE 41st St" },
-  { id: "sea-32", name: "Delridge Playfield",           lat: 47.5633, lng: -122.3649, courts: 2,  address: "4458 Delridge Way SW" },
-  { id: "sea-33", name: "University Playground",        lat: 47.6647, lng: -122.3199, courts: 2,  address: "9th Ave NE / NE 50th St" },
-  { id: "sea-34", name: "Bryant Neighborhood Playground", lat: 47.6751, lng: -122.2840, courts: 2, address: "4103 NE 65th St" },
-  { id: "sea-35", name: "Froula Playground",            lat: 47.6806, lng: -122.3153, courts: 2,  address: "7200 12th Ave NE" },
-  { id: "sea-36", name: "Walt Hundley Playfield",       lat: 47.5403, lng: -122.3747, courts: 2,  address: "6920 34th Ave SW" },
-  { id: "sea-37", name: "Jefferson Park",               lat: 47.5701, lng: -122.3082, courts: 4,  address: "4165 16th Ave S" },
-  { id: "sea-38", name: "South Park Playground",        lat: 47.5284, lng: -122.3252, courts: 1,  address: "738 S Sullivan St" },
-  { id: "sea-39", name: "Riverview Playfield",          lat: 47.5400, lng: -122.3499, courts: 2,  address: "7226 12th Ave SW" },
-  { id: "sea-40", name: "Georgetown Playfield",         lat: 47.5524, lng: -122.3221, courts: 1,  address: "750 S Homer St" },
-  { id: "sea-41", name: "Gilman Playground",            lat: 47.6670, lng: -122.3702, courts: 2,  address: "923 NW 54th St" },
-  { id: "sea-42", name: "Rainier Playfield",            lat: 47.5625, lng: -122.2869, courts: 4,  address: "3700 S Alaska St" },
-  { id: "sea-43", name: "Soundview Playfield",          lat: 47.6959, lng: -122.3805, courts: 2,  address: "1590 NW 90th St" },
-  { id: "sea-44", name: "Volunteer Park (Lower)",       lat: 47.6317, lng: -122.3175, courts: 2,  address: "1247 15th Ave E" },
-  { id: "sea-45", name: "Woodland Park (Upper)",        lat: 47.6642, lng: -122.3435, courts: 4,  address: "Aurora Ave N / N 59th St" },
-  { id: "sea-46", name: "Amy Yee Tennis Center",        lat: 47.5852, lng: -122.2976, courts: 6,  address: "2000 Martin Luther King Jr. Way S" },
-  { id: "sea-47", name: "Dearborn Park",                lat: 47.5522, lng: -122.2951, courts: 2,  address: "9219 S Brandon St" },
-  { id: "sea-48", name: "Observatory Courts",           lat: 47.6316, lng: -122.3551, courts: 2,  address: "1405 Warren Ave N" },
-  { id: "sea-49", name: "Woodland Park (Lower)",        lat: 47.6693, lng: -122.3433, courts: 10, address: "1000 N 50th St" },
-  { id: "sea-50", name: "Cal Anderson Park",            lat: 47.6158, lng: -122.3199, courts: 1,  address: "1635 11th Ave" },
-  { id: "sea-51", name: "Green Lake Park (West)",       lat: 47.6812, lng: -122.3426, courts: 2,  address: "Green Lake Trail" },
-  { id: "sea-52", name: "Volunteer Park (Upper)",       lat: 47.6320, lng: -122.3180, courts: 2,  address: "1247 15th Ave E" },
-  { id: "sea-53", name: "Meadowbrook Playfield",        lat: 47.7062, lng: -122.2955, courts: 6,  address: "10533 35th Ave NE" },
-].map((c) => ({ ...c, type: "official", osmId: 0, source: "official" as const }));
+// ── Bounds helpers ──────────────────────────────────────────────────
+function boundsOverlap(a: BBox, b: BBox): boolean {
+  return a.south < b.north && a.north > b.south && a.west < b.east && a.east > b.west;
+}
 
-// ── In-memory cache for Overpass (non-Seattle areas) ────────────────
+function boundsContains(outer: BBox, inner: BBox): boolean {
+  return inner.south >= outer.south && inner.north <= outer.north &&
+         inner.west >= outer.west && inner.east <= outer.east;
+}
+
+function pointInsideAnyCuratedBbox(lat: number, lng: number): boolean {
+  for (const region of CURATED_REGIONS) {
+    // Only regions with suppressOsm !== false block OSM. Additive regions
+    // (like WA Puget Sound) let OSM through in their gaps; near-duplicates
+    // are filtered by proximity dedup later.
+    if (region.suppressOsm === false) continue;
+    const b = region.bbox;
+    if (lat >= b.south && lat <= b.north && lng >= b.west && lng <= b.east) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Haversine approximation in meters. Cheap enough to call in a tight loop for
+// the handful of OSM results we're deduping against curated markers.
+function metersBetween(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): number {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ── In-memory cache for Overpass (non-curated areas) ────────────────
 type CachedCell = { courts: CourtResult[]; fetchedAt: number };
 const cache = new Map<string, CachedCell>();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
@@ -91,20 +93,14 @@ function cellKey(s: number, w: number): string {
   return `${s.toFixed(2)},${w.toFixed(2)}`;
 }
 
-function boundsOverlap(
-  a: { south: number; west: number; north: number; east: number },
-  b: { south: number; west: number; north: number; east: number }
-): boolean {
-  return a.south < b.north && a.north > b.south && a.west < b.east && a.east > b.west;
-}
-
-function boundsContains(
-  outer: { south: number; west: number; north: number; east: number },
-  inner: { south: number; west: number; north: number; east: number }
-): boolean {
-  return inner.south >= outer.south && inner.north <= outer.north &&
-         inner.west >= outer.west && inner.east <= outer.east;
-}
+// Multiple Overpass API endpoints — the public overpass-api.de server is
+// often overloaded and returns 502/504; the Kumi mirror is generally more
+// reliable. Try them in order, falling back on failure.
+const OVERPASS_MIRRORS = [
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass-api.de/api/interpreter",
+  "https://lz4.overpass-api.de/api/interpreter",
+];
 
 async function fetchOverpass(
   south: number,
@@ -118,13 +114,40 @@ async function fetchOverpass(
   way["leisure"="pitch"]["sport"="tennis"](${south},${west},${north},${east});
 );
 out center tags;`;
-  const res = await fetch("https://overpass-api.de/api/interpreter", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: "data=" + encodeURIComponent(query),
-  });
-  if (!res.ok) throw new Error(`Overpass ${res.status}`);
-  const json = await res.json();
+  const body = "data=" + encodeURIComponent(query);
+
+  // Try each mirror. Overpass sometimes returns HTTP 200 with an HTML error
+  // page ("server is probably too busy"), so we verify the response is
+  // actually JSON before accepting it.
+  let lastErr: unknown = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let json: any = null;
+  for (const url of OVERPASS_MIRRORS) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      });
+      if (!res.ok) {
+        lastErr = new Error(`Overpass ${url} → ${res.status}`);
+        continue;
+      }
+      const text = await res.text();
+      // Overpass error pages start with "<?xml" or "<!DOCTYPE html"
+      if (text.startsWith("<")) {
+        lastErr = new Error(`Overpass ${url} → HTML error response`);
+        continue;
+      }
+      json = JSON.parse(text);
+      break;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (!json) {
+    throw lastErr instanceof Error ? lastErr : new Error("Overpass: all mirrors failed");
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const elements: any[] = Array.isArray(json.elements) ? json.elements : [];
   const out: CourtResult[] = [];
@@ -132,11 +155,10 @@ out center tags;`;
     const lat = typeof el.lat === "number" ? el.lat : el.center?.lat;
     const lng = typeof el.lon === "number" ? el.lon : el.center?.lon;
     if (typeof lat !== "number" || typeof lng !== "number") continue;
-    // Skip courts that fall inside Seattle bbox (official data is better)
-    if (lat >= SEATTLE_BBOX.south && lat <= SEATTLE_BBOX.north &&
-        lng >= SEATTLE_BBOX.west && lng <= SEATTLE_BBOX.east) {
-      continue;
-    }
+    // Skip courts that fall inside ANY curated region's bbox — our hand
+    // curated lists are more accurate than OSM, so we don't want duplicates
+    // or lower-quality OSM markers layered on top of the good data.
+    if (pointInsideAnyCuratedBbox(lat, lng)) continue;
     const tags = el.tags || {};
     out.push({
       id: `${el.type}/${el.id}`,
@@ -169,19 +191,26 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const requestBounds = { south, west, north, east };
+  const requestBounds: BBox = { south, west, north, east };
   const allCourts: CourtResult[] = [];
 
-  // 1. Add Seattle official courts if viewport overlaps Seattle
-  if (boundsOverlap(requestBounds, SEATTLE_BBOX)) {
-    const seattleInView = SEATTLE_COURTS.filter(
-      (c) => c.lat >= south && c.lat <= north && c.lng >= west && c.lng <= east
-    );
-    allCourts.push(...seattleInView);
+  // 1. Add curated courts from every region whose bbox overlaps the viewport
+  for (const region of CURATED_REGIONS) {
+    if (!boundsOverlap(requestBounds, region.bbox)) continue;
+    for (const c of region.courts) {
+      if (c.lat >= south && c.lat <= north && c.lng >= west && c.lng <= east) {
+        allCourts.push(curatedToResult(c));
+      }
+    }
   }
 
-  // 2. If viewport is entirely within Seattle, skip Overpass entirely
-  const needOverpass = !boundsContains(SEATTLE_BBOX, requestBounds);
+  // 2. If viewport is entirely within a single curated region that claims
+  //    comprehensive coverage (suppressOsm !== false), skip Overpass — the
+  //    curated data is authoritative and OSM would just add noise.
+  //    Additive regions (wa-puget-sound) still need OSM for gap fill-in.
+  const needOverpass = !CURATED_REGIONS.some((r) =>
+    r.suppressOsm !== false && boundsContains(r.bbox, requestBounds)
+  );
 
   if (needOverpass) {
     // Snap bounds outward to grid cells
@@ -249,5 +278,18 @@ export async function GET(request: NextRequest) {
     return true;
   });
 
-  return NextResponse.json(unique);
+  // Proximity dedup: drop any OSM marker within 80m of a curated marker.
+  // This handles the overlap between additive regions (like WA Puget Sound)
+  // and OSM, where the same park can be both curated and OSM-tagged.
+  const PROXIMITY_M = 80;
+  const curated = unique.filter((c) => c.source === "official");
+  const osm = unique.filter((c) => c.source === "osm");
+  const filteredOsm = osm.filter((o) => {
+    for (const c of curated) {
+      if (metersBetween(o.lat, o.lng, c.lat, c.lng) < PROXIMITY_M) return false;
+    }
+    return true;
+  });
+
+  return NextResponse.json([...curated, ...filteredOsm]);
 }
