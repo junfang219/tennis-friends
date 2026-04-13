@@ -65,7 +65,7 @@ export default function FriendsPage() {
   const { data: session } = useSession();
   const myId = session?.user?.id || "";
   const [data, setData] = useState<FriendsData | null>(null);
-  const [tab, setTab] = useState<"friends" | "groups" | "chats" | "incoming" | "outgoing" | "blocked">("friends");
+  const [tab, setTab] = useState<"friends" | "groups" | "chats">("friends");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [friendGroups, setFriendGroups] = useState<FriendGroup[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -363,18 +363,11 @@ export default function FriendsPage() {
     { key: "friends" as const, label: "Friends", count: data.friends.length },
     { key: "groups" as const, label: "Groups", count: friendGroups.length },
     { key: "chats" as const, label: "Chats", count: chats.length },
-    { key: "incoming" as const, label: "Incoming", count: data.incomingRequests.length },
-    { key: "outgoing" as const, label: "Sent", count: data.outgoingRequests.length },
-    { key: "blocked" as const, label: "Blocked", count: blocked.length },
   ];
 
   const baseFriendsList =
     tab === "friends"
       ? data.friends
-      : tab === "incoming"
-      ? data.incomingRequests
-      : tab === "outgoing"
-      ? data.outgoingRequests
       : [];
   const friendsList =
     tab === "friends" && friendSearch.trim()
@@ -418,8 +411,6 @@ export default function FriendsPage() {
                 className={`text-xs px-2 py-0.5 rounded-full ${
                   tab === t.key
                     ? "bg-white/20 text-white"
-                    : t.key === "incoming"
-                    ? "bg-ball-yellow text-court-green"
                     : "bg-gray-100 text-gray-600"
                 }`}
               >
@@ -1111,49 +1102,8 @@ export default function FriendsPage() {
         </div>
       )}
 
-      {/* Blocked tab */}
-      {tab === "blocked" && (
-        <div className="space-y-3">
-          {blocked.length === 0 ? (
-            <div className="text-center py-16 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
-              <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
-                </svg>
-              </div>
-              <h3 className="font-display text-lg font-bold text-gray-800 mb-2">No blocked users</h3>
-              <p className="text-gray-500 text-sm max-w-xs mx-auto">
-                Blocked users can&apos;t message you, send friend requests, or see your posts.
-              </p>
-            </div>
-          ) : (
-            blocked.map((entry) => (
-              <div
-                key={entry.id}
-                className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 flex items-center gap-4"
-              >
-                <Avatar name={entry.user.name} image={entry.user.profileImageUrl} size="lg" />
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-gray-900 text-sm">{entry.user.name}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    Blocked {new Date(entry.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                  </p>
-                </div>
-                <button
-                  onClick={() => unblockUser(entry.user.id)}
-                  className="btn-secondary btn-sm"
-                >
-                  Unblock
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {/* Friends / Incoming / Outgoing list */}
-      {tab !== "groups" && tab !== "chats" && tab !== "blocked" && (
+      {/* Friends list */}
+      {tab !== "groups" && tab !== "chats" && (
       <div className="space-y-3">
           {tab === "friends" && data.friends.length > 0 && (
             <div className="relative">
@@ -1204,20 +1154,12 @@ export default function FriendsPage() {
               <h3 className="font-display text-lg font-bold text-gray-800 mb-2">
                 {tab === "friends" && friendSearch.trim()
                   ? "No friends match"
-                  : tab === "friends"
-                  ? "No doubles partner yet"
-                  : tab === "incoming"
-                  ? "No pending requests"
-                  : "No sent requests"}
+                  : "No doubles partner yet"}
               </h3>
               <p className="text-gray-500 text-sm mb-6">
                 {tab === "friends" && friendSearch.trim()
                   ? `No friends found for "${friendSearch}". Try a different name.`
-                  : tab === "friends"
-                  ? "Discover players and send them a friend request!"
-                  : tab === "incoming"
-                  ? "When someone sends you a request, it will appear here."
-                  : "Requests you've sent will show up here."}
+                  : "Discover players and send them a friend request!"}
               </p>
               {tab === "friends" && !friendSearch.trim() && (
                 <Link href="/search" className="btn-primary">
@@ -1280,29 +1222,6 @@ export default function FriendsPage() {
                       </button>
                     </>
                   )}
-                  {tab === "incoming" && (
-                    <>
-                      <button
-                        onClick={() => acceptRequest(entry.friendshipId)}
-                        disabled={actionLoading === entry.friendshipId}
-                        className="btn-primary btn-sm"
-                      >
-                        Accept
-                      </button>
-                      <button
-                        onClick={() => rejectRequest(entry.friendshipId)}
-                        disabled={actionLoading === entry.friendshipId}
-                        className="btn-danger btn-sm"
-                      >
-                        Decline
-                      </button>
-                    </>
-                  )}
-                  {tab === "outgoing" && (
-                    <span className="text-xs text-gray-400 font-medium px-3 py-1.5 bg-gray-50 rounded-full">
-                      Pending
-                    </span>
-                  )}
                 </div>
               </div>
             ))
@@ -1337,19 +1256,6 @@ export default function FriendsPage() {
                   <line x1="23" y1="8" x2="18" y2="13" />
                 </svg>
                 Unfriend
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => blockUser(openMenu.userId, openMenu.userName)}
-              className="block w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 border-t border-gray-100"
-            >
-              <span className="inline-flex items-center gap-2">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
-                </svg>
-                Block
               </span>
             </button>
           </div>

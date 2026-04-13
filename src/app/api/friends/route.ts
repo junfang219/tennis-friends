@@ -43,6 +43,7 @@ export async function GET() {
   const incomingRequests = incoming.map((f) => ({
     friendshipId: f.id,
     user: f.requester,
+    createdAt: f.createdAt,
   }));
 
   const outgoingRequests = outgoing.map((f) => ({

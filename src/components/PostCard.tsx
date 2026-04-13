@@ -399,6 +399,13 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                 {liveGameType && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" />{liveGameType === "doubles" && <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />}</svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Type</p><p className="text-sm font-semibold text-gray-800 capitalize">{liveGameType}</p></div></div>)}
               </div>
               )}
+              {isProposeTeam && (
+              <div className="grid grid-cols-2 gap-3">
+                {liveGameType && liveGameType !== "team" && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-clay" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4.5a2.5 2.5 0 010-5H6" /><path d="M18 9h1.5a2.5 2.5 0 000-5H18" /><path d="M4 22h16" /><path d="M18 2H6v7a6 6 0 0012 0V2z" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Type</p><p className="text-sm font-semibold text-gray-800 capitalize">{({ casual: "Casual Practice", league: "Competitive League", tournament: "Tournament Prep", social: "Social / Fun", drilling: "Drilling / Training" })[liveGameType] || liveGameType}</p></div></div>)}
+                {livePlayTime && livePlayTime.includes(":") && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-clay" strokeLinecap="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Skill Level</p><p className="text-sm font-semibold text-gray-800">{(() => { const parts = livePlayTime.split(":"); if (parts.length !== 2) return livePlayTime; const [sys, range] = parts; const [min, max] = range.split("-"); return `${sys} ${min} – ${max}`; })()}</p></div></div>)}
+                {livePlayDate && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-clay" strokeLinecap="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Schedule</p><p className="text-sm font-semibold text-gray-800">{livePlayDate}</p></div></div>)}
+              </div>
+              )}
               <div className="mt-3 pt-3 border-t border-court-green-pale/20 flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-3 flex-wrap">
                   {liveCourtBooked && (<span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-green-100 text-green-700"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>Court Booked</span>)}
@@ -650,7 +657,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
       {showRequests && createPortal(
         <ManageRequestsModal
           postId={post.id}
-          playersNeeded={post.playersNeeded || 0}
+          playersNeeded={livePlayersNeeded || 0}
           currentlyComplete={complete}
           onClose={() => setShowRequests(false)}
           onUpdate={(newConfirmed, isNowComplete) => { setConfirmed(newConfirmed); setComplete(isNowComplete); onUpdate?.(post.id, { isComplete: isNowComplete, playersConfirmed: newConfirmed }); }}

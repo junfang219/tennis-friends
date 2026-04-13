@@ -9,10 +9,13 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@capacitor/cli": "^8.3.0",
+    "@capacitor/core": "^8.3.0",
+    "@capacitor/ios": "^8.3.0",
     "@prisma/client": "^6.19.3",
     "autoprefixer": "^10.4.27",
     "bcryptjs": "^3.0.3",
-    "next": "^14.2.35",
+    "next": "^15.0.0",
     "next-auth": "^4.24.13",
     "postcss": "^8.5.8",
     "puppeteer": "^24.40.0",
