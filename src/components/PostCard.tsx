@@ -385,7 +385,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
 
           {/* Text content */}
           {currentContent && (
-            <p className="text-gray-700 text-[0.9375rem] leading-relaxed whitespace-pre-wrap pb-3">{currentContent}</p>
+            <p className="text-gray-700 text-[0.9375rem] leading-relaxed whitespace-pre-wrap break-words overflow-wrap-anywhere pb-3" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>{currentContent}</p>
           )}
 
           {/* Find Players / Propose Team details card */}

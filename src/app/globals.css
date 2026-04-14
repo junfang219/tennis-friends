@@ -68,6 +68,19 @@ body {
 .card-hover { transition: transform 0.2s ease, box-shadow 0.2s ease; }
 .card-hover:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(27, 67, 50, 0.12); }
 
+@supports (-webkit-touch-callout: none) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+input[type="date"],
+input[type="time"] {
+  -webkit-appearance: none;
+  appearance: none;
+  max-width: 100%;
+}
+
 input:focus, textarea:focus, select:focus {
   outline: none;
   border-color: var(--color-court-green-soft) !important;

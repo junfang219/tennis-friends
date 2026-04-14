@@ -70,6 +70,10 @@ function ensureLeaflet(): Promise<Leaflet> {
 }
 
 export default function CourtsPage() {
+  const [isNative, setIsNative] = useState(false);
+  useEffect(() => {
+    setIsNative(!!(window as unknown as { Capacitor?: unknown }).Capacitor);
+  }, []);
   const [courts, setCourts] = useState<CourtData[]>([]);
   const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [geoError, setGeoError] = useState(false);
@@ -382,7 +386,7 @@ export default function CourtsPage() {
   }, [courts, mapReady]);
 
   return (
-    <div className="relative w-full" style={{ height: "calc(100vh - 64px)" }}>
+    <div className="relative w-full" style={{ height: isNative ? "calc(100vh - 64px - 5rem)" : "calc(100vh - 64px)" }}>
       {/* Split layout: side panel (left) + map (right) */}
       <div className="flex h-full">
         {/* ── SEATTLE PARKS SIDE PANEL (LEFT) ── */}

@@ -401,13 +401,15 @@ function ComposerModal({
         </div>
 
         {/* Textarea */}
-        <div className="flex-1 px-5 py-3">
+        <div className="px-5 py-3">
           <textarea
             ref={textareaRef}
             value={content}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={(e) => { if (e.target.value.length <= 280) setContent(e.target.value); }}
+            maxLength={280}
             placeholder={placeholder}
-            className="w-full resize-none border-0 text-gray-700 text-base placeholder:text-gray-400 focus:outline-none focus:ring-0 min-h-[120px]"
+            className="w-full resize-none border-0 text-gray-700 text-base placeholder:text-gray-400 focus:outline-none focus:ring-0"
+            rows={1}
           />
 
           {/* Group tags */}
@@ -469,7 +471,7 @@ function ComposerModal({
 
           {/* Find Players form */}
           {findPlayers && (
-            <div className="bg-gradient-to-br from-court-green/5 to-ball-yellow/10 border border-court-green-pale/30 rounded-xl p-4 mb-3">
+            <div className="bg-gradient-to-br from-court-green/5 to-ball-yellow/10 border border-court-green-pale/30 rounded-xl p-4 mb-3 overflow-hidden">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-sm font-bold text-court-green flex items-center gap-1.5">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -485,23 +487,23 @@ function ComposerModal({
                   Remove
                 </button>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-full">
+                <div className="min-w-0">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
                   <input
                     type="date"
                     value={playDate}
                     onChange={(e) => setPlayDate(e.target.value)}
-                    className="w-full min-w-0 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                    className="w-full min-w-0 max-w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white box-border"
                   />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Time</label>
                   <input
                     type="time"
                     value={playTime}
                     onChange={(e) => setPlayTime(e.target.value)}
-                    className="w-full min-w-0 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                    className="w-full min-w-0 max-w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white box-border"
                   />
                 </div>
                 <div className="sm:col-span-2">

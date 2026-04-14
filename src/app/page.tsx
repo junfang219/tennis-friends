@@ -2,6 +2,7 @@
 
 import { useSession } from "next-auth/react";
 import { useEffect, useState, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import PostComposer from "@/components/PostComposer";
 import PostCard from "@/components/PostCard";
@@ -34,10 +35,70 @@ type Post = {
 
 export default function HomePage() {
   const { data: session, status } = useSession();
+  const router = useRouter();
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   // null = show all categories; otherwise show only the selected category
   const [activeFilter, setActiveFilter] = useState<"find_players" | "propose_team" | "social" | null>(null);
+
+  // Pull-to-refresh state
+  const [refreshing, setRefreshing] = useState(false);
+  const [pullDistance, setPullDistance] = useState(0);
+  const pullStartY = useRef(0);
+  const isPulling = useRef(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const PULL_THRESHOLD = 80;
+
+  const refreshFeed = useCallback(async () => {
+    setRefreshing(true);
+    setActiveFilter(null);
+    try {
+      const res = await fetch("/api/posts");
+      const data = await res.json();
+      setPosts(data);
+    } finally {
+      setRefreshing(false);
+      setPullDistance(0);
+    }
+  }, []);
+
+  // Pull-to-refresh touch handlers
+  useEffect(() => {
+    const handleTouchStart = (e: TouchEvent) => {
+      if (window.scrollY <= 0 && !refreshing) {
+        pullStartY.current = e.touches[0].clientY;
+        isPulling.current = true;
+      }
+    };
+    const handleTouchMove = (e: TouchEvent) => {
+      if (!isPulling.current || refreshing) return;
+      const delta = e.touches[0].clientY - pullStartY.current;
+      if (delta > 0 && window.scrollY <= 0) {
+        // Apply resistance: the further you pull, the harder it gets
+        const dampened = Math.min(delta * 0.4, 120);
+        setPullDistance(dampened);
+      } else {
+        setPullDistance(0);
+      }
+    };
+    const handleTouchEnd = () => {
+      if (!isPulling.current || refreshing) return;
+      isPulling.current = false;
+      if (pullDistance >= PULL_THRESHOLD) {
+        refreshFeed();
+      } else {
+        setPullDistance(0);
+      }
+    };
+    document.addEventListener("touchstart", handleTouchStart, { passive: true });
+    document.addEventListener("touchmove", handleTouchMove, { passive: true });
+    document.addEventListener("touchend", handleTouchEnd, { passive: true });
+    return () => {
+      document.removeEventListener("touchstart", handleTouchStart);
+      document.removeEventListener("touchmove", handleTouchMove);
+      document.removeEventListener("touchend", handleTouchEnd);
+    };
+  }, [refreshing, refreshFeed, pullDistance]);
 
   // Track which posts the user has scrolled past (unread tracking)
   const [seenIds, setSeenIds] = useState<Set<string>>(() => {
@@ -136,16 +197,37 @@ export default function HomePage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8">
-      <div className="animate-fade-in-up">
-        <h2 className="font-display text-2xl font-bold text-court-green mb-1">
-          Your Court
-        </h2>
-        <p className="text-gray-500 text-sm mb-6">
-          What&apos;s happening in your tennis world, {session?.user?.name?.split(" ")[0]}?
-        </p>
+    <div ref={scrollContainerRef} className="max-w-2xl mx-auto px-4 py-8">
+      {/* Pull-to-refresh indicator */}
+      <div
+        className="flex justify-center items-center overflow-hidden transition-all duration-300 ease-out"
+        style={{
+          height: refreshing ? 48 : pullDistance > 0 ? pullDistance : 0,
+          opacity: refreshing ? 1 : Math.min(pullDistance / PULL_THRESHOLD, 1),
+        }}
+      >
+        <div
+          className={`w-8 h-8 rounded-full border-2 border-court-green flex items-center justify-center ${refreshing ? "animate-spin border-t-transparent" : ""}`}
+          style={!refreshing ? {
+            transform: `rotate(${pullDistance * 3}deg)`,
+            transition: pullDistance === 0 ? "transform 0.3s ease-out" : "none",
+          } : undefined}
+        >
+          {!refreshing && (
+            <svg
+              width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+              className="text-court-green"
+              style={{
+                transform: pullDistance >= PULL_THRESHOLD ? "rotate(180deg)" : "rotate(0deg)",
+                transition: "transform 0.2s ease",
+              }}
+            >
+              <polyline points="6,9 12,15 18,9" />
+            </svg>
+          )}
+        </div>
       </div>
-
       <div className="space-y-5">
         <div className="animate-fade-in-up stagger-1">
           <PostComposer onPost={(post) => setPosts([post as Post, ...posts])} />
@@ -199,21 +281,6 @@ export default function HomePage() {
               <path d="M18 2H6v7a6 6 0 0012 0V2z" />
             </svg>
             Teams
-          </button>
-          <button
-            onClick={() => setActiveFilter(null)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
-              activeFilter === null
-                ? "bg-gray-800 text-white border-gray-800 shadow-sm"
-                : "bg-white text-gray-500 border-gray-200 hover:border-gray-400"
-            }`}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <line x1="3" y1="12" x2="21" y2="12" />
-              <line x1="3" y1="18" x2="21" y2="18" />
-            </svg>
-            All
           </button>
         </div>
 

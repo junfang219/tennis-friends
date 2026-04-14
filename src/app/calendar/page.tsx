@@ -128,23 +128,19 @@ export default function CalendarPage() {
 
       {/* Group filter */}
       {groups.length > 0 && (
-        <div className="animate-fade-in-up stagger-1 mb-6 flex items-center gap-2 flex-wrap">
+        <div className="animate-fade-in-up stagger-1 mb-6 flex items-center gap-2">
           <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filter:</span>
-          <button
-            onClick={() => setSelectedGroup("all")}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${selectedGroup === "all" ? "bg-court-green text-white" : "bg-white text-gray-600 border border-gray-200 hover:border-court-green-pale"}`}
+          <select
+            value={selectedGroup}
+            onChange={(e) => setSelectedGroup(e.target.value)}
+            className="px-3 py-2 rounded-xl text-sm font-semibold bg-white border border-gray-200 text-gray-700 focus:outline-none focus:ring-2 focus:ring-court-green/20 focus:border-court-green appearance-none pr-8"
+            style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.5' stroke-linecap='round'%3E%3Cpolyline points='6,9 12,15 18,9'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 0.75rem center" }}
           >
-            All Games
-          </button>
-          {groups.map((g) => (
-            <button
-              key={g.id}
-              onClick={() => setSelectedGroup(g.id)}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${selectedGroup === g.id ? "bg-court-green text-white" : "bg-white text-gray-600 border border-gray-200 hover:border-court-green-pale"}`}
-            >
-              {g.name}
-            </button>
-          ))}
+            <option value="all">All Games</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
         </div>
       )}
 
