@@ -11,7 +11,7 @@ const config: CapacitorConfig = {
     cleartext: true,
   },
   ios: {
-    contentInset: 'automatic',
+    contentInset: 'never',
   },
 };
 

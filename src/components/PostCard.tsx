@@ -23,6 +23,7 @@ type Post = {
   postType?: string;
   playDate?: string;
   playTime?: string;
+  playDuration?: number;
   courtLocation?: string;
   gameType?: string;
   playersNeeded?: number;
@@ -47,12 +48,35 @@ type PlayRequest = {
   id: string;
   status: string;
   note: string;
-  user: { id: string; name: string; profileImageUrl: string; skillLevel: string };
+  user: {
+    id: string;
+    name: string;
+    profileImageUrl: string;
+    skillLevel: string;
+    gender?: string;
+    ratingSystem?: string;
+    ntrpRating?: number | null;
+    utrRating?: number | null;
+  };
 };
 
 const SKILL_LABELS: Record<string, string> = {
   beginner: "Beginner", intermediate: "Intermediate", advanced: "Advanced", professional: "Professional",
 };
+
+function GenderSymbol({ gender }: { gender?: string }) {
+  if (gender === "male") return <span title="Male" className="text-blue-500 font-semibold">♂</span>;
+  if (gender === "female") return <span title="Female" className="text-pink-500 font-semibold">♀</span>;
+  if (gender === "non_binary") return <span title="Non-binary" className="text-purple-500 font-semibold">⚧</span>;
+  return null;
+}
+
+function formatUserRating(u: PlayRequest["user"]): string {
+  if (u.ratingSystem === "ntrp" && u.ntrpRating != null) return `NTRP ${u.ntrpRating.toFixed(1)}`;
+  if (u.ratingSystem === "utr" && u.utrRating != null) return `UTR ${u.utrRating.toFixed(2)}`;
+  if (u.ratingSystem === "self") return SKILL_LABELS[u.skillLevel] || u.skillLevel;
+  return SKILL_LABELS[u.skillLevel] || u.skillLevel || "";
+}
 
 function timeAgo(date: string) {
   const seconds = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
@@ -105,6 +129,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   // Editable find-player fields
   const [editPlayDate, setEditPlayDate] = useState(post.playDate || "");
   const [editPlayTime, setEditPlayTime] = useState(post.playTime || "");
+  const [editPlayDuration, setEditPlayDuration] = useState(post.playDuration || 90);
   const [editCourtLocation, setEditCourtLocation] = useState(post.courtLocation || "");
   const [editGameType, setEditGameType] = useState(post.gameType || "singles");
   const [editPlayersNeeded, setEditPlayersNeeded] = useState(post.playersNeeded || 1);
@@ -122,6 +147,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   // Live display state for find-player fields
   const [livePlayDate, setLivePlayDate] = useState(post.playDate || "");
   const [livePlayTime, setLivePlayTime] = useState(post.playTime || "");
+  const [livePlayDuration, setLivePlayDuration] = useState(post.playDuration || 90);
   const [liveCourtLocation, setLiveCourtLocation] = useState(post.courtLocation || "");
   const [liveGameType, setLiveGameType] = useState(post.gameType || "");
   const [livePlayersNeeded, setLivePlayersNeeded] = useState(post.playersNeeded || 0);
@@ -134,6 +160,17 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   // Collapsed state for complete find_players posts
   const [expanded, setExpanded] = useState(false);
   const isCollapsible = isFindPlayers && complete;
+
+  // Derive end time from start + duration ("14:00" + 90 → "15:30")
+  const endTime = (() => {
+    if (!livePlayTime || !livePlayTime.includes(":")) return "";
+    const [h, m] = livePlayTime.split(":").map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return "";
+    const total = h * 60 + m + (livePlayDuration || 0);
+    const eh = Math.floor((total % (24 * 60)) / 60);
+    const em = total % 60;
+    return `${String(eh).padStart(2, "0")}:${String(em).padStart(2, "0")}`;
+  })();
 
   // Likes modal
   const [showLikes, setShowLikes] = useState(false);
@@ -240,7 +277,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
             <span className="text-sm font-semibold text-gray-800 truncate">{post.author.name}</span>
             <span className="text-xs text-green-700 font-bold">Game Full</span>
             <span className="text-xs text-gray-400">·</span>
-            <span className="text-xs text-gray-500 truncate capitalize">{liveGameType} · {livePlayDate} {livePlayTime} · {liveCourtLocation}</span>
+            <span className="text-xs text-gray-500 truncate capitalize">{liveGameType} · {livePlayDate} {livePlayTime}{endTime ? `–${endTime}` : ""} · {liveCourtLocation}</span>
           </div>
           {((post.approvedPlayerNames && post.approvedPlayerNames.length > 0) || liveManualPlayers) && (
             <div className="flex items-center gap-1 mt-0.5 truncate">
@@ -394,7 +431,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
               {isFindPlayers && (
               <div className="grid grid-cols-2 gap-3">
                 {livePlayDate && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Date</p><p className="text-sm font-semibold text-gray-800">{livePlayDate}</p></div></div>)}
-                {livePlayTime && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Time</p><p className="text-sm font-semibold text-gray-800">{livePlayTime}</p></div></div>)}
+                {livePlayTime && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Time</p><p className="text-sm font-semibold text-gray-800">{livePlayTime}{endTime ? ` – ${endTime}` : ""}{livePlayDuration ? ` (${livePlayDuration} min)` : ""}</p></div></div>)}
                 {liveCourtLocation && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Court</p><p className="text-sm font-semibold text-gray-800">{liveCourtLocation}</p></div></div>)}
                 {liveGameType && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" />{liveGameType === "doubles" && <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />}</svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Type</p><p className="text-sm font-semibold text-gray-800 capitalize">{liveGameType}</p></div></div>)}
               </div>
@@ -802,6 +839,12 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                       <label className="block text-xs font-semibold text-gray-600 mb-1">Time</label>
                       <input type="time" value={editPlayTime} onChange={(e) => setEditPlayTime(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
                     </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Duration</label>
+                      <select value={editPlayDuration} onChange={(e) => setEditPlayDuration(Number(e.target.value))} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none">
+                        {[60, 75, 90, 120].map((m) => (<option key={m} value={m}>{m} min</option>))}
+                      </select>
+                    </div>
                     <div className="col-span-2">
                       <label className="block text-xs font-semibold text-gray-600 mb-1">Court Location</label>
                       <input type="text" value={editCourtLocation} onChange={(e) => setEditCourtLocation(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
@@ -873,6 +916,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                   if (isFindPlayers) {
                     body.playDate = editPlayDate;
                     body.playTime = editPlayTime;
+                    body.playDuration = editPlayDuration;
                     body.courtLocation = editCourtLocation;
                     body.gameType = editGameType;
                     body.playersNeeded = editPlayersNeeded;
@@ -888,6 +932,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                     if (isFindPlayers) {
                       setLivePlayDate(editPlayDate);
                       setLivePlayTime(editPlayTime);
+                      setLivePlayDuration(editPlayDuration);
                       setLiveCourtLocation(editCourtLocation);
                       setLiveGameType(editGameType);
                       setLivePlayersNeeded(editPlayersNeeded);
@@ -1479,8 +1524,11 @@ function ManageRequestsModal({
                 <div className="flex items-center gap-3">
                   <Link href={`/profile/${req.user.id}`}><Avatar name={req.user.name} image={req.user.profileImageUrl} size="md" /></Link>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-900">{req.user.name}</p>
-                    <p className="text-xs text-gray-400">{SKILL_LABELS[req.user.skillLevel] || req.user.skillLevel}</p>
+                    <p className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+                      <span className="truncate">{req.user.name}</span>
+                      <GenderSymbol gender={req.user.gender} />
+                    </p>
+                    <p className="text-xs text-gray-400">{formatUserRating(req.user)}</p>
                   </div>
                   {req.status === "PENDING" && (
                     <div className="flex items-center gap-2">

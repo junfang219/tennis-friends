@@ -40,10 +40,36 @@ type Profile = {
   skillLevel: string;
   favoriteSurface: string;
   profileImageUrl: string;
+  gender: string;
+  ageRange: string;
+  ratingSystem: string;
+  ntrpRating: number | null;
+  utrRating: number | null;
   createdAt: string;
   _count: { sentRequests: number; receivedRequests: number };
   posts: Post[];
 };
+
+const GENDER_LABELS: Record<string, string> = {
+  male: "Male",
+  female: "Female",
+  non_binary: "Non-binary",
+  prefer_not_to_say: "Prefer not to say",
+};
+
+const AGE_LABELS: Record<string, string> = {
+  under_18: "Under 18",
+  "18_29": "18–29",
+  "30_49": "30–49",
+  "50_plus": "50+",
+};
+
+function formatRating(p: Pick<Profile, "ratingSystem" | "ntrpRating" | "utrRating" | "skillLevel">): string {
+  if (p.ratingSystem === "ntrp" && p.ntrpRating != null) return `NTRP ${p.ntrpRating.toFixed(1)}`;
+  if (p.ratingSystem === "utr" && p.utrRating != null) return `UTR ${p.utrRating.toFixed(2)}`;
+  if (p.ratingSystem === "self") return SKILL_LABELS[p.skillLevel] || p.skillLevel;
+  return "";
+}
 
 const SKILL_LABELS: Record<string, string> = {
   beginner: "Beginner",
@@ -52,22 +78,8 @@ const SKILL_LABELS: Record<string, string> = {
   professional: "Professional",
 };
 
-const SURFACE_LABELS: Record<string, string> = {
-  hard: "Hard Court",
-  clay: "Clay",
-  grass: "Grass",
-  indoor: "Indoor",
-};
-
-const SURFACE_COLORS: Record<string, string> = {
-  hard: "bg-blue-100 text-blue-700",
-  clay: "bg-orange-100 text-orange-700",
-  grass: "bg-green-100 text-green-700",
-  indoor: "bg-purple-100 text-purple-700",
-};
-
 export default function ProfilePage() {
-  const { data: session } = useSession();
+  const { update: updateSession } = useSession();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [editing, setEditing] = useState(false);
   const [tab, setTab] = useState<"find_players" | "posts" | "videos">("find_players");
@@ -75,8 +87,12 @@ export default function ProfilePage() {
     name: "",
     bio: "",
     skillLevel: "",
-    favoriteSurface: "",
     profileImageUrl: "",
+    gender: "",
+    ageRange: "",
+    ratingSystem: "",
+    ntrpRating: "" as string | number,
+    utrRating: "" as string | number,
   });
   const [saving, setSaving] = useState(false);
   const [isNative, setIsNative] = useState(false);
@@ -115,23 +131,39 @@ export default function ProfilePage() {
           name: data.name,
           bio: data.bio,
           skillLevel: data.skillLevel,
-          favoriteSurface: data.favoriteSurface,
           profileImageUrl: data.profileImageUrl,
+          gender: data.gender || "",
+          ageRange: data.ageRange || "",
+          ratingSystem: data.ratingSystem || "",
+          ntrpRating: data.ntrpRating ?? "",
+          utrRating: data.utrRating ?? "",
         });
       });
   }, []);
 
   const handleSave = async () => {
     setSaving(true);
+    const payload: Record<string, unknown> = {
+      name: form.name,
+      bio: form.bio,
+      skillLevel: form.skillLevel,
+      profileImageUrl: form.profileImageUrl,
+      gender: form.gender,
+      ageRange: form.ageRange,
+      ratingSystem: form.ratingSystem,
+      ntrpRating: form.ratingSystem === "ntrp" && form.ntrpRating !== "" ? Number(form.ntrpRating) : null,
+      utrRating: form.ratingSystem === "utr" && form.utrRating !== "" ? Number(form.utrRating) : null,
+    };
     const res = await fetch("/api/profile", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
+      body: JSON.stringify(payload),
     });
     if (res.ok) {
       const updated = await res.json();
       setProfile({ ...profile!, ...updated });
       setEditing(false);
+      await updateSession();
     }
     setSaving(false);
   };
@@ -265,12 +297,21 @@ export default function ProfilePage() {
 
                 {/* Stats */}
                 <div className="flex flex-wrap gap-3 mb-5">
-                  <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${SURFACE_COLORS[profile.favoriteSurface] || "bg-gray-100 text-gray-700"}`}>
-                    {SURFACE_LABELS[profile.favoriteSurface] || profile.favoriteSurface}
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-ball-yellow/20 text-court-green">
-                    {SKILL_LABELS[profile.skillLevel] || profile.skillLevel}
-                  </span>
+                  {formatRating(profile) && (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-ball-yellow/20 text-court-green">
+                      {formatRating(profile)}
+                    </span>
+                  )}
+                  {profile.ageRange && (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">
+                      {AGE_LABELS[profile.ageRange] || profile.ageRange}
+                    </span>
+                  )}
+                  {profile.gender && (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">
+                      {GENDER_LABELS[profile.gender] || profile.gender}
+                    </span>
+                  )}
                   <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-court-green-pale/20 text-court-green-light">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                       <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
@@ -422,7 +463,17 @@ function EditForm({
   onCancel,
   saving,
 }: {
-  form: { name: string; bio: string; skillLevel: string; favoriteSurface: string; profileImageUrl: string };
+  form: {
+    name: string;
+    bio: string;
+    skillLevel: string;
+    profileImageUrl: string;
+    gender: string;
+    ageRange: string;
+    ratingSystem: string;
+    ntrpRating: string | number;
+    utrRating: string | number;
+  };
   setForm: (f: typeof form) => void;
   onSave: () => void;
   onCancel: () => void;
@@ -545,31 +596,82 @@ function EditForm({
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-1.5">Skill Level</label>
+          <label className="block text-sm font-semibold text-gray-700 mb-1.5">Gender</label>
+          <select
+            value={form.gender}
+            onChange={(e) => setForm({ ...form, gender: e.target.value })}
+            className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm appearance-none"
+          >
+            <option value="">—</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+            <option value="non_binary">Non-binary</option>
+            <option value="prefer_not_to_say">Prefer not to say</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-1.5">Age range</label>
+          <select
+            value={form.ageRange}
+            onChange={(e) => setForm({ ...form, ageRange: e.target.value })}
+            className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm appearance-none"
+          >
+            <option value="">—</option>
+            <option value="under_18">Under 18</option>
+            <option value="18_29">18–29</option>
+            <option value="30_49">30–49</option>
+            <option value="50_plus">50+</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-1.5">Rating system</label>
+        <select
+          value={form.ratingSystem}
+          onChange={(e) => setForm({ ...form, ratingSystem: e.target.value })}
+          className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm appearance-none"
+        >
+          <option value="">—</option>
+          <option value="ntrp">USTA / NTRP</option>
+          <option value="utr">UTR</option>
+          <option value="self">Self-rated</option>
+        </select>
+        {form.ratingSystem === "ntrp" && (
+          <input
+            type="number"
+            step={0.5}
+            min={2.5}
+            max={7.0}
+            value={form.ntrpRating}
+            onChange={(e) => setForm({ ...form, ntrpRating: e.target.value })}
+            placeholder="NTRP (2.5 – 7.0)"
+            className="mt-2 w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm"
+          />
+        )}
+        {form.ratingSystem === "utr" && (
+          <input
+            type="number"
+            step={0.01}
+            min={1}
+            max={16.5}
+            value={form.utrRating}
+            onChange={(e) => setForm({ ...form, utrRating: e.target.value })}
+            placeholder="UTR (1.0 – 16.5)"
+            className="mt-2 w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm"
+          />
+        )}
+        {form.ratingSystem === "self" && (
           <select
             value={form.skillLevel}
             onChange={(e) => setForm({ ...form, skillLevel: e.target.value })}
-            className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm appearance-none"
+            className="mt-2 w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm appearance-none"
           >
             <option value="beginner">Beginner</option>
             <option value="intermediate">Intermediate</option>
             <option value="advanced">Advanced</option>
             <option value="professional">Professional</option>
           </select>
-        </div>
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-1.5">Surface</label>
-          <select
-            value={form.favoriteSurface}
-            onChange={(e) => setForm({ ...form, favoriteSurface: e.target.value })}
-            className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm appearance-none"
-          >
-            <option value="hard">Hard Court</option>
-            <option value="clay">Clay</option>
-            <option value="grass">Grass</option>
-            <option value="indoor">Indoor</option>
-          </select>
-        </div>
+        )}
       </div>
       <div className="flex items-center gap-3 pt-2">
         <button onClick={onSave} disabled={saving || uploading} className="btn-primary">

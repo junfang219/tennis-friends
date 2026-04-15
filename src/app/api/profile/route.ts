@@ -18,6 +18,11 @@ export async function GET() {
       skillLevel: true,
       favoriteSurface: true,
       profileImageUrl: true,
+      gender: true,
+      ageRange: true,
+      ratingSystem: true,
+      ntrpRating: true,
+      utrRating: true,
       createdAt: true,
       _count: { select: { sentRequests: { where: { status: "ACCEPTED" } }, receivedRequests: { where: { status: "ACCEPTED" } } } },
       posts: {
@@ -81,10 +86,14 @@ export async function PUT(request: Request) {
   }
 
   const data = await request.json();
-  const allowed = ["name", "bio", "skillLevel", "favoriteSurface", "profileImageUrl"];
-  const updates: Record<string, string> = {};
-  for (const key of allowed) {
+  const stringFields = ["name", "bio", "skillLevel", "favoriteSurface", "profileImageUrl", "gender", "ageRange", "ratingSystem"];
+  const numberFields = ["ntrpRating", "utrRating"];
+  const updates: Record<string, unknown> = {};
+  for (const key of stringFields) {
     if (data[key] !== undefined) updates[key] = data[key];
+  }
+  for (const key of numberFields) {
+    if (data[key] !== undefined) updates[key] = data[key] === null ? null : Number(data[key]);
   }
 
   const user = await prisma.user.update({

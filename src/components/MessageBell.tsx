@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import ConversationRow, { type InboxItem, type InboxAction } from "./ConversationRow";
@@ -40,6 +41,8 @@ export default function MessageBell() {
   // (or there's no entry). The chat remains on /chat and Friends > Chats regardless.
   const [dismissed, setDismissed] = useState<DismissMap>({});
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [anchorPos, setAnchorPos] = useState<{ top: number; right: number } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadInbox = useCallback(() => {
@@ -86,7 +89,10 @@ export default function MessageBell() {
   // Click outside to close — also resets any half-open row and dismissed items
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const insideDropdown = dropdownRef.current?.contains(target);
+      const insideButton = buttonRef.current?.contains(target);
+      if (!insideDropdown && !insideButton) {
         closeDropdown();
       }
     }
@@ -95,6 +101,25 @@ export default function MessageBell() {
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
   }, [open, closeDropdown]);
+
+  // Position the portal-rendered dropdown relative to the bell button
+  useEffect(() => {
+    if (!open || !buttonRef.current) return;
+    const update = () => {
+      const rect = buttonRef.current!.getBoundingClientRect();
+      setAnchorPos({
+        top: rect.bottom + 8,
+        right: Math.max(8, window.innerWidth - rect.right),
+      });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open]);
 
   // Escape closes dropdown
   useEffect(() => {
@@ -173,8 +198,9 @@ export default function MessageBell() {
   };
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative">
       <button
+        ref={buttonRef}
         onClick={() => (open ? closeDropdown() : setOpen(true))}
         className="relative p-2 rounded-lg text-white/70 hover:text-white hover:bg-white/8 transition-colors"
         title="Messages"
@@ -191,8 +217,12 @@ export default function MessageBell() {
         )}
       </button>
 
-      {open && (
-        <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden z-[100] animate-fade-in-up">
+      {open && anchorPos && typeof document !== "undefined" && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{ position: "fixed", top: anchorPos.top, right: anchorPos.right, zIndex: 500 }}
+          className="w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden animate-fade-in-up"
+        >
           <div className="p-4 border-b border-gray-100 flex items-center justify-between">
             <h3 className="font-display text-lg font-bold text-gray-900">Messages</h3>
             {totalUnread > 0 && (
@@ -234,7 +264,8 @@ export default function MessageBell() {
               });
             })()}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

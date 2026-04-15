@@ -34,6 +34,10 @@ export default function PostComposer({
   const [placeholder] = useState(
     () => PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)]
   );
+  const [isNative, setIsNative] = useState(false);
+  useEffect(() => {
+    setIsNative(!!(window as unknown as { Capacitor?: unknown }).Capacitor);
+  }, []);
 
   const openModal = (findPlayers = false, proposeTeam = false) => {
     setOpenWithFindPlayers(findPlayers);
@@ -53,7 +57,7 @@ export default function PostComposer({
           />
           <button
             onClick={() => openModal(false)}
-            className="flex-1 text-left px-4 py-2.5 bg-surface/60 hover:bg-surface rounded-xl text-sm text-gray-400 transition-colors"
+            className={`flex-1 min-w-0 text-left px-4 py-2.5 bg-surface/60 hover:bg-surface rounded-xl text-sm text-gray-400 transition-colors ${isNative ? "truncate" : ""}`}
           >
             {placeholder}
           </button>
@@ -151,6 +155,7 @@ function ComposerModal({
 }) {
   const [content, setContent] = useState("");
   const [posting, setPosting] = useState(false);
+  const [postError, setPostError] = useState("");
   const [mediaUrl, setMediaUrl] = useState("");
   const [mediaType, setMediaType] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -194,6 +199,7 @@ function ComposerModal({
   const [courtLocation, setCourtLocation] = useState("");
   const [gameType, setGameType] = useState("singles");
   const [playersNeeded, setPlayersNeeded] = useState(1);
+  const [playDuration, setPlayDuration] = useState(90);
   const [courtBooked, setCourtBooked] = useState(false);
 
   // Propose Team fields
@@ -295,6 +301,7 @@ function ComposerModal({
   const handleSubmit = async () => {
     if (!canSubmit || posting || uploading) return;
     setPosting(true);
+    setPostError("");
 
     const body: Record<string, unknown> = {
       content,
@@ -311,9 +318,10 @@ function ComposerModal({
       body.courtLocation = courtLocation;
       body.gameType = gameType;
       body.playersNeeded = playersNeeded;
+      body.playDuration = playDuration;
       body.courtBooked = courtBooked;
       if (!content.trim()) {
-        body.content = `Looking for ${playersNeeded} ${playersNeeded === 1 ? "player" : "players"} for ${gameType} at ${courtLocation} on ${playDate} at ${playTime}`;
+        body.content = `Looking for ${playersNeeded} ${playersNeeded === 1 ? "player" : "players"} for ${gameType} at ${courtLocation} on ${playDate} at ${playTime} (${playDuration} min)`;
       }
     }
 
@@ -327,26 +335,38 @@ function ComposerModal({
       body.content = teamPurpose;
     }
 
-    const res = await fetch("/api/posts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    try {
+      const res = await fetch("/api/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
 
-    if (res.ok) {
-      const post = await res.json();
-      onPost(post);
+      if (res.ok) {
+        const post = await res.json();
+        onPost(post);
+      } else {
+        let msg = `Post failed (${res.status})`;
+        try {
+          const data = await res.json();
+          if (data?.error) msg = data.error;
+        } catch {}
+        setPostError(msg);
+      }
+    } catch (err) {
+      setPostError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setPosting(false);
     }
-    setPosting(false);
   };
 
   return (
     <div
-      className="fixed inset-0 z-[999] bg-black/50 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
+      className="fixed inset-0 z-[10000] bg-black/50 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
       onClick={onClose}
     >
       <div
-        className="bg-white w-full sm:max-w-lg sm:rounded-2xl shadow-2xl min-h-screen sm:min-h-0 sm:my-8 flex flex-col"
+        className="bg-white w-full sm:max-w-lg sm:rounded-2xl shadow-2xl min-h-screen sm:min-h-0 sm:my-8 flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] sm:pt-0 sm:pb-0"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -405,11 +425,16 @@ function ComposerModal({
           <textarea
             ref={textareaRef}
             value={content}
-            onChange={(e) => { if (e.target.value.length <= 280) setContent(e.target.value); }}
+            onChange={(e) => {
+              if (e.target.value.length <= 280) setContent(e.target.value);
+              const el = e.target;
+              el.style.height = "auto";
+              el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
+            }}
             maxLength={280}
             placeholder={placeholder}
-            className="w-full resize-none border-0 text-gray-700 text-base placeholder:text-gray-400 focus:outline-none focus:ring-0"
-            rows={1}
+            className="w-full resize-none border-0 text-gray-700 text-base placeholder:text-gray-400 focus:outline-none focus:ring-0 overflow-y-auto"
+            rows={2}
           />
 
           {/* Group tags */}
@@ -505,6 +530,18 @@ function ComposerModal({
                     onChange={(e) => setPlayTime(e.target.value)}
                     className="w-full min-w-0 max-w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white box-border"
                   />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Duration</label>
+                  <select
+                    value={playDuration}
+                    onChange={(e) => setPlayDuration(Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none"
+                  >
+                    {[60, 75, 90, 120].map((m) => (
+                      <option key={m} value={m}>{m} min</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="sm:col-span-2">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Court Location</label>
@@ -758,6 +795,11 @@ function ComposerModal({
 
         {/* Post button */}
         <div className="px-5 pb-5">
+          {postError && (
+            <div className="mb-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+              {postError}
+            </div>
+          )}
           <button
             onClick={handleSubmit}
             disabled={!canSubmit || posting || uploading}

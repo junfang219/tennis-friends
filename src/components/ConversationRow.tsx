@@ -72,9 +72,10 @@ type Props = {
   layout?: "dropdown" | "page";
 };
 
-// Action panel widths. Small on the 320px dropdown, wider with labels on the /chat page.
+// Action panel widths. Small on the 320px dropdown, slightly wider with labels on the /chat page.
+// Kept narrow so the conversation content remains visible alongside the actions on small phones.
 const BUTTON_W_DROPDOWN = 56;
-const BUTTON_W_PAGE = 72;
+const BUTTON_W_PAGE = 60;
 const TAP_THRESHOLD_PX = 6; // move less than this = treat as tap
 
 export default function ConversationRow({
@@ -160,14 +161,16 @@ export default function ConversationRow({
     setDrag(null);
   }, [drag, isOpen, ACTIONS_WIDTH, OPEN_THRESHOLD, onOpen, onClose, onSelect]);
 
-  const rowBg = item.unreadCount > 0 ? "bg-court-green-soft/5" : "bg-white";
+  // Foreground background must be OPAQUE so the action panel behind doesn't bleed through on iOS.
+  // For unread items we use a solid pale tint instead of a translucent overlay.
+  const rowBg = item.unreadCount > 0 ? "bg-[#F1F7F0]" : "bg-white";
   const rowPadding = layout === "page" ? "px-4 py-4" : "px-4 py-3";
 
   return (
     <div className="relative overflow-hidden touch-pan-y">
       {/* Background action buttons — always there, revealed when foreground slides */}
       <div
-        className="absolute inset-y-0 right-0 flex items-stretch"
+        className="absolute inset-y-0 right-0 flex items-stretch z-0"
         style={{ width: ACTIONS_WIDTH }}
         aria-hidden={!isOpen}
       >
@@ -244,11 +247,12 @@ export default function ConversationRow({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        className={`relative ${rowBg} ${rowPadding} flex items-center gap-3 cursor-pointer select-none`}
+        className={`relative z-10 ${rowBg} ${rowPadding} flex items-center gap-3 cursor-pointer select-none`}
         style={{
           transform: `translateX(${translateX}px)`,
           transition: drag?.active ? "none" : "transform 220ms ease",
           touchAction: "pan-y",
+          willChange: "transform",
         }}
         role="button"
         tabIndex={0}

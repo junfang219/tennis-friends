@@ -10,8 +10,6 @@ export default function RegisterPage() {
     name: "",
     email: "",
     password: "",
-    skillLevel: "intermediate",
-    favoriteSurface: "hard",
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -44,7 +42,7 @@ export default function RegisterPage() {
     });
 
     if (result?.ok) {
-      router.push("/");
+      router.push("/onboarding");
       router.refresh();
     }
   };
@@ -116,35 +114,6 @@ export default function RegisterPage() {
                 required
                 minLength={6}
               />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Skill Level</label>
-                <select
-                  value={form.skillLevel}
-                  onChange={(e) => update("skillLevel", e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm bg-surface/50 appearance-none"
-                >
-                  <option value="beginner">Beginner</option>
-                  <option value="intermediate">Intermediate</option>
-                  <option value="advanced">Advanced</option>
-                  <option value="professional">Professional</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Favorite Surface</label>
-                <select
-                  value={form.favoriteSurface}
-                  onChange={(e) => update("favoriteSurface", e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm bg-surface/50 appearance-none"
-                >
-                  <option value="hard">Hard Court</option>
-                  <option value="clay">Clay</option>
-                  <option value="grass">Grass</option>
-                  <option value="indoor">Indoor</option>
-                </select>
-              </div>
             </div>
 
             <button

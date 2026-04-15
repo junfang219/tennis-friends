@@ -61,6 +61,7 @@ export async function GET(request: Request) {
       id: post.id,
       playDate: post.playDate,
       playTime: post.playTime,
+      playDuration: post.playDuration,
       courtLocation: post.courtLocation,
       gameType: post.gameType,
       playersNeeded: post.playersNeeded,

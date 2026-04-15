@@ -41,15 +41,32 @@ export const authOptions: NextAuthOptions = {
     signIn: "/login",
   },
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger }) {
       if (user) {
         token.id = user.id;
+        const fresh = await prisma.user.findUnique({
+          where: { id: user.id as string },
+          select: { onboardingComplete: true },
+        });
+        token.onboardingComplete = fresh?.onboardingComplete ?? false;
+      }
+      if (trigger === "update" && token.id) {
+        const fresh = await prisma.user.findUnique({
+          where: { id: token.id as string },
+          select: { name: true, profileImageUrl: true, onboardingComplete: true },
+        });
+        if (fresh) {
+          token.name = fresh.name;
+          token.picture = fresh.profileImageUrl || null;
+          token.onboardingComplete = fresh.onboardingComplete;
+        }
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
-        (session.user as { id?: string }).id = token.id as string;
+        (session.user as { id?: string; onboardingComplete?: boolean }).id = token.id as string;
+        (session.user as { id?: string; onboardingComplete?: boolean }).onboardingComplete = Boolean(token.onboardingComplete);
       }
       return session;
     },

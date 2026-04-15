@@ -16,6 +16,12 @@ model User {
   skillLevel     String   @default("intermediate")
   favoriteSurface String  @default("hard")
   profileImageUrl String  @default("")
+  gender         String   @default("")
+  ageRange       String   @default("")
+  ratingSystem   String   @default("")
+  ntrpRating     Float?
+  utrRating      Float?
+  onboardingComplete Boolean @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -70,6 +76,7 @@ model Post {
   postType  String   @default("regular")
   playDate  String   @default("")
   playTime  String   @default("")
+  playDuration Int    @default(90)
   courtLocation String @default("")
   gameType  String   @default("")
   playersNeeded    Int     @default(0)

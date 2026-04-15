@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
+import { buildGoogleCalendarUrl, downloadIcs } from "@/lib/calendarExport";
 
 type CalendarEvent = {
   id: string;
   playDate: string;
   playTime: string;
+  playDuration: number;
   courtLocation: string;
   gameType: string;
   playersNeeded: number;
@@ -262,7 +264,7 @@ function EventCard({ event: ev }: { event: CalendarEvent }) {
 
   return (
     <Link
-      href={`/`}
+      href={`/?post=${ev.id}`}
       className={`block bg-white rounded-xl shadow-sm border p-4 card-hover ${ev.isComplete ? "border-green-200" : "border-court-green-pale/20"}`}
     >
       <div className="flex items-start gap-3">
@@ -292,7 +294,7 @@ function EventCard({ event: ev }: { event: CalendarEvent }) {
           <div className="flex items-center gap-3 text-xs text-gray-500 mb-2">
             <span className="flex items-center gap-1">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" /></svg>
-              {ev.playTime}
+              {ev.playTime}{ev.playDuration ? ` · ${ev.playDuration} min` : ""}
             </span>
             <span className="flex items-center gap-1 truncate">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg>
@@ -316,6 +318,28 @@ function EventCard({ event: ev }: { event: CalendarEvent }) {
               {ev.groups.map((g) => (
                 <span key={g.id} className="text-[10px] font-medium text-court-green-soft bg-court-green-soft/10 px-2 py-0.5 rounded-full">{g.name}</span>
               ))}
+            </div>
+          )}
+
+          {ev.isComplete && (
+            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-green-100/70">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Add to calendar</span>
+              <button
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); downloadIcs(ev); }}
+                className="text-xs font-semibold px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
+              >
+                Apple / .ics
+              </button>
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  window.open(buildGoogleCalendarUrl(ev), "_blank", "noopener,noreferrer");
+                }}
+                className="text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+              >
+                Google
+              </button>
             </div>
           )}
         </div>

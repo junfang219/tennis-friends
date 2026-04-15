@@ -123,6 +123,8 @@ export default function NotificationBell() {
   const [openPost, setOpenPost] = useState<Record<string, unknown> | null>(null);
   const [loadingPost, setLoadingPost] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [anchorPos, setAnchorPos] = useState<{ top: number; right: number } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Friend requests sub-view (inline, like Instagram)
@@ -231,7 +233,10 @@ export default function NotificationBell() {
   // Click outside to close
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const insideDropdown = dropdownRef.current?.contains(target);
+      const insideButton = buttonRef.current?.contains(target);
+      if (!insideDropdown && !insideButton) {
         setOpen(false);
       }
     }
@@ -239,6 +244,25 @@ export default function NotificationBell() {
       document.addEventListener("mousedown", handleClickOutside);
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
+  }, [open]);
+
+  // Position the portal-rendered dropdown relative to the bell button
+  useEffect(() => {
+    if (!open || !buttonRef.current) return;
+    const update = () => {
+      const rect = buttonRef.current!.getBoundingClientRect();
+      setAnchorPos({
+        top: rect.bottom + 8,
+        right: Math.max(8, window.innerWidth - rect.right),
+      });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
   }, [open]);
 
   const handleOpen = () => {
@@ -256,8 +280,9 @@ export default function NotificationBell() {
   };
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative">
       <button
+        ref={buttonRef}
         onClick={handleOpen}
         className="relative p-2 rounded-lg text-white/70 hover:text-white hover:bg-white/8 transition-colors"
       >
@@ -272,8 +297,12 @@ export default function NotificationBell() {
         )}
       </button>
 
-      {open && (
-        <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden z-[100] animate-fade-in-up">
+      {open && anchorPos && typeof document !== "undefined" && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{ position: "fixed", top: anchorPos.top, right: anchorPos.right, zIndex: 500 }}
+          className="w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden animate-fade-in-up"
+        >
 
           {/* ── Friend Requests sub-view (Instagram-style) ── */}
           {showFriendRequests ? (
@@ -412,7 +441,8 @@ export default function NotificationBell() {
               </div>
             </>
           )}
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Post detail modal */}

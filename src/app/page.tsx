@@ -2,7 +2,7 @@
 
 import { useSession } from "next-auth/react";
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import PostComposer from "@/components/PostComposer";
 import PostCard from "@/components/PostCard";
@@ -36,8 +36,11 @@ type Post = {
 export default function HomePage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const targetPostId = searchParams.get("post");
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
+  const [highlightedPostId, setHighlightedPostId] = useState<string | null>(null);
   // null = show all categories; otherwise show only the selected category
   const [activeFilter, setActiveFilter] = useState<"find_players" | "propose_team" | "social" | null>(null);
 
@@ -170,6 +173,23 @@ export default function HomePage() {
         });
     }
   }, [status]);
+
+  // Scroll to + highlight a post when linked via ?post=<id> (e.g. from calendar)
+  useEffect(() => {
+    if (!targetPostId || loading) return;
+    if (!posts.some((p) => p.id === targetPostId)) return;
+    setActiveFilter(null);
+    const scroll = () => {
+      const el = document.querySelector(`[data-post-id="${targetPostId}"]`) as HTMLElement | null;
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        setHighlightedPostId(targetPostId);
+        setTimeout(() => setHighlightedPostId(null), 2000);
+      }
+    };
+    const t = setTimeout(scroll, 50);
+    return () => clearTimeout(t);
+  }, [targetPostId, loading, posts]);
 
   if (status === "unauthenticated") {
     return <LandingPage />;
@@ -333,7 +353,7 @@ export default function HomePage() {
               key={post.id}
               data-post-id={post.id}
               ref={observePost}
-              className={`animate-fade-in-up stagger-${Math.min(i + 1, 5)}`}
+              className={`animate-fade-in-up stagger-${Math.min(i + 1, 5)} rounded-2xl transition-shadow ${highlightedPostId === post.id ? "ring-2 ring-court-green ring-offset-2" : ""}`}
             >
               <PostCard
                 post={post}

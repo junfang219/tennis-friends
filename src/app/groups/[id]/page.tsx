@@ -620,6 +620,7 @@ function GroupComposerModal({
 }) {
   const [content, setContent] = useState("");
   const [posting, setPosting] = useState(false);
+  const [postError, setPostError] = useState("");
   const [mediaUrl, setMediaUrl] = useState("");
   const [mediaType, setMediaType] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -652,6 +653,7 @@ function GroupComposerModal({
   const [courtLocation, setCourtLocation] = useState("");
   const [gameType, setGameType] = useState("singles");
   const [playersNeeded, setPlayersNeeded] = useState(1);
+  const [playDuration, setPlayDuration] = useState(90);
   const [courtBooked, setCourtBooked] = useState(false);
 
   useEffect(() => {
@@ -685,6 +687,7 @@ function GroupComposerModal({
   const handleSubmit = async () => {
     if (!canSubmit || posting || uploading) return;
     setPosting(true);
+    setPostError("");
 
     const body: Record<string, unknown> = {
       content,
@@ -700,22 +703,35 @@ function GroupComposerModal({
       body.courtLocation = courtLocation;
       body.gameType = gameType;
       body.playersNeeded = playersNeeded;
+      body.playDuration = playDuration;
       body.courtBooked = courtBooked;
       if (!content.trim()) {
-        body.content = `Looking for ${playersNeeded} ${playersNeeded === 1 ? "player" : "players"} for ${gameType} at ${courtLocation} on ${playDate} at ${playTime}`;
+        body.content = `Looking for ${playersNeeded} ${playersNeeded === 1 ? "player" : "players"} for ${gameType} at ${courtLocation} on ${playDate} at ${playTime} (${playDuration} min)`;
       }
     }
 
-    const res = await fetch("/api/posts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (res.ok) {
-      const post = await res.json();
-      onPost(post);
+    try {
+      const res = await fetch("/api/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const post = await res.json();
+        onPost(post);
+      } else {
+        let msg = `Post failed (${res.status})`;
+        try {
+          const data = await res.json();
+          if (data?.error) msg = data.error;
+        } catch {}
+        setPostError(msg);
+      }
+    } catch (err) {
+      setPostError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setPosting(false);
     }
-    setPosting(false);
   };
 
   return (
@@ -815,6 +831,14 @@ function GroupComposerModal({
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Time</label>
                   <input type="time" value={playTime} onChange={(e) => setPlayTime(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
                 </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Duration</label>
+                  <select value={playDuration} onChange={(e) => setPlayDuration(Number(e.target.value))} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none">
+                    {[60, 75, 90, 120].map((m) => (
+                      <option key={m} value={m}>{m} min</option>
+                    ))}
+                  </select>
+                </div>
                 <div className="col-span-2">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Court Location</label>
                   <input type="text" value={courtLocation} onChange={(e) => setCourtLocation(e.target.value)} placeholder="e.g. Central Park Tennis Center" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
@@ -882,6 +906,11 @@ function GroupComposerModal({
 
         {/* Post button */}
         <div className="px-5 pb-5">
+          {postError && (
+            <div className="mb-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+              {postError}
+            </div>
+          )}
           <button
             onClick={handleSubmit}
             disabled={!canSubmit || posting || uploading}

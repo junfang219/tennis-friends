@@ -110,6 +110,7 @@ export async function PATCH(
   if (body.commentsDisabled !== undefined) updates.commentsDisabled = body.commentsDisabled;
   if (body.playDate !== undefined) updates.playDate = body.playDate;
   if (body.playTime !== undefined) updates.playTime = body.playTime;
+  if (body.playDuration !== undefined) updates.playDuration = Number(body.playDuration) || 90;
   if (body.courtLocation !== undefined) updates.courtLocation = body.courtLocation;
   if (body.gameType !== undefined) updates.gameType = body.gameType;
   if (body.playersNeeded !== undefined) updates.playersNeeded = body.playersNeeded;

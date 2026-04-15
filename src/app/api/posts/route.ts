@@ -120,6 +120,7 @@ export async function GET() {
     postType: post.postType,
     playDate: post.playDate,
     playTime: post.playTime,
+    playDuration: post.playDuration,
     courtLocation: post.courtLocation,
     gameType: post.gameType,
     playersNeeded: post.playersNeeded,
@@ -157,7 +158,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { content, mediaUrl, mediaType, groupIds, friendGroupIds, postType, playDate, playTime, courtLocation, gameType, playersNeeded, courtBooked } = await request.json();
+  const { content, mediaUrl, mediaType, groupIds, friendGroupIds, postType, playDate, playTime, playDuration, courtLocation, gameType, playersNeeded, courtBooked } = await request.json();
 
   if (!content?.trim() && !mediaUrl && postType !== "find_players") {
     return NextResponse.json({ error: "Post must have text or media" }, { status: 400 });
@@ -171,6 +172,7 @@ export async function POST(request: Request) {
       postType: postType || "regular",
       playDate: playDate || "",
       playTime: playTime || "",
+      playDuration: Number(playDuration) || 90,
       courtLocation: courtLocation || "",
       gameType: gameType || "",
       playersNeeded: playersNeeded || 0,
@@ -213,6 +215,7 @@ export async function POST(request: Request) {
     postType: post.postType,
     playDate: post.playDate,
     playTime: post.playTime,
+    playDuration: post.playDuration,
     courtLocation: post.courtLocation,
     gameType: post.gameType,
     playersNeeded: post.playersNeeded,
