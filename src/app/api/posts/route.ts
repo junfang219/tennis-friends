@@ -112,6 +112,21 @@ export async function GET() {
     },
   });
 
+  // For every completed find-players post, look up its auto-created session
+  // chat so the card can link straight to /chat/group/<id>. One bounded query.
+  const completePostIds = posts
+    .filter((p) => p.postType === "find_players" && p.isComplete)
+    .map((p) => p.id);
+  const sessionChats = completePostIds.length
+    ? await prisma.chat.findMany({
+        where: { postId: { in: completePostIds } },
+        select: { id: true, postId: true },
+      })
+    : [];
+  const sessionChatByPost = new Map(
+    sessionChats.map((c) => [c.postId as string, c.id])
+  );
+
   const formatted = posts.map((post) => ({
     id: post.id,
     content: post.content,
@@ -127,6 +142,7 @@ export async function GET() {
     playersConfirmed: post.playersConfirmed,
     courtBooked: post.courtBooked,
     isComplete: post.isComplete,
+    sessionChatId: sessionChatByPost.get(post.id) || null,
     commentsDisabled: post.commentsDisabled,
     createdAt: post.createdAt,
     author: post.author,

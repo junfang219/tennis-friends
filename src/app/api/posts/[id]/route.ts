@@ -82,6 +82,11 @@ export async function DELETE(
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
+  // Clean up any auto-created session chat tied to this post. Chat has
+  // nullable postId (no FK cascade), so do this explicitly. ChatParticipant
+  // and ChatMessage cascade off Chat.
+  await prisma.chat.deleteMany({ where: { postId: id } });
+
   await prisma.post.delete({ where: { id } });
 
   return NextResponse.json({ success: true });

@@ -41,6 +41,8 @@ type InboxItem = {
   unreadCount: number;
   muted: boolean;
   pinnedAt: string | null;
+  // group-only: "session" when auto-created from a filled find-players post
+  kind?: "session" | "group";
   // direct only
   avatarUser?: { id: string; name: string; profileImageUrl: string };
   // group / team
@@ -741,7 +743,13 @@ export default function FriendsPage() {
                   isPinned={isPinned}
                   isMuted={isMuted}
                 >
-                  <div className={`p-4 flex items-center gap-3 ${chat.type === "team" ? "bg-gradient-to-r from-court-green-pale/20 to-white" : "bg-white"}`}>
+                  <div className={`p-4 flex items-center gap-3 ${
+                    chat.type === "group" && chat.kind === "session"
+                      ? "bg-gradient-to-r from-court-green-pale/25 to-white border-l-4 border-l-court-green"
+                      : chat.type === "team"
+                      ? "bg-gradient-to-r from-clay/15 to-white border-l-4 border-l-clay"
+                      : "bg-white"
+                  }`}>
                     {/* Avatar */}
                     <div className="shrink-0">
                       {chat.type === "direct" && chat.avatarUser ? (
@@ -759,13 +767,13 @@ export default function FriendsPage() {
                               className="w-11 h-11 rounded-xl object-cover shadow-md ring-2 ring-white"
                             />
                           ) : (
-                            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-court-green to-court-green-soft flex items-center justify-center text-white font-bold text-base shadow-md ring-2 ring-white">
+                            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-clay to-clay-light flex items-center justify-center text-white font-bold text-base shadow-md ring-2 ring-white">
                               {chat.title.charAt(0).toUpperCase()}
                             </div>
                           )}
                           {/* Trophy badge */}
-                          <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-ball-yellow flex items-center justify-center shadow-sm ring-2 ring-white">
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-court-green">
+                          <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-clay flex items-center justify-center shadow-sm ring-2 ring-white">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
                               <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
                               <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
                               <path d="M4 22h16" />
@@ -793,8 +801,13 @@ export default function FriendsPage() {
                             {chat.title}
                           </h3>
                           {chat.type === "team" && (
-                            <span className="text-[9px] font-bold tracking-wider text-court-green bg-court-green-pale/40 px-1.5 py-0.5 rounded uppercase shrink-0">
+                            <span className="text-[9px] font-bold tracking-wider text-clay bg-clay/15 px-1.5 py-0.5 rounded uppercase shrink-0">
                               Team
+                            </span>
+                          )}
+                          {chat.type === "group" && chat.kind === "session" && (
+                            <span className="text-[9px] font-bold tracking-wider text-white bg-court-green px-1.5 py-0.5 rounded uppercase shrink-0">
+                              🎾 Game
                             </span>
                           )}
                           {isMuted && (

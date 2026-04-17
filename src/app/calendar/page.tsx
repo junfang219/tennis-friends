@@ -100,8 +100,10 @@ export default function CalendarPage() {
 
   const selectedEvents = selectedDate ? (eventsByDate.get(selectedDate) || []) : [];
 
-  // All events sorted for list view
-  const sortedEvents = [...events].sort((a, b) => a.playDate.localeCompare(b.playDate) || a.playTime.localeCompare(b.playTime));
+  // Today and future events only, sorted for list view
+  const sortedEvents = events
+    .filter((ev) => ev.playDate >= today)
+    .sort((a, b) => a.playDate.localeCompare(b.playDate) || a.playTime.localeCompare(b.playTime));
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">

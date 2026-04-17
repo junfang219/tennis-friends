@@ -268,15 +268,19 @@ model PostFriendGroup {
 }
 
 model Chat {
-  id        String   @id @default(cuid())
-  name      String   @default("")
-  creatorId String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String    @id @default(cuid())
+  name         String    @default("")
+  creatorId    String
+  postId       String?
+  sessionEndAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   creator      User              @relation("ChatCreator", fields: [creatorId], references: [id])
   participants ChatParticipant[]
   messages     ChatMessage[]
+
+  @@index([sessionEndAt])
 }
 
 model ChatParticipant {

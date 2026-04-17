@@ -27,6 +27,8 @@ export type GroupItem = {
   muted: boolean;
   pinnedAt: string | null;
   href: string;
+  kind?: "session" | "group";
+  sessionEndAt?: string | null;
 };
 
 export type TeamItem = {
@@ -163,8 +165,25 @@ export default function ConversationRow({
 
   // Foreground background must be OPAQUE so the action panel behind doesn't bleed through on iOS.
   // For unread items we use a solid pale tint instead of a translucent overlay.
-  const rowBg = item.unreadCount > 0 ? "bg-[#F1F7F0]" : "bg-white";
+  const isSession = item.type === "group" && item.kind === "session";
+  const isTeam = item.type === "team";
+  const rowBg = isSession
+    ? item.unreadCount > 0
+      ? "bg-[#E3F1E1]"
+      : "bg-[#EFF7ED]"
+    : isTeam
+    ? item.unreadCount > 0
+      ? "bg-[#F7E6D4]"
+      : "bg-[#FDF5ED]"
+    : item.unreadCount > 0
+    ? "bg-[#F1F7F0]"
+    : "bg-white";
   const rowPadding = layout === "page" ? "px-4 py-4" : "px-4 py-3";
+  const sideBorder = isSession
+    ? "border-l-4 border-l-court-green"
+    : isTeam
+    ? "border-l-4 border-l-clay"
+    : "";
 
   return (
     <div className="relative overflow-hidden touch-pan-y">
@@ -247,7 +266,7 @@ export default function ConversationRow({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        className={`relative z-10 ${rowBg} ${rowPadding} flex items-center gap-3 cursor-pointer select-none`}
+        className={`relative z-10 ${rowBg} ${sideBorder} ${rowPadding} flex items-center gap-3 cursor-pointer select-none`}
         style={{
           transform: `translateX(${translateX}px)`,
           transition: drag?.active ? "none" : "transform 220ms ease",
@@ -278,12 +297,12 @@ export default function ConversationRow({
                   className={`${layout === "page" ? "w-12 h-12" : "w-10 h-10"} rounded-xl object-cover shadow-sm`}
                 />
               ) : (
-                <div className={`${layout === "page" ? "w-12 h-12 text-lg" : "w-10 h-10 text-sm"} rounded-xl bg-gradient-to-br from-court-green to-court-green-soft flex items-center justify-center text-white font-bold shadow-sm`}>
+                <div className={`${layout === "page" ? "w-12 h-12 text-lg" : "w-10 h-10 text-sm"} rounded-xl bg-gradient-to-br from-clay to-clay-light flex items-center justify-center text-white font-bold shadow-sm`}>
                   {item.title.charAt(0).toUpperCase()}
                 </div>
               )}
-              <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-ball-yellow flex items-center justify-center">
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-court-green">
+              <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-clay flex items-center justify-center">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
                   <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
                   <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
                   <path d="M4 22h16" />
@@ -316,8 +335,13 @@ export default function ConversationRow({
             <p className={`text-sm truncate ${item.unreadCount > 0 ? "font-bold text-gray-900" : "font-semibold text-gray-800"}`}>
               {item.title}
               {item.type === "team" && (
-                <span className="ml-1.5 text-[9px] font-bold tracking-wider text-court-green bg-court-green-pale/40 px-1 py-0.5 rounded uppercase">
+                <span className="ml-1.5 text-[9px] font-bold tracking-wider text-clay bg-clay/15 px-1 py-0.5 rounded uppercase">
                   Team
+                </span>
+              )}
+              {isSession && (
+                <span className="ml-1.5 text-[9px] font-bold tracking-wider text-white bg-court-green px-1.5 py-0.5 rounded uppercase">
+                  🎾 Game
                 </span>
               )}
               {item.muted && (

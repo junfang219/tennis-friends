@@ -30,6 +30,7 @@ type Post = {
   playersConfirmed?: number;
   courtBooked?: boolean;
   isComplete?: boolean;
+  sessionChatId?: string | null;
   commentsDisabled?: boolean;
   manualPlayers?: string;
   pendingRequestCount?: number;
@@ -108,6 +109,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   const manualCount = post.manualPlayers ? post.manualPlayers.split(",").filter((n) => n.trim()).length : 0;
   const [confirmed, setConfirmed] = useState(Math.max(post.playersConfirmed || 0, approvedCount + manualCount));
   const [complete, setComplete] = useState(post.isComplete || false);
+  const [liveSessionChatId, setLiveSessionChatId] = useState<string | null>(post.sessionChatId || null);
 
   // Comments
   const [showComments, setShowComments] = useState(false);
@@ -262,41 +264,62 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
 
   if (deleted) return null;
 
-  // Collapsed view for completed find_players posts
+  // Collapsed view for completed find_players posts — highlighted confirmation
+  // card with a direct link to the auto-created group chat. Tap the main body
+  // to expand back to the full post for details; tap "Open chat" to jump into
+  // the group chat where confirmed players coordinate.
   if (isCollapsible && !expanded) {
     return (
-      <button
-        onClick={() => setExpanded(true)}
-        className="w-full text-left bg-white rounded-2xl shadow-sm border border-green-200 px-4 py-3 flex items-center gap-3 hover:bg-green-50/50 transition-colors group"
-      >
-        <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center shrink-0">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-green-600"><polyline points="20,6 9,17 4,12" /></svg>
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-gray-800 truncate">{post.author.name}</span>
-            <span className="text-xs text-green-700 font-bold">Game Full</span>
-            <span className="text-xs text-gray-400">·</span>
-            <span className="text-xs text-gray-500 truncate capitalize">{liveGameType} · {livePlayDate} {livePlayTime}{endTime ? `–${endTime}` : ""} · {liveCourtLocation}</span>
+      <div className="w-full bg-green-50 rounded-2xl shadow-md ring-2 ring-court-green/60 px-4 py-3 flex items-center gap-3">
+        <button
+          onClick={() => setExpanded(true)}
+          className="flex-1 min-w-0 flex items-center gap-3 text-left group"
+          aria-label="Show full game details"
+        >
+          <div className="w-9 h-9 rounded-full bg-court-green flex items-center justify-center shrink-0 shadow-sm">
+            <span className="text-base leading-none">🎾</span>
           </div>
-          {((post.approvedPlayerNames && post.approvedPlayerNames.length > 0) || liveManualPlayers) && (
-            <div className="flex items-center gap-1 mt-0.5 truncate">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 shrink-0" strokeLinecap="round">
-                <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" />
-              </svg>
-              <span className="text-[11px] text-gray-400 truncate">
-                {[
-                  ...(post.approvedPlayerNames || []),
-                  ...(liveManualPlayers ? liveManualPlayers.split(",").filter((n: string) => n.trim()) : []),
-                ].map((n: string) => n.trim()).join(", ")}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-bold text-court-green truncate">Game confirmed</span>
+              <span className="text-xs text-gray-400">·</span>
+              <span className="text-xs text-gray-600 truncate capitalize">
+                {livePlayDate} {livePlayTime}{endTime ? `–${endTime}` : ""}
               </span>
             </div>
-          )}
-        </div>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-gray-300 group-hover:text-gray-500 transition-colors shrink-0">
-          <polyline points="6,9 12,15 18,9" />
-        </svg>
-      </button>
+            <div className="text-[11px] text-gray-500 truncate mt-0.5">
+              {liveCourtLocation || "Location TBD"}
+              {((post.approvedPlayerNames && post.approvedPlayerNames.length > 0) || liveManualPlayers) && (
+                <>
+                  {" · "}
+                  {[
+                    ...(post.approvedPlayerNames || []),
+                    ...(liveManualPlayers ? liveManualPlayers.split(",").filter((n: string) => n.trim()) : []),
+                  ].map((n: string) => n.trim()).join(", ")}
+                </>
+              )}
+            </div>
+          </div>
+        </button>
+        {liveSessionChatId ? (
+          <Link
+            href={`/chat/group/${liveSessionChatId}`}
+            className="shrink-0 inline-flex items-center gap-1.5 bg-court-green text-white text-xs font-bold px-3 py-2 rounded-full hover:bg-court-green-light transition-colors shadow-sm"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+            </svg>
+            Open chat
+          </Link>
+        ) : (
+          <button
+            onClick={() => setExpanded(true)}
+            className="shrink-0 text-xs text-court-green font-semibold px-2 py-1 rounded-full hover:bg-court-green/10"
+          >
+            Details
+          </button>
+        )}
+      </div>
     );
   }
 
@@ -697,7 +720,16 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
           playersNeeded={livePlayersNeeded || 0}
           currentlyComplete={complete}
           onClose={() => setShowRequests(false)}
-          onUpdate={(newConfirmed, isNowComplete) => { setConfirmed(newConfirmed); setComplete(isNowComplete); onUpdate?.(post.id, { isComplete: isNowComplete, playersConfirmed: newConfirmed }); }}
+          onUpdate={(newConfirmed, isNowComplete, sessionChatId) => {
+            setConfirmed(newConfirmed);
+            setComplete(isNowComplete);
+            if (sessionChatId) setLiveSessionChatId(sessionChatId);
+            // Snap back to the compact confirmation card so the creator sees
+            // the final state immediately, instead of staying in the tall
+            // expanded view until they refresh.
+            if (isNowComplete) setExpanded(false);
+            onUpdate?.(post.id, { isComplete: isNowComplete, playersConfirmed: newConfirmed, sessionChatId: sessionChatId ?? undefined });
+          }}
           onManualPlayersUpdate={(names) => setLiveManualPlayers(names)}
           manualPlayers={liveManualPlayers}
         />,
@@ -1257,7 +1289,7 @@ function ManageRequestsModal({
   postId, playersNeeded, currentlyComplete, onClose, onUpdate, onManualPlayersUpdate, manualPlayers,
 }: {
   postId: string; playersNeeded: number; currentlyComplete: boolean; onClose: () => void;
-  onUpdate: (confirmed: number, complete: boolean) => void;
+  onUpdate: (confirmed: number, complete: boolean, sessionChatId?: string | null) => void;
   onManualPlayersUpdate: (names: string) => void;
   manualPlayers: string;
 }) {
@@ -1303,7 +1335,11 @@ function ManageRequestsModal({
       const data = await res.json();
       loadRequests();
       if (action === "approve") {
-        onUpdate(approvedCount + 1, data.isComplete);
+        onUpdate(approvedCount + 1, data.isComplete, data.sessionChatId ?? null);
+        // Close the modal when this approval just filled the game — the
+        // underlying PostCard will snap back to its compact confirmation
+        // state, which is the signal the creator needs to see.
+        if (data.isComplete) onClose();
       }
     }
     setRespondingTo(null);
