@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import Avatar from "./Avatar";
+import EmojiPicker from "./EmojiPicker";
 
 type PlayRequestInfo = { id: string; status: string; note: string } | null;
 
@@ -20,10 +21,13 @@ type Post = {
   content: string;
   mediaUrl?: string;
   mediaType?: string;
+  photoUrls?: string[];
   postType?: string;
   playDate?: string;
   playTime?: string;
   playDuration?: number;
+  skillMin?: number | null;
+  skillMax?: number | null;
   courtLocation?: string;
   gameType?: string;
   playersNeeded?: number;
@@ -88,7 +92,7 @@ function timeAgo(date: string) {
   return new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onDelete?: (id: string) => void; onUpdate?: (id: string, updates: Partial<Post>) => void }) {
+export default function PostCard({ post, onDelete, onUpdate, initialExpanded = false, initialShowComments = false }: { post: Post; onDelete?: (id: string) => void; onUpdate?: (id: string, updates: Partial<Post>) => void; initialExpanded?: boolean; initialShowComments?: boolean }) {
   const { data: session } = useSession();
   const isAuthor = session?.user?.id === post.author.id;
   const isFindPlayers = post.postType === "find_players";
@@ -99,7 +103,16 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   const [likeCount, setLikeCount] = useState(post.likeCount);
   const [animating, setAnimating] = useState(false);
   const [imageExpanded, setImageExpanded] = useState(false);
+  // Index of the photo currently in view (carousel + lightbox).
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const photoStripRef = useRef<HTMLDivElement>(null);
   const [deleted, setDeleted] = useState(false);
+
+  // Unified photo list — prefer photoUrls (multi support); fall back to legacy
+  // single mediaUrl when the API or older client hasn't migrated yet.
+  const photos: string[] = (post.photoUrls && post.photoUrls.length > 0)
+    ? post.photoUrls
+    : (post.mediaType === "image" && post.mediaUrl ? [post.mediaUrl] : []);
 
   // Play request state
   const [myRequest, setMyRequest] = useState<PlayRequestInfo>(post.myPlayRequest || null);
@@ -112,12 +125,31 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   const [liveSessionChatId, setLiveSessionChatId] = useState<string | null>(post.sessionChatId || null);
 
   // Comments
-  const [showComments, setShowComments] = useState(false);
+  const [showComments, setShowComments] = useState(initialShowComments);
   const [comments, setComments] = useState<CommentData[]>([]);
   const [commentInput, setCommentInput] = useState("");
   const [commentCount, setCommentCount] = useState(post.commentCount || 0);
   const [postingComment, setPostingComment] = useState(false);
   const [commentsLoaded, setCommentsLoaded] = useState(false);
+  const [commentEmojiOpen, setCommentEmojiOpen] = useState(false);
+  const commentInputRef = useRef<HTMLInputElement>(null);
+
+  const insertCommentEmoji = (emoji: string) => {
+    const el = commentInputRef.current;
+    if (!el) {
+      setCommentInput((prev) => prev + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const next = el.value.slice(0, start) + emoji + el.value.slice(end);
+    setCommentInput(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
 
   // Post menu
   const [showMenu, setShowMenu] = useState(false);
@@ -160,7 +192,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   const [showSendToFriend, setShowSendToFriend] = useState(false);
 
   // Collapsed state for complete find_players posts
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initialExpanded);
   const isCollapsible = isFindPlayers && complete;
 
   // Derive end time from start + duration ("14:00" + 90 → "15:30")
@@ -240,6 +272,11 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
     }
   };
 
+  useEffect(() => {
+    if (initialShowComments && !commentsLoaded) loadComments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleComment = async () => {
     if (!commentInput.trim() || postingComment) return;
     setPostingComment(true);
@@ -269,25 +306,58 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   // to expand back to the full post for details; tap "Open chat" to jump into
   // the group chat where confirmed players coordinate.
   if (isCollapsible && !expanded) {
+    const collapsedRole: "creator" | "player" | "bystander" = isAuthor
+      ? "creator"
+      : myRequest?.status === "APPROVED"
+      ? "player"
+      : "bystander";
+    const roleStyles = {
+      creator: {
+        container: "bg-green-50 ring-court-green/60",
+        icon: "bg-court-green",
+        title: "text-court-green",
+        subtitle: "text-gray-600",
+        meta: "text-gray-500",
+        dot: "text-gray-400",
+      },
+      player: {
+        container: "bg-ball-yellow/60 ring-ball-yellow",
+        icon: "bg-ball-yellow",
+        title: "text-court-green",
+        subtitle: "text-court-green",
+        meta: "text-court-green/80",
+        dot: "text-court-green/60",
+      },
+      bystander: {
+        container: "bg-gray-50 ring-gray-200",
+        icon: "bg-gray-400",
+        title: "text-gray-600",
+        subtitle: "text-gray-600",
+        meta: "text-gray-500",
+        dot: "text-gray-400",
+      },
+    }[collapsedRole];
     return (
-      <div className="w-full bg-green-50 rounded-2xl shadow-md ring-2 ring-court-green/60 px-4 py-3 flex items-center gap-3">
+      <div className={`w-full rounded-2xl shadow-md ring-2 px-4 py-3 flex items-center gap-3 ${roleStyles.container}`}>
         <button
           onClick={() => setExpanded(true)}
           className="flex-1 min-w-0 flex items-center gap-3 text-left group"
           aria-label="Show full game details"
         >
-          <div className="w-9 h-9 rounded-full bg-court-green flex items-center justify-center shrink-0 shadow-sm">
+          <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 shadow-sm ${roleStyles.icon}`}>
             <span className="text-base leading-none">🎾</span>
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-bold text-court-green truncate">Game confirmed</span>
-              <span className="text-xs text-gray-400">·</span>
-              <span className="text-xs text-gray-600 truncate capitalize">
+              <span className={`text-sm font-bold truncate ${roleStyles.title}`}>
+                {isAuthor ? "Your" : `${post.author.name}'s`} Game confirmed
+              </span>
+              <span className={`text-xs ${roleStyles.dot}`}>·</span>
+              <span className={`text-xs truncate capitalize font-medium ${roleStyles.subtitle}`}>
                 {livePlayDate} {livePlayTime}{endTime ? `–${endTime}` : ""}
               </span>
             </div>
-            <div className="text-[11px] text-gray-500 truncate mt-0.5">
+            <div className={`text-[11px] truncate mt-0.5 font-medium ${roleStyles.meta}`}>
               {liveCourtLocation || "Location TBD"}
               {((post.approvedPlayerNames && post.approvedPlayerNames.length > 0) || liveManualPlayers) && (
                 <>
@@ -457,6 +527,28 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                 {livePlayTime && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Time</p><p className="text-sm font-semibold text-gray-800">{livePlayTime}{endTime ? ` – ${endTime}` : ""}{livePlayDuration ? ` (${livePlayDuration} min)` : ""}</p></div></div>)}
                 {liveCourtLocation && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Court</p><p className="text-sm font-semibold text-gray-800">{liveCourtLocation}</p></div></div>)}
                 {liveGameType && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" />{liveGameType === "doubles" && <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />}</svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Type</p><p className="text-sm font-semibold text-gray-800 capitalize">{liveGameType}</p></div></div>)}
+                {(post.skillMin != null || post.skillMax != null) && (() => {
+                  const min = post.skillMin ?? 2.5;
+                  const max = post.skillMax ?? 7.0;
+                  const range = `${min.toFixed(1)}–${max >= 7.0 ? "5.0+" : max.toFixed(1)}`;
+                  return (
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="6 4 6 12 9 14 15 14 18 12 18 4" />
+                          <line x1="6" y1="4" x2="18" y2="4" />
+                          <line x1="9" y1="14" x2="9" y2="20" />
+                          <line x1="15" y1="14" x2="15" y2="20" />
+                          <line x1="6" y1="20" x2="18" y2="20" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Level</p>
+                        <p className="text-sm font-semibold text-gray-800">NTRP {range}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
               )}
               {isProposeTeam && (
@@ -613,13 +705,58 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
         </div>
 
         {/* Media */}
-        {post.mediaUrl && post.mediaType === "image" && (
-          <div className="cursor-pointer" onClick={() => setImageExpanded(true)}>
-            <img src={post.mediaUrl} alt="Post image" className="w-full max-h-[500px] object-cover hover:opacity-95 transition-opacity" />
+        {photos.length === 1 && (
+          <div className="cursor-pointer" onClick={() => { setPhotoIndex(0); setImageExpanded(true); }}>
+            <img src={photos[0]} alt="Post image" className="w-full max-h-[500px] object-cover hover:opacity-95 transition-opacity" />
+          </div>
+        )}
+        {photos.length > 1 && (
+          <div className="relative">
+            <div
+              ref={photoStripRef}
+              onScroll={(e) => {
+                const el = e.currentTarget;
+                const idx = Math.round(el.scrollLeft / el.clientWidth);
+                if (idx !== photoIndex) setPhotoIndex(idx);
+              }}
+              className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide cursor-pointer"
+              style={{ scrollbarWidth: "none" }}
+            >
+              {photos.map((url, i) => (
+                <img
+                  key={i}
+                  src={url}
+                  alt={`Photo ${i + 1}`}
+                  onClick={() => { setPhotoIndex(i); setImageExpanded(true); }}
+                  className="snap-center min-w-full max-h-[500px] object-cover hover:opacity-95 transition-opacity"
+                />
+              ))}
+            </div>
+            <div className="absolute top-3 right-3 bg-black/60 text-white text-[11px] font-semibold px-2 py-1 rounded-full pointer-events-none">
+              {photoIndex + 1} / {photos.length}
+            </div>
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 pointer-events-none">
+              {photos.map((_, i) => (
+                <span
+                  key={i}
+                  className={`w-1.5 h-1.5 rounded-full transition-colors ${
+                    i === photoIndex ? "bg-white" : "bg-white/50"
+                  }`}
+                />
+              ))}
+            </div>
           </div>
         )}
         {post.mediaUrl && post.mediaType === "video" && (
-          <div className="bg-black"><video src={post.mediaUrl} className="w-full max-h-[500px] object-contain" controls preload="metadata" playsInline /></div>
+          <div className="bg-black">
+            <video
+              src={`${post.mediaUrl}#t=0.1`}
+              className="w-full max-h-[500px] object-contain"
+              controls
+              preload="metadata"
+              playsInline
+            />
+          </div>
         )}
 
         {/* Actions: Like + Comment toggle */}
@@ -681,6 +818,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
               <Avatar name={session?.user?.name || ""} image={session?.user?.image} size="sm" />
               <div className="flex-1 flex items-center gap-2">
                 <input
+                  ref={commentInputRef}
                   type="text"
                   value={commentInput}
                   onChange={(e) => setCommentInput(e.target.value)}
@@ -688,6 +826,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                   placeholder="Write a comment..."
                   className="flex-1 px-3.5 py-2 border border-gray-200 rounded-full text-sm bg-surface/50 focus:bg-white transition-colors"
                 />
+                <EmojiPicker open={commentEmojiOpen} onOpenChange={setCommentEmojiOpen} onSelect={insertCommentEmoji} />
                 <button
                   onClick={handleComment}
                   disabled={!commentInput.trim() || postingComment}
@@ -704,12 +843,49 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
       </div>
 
       {/* Lightbox */}
-      {imageExpanded && post.mediaUrl && post.mediaType === "image" && (
+      {imageExpanded && photos.length > 0 && (
         <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 cursor-pointer" onClick={() => setImageExpanded(false)}>
-          <button className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors" onClick={() => setImageExpanded(false)}>
+          <button
+            className="absolute top-4 right-4 z-10 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+            onClick={() => setImageExpanded(false)}
+            aria-label="Close"
+          >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
-          <img src={post.mediaUrl} alt="Post image" className="max-w-full max-h-[90vh] object-contain rounded-lg" onClick={(e) => e.stopPropagation()} />
+
+          {photos.length > 1 && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); setPhotoIndex((i) => (i - 1 + photos.length) % photos.length); }}
+                disabled={photos.length <= 1}
+                className="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+                aria-label="Previous photo"
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setPhotoIndex((i) => (i + 1) % photos.length); }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+                aria-label="Next photo"
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="9 6 15 12 9 18" />
+                </svg>
+              </button>
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-white/15 text-white text-xs font-semibold px-2.5 py-1 rounded-full">
+                {photoIndex + 1} / {photos.length}
+              </div>
+            </>
+          )}
+
+          <img
+            src={photos[photoIndex]}
+            alt={`Photo ${photoIndex + 1}`}
+            className="max-w-full max-h-[90vh] object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
 
@@ -869,7 +1045,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-1">Time</label>
-                      <input type="time" value={editPlayTime} onChange={(e) => setEditPlayTime(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
+                      <input type="time" lang="en-GB" value={editPlayTime} onChange={(e) => setEditPlayTime(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-1">Duration</label>
@@ -1415,9 +1591,10 @@ function ManageRequestsModal({
                       method: "PATCH",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ playersConfirmed: playersNeeded, isComplete: true }),
-                    }).then((res) => {
+                    }).then(async (res) => {
                       if (res.ok) {
-                        onUpdate(playersNeeded, true);
+                        const data = await res.json().catch(() => ({}));
+                        onUpdate(playersNeeded, true, data.sessionChatId ?? null);
                         setCurrentConfirmedCount(playersNeeded);
                         setDropdownValue(playersNeeded);
                         setIsMarkedFull(true);
@@ -1425,8 +1602,11 @@ function ManageRequestsModal({
                       setSavingManual(false);
                     }).catch(() => setSavingManual(false));
                   } else {
-                    // Has unfilled slots — start with 1 input, user can add more
-                    setManualNames([""]);
+                    // Has unfilled slots — pre-create one input per missing
+                    // player so the user can fill them in (or leave blank →
+                    // auto-named "Guest N" on submit).
+                    const slots = Math.max(playersNeeded - approvedCount, 1);
+                    setManualNames(Array(slots).fill(""));
                     setShowMarkFullForm(true);
                   }
                 }}
@@ -1513,7 +1693,19 @@ function ManageRequestsModal({
               <button
                 onClick={() => {
                   setSavingManual(true);
-                  const names = manualNames.filter((n) => n.trim()).join(", ");
+                  // Every unfilled slot becomes a guest. Blank inputs are
+                  // auto-named "Guest 1", "Guest 2", ... so they still count
+                  // toward the split. If the user added more inputs than
+                  // unfilled slots, honor the extras too.
+                  const guestSlots = Math.max(
+                    playersNeeded - approvedCount,
+                    manualNames.length
+                  );
+                  const filled = Array.from({ length: guestSlots }, (_, i) => {
+                    const typed = (manualNames[i] || "").trim();
+                    return typed.length > 0 ? typed : `Guest ${i + 1}`;
+                  });
+                  const names = filled.join(", ");
                   fetch(`/api/posts/${postId}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
@@ -1522,9 +1714,10 @@ function ManageRequestsModal({
                       isComplete: true,
                       manualPlayers: names,
                     }),
-                  }).then((res) => {
+                  }).then(async (res) => {
                     if (res.ok) {
-                      onUpdate(playersNeeded, true);
+                      const data = await res.json().catch(() => ({}));
+                      onUpdate(playersNeeded, true, data.sessionChatId ?? null);
                       setCurrentConfirmedCount(playersNeeded);
                       setDropdownValue(playersNeeded);
                       setIsMarkedFull(true);

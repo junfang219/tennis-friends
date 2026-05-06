@@ -62,24 +62,51 @@ export async function GET(
       playRequests: {
         select: { id: true, status: true, note: true, userId: true, user: { select: { name: true } } },
       },
+      photos: { orderBy: { order: "asc" }, select: { url: true } },
       _count: { select: { likes: true, comments: true, playRequests: { where: { status: "PENDING" } } } },
     },
   });
+
+  const completePostIds = posts
+    .filter((p) => p.postType === "find_players" && p.isComplete)
+    .map((p) => p.id);
+  const sessionChats = completePostIds.length
+    ? await prisma.chat.findMany({
+        where: {
+          postId: { in: completePostIds },
+          participants: { some: { userId: session.user.id } },
+        },
+        select: { id: true, postId: true },
+      })
+    : [];
+  const sessionChatByPost = new Map(
+    sessionChats.map((c) => [c.postId as string, c.id])
+  );
 
   const formattedPosts = posts.map((post) => ({
     id: post.id,
     content: post.content,
     mediaUrl: post.mediaUrl,
     mediaType: post.mediaType,
+    photoUrls:
+      post.photos.length > 0
+        ? post.photos.map((p) => p.url)
+        : post.mediaType === "image" && post.mediaUrl
+        ? [post.mediaUrl]
+        : [],
     postType: post.postType,
     playDate: post.playDate,
     playTime: post.playTime,
+    playDuration: post.playDuration,
     courtLocation: post.courtLocation,
     gameType: post.gameType,
     playersNeeded: post.playersNeeded,
+    skillMin: post.skillMin,
+    skillMax: post.skillMax,
     playersConfirmed: post.playersConfirmed,
     courtBooked: post.courtBooked,
     isComplete: post.isComplete,
+    sessionChatId: sessionChatByPost.get(post.id) || null,
     commentsDisabled: post.commentsDisabled,
     createdAt: post.createdAt,
     author: post.author,

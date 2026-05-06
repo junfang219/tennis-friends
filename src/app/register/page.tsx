@@ -4,10 +4,16 @@ import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import OAuthButtons from "@/components/OAuthButtons";
+import PhoneAuthForm from "@/components/PhoneAuthForm";
+
+type Tab = "email" | "phone";
 
 export default function RegisterPage() {
+  const [tab, setTab] = useState<Tab>("email");
   const [form, setForm] = useState({
     name: "",
+    handle: "",
     email: "",
     password: "",
   });
@@ -72,65 +78,119 @@ export default function RegisterPage() {
         </div>
 
         <div className="bg-white rounded-3xl shadow-xl shadow-court-green/5 border border-court-green-pale/20 p-8">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <div className="bg-red-50 text-red-600 text-sm font-medium px-4 py-3 rounded-xl border border-red-100">
-                {error}
-              </div>
-            )}
+          <OAuthButtons callbackUrl="/onboarding" />
 
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5">Full Name</label>
-              <input
-                type="text"
-                value={form.name}
-                onChange={(e) => update("name", e.target.value)}
-                className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm bg-surface/50"
-                placeholder="Roger Federer"
-                required
-              />
+          <div className="relative my-6">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-200" />
             </div>
-
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5">Email</label>
-              <input
-                type="email"
-                value={form.email}
-                onChange={(e) => update("email", e.target.value)}
-                className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm bg-surface/50"
-                placeholder="your@email.com"
-                required
-              />
+            <div className="relative flex justify-center">
+              <span className="px-3 text-xs uppercase tracking-wider text-gray-400 bg-white font-semibold">or</span>
             </div>
+          </div>
 
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5">Password</label>
-              <input
-                type="password"
-                value={form.password}
-                onChange={(e) => update("password", e.target.value)}
-                className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm bg-surface/50"
-                placeholder="At least 6 characters"
-                required
-                minLength={6}
-              />
-            </div>
-
+          <div className="flex bg-surface/70 rounded-xl p-1 mb-5">
             <button
-              type="submit"
-              disabled={loading}
-              className="btn-primary w-full py-3 text-base mt-2"
+              type="button"
+              onClick={() => setTab("email")}
+              className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${
+                tab === "email" ? "bg-white text-court-green shadow-sm" : "text-gray-500"
+              }`}
             >
-              {loading ? (
-                <svg className="animate-spin w-5 h-5 mx-auto" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
-                  <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                </svg>
-              ) : (
-                "Create Account"
-              )}
+              Email
             </button>
-          </form>
+            <button
+              type="button"
+              onClick={() => setTab("phone")}
+              className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${
+                tab === "phone" ? "bg-white text-court-green shadow-sm" : "text-gray-500"
+              }`}
+            >
+              Phone
+            </button>
+          </div>
+
+          {tab === "email" ? (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {error && (
+                <div className="bg-red-50 text-red-600 text-sm font-medium px-4 py-3 rounded-xl border border-red-100">
+                  {error}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Full Name</label>
+                <input
+                  type="text"
+                  value={form.name}
+                  onChange={(e) => update("name", e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm bg-surface/50"
+                  placeholder="Roger Federer"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Handle</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">@</span>
+                  <input
+                    type="text"
+                    value={form.handle}
+                    onChange={(e) => update("handle", e.target.value.replace(/^@+/, ""))}
+                    className="w-full pl-7 pr-4 py-3 border border-gray-200 rounded-xl text-sm bg-surface/50"
+                    placeholder="your_handle"
+                    required
+                    minLength={3}
+                    maxLength={20}
+                  />
+                </div>
+                <p className="text-[11px] text-gray-400 mt-1">3–20 characters: letters, numbers, dot, underscore.</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Email</label>
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => update("email", e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm bg-surface/50"
+                  placeholder="your@email.com"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Password</label>
+                <input
+                  type="password"
+                  value={form.password}
+                  onChange={(e) => update("password", e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm bg-surface/50"
+                  placeholder="At least 6 characters"
+                  required
+                  minLength={6}
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="btn-primary w-full py-3 text-base mt-2"
+              >
+                {loading ? (
+                  <svg className="animate-spin w-5 h-5 mx-auto" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
+                    <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  </svg>
+                ) : (
+                  "Create Account"
+                )}
+              </button>
+            </form>
+          ) : (
+            <PhoneAuthForm callbackUrl="/onboarding" />
+          )}
 
           <div className="mt-6 text-center">
             <p className="text-sm text-gray-500">

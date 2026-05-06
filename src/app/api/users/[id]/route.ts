@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { parseTags } from "@/lib/tags";
 
 export async function GET(
   _request: Request,
@@ -27,7 +28,7 @@ export async function GET(
     // Return a stub profile so the page can show a friendly blocked state
     const stub = await prisma.user.findUnique({
       where: { id },
-      select: { id: true, name: true, profileImageUrl: true },
+      select: { id: true, name: true, profileImageUrl: true, coverImageUrl: true },
     });
     return NextResponse.json({
       ...stub,
@@ -36,6 +37,13 @@ export async function GET(
       bio: "",
       skillLevel: "",
       favoriteSurface: "",
+      gender: "",
+      ageRange: "",
+      ratingSystem: "",
+      ntrpRating: null,
+      utrRating: null,
+      handle: null,
+      customTags: [],
       posts: [],
       friendCount: 0,
       friendshipId: null,
@@ -61,7 +69,18 @@ export async function GET(
       skillLevel: true,
       favoriteSurface: true,
       profileImageUrl: true,
+      coverImageUrl: true,
+      coverOffsetY: true,
+      coverScale: true,
+      customTags: true,
+      gender: true,
+      ageRange: true,
+      ratingSystem: true,
+      ntrpRating: true,
+      utrRating: true,
+      handle: true,
       createdAt: true,
+      highlights: { orderBy: { createdAt: "desc" } },
       posts: {
         where: {
           OR: [
@@ -84,6 +103,7 @@ export async function GET(
           playRequests: {
             select: { id: true, status: true, note: true, userId: true, user: { select: { name: true } } },
           },
+          photos: { orderBy: { order: "asc" }, select: { url: true } },
           _count: { select: { likes: true, comments: true, playRequests: { where: { status: "PENDING" } } } },
         },
       },
@@ -93,6 +113,22 @@ export async function GET(
   if (!user) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
+
+  const completePostIds = user.posts
+    .filter((p) => p.postType === "find_players" && p.isComplete)
+    .map((p) => p.id);
+  const sessionChats = completePostIds.length
+    ? await prisma.chat.findMany({
+        where: {
+          postId: { in: completePostIds },
+          participants: { some: { userId: session.user.id } },
+        },
+        select: { id: true, postId: true },
+      })
+    : [];
+  const sessionChatByPost = new Map(
+    sessionChats.map((c) => [c.postId as string, c.id])
+  );
 
   const friendship = await prisma.friendship.findFirst({
     where: {
@@ -115,15 +151,25 @@ export async function GET(
     content: post.content,
     mediaUrl: post.mediaUrl,
     mediaType: post.mediaType,
+    photoUrls:
+      post.photos.length > 0
+        ? post.photos.map((p) => p.url)
+        : post.mediaType === "image" && post.mediaUrl
+        ? [post.mediaUrl]
+        : [],
     postType: post.postType,
     playDate: post.playDate,
     playTime: post.playTime,
+    playDuration: post.playDuration,
     courtLocation: post.courtLocation,
     gameType: post.gameType,
     playersNeeded: post.playersNeeded,
+    skillMin: post.skillMin,
+    skillMax: post.skillMax,
     playersConfirmed: post.playersConfirmed,
     courtBooked: post.courtBooked,
     isComplete: post.isComplete,
+    sessionChatId: sessionChatByPost.get(post.id) || null,
     commentsDisabled: post.commentsDisabled,
     createdAt: post.createdAt,
     _count: post._count,
@@ -139,6 +185,7 @@ export async function GET(
 
   return NextResponse.json({
     ...user,
+    customTags: parseTags(user.customTags),
     posts,
     friendCount,
     friendshipId: friendship?.id || null,

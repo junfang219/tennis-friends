@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { parseTags, serializeTags } from "@/lib/tags";
 
 const GENDERS = new Set(["male", "female", "non_binary", "prefer_not_to_say"]);
 const AGE_RANGES = new Set(["under_18", "18_29", "30_49", "50_plus"]);
@@ -15,13 +16,15 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   if (!body) return NextResponse.json({ error: "Invalid body" }, { status: 400 });
 
-  const { gender, ageRange, ratingSystem, ntrpRating, utrRating, skillLevel } = body as {
+  const { gender, ageRange, ratingSystem, ntrpRating, utrRating, skillLevel, club, city } = body as {
     gender?: string;
     ageRange?: string;
     ratingSystem?: string;
     ntrpRating?: number;
     utrRating?: number;
     skillLevel?: string;
+    club?: string;
+    city?: string;
   };
 
   if (!gender || !GENDERS.has(gender)) {
@@ -64,6 +67,21 @@ export async function POST(request: Request) {
   }
 
   updates.onboardingComplete = true;
+
+  // Merge optional onboarding extras (home club + current city) into the
+  // user's customTags so they show up as chips on the profile. Preserve any
+  // existing tags so this is non-destructive even on re-onboarding.
+  if ((typeof club === "string" && club.trim()) || (typeof city === "string" && city.trim())) {
+    const me = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { customTags: true },
+    });
+    const existing = parseTags(me?.customTags);
+    const merged = [...existing];
+    if (typeof club === "string" && club.trim() && !merged.includes(club.trim())) merged.push(club.trim());
+    if (typeof city === "string" && city.trim() && !merged.includes(city.trim())) merged.push(city.trim());
+    updates.customTags = serializeTags(merged);
+  }
 
   await prisma.user.update({
     where: { id: session.user.id },

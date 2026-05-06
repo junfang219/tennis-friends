@@ -6,8 +6,19 @@ import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
+import { formatRating } from "@/lib/profileLabels";
 
-type FriendUser = { id: string; name: string; profileImageUrl: string; skillLevel: string };
+type FriendUser = {
+  id: string;
+  name: string;
+  profileImageUrl: string;
+  skillLevel: string;
+  gender?: string;
+  ageRange?: string;
+  ratingSystem?: string;
+  ntrpRating?: number | null;
+  utrRating?: number | null;
+};
 
 type FriendEntry = {
   friendshipId: string;
@@ -30,7 +41,7 @@ type FriendGroup = {
 type BlockedEntry = {
   id: string;
   createdAt: string;
-  user: { id: string; name: string; profileImageUrl: string; skillLevel: string };
+  user: FriendUser;
 };
 
 type InboxItem = {
@@ -53,13 +64,6 @@ type InboxItem = {
   lastMessage:
     | { content: string; createdAt: string; fromSelf: boolean; senderName?: string }
     | null;
-};
-
-const SKILL_LABELS: Record<string, string> = {
-  beginner: "Beginner",
-  intermediate: "Intermediate",
-  advanced: "Advanced",
-  professional: "Professional",
 };
 
 export default function FriendsPage() {
@@ -1196,9 +1200,11 @@ export default function FriendsPage() {
                   >
                     {entry.user.name}
                   </Link>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    {SKILL_LABELS[entry.user.skillLevel] || entry.user.skillLevel}
-                  </p>
+                  {formatRating(entry.user) && (
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {formatRating(entry.user)}
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   {tab === "friends" && (

@@ -275,7 +275,7 @@ export default function GroupChatPage() {
                     {msg.mediaUrl && (
                       <div className={`rounded-2xl overflow-hidden shadow-sm ${isMe ? "ml-auto" : ""}`}>
                         {msg.mediaType === "video" ? (
-                          <video src={msg.mediaUrl} controls className="max-w-full max-h-80 bg-black" />
+                          <video src={`${msg.mediaUrl}#t=0.1`} controls preload="metadata" playsInline className="max-w-full max-h-80 bg-black" />
                         ) : (
                           <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer">
                             <img src={msg.mediaUrl} alt="" className="max-w-full max-h-80 object-cover" />
@@ -318,7 +318,7 @@ export default function GroupChatPage() {
             {pendingMedia.type === "image" ? (
               <img src={pendingMedia.url} alt="" className="w-20 h-20 object-cover rounded-lg" />
             ) : (
-              <video src={pendingMedia.url} className="w-20 h-20 object-cover rounded-lg bg-black" />
+              <video src={`${pendingMedia.url}#t=0.1`} preload="metadata" playsInline muted className="w-20 h-20 object-cover rounded-lg bg-black" />
             )}
             <button
               onClick={() => setPendingMedia(null)}

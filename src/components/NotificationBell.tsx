@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import Avatar from "./Avatar";
 import PostCard from "./PostCard";
 
@@ -116,12 +116,14 @@ type FriendRequest = {
 
 export default function NotificationBell() {
   const router = useRouter();
+  const pathname = usePathname();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [pendingFriendRequests, setPendingFriendRequests] = useState(0);
   const [open, setOpen] = useState(false);
   const [openPost, setOpenPost] = useState<Record<string, unknown> | null>(null);
   const [loadingPost, setLoadingPost] = useState(false);
+  const [openWithComments, setOpenWithComments] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [anchorPos, setAnchorPos] = useState<{ top: number; right: number } | null>(null);
@@ -133,9 +135,10 @@ export default function NotificationBell() {
   const [friendReqLoading, setFriendReqLoading] = useState(false);
   const [friendReqAction, setFriendReqAction] = useState("");
 
-  const openPostModal = async (postId: string) => {
+  const openPostModal = async (postId: string, withComments = false) => {
     if (!postId) return;
     setOpen(false);
+    setOpenWithComments(withComments);
     setOpenPost({}); // Show modal immediately
     setLoadingPost(true);
     try {
@@ -158,7 +161,8 @@ export default function NotificationBell() {
       router.push(`/profile/${n.actor.id}`);
       return;
     }
-    if (n.postId) openPostModal(n.postId);
+    const wantsComments = n.type === "comment" || n.type === "reply";
+    if (n.postId) openPostModal(n.postId, wantsComments);
   };
 
   const loadFriendRequests = async () => {
@@ -229,6 +233,16 @@ export default function NotificationBell() {
     pollRef.current = setInterval(loadNotifications, 15000); // Poll every 15s
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
+
+  // Close any open modal/dropdown when the route changes (e.g. tapping
+  // "Open chat" inside the post-detail modal navigates to /chat/group/[id]).
+  // The bell sits in the persistent layout so its state would otherwise
+  // survive navigation and leave stale overlays on top of the new page.
+  useEffect(() => {
+    setOpenPost(null);
+    setOpen(false);
+    setShowFriendRequests(false);
+  }, [pathname]);
 
   // Click outside to close
   useEffect(() => {
@@ -470,7 +484,11 @@ export default function NotificationBell() {
                 </svg>
               </div>
             ) : (
-              <PostCard post={openPost as Parameters<typeof PostCard>[0]["post"]} />
+              <PostCard
+                post={openPost as Parameters<typeof PostCard>[0]["post"]}
+                initialExpanded={openWithComments}
+                initialShowComments={openWithComments}
+              />
             )}
           </div>
         </div>,

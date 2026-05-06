@@ -57,18 +57,6 @@ export default function FriendRequestButton({
     setLoading(false);
   };
 
-  const removeFriend = async () => {
-    setLoading(true);
-    await fetch("/api/friends/remove", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ friendshipId: state.friendshipId }),
-    });
-    setState({ friendshipId: null, friendshipStatus: null, isRequester: false });
-    setLoading(false);
-    router.refresh();
-  };
-
   if (loading) {
     return (
       <button disabled className="btn-secondary btn-sm opacity-60">
@@ -125,17 +113,12 @@ export default function FriendRequestButton({
   // Accepted
   if (state.friendshipStatus === "ACCEPTED") {
     return (
-      <div className="flex items-center gap-2">
-        <span className="inline-flex items-center gap-1.5 text-sm font-medium text-court-green-soft px-3 py-1.5 bg-court-green-soft/10 rounded-xl">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-            <polyline points="20,6 9,17 4,12" />
-          </svg>
-          Friends
-        </span>
-        <button onClick={removeFriend} className="text-xs text-gray-400 hover:text-red-500 transition-colors px-2 py-1">
-          Remove
-        </button>
-      </div>
+      <span className="inline-flex items-center gap-1.5 text-sm font-medium text-court-green-soft px-3 py-1.5 bg-court-green-soft/10 rounded-xl">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+          <polyline points="20,6 9,17 4,12" />
+        </svg>
+        Friends
+      </span>
     );
   }
 

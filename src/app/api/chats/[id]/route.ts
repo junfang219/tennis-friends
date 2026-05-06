@@ -40,12 +40,18 @@ export async function GET(
     return NextResponse.json({ error: "Chat not found" }, { status: 404 });
   }
 
+  const guestNames = (chat.manualPlayerNames || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
   return NextResponse.json({
     id: chat.id,
     name: chat.name,
     creatorId: chat.creatorId,
     createdAt: chat.createdAt,
     participants: chat.participants.map((p) => p.user),
+    guestNames,
   });
 }
 

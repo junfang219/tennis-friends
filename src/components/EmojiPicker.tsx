@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 const EMOJI_CATEGORIES = [
   {
@@ -76,14 +77,46 @@ export default function EmojiPicker({
 }) {
   const [activeCategory, setActiveCategory] = useState<CategoryId>("tennis");
   const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const [popupPos, setPopupPos] = useState<{ top: number; left: number } | null>(null);
 
-  // Outside-click close
+  // Position the popup using fixed coords so it escapes any overflow:hidden parents.
+  useLayoutEffect(() => {
+    if (!open || !buttonRef.current) return;
+    const POPUP_W = 288; // w-72
+    const POPUP_H = 280; // approx height of picker
+    const GAP = 8;
+    const update = () => {
+      const rect = buttonRef.current!.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      // Prefer above the button; flip below if not enough room.
+      let top = rect.top - POPUP_H - GAP;
+      if (top < 8) top = Math.min(rect.bottom + GAP, vh - POPUP_H - 8);
+      // Align right edge to button right (for align="right"), left edge for "left".
+      let left = align === "right" ? rect.right - POPUP_W : rect.left;
+      if (left < 8) left = 8;
+      if (left + POPUP_W > vw - 8) left = vw - POPUP_W - 8;
+      setPopupPos({ top, left });
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [open, align]);
+
+  // Outside-click close (covers both trigger container and portal popup)
   useEffect(() => {
     if (!open) return;
     function handle(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        onOpenChange(false);
-      }
+      const target = e.target as Node;
+      if (containerRef.current?.contains(target)) return;
+      if (popupRef.current?.contains(target)) return;
+      onOpenChange(false);
     }
     document.addEventListener("mousedown", handle);
     return () => document.removeEventListener("mousedown", handle);
@@ -104,6 +137,7 @@ export default function EmojiPicker({
   return (
     <div className="relative shrink-0" ref={containerRef}>
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => onOpenChange(!open)}
         className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors shrink-0 ${
@@ -122,9 +156,11 @@ export default function EmojiPicker({
         </svg>
       </button>
 
-      {open && (
+      {open && popupPos && typeof window !== "undefined" && createPortal(
         <div
-          className={`absolute bottom-12 ${align === "right" ? "right-0" : "left-0"} z-[60] w-72 bg-white rounded-2xl shadow-2xl border border-court-green-pale/30 p-3 animate-fade-in-up`}
+          ref={popupRef}
+          style={{ position: "fixed", top: popupPos.top, left: popupPos.left, width: 288 }}
+          className="z-[10001] bg-white rounded-2xl shadow-2xl border border-court-green-pale/30 p-3 animate-fade-in-up"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Category tabs */}
@@ -168,7 +204,8 @@ export default function EmojiPicker({
           <div className="text-[10px] text-gray-400 text-center mt-2 pt-2 border-t border-gray-100">
             {active.label}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

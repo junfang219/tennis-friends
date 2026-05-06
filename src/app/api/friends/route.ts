@@ -17,20 +17,20 @@ export async function GET() {
         OR: [{ requesterId: userId }, { addresseeId: userId }],
       },
       include: {
-        requester: { select: { id: true, name: true, profileImageUrl: true, skillLevel: true } },
-        addressee: { select: { id: true, name: true, profileImageUrl: true, skillLevel: true } },
+        requester: { select: { id: true, name: true, profileImageUrl: true, skillLevel: true, gender: true, ageRange: true, ratingSystem: true, ntrpRating: true, utrRating: true } },
+        addressee: { select: { id: true, name: true, profileImageUrl: true, skillLevel: true, gender: true, ageRange: true, ratingSystem: true, ntrpRating: true, utrRating: true } },
       },
     }),
     prisma.friendship.findMany({
       where: { addresseeId: userId, status: "PENDING" },
       include: {
-        requester: { select: { id: true, name: true, profileImageUrl: true, skillLevel: true } },
+        requester: { select: { id: true, name: true, profileImageUrl: true, skillLevel: true, gender: true, ageRange: true, ratingSystem: true, ntrpRating: true, utrRating: true } },
       },
     }),
     prisma.friendship.findMany({
       where: { requesterId: userId, status: "PENDING" },
       include: {
-        addressee: { select: { id: true, name: true, profileImageUrl: true, skillLevel: true } },
+        addressee: { select: { id: true, name: true, profileImageUrl: true, skillLevel: true, gender: true, ageRange: true, ratingSystem: true, ntrpRating: true, utrRating: true } },
       },
     }),
   ]);

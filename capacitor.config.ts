@@ -7,7 +7,7 @@ const config: CapacitorConfig = {
   server: {
     // During development, load from the Next.js dev server.
     // For production, change to your deployed URL and remove cleartext.
-    url: 'http://192.168.7.129:3000',
+    url: 'http://10.229.221.32:3000',
     cleartext: true,
   },
   ios: {

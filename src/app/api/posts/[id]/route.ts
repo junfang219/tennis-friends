@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { ensureSessionChat } from "@/lib/sessionChat";
 
 export async function GET(
   _request: Request,
@@ -22,6 +23,7 @@ export async function GET(
       postGroups: { include: { group: { select: { id: true, name: true } } } },
       postFriendGroups: { include: { friendGroup: { select: { id: true, name: true } } } },
       playRequests: { select: { id: true, status: true, note: true, userId: true, user: { select: { name: true } } } },
+      photos: { orderBy: { order: "asc" }, select: { url: true } },
       _count: { select: { likes: true, comments: true, playRequests: { where: { status: "PENDING" } } } },
     },
   });
@@ -30,20 +32,57 @@ export async function GET(
     return NextResponse.json({ error: "Post not found" }, { status: 404 });
   }
 
+  let sessionChatId: string | null = null;
+  if (post.postType === "find_players" && post.isComplete) {
+    const chat = await prisma.chat.findFirst({
+      where: {
+        postId: post.id,
+        participants: { some: { userId } },
+      },
+      select: { id: true },
+    });
+    sessionChatId = chat?.id || null;
+    // Back-fill: if the post is complete but no chat exists yet (e.g. it was
+    // marked full manually before this feature), create one now lazily — but
+    // only when the viewer is a participant (author or approved player).
+    if (!sessionChatId) {
+      const isParticipant =
+        post.authorId === userId ||
+        post.playRequests.some((r) => r.userId === userId && r.status === "APPROVED");
+      if (isParticipant) {
+        try {
+          sessionChatId = await ensureSessionChat(post.id);
+        } catch (err) {
+          console.error("ensureSessionChat (lazy) failed:", err);
+        }
+      }
+    }
+  }
+
   return NextResponse.json({
     id: post.id,
     content: post.content,
     mediaUrl: post.mediaUrl,
     mediaType: post.mediaType,
+    photoUrls:
+      post.photos.length > 0
+        ? post.photos.map((p) => p.url)
+        : post.mediaType === "image" && post.mediaUrl
+        ? [post.mediaUrl]
+        : [],
     postType: post.postType,
     playDate: post.playDate,
     playTime: post.playTime,
+    playDuration: post.playDuration,
     courtLocation: post.courtLocation,
     gameType: post.gameType,
     playersNeeded: post.playersNeeded,
+    skillMin: post.skillMin,
+    skillMax: post.skillMax,
     playersConfirmed: post.playersConfirmed,
     courtBooked: post.courtBooked,
     isComplete: post.isComplete,
+    sessionChatId,
     commentsDisabled: post.commentsDisabled,
     createdAt: post.createdAt,
     author: post.author,
@@ -119,6 +158,8 @@ export async function PATCH(
   if (body.courtLocation !== undefined) updates.courtLocation = body.courtLocation;
   if (body.gameType !== undefined) updates.gameType = body.gameType;
   if (body.playersNeeded !== undefined) updates.playersNeeded = body.playersNeeded;
+  if (body.skillMin !== undefined) updates.skillMin = body.skillMin === null ? null : Number(body.skillMin);
+  if (body.skillMax !== undefined) updates.skillMax = body.skillMax === null ? null : Number(body.skillMax);
   if (body.playersConfirmed !== undefined) updates.playersConfirmed = body.playersConfirmed;
   if (body.courtBooked !== undefined) updates.courtBooked = body.courtBooked;
   if (body.isComplete !== undefined) updates.isComplete = body.isComplete;
@@ -152,8 +193,18 @@ export async function PATCH(
     },
   });
 
+  let sessionChatId: string | null = null;
+  if (updated.postType === "find_players" && updated.isComplete) {
+    try {
+      sessionChatId = await ensureSessionChat(updated.id);
+    } catch (err) {
+      console.error("ensureSessionChat failed:", err);
+    }
+  }
+
   return NextResponse.json({
     ...updated,
+    sessionChatId,
     groups: updated.postGroups.map((pg) => ({ id: pg.group.id, name: pg.group.name })),
     friendGroups: updated.postFriendGroups.map((pfg) => ({ id: pfg.friendGroup.id, name: pfg.friendGroup.name })),
   });

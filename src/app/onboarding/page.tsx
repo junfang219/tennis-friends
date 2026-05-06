@@ -34,6 +34,8 @@ export default function OnboardingPage() {
   const [ntrp, setNtrp] = useState<number | "">("");
   const [utr, setUtr] = useState<string>("");
   const [selfLevel, setSelfLevel] = useState<string>("intermediate");
+  const [club, setClub] = useState<string>("");
+  const [city, setCity] = useState<string>("");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -55,6 +57,8 @@ export default function OnboardingPage() {
     if (ratingSystem === "ntrp") payload.ntrpRating = ntrp;
     if (ratingSystem === "utr") payload.utrRating = Number(utr);
     if (ratingSystem === "self") payload.skillLevel = selfLevel;
+    if (club.trim()) payload.club = club.trim();
+    if (city.trim()) payload.city = city.trim();
 
     const res = await fetch("/api/onboarding", {
       method: "POST",
@@ -215,6 +219,30 @@ export default function OnboardingPage() {
                 <option value="professional">Professional / tournament</option>
               </select>
             )}
+          </section>
+
+          <section>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Home club / court</label>
+            <input
+              type="text"
+              value={club}
+              onChange={(e) => setClub(e.target.value)}
+              placeholder="e.g. Tennis Center Sand Point"
+              maxLength={30}
+              className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm bg-surface/50"
+            />
+          </section>
+
+          <section>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Current city</label>
+            <input
+              type="text"
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+              placeholder="e.g. Seattle"
+              maxLength={30}
+              className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm bg-surface/50"
+            />
           </section>
 
           <button
