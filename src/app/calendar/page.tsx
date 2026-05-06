@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
+import { buildGoogleCalendarUrl, downloadIcs } from "@/lib/calendarExport";
 
 type CalendarEvent = {
   id: string;
   playDate: string;
   playTime: string;
+  playDuration: number;
   courtLocation: string;
   gameType: string;
   playersNeeded: number;
@@ -98,8 +100,10 @@ export default function CalendarPage() {
 
   const selectedEvents = selectedDate ? (eventsByDate.get(selectedDate) || []) : [];
 
-  // All events sorted for list view
-  const sortedEvents = [...events].sort((a, b) => a.playDate.localeCompare(b.playDate) || a.playTime.localeCompare(b.playTime));
+  // Today and future events only, sorted for list view
+  const sortedEvents = events
+    .filter((ev) => ev.playDate >= today)
+    .sort((a, b) => a.playDate.localeCompare(b.playDate) || a.playTime.localeCompare(b.playTime));
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
@@ -128,23 +132,19 @@ export default function CalendarPage() {
 
       {/* Group filter */}
       {groups.length > 0 && (
-        <div className="animate-fade-in-up stagger-1 mb-6 flex items-center gap-2 flex-wrap">
+        <div className="animate-fade-in-up stagger-1 mb-6 flex items-center gap-2">
           <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filter:</span>
-          <button
-            onClick={() => setSelectedGroup("all")}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${selectedGroup === "all" ? "bg-court-green text-white" : "bg-white text-gray-600 border border-gray-200 hover:border-court-green-pale"}`}
+          <select
+            value={selectedGroup}
+            onChange={(e) => setSelectedGroup(e.target.value)}
+            className="px-3 py-2 rounded-xl text-sm font-semibold bg-white border border-gray-200 text-gray-700 focus:outline-none focus:ring-2 focus:ring-court-green/20 focus:border-court-green appearance-none pr-8"
+            style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.5' stroke-linecap='round'%3E%3Cpolyline points='6,9 12,15 18,9'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 0.75rem center" }}
           >
-            All Games
-          </button>
-          {groups.map((g) => (
-            <button
-              key={g.id}
-              onClick={() => setSelectedGroup(g.id)}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${selectedGroup === g.id ? "bg-court-green text-white" : "bg-white text-gray-600 border border-gray-200 hover:border-court-green-pale"}`}
-            >
-              {g.name}
-            </button>
-          ))}
+            <option value="all">All Games</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
         </div>
       )}
 
@@ -266,7 +266,7 @@ function EventCard({ event: ev }: { event: CalendarEvent }) {
 
   return (
     <Link
-      href={`/`}
+      href={`/?post=${ev.id}`}
       className={`block bg-white rounded-xl shadow-sm border p-4 card-hover ${ev.isComplete ? "border-green-200" : "border-court-green-pale/20"}`}
     >
       <div className="flex items-start gap-3">
@@ -296,7 +296,7 @@ function EventCard({ event: ev }: { event: CalendarEvent }) {
           <div className="flex items-center gap-3 text-xs text-gray-500 mb-2">
             <span className="flex items-center gap-1">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" /></svg>
-              {ev.playTime}
+              {ev.playTime}{ev.playDuration ? ` · ${ev.playDuration} min` : ""}
             </span>
             <span className="flex items-center gap-1 truncate">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg>
@@ -320,6 +320,28 @@ function EventCard({ event: ev }: { event: CalendarEvent }) {
               {ev.groups.map((g) => (
                 <span key={g.id} className="text-[10px] font-medium text-court-green-soft bg-court-green-soft/10 px-2 py-0.5 rounded-full">{g.name}</span>
               ))}
+            </div>
+          )}
+
+          {ev.isComplete && (
+            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-green-100/70">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Add to calendar</span>
+              <button
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); downloadIcs(ev); }}
+                className="text-xs font-semibold px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
+              >
+                Apple / .ics
+              </button>
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  window.open(buildGoogleCalendarUrl(ev), "_blank", "noopener,noreferrer");
+                }}
+                className="text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+              >
+                Google
+              </button>
             </div>
           )}
         </div>

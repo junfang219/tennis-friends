@@ -1,10 +1,13 @@
 "use client";
 
 import { useSession } from "next-auth/react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import PostComposer from "@/components/PostComposer";
 import PostCard from "@/components/PostCard";
+
+const SEEN_KEY = "tennisfriend_seen_posts";
 
 type Post = {
   id: string;
@@ -32,10 +35,124 @@ type Post = {
 
 export default function HomePage() {
   const { data: session, status } = useSession();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const targetPostId = searchParams.get("post");
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
+  const [highlightedPostId, setHighlightedPostId] = useState<string | null>(null);
   // null = show all categories; otherwise show only the selected category
   const [activeFilter, setActiveFilter] = useState<"find_players" | "propose_team" | "social" | null>(null);
+
+  // Pull-to-refresh state
+  const [refreshing, setRefreshing] = useState(false);
+  const [pullDistance, setPullDistance] = useState(0);
+  const pullStartY = useRef(0);
+  const isPulling = useRef(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const PULL_THRESHOLD = 80;
+
+  const refreshFeed = useCallback(async () => {
+    setRefreshing(true);
+    setActiveFilter(null);
+    try {
+      const res = await fetch("/api/posts");
+      const data = await res.json();
+      setPosts(data);
+    } finally {
+      setRefreshing(false);
+      setPullDistance(0);
+    }
+  }, []);
+
+  // Pull-to-refresh touch handlers
+  useEffect(() => {
+    const handleTouchStart = (e: TouchEvent) => {
+      if (window.scrollY <= 0 && !refreshing) {
+        pullStartY.current = e.touches[0].clientY;
+        isPulling.current = true;
+      }
+    };
+    const handleTouchMove = (e: TouchEvent) => {
+      if (!isPulling.current || refreshing) return;
+      const delta = e.touches[0].clientY - pullStartY.current;
+      if (delta > 0 && window.scrollY <= 0) {
+        // Apply resistance: the further you pull, the harder it gets
+        const dampened = Math.min(delta * 0.4, 120);
+        setPullDistance(dampened);
+      } else {
+        setPullDistance(0);
+      }
+    };
+    const handleTouchEnd = () => {
+      if (!isPulling.current || refreshing) return;
+      isPulling.current = false;
+      if (pullDistance >= PULL_THRESHOLD) {
+        refreshFeed();
+      } else {
+        setPullDistance(0);
+      }
+    };
+    document.addEventListener("touchstart", handleTouchStart, { passive: true });
+    document.addEventListener("touchmove", handleTouchMove, { passive: true });
+    document.addEventListener("touchend", handleTouchEnd, { passive: true });
+    return () => {
+      document.removeEventListener("touchstart", handleTouchStart);
+      document.removeEventListener("touchmove", handleTouchMove);
+      document.removeEventListener("touchend", handleTouchEnd);
+    };
+  }, [refreshing, refreshFeed, pullDistance]);
+
+  // Track which posts the user has scrolled past (unread tracking)
+  const [seenIds, setSeenIds] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const stored = localStorage.getItem(SEEN_KEY);
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+  const observerRef = useRef<IntersectionObserver | null>(null);
+
+  // Persist seen IDs to localStorage (capped at 500 to prevent bloat)
+  useEffect(() => {
+    const arr = [...seenIds];
+    const capped = arr.length > 500 ? arr.slice(arr.length - 500) : arr;
+    localStorage.setItem(SEEN_KEY, JSON.stringify(capped));
+  }, [seenIds]);
+
+  // IntersectionObserver: marks posts as "seen" when 50% visible
+  useEffect(() => {
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        const newlySeen: string[] = [];
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const postId = (entry.target as HTMLElement).dataset.postId;
+            if (postId) newlySeen.push(postId);
+          }
+        }
+        if (newlySeen.length > 0) {
+          setSeenIds((prev) => {
+            const next = new Set(prev);
+            let changed = false;
+            for (const id of newlySeen) {
+              if (!next.has(id)) { next.add(id); changed = true; }
+            }
+            return changed ? next : prev;
+          });
+        }
+      },
+      { threshold: 0.5 }
+    );
+    return () => observerRef.current?.disconnect();
+  }, []);
+
+  // Callback ref for observing post elements
+  const observePost = useCallback((el: HTMLDivElement | null) => {
+    if (el && observerRef.current) observerRef.current.observe(el);
+  }, []);
 
   const toggleFilter = (key: "find_players" | "propose_team" | "social") => {
     setActiveFilter(activeFilter === key ? null : key);
@@ -56,6 +173,23 @@ export default function HomePage() {
         });
     }
   }, [status]);
+
+  // Scroll to + highlight a post when linked via ?post=<id> (e.g. from calendar)
+  useEffect(() => {
+    if (!targetPostId || loading) return;
+    if (!posts.some((p) => p.id === targetPostId)) return;
+    setActiveFilter(null);
+    const scroll = () => {
+      const el = document.querySelector(`[data-post-id="${targetPostId}"]`) as HTMLElement | null;
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        setHighlightedPostId(targetPostId);
+        setTimeout(() => setHighlightedPostId(null), 2000);
+      }
+    };
+    const t = setTimeout(scroll, 50);
+    return () => clearTimeout(t);
+  }, [targetPostId, loading, posts]);
 
   if (status === "unauthenticated") {
     return <LandingPage />;
@@ -83,16 +217,37 @@ export default function HomePage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8">
-      <div className="animate-fade-in-up">
-        <h2 className="font-display text-2xl font-bold text-court-green mb-1">
-          Your Court
-        </h2>
-        <p className="text-gray-500 text-sm mb-6">
-          What&apos;s happening in your tennis world, {session?.user?.name?.split(" ")[0]}?
-        </p>
+    <div ref={scrollContainerRef} className="max-w-2xl mx-auto px-4 py-8">
+      {/* Pull-to-refresh indicator */}
+      <div
+        className="flex justify-center items-center overflow-hidden transition-all duration-300 ease-out"
+        style={{
+          height: refreshing ? 48 : pullDistance > 0 ? pullDistance : 0,
+          opacity: refreshing ? 1 : Math.min(pullDistance / PULL_THRESHOLD, 1),
+        }}
+      >
+        <div
+          className={`w-8 h-8 rounded-full border-2 border-court-green flex items-center justify-center ${refreshing ? "animate-spin border-t-transparent" : ""}`}
+          style={!refreshing ? {
+            transform: `rotate(${pullDistance * 3}deg)`,
+            transition: pullDistance === 0 ? "transform 0.3s ease-out" : "none",
+          } : undefined}
+        >
+          {!refreshing && (
+            <svg
+              width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+              className="text-court-green"
+              style={{
+                transform: pullDistance >= PULL_THRESHOLD ? "rotate(180deg)" : "rotate(0deg)",
+                transition: "transform 0.2s ease",
+              }}
+            >
+              <polyline points="6,9 12,15 18,9" />
+            </svg>
+          )}
+        </div>
       </div>
-
       <div className="space-y-5">
         <div className="animate-fade-in-up stagger-1">
           <PostComposer onPost={(post) => setPosts([post as Post, ...posts])} />
@@ -100,11 +255,10 @@ export default function HomePage() {
 
         {/* Filter chips */}
         <div className="flex items-center gap-2 flex-wrap animate-fade-in-up stagger-2">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+          <span className="text-gray-400 flex items-center">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polygon points="22,3 2,3 10,12.46 10,19 14,21 14,12.46" />
             </svg>
-            Filter:
           </span>
           <button
             onClick={() => toggleFilter("social")}
@@ -118,11 +272,6 @@ export default function HomePage() {
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21,15 16,10 5,21" />
             </svg>
             Social
-            {!loading && (
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${filters.has("social") ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600"}`}>
-                {posts.filter((p) => p.postType !== "find_players" && p.postType !== "propose_team").length}
-              </span>
-            )}
           </button>
           <button
             onClick={() => toggleFilter("find_players")}
@@ -136,11 +285,6 @@ export default function HomePage() {
               <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
             </svg>
             Find Players
-            {!loading && (
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${filters.has("find_players") ? "bg-white/20 text-white" : "bg-ball-yellow text-court-green"}`}>
-                {posts.filter((p) => p.postType === "find_players" && !p.isComplete).length}
-              </span>
-            )}
           </button>
           <button
             onClick={() => toggleFilter("propose_team")}
@@ -157,31 +301,6 @@ export default function HomePage() {
               <path d="M18 2H6v7a6 6 0 0012 0V2z" />
             </svg>
             Teams
-            {!loading && (
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${filters.has("propose_team") ? "bg-white/20 text-white" : "bg-clay/20 text-clay"}`}>
-                {posts.filter((p) => p.postType === "propose_team" && !p.isComplete).length}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setActiveFilter(null)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
-              activeFilter === null
-                ? "bg-gray-800 text-white border-gray-800 shadow-sm"
-                : "bg-white text-gray-500 border-gray-200 hover:border-gray-400"
-            }`}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <line x1="3" y1="12" x2="21" y2="12" />
-              <line x1="3" y1="18" x2="21" y2="18" />
-            </svg>
-            All
-            {!loading && (
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeFilter === null ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600"}`}>
-                {posts.length}
-              </span>
-            )}
           </button>
         </div>
 
@@ -230,7 +349,12 @@ export default function HomePage() {
           }
 
           return filtered.map((post, i) => (
-            <div key={post.id} className={`animate-fade-in-up stagger-${Math.min(i + 1, 5)}`}>
+            <div
+              key={post.id}
+              data-post-id={post.id}
+              ref={observePost}
+              className={`animate-fade-in-up stagger-${Math.min(i + 1, 5)} rounded-2xl transition-shadow ${highlightedPostId === post.id ? "ring-2 ring-court-green ring-offset-2" : ""}`}
+            >
               <PostCard
                 post={post}
                 onDelete={(id) => setPosts(posts.filter(p => p.id !== id))}

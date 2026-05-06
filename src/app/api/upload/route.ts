@@ -16,17 +16,42 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const formData = await request.formData();
+  // FormData parsing throws "expected boundary after body" when the platform
+  // (next.config middlewareClientMaxBodySize) truncated the request before it
+  // arrived. Translate that into a structured 413 instead of an opaque 500.
+  let formData: FormData;
+  try {
+    formData = await request.formData();
+  } catch {
+    return NextResponse.json(
+      { error: "Upload too large. Photos must be under 10 MB; videos under 100 MB." },
+      { status: 413 }
+    );
+  }
   const file = formData.get("file") as File | null;
 
   if (!file) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
   }
 
-  const isImage = IMAGE_TYPES.includes(file.type);
-  const isVideo = VIDEO_TYPES.includes(file.type);
+  // Some browsers (notably iOS Safari for .mov) report file.type as "". Fall
+  // back to the file extension so we can still classify and accept the file.
+  const fileExt = file.name.split(".").pop()?.toLowerCase() || "";
+  const extType =
+    fileExt === "jpg" || fileExt === "jpeg" ? "image/jpeg"
+    : fileExt === "png" ? "image/png"
+    : fileExt === "gif" ? "image/gif"
+    : fileExt === "webp" ? "image/webp"
+    : fileExt === "mp4" ? "video/mp4"
+    : fileExt === "webm" ? "video/webm"
+    : fileExt === "mov" || fileExt === "qt" ? "video/quicktime"
+    : "";
+  const effectiveType = file.type || extType;
 
-  if (!ALL_TYPES.includes(file.type)) {
+  const isImage = IMAGE_TYPES.includes(effectiveType);
+  const isVideo = VIDEO_TYPES.includes(effectiveType);
+
+  if (!ALL_TYPES.includes(effectiveType)) {
     return NextResponse.json(
       { error: "Supported formats: JPEG, PNG, GIF, WebP, MP4, WebM, MOV" },
       { status: 400 }
@@ -44,7 +69,7 @@ export async function POST(request: Request) {
   const bytes = await file.arrayBuffer();
   const buffer = Buffer.from(bytes);
 
-  const ext = file.name.split(".").pop()?.toLowerCase() || (isImage ? "jpg" : "mp4");
+  const ext = fileExt || (isImage ? "jpg" : "mp4");
   const filename = `${session.user.id}-${Date.now()}.${ext}`;
   const uploadPath = path.join(process.cwd(), "public", "uploads", filename);
 

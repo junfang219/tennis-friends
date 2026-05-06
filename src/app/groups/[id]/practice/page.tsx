@@ -247,6 +247,7 @@ export default function TeamPracticePage() {
               <label className="block text-xs font-semibold text-gray-600 mb-1">Time</label>
               <input
                 type="time"
+                lang="en-GB"
                 value={practiceTime}
                 onChange={(e) => setPracticeTime(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"

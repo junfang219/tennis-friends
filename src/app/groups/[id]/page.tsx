@@ -342,6 +342,21 @@ function MembersButton({
     }
   };
 
+  const deleteTeam = async () => {
+    if (!confirm("Delete this team? This removes the team and its chat, matches, and practices for all members. This cannot be undone.")) return;
+    const res = await fetch("/api/groups", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupId }),
+    });
+    if (res.ok) {
+      window.location.href = "/groups";
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "Failed to delete team");
+    }
+  };
+
   // Friends not yet in the team — for non-owners these are the only ones they can add
   const addableFriends = friends.filter(
     (f) =>
@@ -422,7 +437,11 @@ function MembersButton({
                   <button onClick={startEdit} className="btn-primary flex-1">
                     {isOwner ? "Edit Members" : "Add Friends"}
                   </button>
-                  {!isOwner && (
+                  {isOwner ? (
+                    <button onClick={deleteTeam} className="btn-danger">
+                      Delete
+                    </button>
+                  ) : (
                     <button onClick={leaveTeam} className="btn-danger">
                       Leave
                     </button>
@@ -620,6 +639,7 @@ function GroupComposerModal({
 }) {
   const [content, setContent] = useState("");
   const [posting, setPosting] = useState(false);
+  const [postError, setPostError] = useState("");
   const [mediaUrl, setMediaUrl] = useState("");
   const [mediaType, setMediaType] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -652,6 +672,7 @@ function GroupComposerModal({
   const [courtLocation, setCourtLocation] = useState("");
   const [gameType, setGameType] = useState("singles");
   const [playersNeeded, setPlayersNeeded] = useState(1);
+  const [playDuration, setPlayDuration] = useState(90);
   const [courtBooked, setCourtBooked] = useState(false);
 
   useEffect(() => {
@@ -685,6 +706,7 @@ function GroupComposerModal({
   const handleSubmit = async () => {
     if (!canSubmit || posting || uploading) return;
     setPosting(true);
+    setPostError("");
 
     const body: Record<string, unknown> = {
       content,
@@ -700,22 +722,35 @@ function GroupComposerModal({
       body.courtLocation = courtLocation;
       body.gameType = gameType;
       body.playersNeeded = playersNeeded;
+      body.playDuration = playDuration;
       body.courtBooked = courtBooked;
       if (!content.trim()) {
-        body.content = `Looking for ${playersNeeded} ${playersNeeded === 1 ? "player" : "players"} for ${gameType} at ${courtLocation} on ${playDate} at ${playTime}`;
+        body.content = `Looking for ${playersNeeded} ${playersNeeded === 1 ? "player" : "players"} for ${gameType} at ${courtLocation} on ${playDate} at ${playTime} (${playDuration} min)`;
       }
     }
 
-    const res = await fetch("/api/posts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (res.ok) {
-      const post = await res.json();
-      onPost(post);
+    try {
+      const res = await fetch("/api/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const post = await res.json();
+        onPost(post);
+      } else {
+        let msg = `Post failed (${res.status})`;
+        try {
+          const data = await res.json();
+          if (data?.error) msg = data.error;
+        } catch {}
+        setPostError(msg);
+      }
+    } catch (err) {
+      setPostError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setPosting(false);
     }
-    setPosting(false);
   };
 
   return (
@@ -770,7 +805,7 @@ function GroupComposerModal({
               {mediaType === "image" ? (
                 <img src={mediaUrl} alt="Attachment" className="max-h-72 w-full object-cover" />
               ) : (
-                <video src={mediaUrl} className="max-h-72 w-full object-cover" controls preload="metadata" />
+                <video src={`${mediaUrl}#t=0.1`} className="max-h-72 w-full object-cover" controls preload="metadata" playsInline />
               )}
               <button onClick={() => { setMediaUrl(""); setMediaType(""); }} className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -813,7 +848,15 @@ function GroupComposerModal({
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Time</label>
-                  <input type="time" value={playTime} onChange={(e) => setPlayTime(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
+                  <input type="time" lang="en-GB" value={playTime} onChange={(e) => setPlayTime(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Duration</label>
+                  <select value={playDuration} onChange={(e) => setPlayDuration(Number(e.target.value))} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none">
+                    {[60, 75, 90, 120].map((m) => (
+                      <option key={m} value={m}>{m} min</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="col-span-2">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Court Location</label>
@@ -882,6 +925,11 @@ function GroupComposerModal({
 
         {/* Post button */}
         <div className="px-5 pb-5">
+          {postError && (
+            <div className="mb-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+              {postError}
+            </div>
+          )}
           <button
             onClick={handleSubmit}
             disabled={!canSubmit || posting || uploading}

@@ -11,6 +11,18 @@ export async function GET() {
 
   const userId = session.user.id;
 
+  // Lazy sweep: hard-delete session chats whose game ended more than 3 days
+  // ago. Narrowed by postId != null so this only touches session chats; the
+  // @@index([sessionEndAt]) keeps it cheap. onDelete: Cascade on
+  // ChatParticipant / ChatMessage cleans up the rest.
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  await prisma.chat.deleteMany({
+    where: {
+      postId: { not: null },
+      sessionEndAt: { lt: threeDaysAgo },
+    },
+  });
+
   // Helper: turn an empty-content media message into a friendly preview label
   const previewContent = (
     content: string,
@@ -172,11 +184,14 @@ export async function GET() {
 
       const others = chat.participants.filter((p) => p.userId !== userId).map((p) => p.user);
       const title = chat.name || others.map((u) => u.name.split(" ")[0]).join(", ") || "Group chat";
+      const kind: "session" | "group" = chat.postId ? "session" : "group";
       return {
         type: "group" as const,
         id: chat.id,
         title,
         participants: others,
+        kind,
+        sessionEndAt: chat.sessionEndAt,
         lastMessage: visibleLatest
           ? {
               content: previewContent(visibleLatest.content, visibleLatest.mediaUrl, visibleLatest.mediaType),

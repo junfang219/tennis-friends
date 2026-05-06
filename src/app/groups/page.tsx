@@ -92,29 +92,29 @@ export default function GroupsPage() {
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
-      <div className="animate-fade-in-up">
-        <h1 className="font-display text-2xl font-bold text-court-green mb-1">
-          Your Teams
-        </h1>
-        <p className="text-gray-500 text-sm mb-6">Organize your tennis circles</p>
-      </div>
-
-      <div className="space-y-4">
-        {/* Create group button */}
+      <div className="animate-fade-in-up flex items-start justify-between mb-6 gap-3">
+        <div className="min-w-0">
+          <h1 className="font-display text-2xl font-bold text-court-green mb-1">
+            Your Teams
+          </h1>
+          <p className="text-gray-500 text-sm">Organize your tennis circles</p>
+        </div>
         {!showCreate && (
           <button
             onClick={() => setShowCreate(true)}
-            className="w-full bg-white rounded-2xl shadow-sm border-2 border-dashed border-court-green-pale/40 p-5 flex items-center justify-center gap-3 text-court-green-soft hover:border-court-green-soft hover:bg-court-green-soft/5 transition-all group animate-fade-in-up stagger-1"
+            className="btn-primary btn-sm shrink-0"
+            aria-label="Create a new team"
           >
-            <div className="w-10 h-10 rounded-full bg-court-green-soft/10 flex items-center justify-center group-hover:bg-court-green-soft/20 transition-colors">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-            </div>
-            <span className="font-semibold text-sm">Create a New Team</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            New Team
           </button>
         )}
+      </div>
+
+      <div className="space-y-4">
 
         {/* Create group form */}
         {showCreate && (

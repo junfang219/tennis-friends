@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { ensureSessionChat } from "@/lib/sessionChat";
 
 // POST: Approve or reject a play request
 export async function POST(request: Request) {
@@ -17,7 +18,7 @@ export async function POST(request: Request) {
 
   const playRequest = await prisma.playRequest.findUnique({
     where: { id: requestId },
-    include: { post: true },
+    include: { post: { include: { author: { select: { id: true, name: true } } } } },
   });
 
   if (!playRequest || playRequest.post.authorId !== session.user.id) {
@@ -61,7 +62,19 @@ export async function POST(request: Request) {
       },
     });
 
-    return NextResponse.json({ status: "APPROVED", isComplete: isNowComplete });
+    // When the session just filled up AND it's a find-players post, spin up a
+    // group chat with the author + every approved player. Idempotent helper
+    // also covers re-trigger paths (manual fill via PATCH).
+    let sessionChatId: string | null = null;
+    if (isNowComplete && playRequest.post.postType === "find_players") {
+      try {
+        sessionChatId = await ensureSessionChat(playRequest.postId);
+      } catch (err) {
+        console.error("ensureSessionChat (respond) failed:", err);
+      }
+    }
+
+    return NextResponse.json({ status: "APPROVED", isComplete: isNowComplete, sessionChatId });
   } else {
     await prisma.playRequest.update({
       where: { id: requestId },

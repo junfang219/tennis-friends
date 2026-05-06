@@ -108,24 +108,53 @@ export async function GET() {
       playRequests: {
         select: { id: true, status: true, note: true, userId: true, user: { select: { name: true, profileImageUrl: true } } },
       },
+      photos: { orderBy: { order: "asc" }, select: { url: true } },
       _count: { select: { likes: true, comments: true, playRequests: { where: { status: "PENDING" } } } },
     },
   });
+
+  // For every completed find-players post, look up its auto-created session
+  // chat so the card can link straight to /chat/group/<id>. One bounded query.
+  const completePostIds = posts
+    .filter((p) => p.postType === "find_players" && p.isComplete)
+    .map((p) => p.id);
+  const sessionChats = completePostIds.length
+    ? await prisma.chat.findMany({
+        where: {
+          postId: { in: completePostIds },
+          participants: { some: { userId } },
+        },
+        select: { id: true, postId: true },
+      })
+    : [];
+  const sessionChatByPost = new Map(
+    sessionChats.map((c) => [c.postId as string, c.id])
+  );
 
   const formatted = posts.map((post) => ({
     id: post.id,
     content: post.content,
     mediaUrl: post.mediaUrl,
     mediaType: post.mediaType,
+    photoUrls:
+      post.photos.length > 0
+        ? post.photos.map((p) => p.url)
+        : post.mediaType === "image" && post.mediaUrl
+        ? [post.mediaUrl]
+        : [],
     postType: post.postType,
     playDate: post.playDate,
     playTime: post.playTime,
+    playDuration: post.playDuration,
     courtLocation: post.courtLocation,
     gameType: post.gameType,
     playersNeeded: post.playersNeeded,
+    skillMin: post.skillMin,
+    skillMax: post.skillMax,
     playersConfirmed: post.playersConfirmed,
     courtBooked: post.courtBooked,
     isComplete: post.isComplete,
+    sessionChatId: sessionChatByPost.get(post.id) || null,
     commentsDisabled: post.commentsDisabled,
     createdAt: post.createdAt,
     author: post.author,
@@ -157,25 +186,54 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { content, mediaUrl, mediaType, groupIds, friendGroupIds, postType, playDate, playTime, courtLocation, gameType, playersNeeded, courtBooked } = await request.json();
+  const { content, mediaUrl, mediaType, photoUrls, groupIds, friendGroupIds, postType, playDate, playTime, playDuration, courtLocation, gameType, playersNeeded, courtBooked, skillMin, skillMax } = await request.json();
 
-  if (!content?.trim() && !mediaUrl && postType !== "find_players") {
+  // Normalize photoUrls (cap at 9). Falls back to legacy single-image
+  // mediaUrl/mediaType pair when photoUrls isn't provided.
+  let normalizedPhotoUrls: string[] = [];
+  if (Array.isArray(photoUrls)) {
+    normalizedPhotoUrls = photoUrls
+      .filter((u): u is string => typeof u === "string" && u.trim().length > 0)
+      .slice(0, 9);
+  }
+
+  // For multi-photo posts, set legacy mediaUrl to the first photo so older
+  // consumers (and the chat preview, post grid thumbnail, etc.) still work.
+  let resolvedMediaUrl = mediaUrl || "";
+  let resolvedMediaType = mediaType || "";
+  if (normalizedPhotoUrls.length > 0) {
+    resolvedMediaUrl = normalizedPhotoUrls[0];
+    resolvedMediaType = "image";
+  }
+
+  if (!content?.trim() && !resolvedMediaUrl && postType !== "find_players") {
     return NextResponse.json({ error: "Post must have text or media" }, { status: 400 });
   }
 
   const post = await prisma.post.create({
     data: {
       content: (content || "").trim(),
-      mediaUrl: mediaUrl || "",
-      mediaType: mediaType || "",
+      mediaUrl: resolvedMediaUrl,
+      mediaType: resolvedMediaType,
       postType: postType || "regular",
       playDate: playDate || "",
       playTime: playTime || "",
+      playDuration: Number(playDuration) || 90,
       courtLocation: courtLocation || "",
       gameType: gameType || "",
       playersNeeded: playersNeeded || 0,
       courtBooked: courtBooked || false,
+      skillMin: typeof skillMin === "number" ? skillMin : null,
+      skillMax: typeof skillMax === "number" ? skillMax : null,
       authorId: session.user.id,
+      // Multi-photo: persist the full array (including the first one duplicated
+      // in mediaUrl) so the read path can return them in order.
+      photos:
+        normalizedPhotoUrls.length > 1
+          ? {
+              create: normalizedPhotoUrls.map((url, i) => ({ url, order: i })),
+            }
+          : undefined,
       postGroups:
         groupIds && groupIds.length > 0
           ? {
@@ -202,6 +260,10 @@ export async function POST(request: Request) {
           friendGroup: { select: { id: true, name: true } },
         },
       },
+      photos: {
+        orderBy: { order: "asc" },
+        select: { url: true },
+      },
     },
   });
 
@@ -210,12 +272,21 @@ export async function POST(request: Request) {
     content: post.content,
     mediaUrl: post.mediaUrl,
     mediaType: post.mediaType,
+    photoUrls:
+      post.photos.length > 0
+        ? post.photos.map((p) => p.url)
+        : post.mediaType === "image" && post.mediaUrl
+        ? [post.mediaUrl]
+        : [],
     postType: post.postType,
     playDate: post.playDate,
     playTime: post.playTime,
+    playDuration: post.playDuration,
     courtLocation: post.courtLocation,
     gameType: post.gameType,
     playersNeeded: post.playersNeeded,
+    skillMin: post.skillMin,
+    skillMax: post.skillMax,
     playersConfirmed: 0,
     courtBooked: post.courtBooked,
     isComplete: false,

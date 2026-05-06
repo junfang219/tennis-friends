@@ -22,7 +22,11 @@ export async function GET() {
     where: { userId: session.user.id, read: false },
   });
 
-  return NextResponse.json({ notifications, unreadCount });
+  const pendingFriendRequestCount = await prisma.friendship.count({
+    where: { addresseeId: session.user.id, status: "PENDING" },
+  });
+
+  return NextResponse.json({ notifications, unreadCount, pendingFriendRequestCount });
 }
 
 // POST mark notifications as read

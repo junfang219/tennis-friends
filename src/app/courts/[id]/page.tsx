@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import AvailabilityGrid from "@/components/courts/AvailabilityGrid";
 import PrivacyNotice from "@/components/courts/PrivacyNotice";
@@ -58,12 +59,9 @@ function getDateOptions(): Array<{ label: string; value: string }> {
 const BOOKING_BASE =
   "https://anc.apm.activecommunities.com/seattle/reservation/search";
 
-export default function CourtDetailPage({
-  params,
-}: {
-  params: { id: string };
-}) {
-  const { id } = params;
+export default function CourtDetailPage() {
+  const params = useParams<{ id: string }>();
+  const id = params.id;
   const [court, setCourt] = useState<CourtDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");

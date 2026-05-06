@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
-import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
 import Avatar from "./Avatar";
 import NotificationBell from "./NotificationBell";
 import MessageBell from "./MessageBell";
@@ -11,7 +11,13 @@ import MessageBell from "./MessageBell";
 export default function Navbar() {
   const { data: session, status } = useSession();
   const pathname = usePathname();
+  const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isNative, setIsNative] = useState(false);
+
+  useEffect(() => {
+    setIsNative(!!(window as unknown as { Capacitor?: unknown }).Capacitor);
+  }, []);
 
   const isActive = (path: string) => pathname === path;
 
@@ -24,12 +30,29 @@ export default function Navbar() {
     { href: "/search", label: "Discover", icon: SearchIcon },
   ];
 
+  // Warm up all top-nav routes once the user is authenticated, so clicking any tab feels instant.
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    navLinks.forEach((link) => router.prefetch(link.href));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
   return (
-    <nav className="sticky top-0 z-50 bg-court-green court-pattern border-b border-white/10">
+    <nav className="sticky top-0 z-40 bg-court-green court-pattern border-b border-white/10 pt-[env(safe-area-inset-top)]">
       <div className="max-w-5xl mx-auto px-4 sm:px-6">
         <div className="flex items-center justify-between h-16">
-          {/* Logo */}
-          <Link href="/" className="flex items-center gap-2.5 group">
+          {/* Logo — tapping refreshes feed and shows all content */}
+          <button
+            onClick={() => {
+              if (pathname === "/") {
+                window.scrollTo({ top: 0, behavior: "smooth" });
+                window.location.reload();
+              } else {
+                router.push("/");
+              }
+            }}
+            className="flex items-center gap-2.5 group"
+          >
             <div className="w-9 h-9 rounded-full bg-ball-yellow flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
               <svg viewBox="0 0 24 24" className="w-5 h-5 text-court-green" fill="currentColor">
                 <circle cx="12" cy="12" r="10" fill="currentColor" />
@@ -40,7 +63,7 @@ export default function Navbar() {
             <span className="font-display text-xl font-bold text-white tracking-tight hidden sm:block">
               Tennis<span className="text-ball-yellow">Friends</span>
             </span>
-          </Link>
+          </button>
 
           {/* Desktop Nav */}
           {status === "authenticated" && (
@@ -49,6 +72,9 @@ export default function Navbar() {
                 <Link
                   key={link.href}
                   href={link.href}
+                  prefetch={true}
+                  onMouseEnter={() => router.prefetch(link.href)}
+                  onFocus={() => router.prefetch(link.href)}
                   className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
                     isActive(link.href)
                       ? "bg-white/15 text-ball-yellow"
@@ -66,20 +92,11 @@ export default function Navbar() {
           <div className="flex items-center gap-3">
             {status === "authenticated" && session?.user ? (
               <div className="flex items-center gap-3">
-                <MessageBell />
-                <NotificationBell />
-                <Link href="/profile" className="hidden sm:flex items-center gap-2 group">
+                {!isNative && <MessageBell />}
+                {!isNative && <NotificationBell />}
+                <Link href="/profile" className="hidden sm:flex items-center group">
                   <Avatar name={session.user.name || ""} image={session.user.image} size="sm" />
-                  <span className="text-sm font-medium text-white/80 group-hover:text-white transition-colors">
-                    {session.user.name}
-                  </span>
                 </Link>
-                <button
-                  onClick={() => signOut({ callbackUrl: "/login" })}
-                  className="text-sm text-white/50 hover:text-white transition-colors px-3 py-1.5 rounded-lg hover:bg-white/8"
-                >
-                  Sign out
-                </button>
               </div>
             ) : status === "unauthenticated" ? (
               <div className="flex items-center gap-2">
@@ -113,10 +130,15 @@ export default function Navbar() {
         {/* Mobile Nav */}
         {mobileOpen && status === "authenticated" && (
           <div className="md:hidden pb-4 border-t border-white/10 mt-2 pt-3">
-            {navLinks.map((link) => (
+            {/* On iOS native, hide Feed/Teams/Courts (they're in bottom nav) and add Notifications */}
+            {(isNative
+              ? navLinks.filter((l) => l.href !== "/" && l.href !== "/groups" && l.href !== "/courts")
+              : navLinks
+            ).map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
+                prefetch={true}
                 onClick={() => setMobileOpen(false)}
                 className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
                   isActive(link.href)
@@ -128,6 +150,29 @@ export default function Navbar() {
                 {link.label}
               </Link>
             ))}
+            {isNative && (
+              <Link
+                href="/notifications"
+                onClick={() => setMobileOpen(false)}
+                className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                  isActive("/notifications")
+                    ? "bg-white/15 text-ball-yellow"
+                    : "text-white/70 hover:text-white hover:bg-white/8"
+                }`}
+              >
+                <NotificationIcon active={isActive("/notifications")} />
+                Notifications
+              </Link>
+            )}
+            {isNative && (
+              <button
+                onClick={() => { setMobileOpen(false); signOut({ callbackUrl: "/login" }); }}
+                className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-white/70 hover:text-white hover:bg-white/8 transition-all w-full text-left"
+              >
+                <SignOutIcon />
+                Sign out
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -200,6 +245,25 @@ function CourtsIcon({ active }: { active: boolean }) {
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
       <circle cx="12" cy="10" r="3" />
+    </svg>
+  );
+}
+
+function NotificationIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 01-3.46 0" />
+    </svg>
+  );
+}
+
+function SignOutIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
+      <polyline points="16,17 21,12 16,7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
     </svg>
   );
 }

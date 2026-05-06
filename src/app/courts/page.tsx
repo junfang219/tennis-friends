@@ -70,6 +70,10 @@ function ensureLeaflet(): Promise<Leaflet> {
 }
 
 export default function CourtsPage() {
+  const [isNative, setIsNative] = useState(false);
+  useEffect(() => {
+    setIsNative(!!(window as unknown as { Capacitor?: unknown }).Capacitor);
+  }, []);
   const [courts, setCourts] = useState<CourtData[]>([]);
   const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [geoError, setGeoError] = useState(false);
@@ -363,9 +367,7 @@ export default function CourtsPage() {
       const detailLine = detailBits.length
         ? `<div style="color:#6b7280;font-size:11px;margin-top:2px">${detailBits.join(" · ")}</div>`
         : "";
-      const addressLine = c.address
-        ? `<div style="color:#9ca3af;font-size:11px;margin-top:2px">${escapeHtml(c.address)}</div>`
-        : "";
+      const addressLine = c.address ? mapsLink(c) : "";
       const accessLine = c.access && c.access !== "yes" && c.access !== "public"
         ? `<div style="color:#b45309;font-size:11px;margin-top:2px">access: ${escapeHtml(c.access)}</div>`
         : "";
@@ -382,7 +384,7 @@ export default function CourtsPage() {
   }, [courts, mapReady]);
 
   return (
-    <div className="relative w-full" style={{ height: "calc(100vh - 64px)" }}>
+    <div className="relative w-full" style={{ height: isNative ? "calc(100vh - 64px - 5rem)" : "calc(100vh - 64px)" }}>
       {/* Split layout: side panel (left) + map (right) */}
       <div className="flex h-full">
         {/* ── SEATTLE PARKS SIDE PANEL (LEFT) ── */}
@@ -639,4 +641,25 @@ function escapeHtml(s: string) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+function mapsLink(c: CourtData): string {
+  const isIOS =
+    typeof navigator !== "undefined" &&
+    /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const dest = `${c.lat},${c.lng}`;
+  const style =
+    "display:block;margin-top:2px;color:#2D6A4F;font-size:11px;text-decoration:underline;text-underline-offset:2px";
+  const inner = `${escapeHtml(c.address ?? "")} <span style="white-space:nowrap">↗</span>`;
+  if (isIOS) {
+    // Open Apple Maps to the court's pin rather than requesting a route.
+    // `daddr=&dirflg=d` makes Apple Maps compute directions from "current
+    // location", which stalls forever if the Capacitor app hasn't been
+    // granted Location Services. Dropping a pin (q + ll) works with no
+    // permission; the user taps Directions inside Apple Maps and Apple
+    // handles the permission prompt natively.
+    const label = encodeURIComponent(c.address || c.name);
+    return `<a href="maps://?q=${label}&ll=${dest}" style="${style}">${inner}</a>`;
+  }
+  return `<a href="https://www.google.com/maps/dir/?api=1&destination=${dest}" target="_blank" rel="noopener noreferrer" style="${style}">${inner}</a>`;
 }

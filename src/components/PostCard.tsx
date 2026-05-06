@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import Avatar from "./Avatar";
+import EmojiPicker from "./EmojiPicker";
 
 type PlayRequestInfo = { id: string; status: string; note: string } | null;
 
@@ -20,15 +21,20 @@ type Post = {
   content: string;
   mediaUrl?: string;
   mediaType?: string;
+  photoUrls?: string[];
   postType?: string;
   playDate?: string;
   playTime?: string;
+  playDuration?: number;
+  skillMin?: number | null;
+  skillMax?: number | null;
   courtLocation?: string;
   gameType?: string;
   playersNeeded?: number;
   playersConfirmed?: number;
   courtBooked?: boolean;
   isComplete?: boolean;
+  sessionChatId?: string | null;
   commentsDisabled?: boolean;
   manualPlayers?: string;
   pendingRequestCount?: number;
@@ -47,12 +53,35 @@ type PlayRequest = {
   id: string;
   status: string;
   note: string;
-  user: { id: string; name: string; profileImageUrl: string; skillLevel: string };
+  user: {
+    id: string;
+    name: string;
+    profileImageUrl: string;
+    skillLevel: string;
+    gender?: string;
+    ratingSystem?: string;
+    ntrpRating?: number | null;
+    utrRating?: number | null;
+  };
 };
 
 const SKILL_LABELS: Record<string, string> = {
   beginner: "Beginner", intermediate: "Intermediate", advanced: "Advanced", professional: "Professional",
 };
+
+function GenderSymbol({ gender }: { gender?: string }) {
+  if (gender === "male") return <span title="Male" className="text-blue-500 font-semibold">♂</span>;
+  if (gender === "female") return <span title="Female" className="text-pink-500 font-semibold">♀</span>;
+  if (gender === "non_binary") return <span title="Non-binary" className="text-purple-500 font-semibold">⚧</span>;
+  return null;
+}
+
+function formatUserRating(u: PlayRequest["user"]): string {
+  if (u.ratingSystem === "ntrp" && u.ntrpRating != null) return `NTRP ${u.ntrpRating.toFixed(1)}`;
+  if (u.ratingSystem === "utr" && u.utrRating != null) return `UTR ${u.utrRating.toFixed(2)}`;
+  if (u.ratingSystem === "self") return SKILL_LABELS[u.skillLevel] || u.skillLevel;
+  return SKILL_LABELS[u.skillLevel] || u.skillLevel || "";
+}
 
 function timeAgo(date: string) {
   const seconds = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
@@ -63,7 +92,7 @@ function timeAgo(date: string) {
   return new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onDelete?: (id: string) => void; onUpdate?: (id: string, updates: Partial<Post>) => void }) {
+export default function PostCard({ post, onDelete, onUpdate, initialExpanded = false, initialShowComments = false }: { post: Post; onDelete?: (id: string) => void; onUpdate?: (id: string, updates: Partial<Post>) => void; initialExpanded?: boolean; initialShowComments?: boolean }) {
   const { data: session } = useSession();
   const isAuthor = session?.user?.id === post.author.id;
   const isFindPlayers = post.postType === "find_players";
@@ -74,7 +103,16 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   const [likeCount, setLikeCount] = useState(post.likeCount);
   const [animating, setAnimating] = useState(false);
   const [imageExpanded, setImageExpanded] = useState(false);
+  // Index of the photo currently in view (carousel + lightbox).
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const photoStripRef = useRef<HTMLDivElement>(null);
   const [deleted, setDeleted] = useState(false);
+
+  // Unified photo list — prefer photoUrls (multi support); fall back to legacy
+  // single mediaUrl when the API or older client hasn't migrated yet.
+  const photos: string[] = (post.photoUrls && post.photoUrls.length > 0)
+    ? post.photoUrls
+    : (post.mediaType === "image" && post.mediaUrl ? [post.mediaUrl] : []);
 
   // Play request state
   const [myRequest, setMyRequest] = useState<PlayRequestInfo>(post.myPlayRequest || null);
@@ -84,14 +122,34 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   const manualCount = post.manualPlayers ? post.manualPlayers.split(",").filter((n) => n.trim()).length : 0;
   const [confirmed, setConfirmed] = useState(Math.max(post.playersConfirmed || 0, approvedCount + manualCount));
   const [complete, setComplete] = useState(post.isComplete || false);
+  const [liveSessionChatId, setLiveSessionChatId] = useState<string | null>(post.sessionChatId || null);
 
   // Comments
-  const [showComments, setShowComments] = useState(false);
+  const [showComments, setShowComments] = useState(initialShowComments);
   const [comments, setComments] = useState<CommentData[]>([]);
   const [commentInput, setCommentInput] = useState("");
   const [commentCount, setCommentCount] = useState(post.commentCount || 0);
   const [postingComment, setPostingComment] = useState(false);
   const [commentsLoaded, setCommentsLoaded] = useState(false);
+  const [commentEmojiOpen, setCommentEmojiOpen] = useState(false);
+  const commentInputRef = useRef<HTMLInputElement>(null);
+
+  const insertCommentEmoji = (emoji: string) => {
+    const el = commentInputRef.current;
+    if (!el) {
+      setCommentInput((prev) => prev + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const next = el.value.slice(0, start) + emoji + el.value.slice(end);
+    setCommentInput(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
 
   // Post menu
   const [showMenu, setShowMenu] = useState(false);
@@ -105,6 +163,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   // Editable find-player fields
   const [editPlayDate, setEditPlayDate] = useState(post.playDate || "");
   const [editPlayTime, setEditPlayTime] = useState(post.playTime || "");
+  const [editPlayDuration, setEditPlayDuration] = useState(post.playDuration || 90);
   const [editCourtLocation, setEditCourtLocation] = useState(post.courtLocation || "");
   const [editGameType, setEditGameType] = useState(post.gameType || "singles");
   const [editPlayersNeeded, setEditPlayersNeeded] = useState(post.playersNeeded || 1);
@@ -122,6 +181,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   // Live display state for find-player fields
   const [livePlayDate, setLivePlayDate] = useState(post.playDate || "");
   const [livePlayTime, setLivePlayTime] = useState(post.playTime || "");
+  const [livePlayDuration, setLivePlayDuration] = useState(post.playDuration || 90);
   const [liveCourtLocation, setLiveCourtLocation] = useState(post.courtLocation || "");
   const [liveGameType, setLiveGameType] = useState(post.gameType || "");
   const [livePlayersNeeded, setLivePlayersNeeded] = useState(post.playersNeeded || 0);
@@ -132,8 +192,19 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
   const [showSendToFriend, setShowSendToFriend] = useState(false);
 
   // Collapsed state for complete find_players posts
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initialExpanded);
   const isCollapsible = isFindPlayers && complete;
+
+  // Derive end time from start + duration ("14:00" + 90 → "15:30")
+  const endTime = (() => {
+    if (!livePlayTime || !livePlayTime.includes(":")) return "";
+    const [h, m] = livePlayTime.split(":").map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return "";
+    const total = h * 60 + m + (livePlayDuration || 0);
+    const eh = Math.floor((total % (24 * 60)) / 60);
+    const em = total % 60;
+    return `${String(eh).padStart(2, "0")}:${String(em).padStart(2, "0")}`;
+  })();
 
   // Likes modal
   const [showLikes, setShowLikes] = useState(false);
@@ -201,6 +272,11 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
     }
   };
 
+  useEffect(() => {
+    if (initialShowComments && !commentsLoaded) loadComments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleComment = async () => {
     if (!commentInput.trim() || postingComment) return;
     setPostingComment(true);
@@ -225,41 +301,95 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
 
   if (deleted) return null;
 
-  // Collapsed view for completed find_players posts
+  // Collapsed view for completed find_players posts — highlighted confirmation
+  // card with a direct link to the auto-created group chat. Tap the main body
+  // to expand back to the full post for details; tap "Open chat" to jump into
+  // the group chat where confirmed players coordinate.
   if (isCollapsible && !expanded) {
+    const collapsedRole: "creator" | "player" | "bystander" = isAuthor
+      ? "creator"
+      : myRequest?.status === "APPROVED"
+      ? "player"
+      : "bystander";
+    const roleStyles = {
+      creator: {
+        container: "bg-green-50 ring-court-green/60",
+        icon: "bg-court-green",
+        title: "text-court-green",
+        subtitle: "text-gray-600",
+        meta: "text-gray-500",
+        dot: "text-gray-400",
+      },
+      player: {
+        container: "bg-ball-yellow/60 ring-ball-yellow",
+        icon: "bg-ball-yellow",
+        title: "text-court-green",
+        subtitle: "text-court-green",
+        meta: "text-court-green/80",
+        dot: "text-court-green/60",
+      },
+      bystander: {
+        container: "bg-gray-50 ring-gray-200",
+        icon: "bg-gray-400",
+        title: "text-gray-600",
+        subtitle: "text-gray-600",
+        meta: "text-gray-500",
+        dot: "text-gray-400",
+      },
+    }[collapsedRole];
     return (
-      <button
-        onClick={() => setExpanded(true)}
-        className="w-full text-left bg-white rounded-2xl shadow-sm border border-green-200 px-4 py-3 flex items-center gap-3 hover:bg-green-50/50 transition-colors group"
-      >
-        <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center shrink-0">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-green-600"><polyline points="20,6 9,17 4,12" /></svg>
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-gray-800 truncate">{post.author.name}</span>
-            <span className="text-xs text-green-700 font-bold">Game Full</span>
-            <span className="text-xs text-gray-400">·</span>
-            <span className="text-xs text-gray-500 truncate capitalize">{liveGameType} · {livePlayDate} {livePlayTime} · {liveCourtLocation}</span>
+      <div className={`w-full rounded-2xl shadow-md ring-2 px-4 py-3 flex items-center gap-3 ${roleStyles.container}`}>
+        <button
+          onClick={() => setExpanded(true)}
+          className="flex-1 min-w-0 flex items-center gap-3 text-left group"
+          aria-label="Show full game details"
+        >
+          <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 shadow-sm ${roleStyles.icon}`}>
+            <span className="text-base leading-none">🎾</span>
           </div>
-          {((post.approvedPlayerNames && post.approvedPlayerNames.length > 0) || liveManualPlayers) && (
-            <div className="flex items-center gap-1 mt-0.5 truncate">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 shrink-0" strokeLinecap="round">
-                <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" />
-              </svg>
-              <span className="text-[11px] text-gray-400 truncate">
-                {[
-                  ...(post.approvedPlayerNames || []),
-                  ...(liveManualPlayers ? liveManualPlayers.split(",").filter((n: string) => n.trim()) : []),
-                ].map((n: string) => n.trim()).join(", ")}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-sm font-bold truncate ${roleStyles.title}`}>
+                {isAuthor ? "Your" : `${post.author.name}'s`} Game confirmed
+              </span>
+              <span className={`text-xs ${roleStyles.dot}`}>·</span>
+              <span className={`text-xs truncate capitalize font-medium ${roleStyles.subtitle}`}>
+                {livePlayDate} {livePlayTime}{endTime ? `–${endTime}` : ""}
               </span>
             </div>
-          )}
-        </div>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-gray-300 group-hover:text-gray-500 transition-colors shrink-0">
-          <polyline points="6,9 12,15 18,9" />
-        </svg>
-      </button>
+            <div className={`text-[11px] truncate mt-0.5 font-medium ${roleStyles.meta}`}>
+              {liveCourtLocation || "Location TBD"}
+              {((post.approvedPlayerNames && post.approvedPlayerNames.length > 0) || liveManualPlayers) && (
+                <>
+                  {" · "}
+                  {[
+                    ...(post.approvedPlayerNames || []),
+                    ...(liveManualPlayers ? liveManualPlayers.split(",").filter((n: string) => n.trim()) : []),
+                  ].map((n: string) => n.trim()).join(", ")}
+                </>
+              )}
+            </div>
+          </div>
+        </button>
+        {liveSessionChatId ? (
+          <Link
+            href={`/chat/group/${liveSessionChatId}`}
+            className="shrink-0 inline-flex items-center gap-1.5 bg-court-green text-white text-xs font-bold px-3 py-2 rounded-full hover:bg-court-green-light transition-colors shadow-sm"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+            </svg>
+            Open chat
+          </Link>
+        ) : (
+          <button
+            onClick={() => setExpanded(true)}
+            className="shrink-0 text-xs text-court-green font-semibold px-2 py-1 rounded-full hover:bg-court-green/10"
+          >
+            Details
+          </button>
+        )}
+      </div>
     );
   }
 
@@ -385,7 +515,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
 
           {/* Text content */}
           {currentContent && (
-            <p className="text-gray-700 text-[0.9375rem] leading-relaxed whitespace-pre-wrap pb-3">{currentContent}</p>
+            <p className="text-gray-700 text-[0.9375rem] leading-relaxed whitespace-pre-wrap break-words overflow-wrap-anywhere pb-3" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>{currentContent}</p>
           )}
 
           {/* Find Players / Propose Team details card */}
@@ -394,9 +524,38 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
               {isFindPlayers && (
               <div className="grid grid-cols-2 gap-3">
                 {livePlayDate && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Date</p><p className="text-sm font-semibold text-gray-800">{livePlayDate}</p></div></div>)}
-                {livePlayTime && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Time</p><p className="text-sm font-semibold text-gray-800">{livePlayTime}</p></div></div>)}
+                {livePlayTime && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Time</p><p className="text-sm font-semibold text-gray-800">{livePlayTime}{endTime ? ` – ${endTime}` : ""}{livePlayDuration ? ` (${livePlayDuration} min)` : ""}</p></div></div>)}
                 {liveCourtLocation && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Court</p><p className="text-sm font-semibold text-gray-800">{liveCourtLocation}</p></div></div>)}
                 {liveGameType && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" />{liveGameType === "doubles" && <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />}</svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Type</p><p className="text-sm font-semibold text-gray-800 capitalize">{liveGameType}</p></div></div>)}
+                {(post.skillMin != null || post.skillMax != null) && (() => {
+                  const min = post.skillMin ?? 2.5;
+                  const max = post.skillMax ?? 7.0;
+                  const range = `${min.toFixed(1)}–${max >= 7.0 ? "5.0+" : max.toFixed(1)}`;
+                  return (
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="6 4 6 12 9 14 15 14 18 12 18 4" />
+                          <line x1="6" y1="4" x2="18" y2="4" />
+                          <line x1="9" y1="14" x2="9" y2="20" />
+                          <line x1="15" y1="14" x2="15" y2="20" />
+                          <line x1="6" y1="20" x2="18" y2="20" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Level</p>
+                        <p className="text-sm font-semibold text-gray-800">NTRP {range}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+              )}
+              {isProposeTeam && (
+              <div className="grid grid-cols-2 gap-3">
+                {liveGameType && liveGameType !== "team" && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-clay" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4.5a2.5 2.5 0 010-5H6" /><path d="M18 9h1.5a2.5 2.5 0 000-5H18" /><path d="M4 22h16" /><path d="M18 2H6v7a6 6 0 0012 0V2z" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Type</p><p className="text-sm font-semibold text-gray-800 capitalize">{({ casual: "Casual Practice", league: "Competitive League", tournament: "Tournament Prep", social: "Social / Fun", drilling: "Drilling / Training" })[liveGameType] || liveGameType}</p></div></div>)}
+                {livePlayTime && livePlayTime.includes(":") && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-clay" strokeLinecap="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Skill Level</p><p className="text-sm font-semibold text-gray-800">{(() => { const parts = livePlayTime.split(":"); if (parts.length !== 2) return livePlayTime; const [sys, range] = parts; const [min, max] = range.split("-"); return `${sys} ${min} – ${max}`; })()}</p></div></div>)}
+                {livePlayDate && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-clay" strokeLinecap="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Schedule</p><p className="text-sm font-semibold text-gray-800">{livePlayDate}</p></div></div>)}
               </div>
               )}
               <div className="mt-3 pt-3 border-t border-court-green-pale/20 flex items-center justify-between flex-wrap gap-2">
@@ -546,13 +705,58 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
         </div>
 
         {/* Media */}
-        {post.mediaUrl && post.mediaType === "image" && (
-          <div className="cursor-pointer" onClick={() => setImageExpanded(true)}>
-            <img src={post.mediaUrl} alt="Post image" className="w-full max-h-[500px] object-cover hover:opacity-95 transition-opacity" />
+        {photos.length === 1 && (
+          <div className="cursor-pointer" onClick={() => { setPhotoIndex(0); setImageExpanded(true); }}>
+            <img src={photos[0]} alt="Post image" className="w-full max-h-[500px] object-cover hover:opacity-95 transition-opacity" />
+          </div>
+        )}
+        {photos.length > 1 && (
+          <div className="relative">
+            <div
+              ref={photoStripRef}
+              onScroll={(e) => {
+                const el = e.currentTarget;
+                const idx = Math.round(el.scrollLeft / el.clientWidth);
+                if (idx !== photoIndex) setPhotoIndex(idx);
+              }}
+              className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide cursor-pointer"
+              style={{ scrollbarWidth: "none" }}
+            >
+              {photos.map((url, i) => (
+                <img
+                  key={i}
+                  src={url}
+                  alt={`Photo ${i + 1}`}
+                  onClick={() => { setPhotoIndex(i); setImageExpanded(true); }}
+                  className="snap-center min-w-full max-h-[500px] object-cover hover:opacity-95 transition-opacity"
+                />
+              ))}
+            </div>
+            <div className="absolute top-3 right-3 bg-black/60 text-white text-[11px] font-semibold px-2 py-1 rounded-full pointer-events-none">
+              {photoIndex + 1} / {photos.length}
+            </div>
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 pointer-events-none">
+              {photos.map((_, i) => (
+                <span
+                  key={i}
+                  className={`w-1.5 h-1.5 rounded-full transition-colors ${
+                    i === photoIndex ? "bg-white" : "bg-white/50"
+                  }`}
+                />
+              ))}
+            </div>
           </div>
         )}
         {post.mediaUrl && post.mediaType === "video" && (
-          <div className="bg-black"><video src={post.mediaUrl} className="w-full max-h-[500px] object-contain" controls preload="metadata" playsInline /></div>
+          <div className="bg-black">
+            <video
+              src={`${post.mediaUrl}#t=0.1`}
+              className="w-full max-h-[500px] object-contain"
+              controls
+              preload="metadata"
+              playsInline
+            />
+          </div>
         )}
 
         {/* Actions: Like + Comment toggle */}
@@ -614,6 +818,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
               <Avatar name={session?.user?.name || ""} image={session?.user?.image} size="sm" />
               <div className="flex-1 flex items-center gap-2">
                 <input
+                  ref={commentInputRef}
                   type="text"
                   value={commentInput}
                   onChange={(e) => setCommentInput(e.target.value)}
@@ -621,6 +826,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                   placeholder="Write a comment..."
                   className="flex-1 px-3.5 py-2 border border-gray-200 rounded-full text-sm bg-surface/50 focus:bg-white transition-colors"
                 />
+                <EmojiPicker open={commentEmojiOpen} onOpenChange={setCommentEmojiOpen} onSelect={insertCommentEmoji} />
                 <button
                   onClick={handleComment}
                   disabled={!commentInput.trim() || postingComment}
@@ -637,12 +843,49 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
       </div>
 
       {/* Lightbox */}
-      {imageExpanded && post.mediaUrl && post.mediaType === "image" && (
+      {imageExpanded && photos.length > 0 && (
         <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 cursor-pointer" onClick={() => setImageExpanded(false)}>
-          <button className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors" onClick={() => setImageExpanded(false)}>
+          <button
+            className="absolute top-4 right-4 z-10 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+            onClick={() => setImageExpanded(false)}
+            aria-label="Close"
+          >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
-          <img src={post.mediaUrl} alt="Post image" className="max-w-full max-h-[90vh] object-contain rounded-lg" onClick={(e) => e.stopPropagation()} />
+
+          {photos.length > 1 && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); setPhotoIndex((i) => (i - 1 + photos.length) % photos.length); }}
+                disabled={photos.length <= 1}
+                className="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+                aria-label="Previous photo"
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setPhotoIndex((i) => (i + 1) % photos.length); }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+                aria-label="Next photo"
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="9 6 15 12 9 18" />
+                </svg>
+              </button>
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-white/15 text-white text-xs font-semibold px-2.5 py-1 rounded-full">
+                {photoIndex + 1} / {photos.length}
+              </div>
+            </>
+          )}
+
+          <img
+            src={photos[photoIndex]}
+            alt={`Photo ${photoIndex + 1}`}
+            className="max-w-full max-h-[90vh] object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
 
@@ -650,10 +893,19 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
       {showRequests && createPortal(
         <ManageRequestsModal
           postId={post.id}
-          playersNeeded={post.playersNeeded || 0}
+          playersNeeded={livePlayersNeeded || 0}
           currentlyComplete={complete}
           onClose={() => setShowRequests(false)}
-          onUpdate={(newConfirmed, isNowComplete) => { setConfirmed(newConfirmed); setComplete(isNowComplete); onUpdate?.(post.id, { isComplete: isNowComplete, playersConfirmed: newConfirmed }); }}
+          onUpdate={(newConfirmed, isNowComplete, sessionChatId) => {
+            setConfirmed(newConfirmed);
+            setComplete(isNowComplete);
+            if (sessionChatId) setLiveSessionChatId(sessionChatId);
+            // Snap back to the compact confirmation card so the creator sees
+            // the final state immediately, instead of staying in the tall
+            // expanded view until they refresh.
+            if (isNowComplete) setExpanded(false);
+            onUpdate?.(post.id, { isComplete: isNowComplete, playersConfirmed: newConfirmed, sessionChatId: sessionChatId ?? undefined });
+          }}
           onManualPlayersUpdate={(names) => setLiveManualPlayers(names)}
           manualPlayers={liveManualPlayers}
         />,
@@ -793,7 +1045,13 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-1">Time</label>
-                      <input type="time" value={editPlayTime} onChange={(e) => setEditPlayTime(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
+                      <input type="time" lang="en-GB" value={editPlayTime} onChange={(e) => setEditPlayTime(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Duration</label>
+                      <select value={editPlayDuration} onChange={(e) => setEditPlayDuration(Number(e.target.value))} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none">
+                        {[60, 75, 90, 120].map((m) => (<option key={m} value={m}>{m} min</option>))}
+                      </select>
                     </div>
                     <div className="col-span-2">
                       <label className="block text-xs font-semibold text-gray-600 mb-1">Court Location</label>
@@ -866,6 +1124,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                   if (isFindPlayers) {
                     body.playDate = editPlayDate;
                     body.playTime = editPlayTime;
+                    body.playDuration = editPlayDuration;
                     body.courtLocation = editCourtLocation;
                     body.gameType = editGameType;
                     body.playersNeeded = editPlayersNeeded;
@@ -881,6 +1140,7 @@ export default function PostCard({ post, onDelete, onUpdate }: { post: Post; onD
                     if (isFindPlayers) {
                       setLivePlayDate(editPlayDate);
                       setLivePlayTime(editPlayTime);
+                      setLivePlayDuration(editPlayDuration);
                       setLiveCourtLocation(editCourtLocation);
                       setLiveGameType(editGameType);
                       setLivePlayersNeeded(editPlayersNeeded);
@@ -1205,7 +1465,7 @@ function ManageRequestsModal({
   postId, playersNeeded, currentlyComplete, onClose, onUpdate, onManualPlayersUpdate, manualPlayers,
 }: {
   postId: string; playersNeeded: number; currentlyComplete: boolean; onClose: () => void;
-  onUpdate: (confirmed: number, complete: boolean) => void;
+  onUpdate: (confirmed: number, complete: boolean, sessionChatId?: string | null) => void;
   onManualPlayersUpdate: (names: string) => void;
   manualPlayers: string;
 }) {
@@ -1251,7 +1511,11 @@ function ManageRequestsModal({
       const data = await res.json();
       loadRequests();
       if (action === "approve") {
-        onUpdate(approvedCount + 1, data.isComplete);
+        onUpdate(approvedCount + 1, data.isComplete, data.sessionChatId ?? null);
+        // Close the modal when this approval just filled the game — the
+        // underlying PostCard will snap back to its compact confirmation
+        // state, which is the signal the creator needs to see.
+        if (data.isComplete) onClose();
       }
     }
     setRespondingTo(null);
@@ -1327,9 +1591,10 @@ function ManageRequestsModal({
                       method: "PATCH",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ playersConfirmed: playersNeeded, isComplete: true }),
-                    }).then((res) => {
+                    }).then(async (res) => {
                       if (res.ok) {
-                        onUpdate(playersNeeded, true);
+                        const data = await res.json().catch(() => ({}));
+                        onUpdate(playersNeeded, true, data.sessionChatId ?? null);
                         setCurrentConfirmedCount(playersNeeded);
                         setDropdownValue(playersNeeded);
                         setIsMarkedFull(true);
@@ -1337,8 +1602,11 @@ function ManageRequestsModal({
                       setSavingManual(false);
                     }).catch(() => setSavingManual(false));
                   } else {
-                    // Has unfilled slots — start with 1 input, user can add more
-                    setManualNames([""]);
+                    // Has unfilled slots — pre-create one input per missing
+                    // player so the user can fill them in (or leave blank →
+                    // auto-named "Guest N" on submit).
+                    const slots = Math.max(playersNeeded - approvedCount, 1);
+                    setManualNames(Array(slots).fill(""));
                     setShowMarkFullForm(true);
                   }
                 }}
@@ -1425,7 +1693,19 @@ function ManageRequestsModal({
               <button
                 onClick={() => {
                   setSavingManual(true);
-                  const names = manualNames.filter((n) => n.trim()).join(", ");
+                  // Every unfilled slot becomes a guest. Blank inputs are
+                  // auto-named "Guest 1", "Guest 2", ... so they still count
+                  // toward the split. If the user added more inputs than
+                  // unfilled slots, honor the extras too.
+                  const guestSlots = Math.max(
+                    playersNeeded - approvedCount,
+                    manualNames.length
+                  );
+                  const filled = Array.from({ length: guestSlots }, (_, i) => {
+                    const typed = (manualNames[i] || "").trim();
+                    return typed.length > 0 ? typed : `Guest ${i + 1}`;
+                  });
+                  const names = filled.join(", ");
                   fetch(`/api/posts/${postId}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
@@ -1434,9 +1714,10 @@ function ManageRequestsModal({
                       isComplete: true,
                       manualPlayers: names,
                     }),
-                  }).then((res) => {
+                  }).then(async (res) => {
                     if (res.ok) {
-                      onUpdate(playersNeeded, true);
+                      const data = await res.json().catch(() => ({}));
+                      onUpdate(playersNeeded, true, data.sessionChatId ?? null);
                       setCurrentConfirmedCount(playersNeeded);
                       setDropdownValue(playersNeeded);
                       setIsMarkedFull(true);
@@ -1472,8 +1753,11 @@ function ManageRequestsModal({
                 <div className="flex items-center gap-3">
                   <Link href={`/profile/${req.user.id}`}><Avatar name={req.user.name} image={req.user.profileImageUrl} size="md" /></Link>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-900">{req.user.name}</p>
-                    <p className="text-xs text-gray-400">{SKILL_LABELS[req.user.skillLevel] || req.user.skillLevel}</p>
+                    <p className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+                      <span className="truncate">{req.user.name}</span>
+                      <GenderSymbol gender={req.user.gender} />
+                    </p>
+                    <p className="text-xs text-gray-400">{formatUserRating(req.user)}</p>
                   </div>
                   {req.status === "PENDING" && (
                     <div className="flex items-center gap-2">

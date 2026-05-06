@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   const playRequest = await prisma.playRequest.create({
     data: { postId, userId: session.user.id },
     include: {
-      user: { select: { id: true, name: true, profileImageUrl: true, skillLevel: true } },
+      user: { select: { id: true, name: true, profileImageUrl: true, skillLevel: true, gender: true, ratingSystem: true, ntrpRating: true, utrRating: true } },
     },
   });
 
@@ -75,7 +75,7 @@ export async function GET(request: Request) {
     where: { postId },
     orderBy: { createdAt: "asc" },
     include: {
-      user: { select: { id: true, name: true, profileImageUrl: true, skillLevel: true } },
+      user: { select: { id: true, name: true, profileImageUrl: true, skillLevel: true, gender: true, ratingSystem: true, ntrpRating: true, utrRating: true } },
     },
   });
 

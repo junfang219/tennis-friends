@@ -34,6 +34,10 @@ export default function PostComposer({
   const [placeholder] = useState(
     () => PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)]
   );
+  const [isNative, setIsNative] = useState(false);
+  useEffect(() => {
+    setIsNative(!!(window as unknown as { Capacitor?: unknown }).Capacitor);
+  }, []);
 
   const openModal = (findPlayers = false, proposeTeam = false) => {
     setOpenWithFindPlayers(findPlayers);
@@ -53,7 +57,7 @@ export default function PostComposer({
           />
           <button
             onClick={() => openModal(false)}
-            className="flex-1 text-left px-4 py-2.5 bg-surface/60 hover:bg-surface rounded-xl text-sm text-gray-400 transition-colors"
+            className={`flex-1 min-w-0 text-left px-4 py-2.5 bg-surface/60 hover:bg-surface rounded-xl text-sm text-gray-400 transition-colors ${isNative ? "truncate" : ""}`}
           >
             {placeholder}
           </button>
@@ -151,12 +155,20 @@ function ComposerModal({
 }) {
   const [content, setContent] = useState("");
   const [posting, setPosting] = useState(false);
+  const [postError, setPostError] = useState("");
+  // Up to 9 photos per post (images only). Videos are single-attachment and
+  // tracked via mediaUrl + mediaType — image and video are mutually exclusive.
+  const [photoUrls, setPhotoUrls] = useState<string[]>([]);
   const [mediaUrl, setMediaUrl] = useState("");
   const [mediaType, setMediaType] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const MAX_PHOTOS = 9;
+  const MAX_PHOTO_BYTES = 10 * 1024 * 1024; // 10 MB — matches /api/upload
+  const MAX_VIDEO_BYTES = 100 * 1024 * 1024; // 100 MB — matches /api/upload
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const teamPurposeRef = useRef<HTMLTextAreaElement>(null);
 
   // Audience
   const [groups, setGroups] = useState<GroupOption[]>([]);
@@ -167,15 +179,18 @@ function ComposerModal({
   const [emojiOpen, setEmojiOpen] = useState(false);
 
   const insertEmoji = (emoji: string) => {
-    const el = textareaRef.current;
+    // When propose-team form is active, insert into teamPurpose; otherwise into content
+    const isTeam = proposeTeam;
+    const el = isTeam ? teamPurposeRef.current : textareaRef.current;
+    const setter = isTeam ? setTeamPurpose : setContent;
     if (!el) {
-      setContent((prev) => prev + emoji);
+      setter((prev) => prev + emoji);
       return;
     }
     const start = el.selectionStart ?? el.value.length;
     const end = el.selectionEnd ?? el.value.length;
     const next = el.value.slice(0, start) + emoji + el.value.slice(end);
-    setContent(next);
+    setter(next);
     requestAnimationFrame(() => {
       el.focus();
       const pos = start + emoji.length;
@@ -190,6 +205,8 @@ function ComposerModal({
   const [courtLocation, setCourtLocation] = useState("");
   const [gameType, setGameType] = useState("singles");
   const [playersNeeded, setPlayersNeeded] = useState(1);
+  const [skillBucket, setSkillBucket] = useState<"any" | "beginner" | "intermediate" | "advanced" | "pro">("any");
+  const [playDuration, setPlayDuration] = useState(90);
   const [courtBooked, setCourtBooked] = useState(false);
 
   // Propose Team fields
@@ -197,6 +214,11 @@ function ComposerModal({
   const [teamName, setTeamName] = useState("");
   const [teamPurpose, setTeamPurpose] = useState("");
   const [teamSize, setTeamSize] = useState(4);
+  const [teamType, setTeamType] = useState("casual");
+  const [teamSchedule, setTeamSchedule] = useState("");
+  const [skillSystem, setSkillSystem] = useState<"NTRP" | "UTR">("NTRP");
+  const [skillMin, setSkillMin] = useState("3.0");
+  const [skillMax, setSkillMax] = useState("4.0");
 
   useEffect(() => {
     fetch("/api/groups")
@@ -244,34 +266,105 @@ function ComposerModal({
         ...friendGroups.filter((g) => selectedFriendGroupIds.has(g.id)).map((g) => g.name),
       ].join(", ");
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploadError("");
-    setUploading(true);
-
-    const formData = new FormData();
-    formData.append("file", file);
-
+  // Upload a single file. Used for the video button.
+  const uploadOne = async (file: File): Promise<{ url: string; mediaType: string } | null> => {
+    const fd = new FormData();
+    fd.append("file", file);
     try {
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
       if (!res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         setUploadError(data.error || "Upload failed");
-        setUploading(false);
-        return;
+        return null;
       }
-      const data = await res.json();
-      setMediaUrl(data.url);
-      setMediaType(data.mediaType);
+      return await res.json();
     } catch {
       setUploadError("Upload failed. Please try again.");
+      return null;
+    }
+  };
+
+  // Photo button: multi-file. Uploads in parallel, appends image URLs to
+  // photoUrls (capped at MAX_PHOTOS). Rejects if a video is mixed in or any
+  // file exceeds MAX_PHOTO_BYTES (skipped with a count).
+  const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    if (mediaUrl && mediaType === "video") {
+      setUploadError("Remove the video before adding photos.");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    const remaining = MAX_PHOTOS - photoUrls.length;
+    if (remaining <= 0) {
+      setUploadError(`Up to ${MAX_PHOTOS} photos per post.`);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    const ok = files.filter((f) => f.size <= MAX_PHOTO_BYTES);
+    const oversized = files.length - ok.length;
+    const toUpload = ok.slice(0, remaining);
+    setUploadError("");
+    if (toUpload.length === 0) {
+      if (oversized > 0) {
+        setUploadError(`Photo${oversized === 1 ? "" : "s"} must be under 10 MB.`);
+      }
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    setUploading(true);
+    const results = await Promise.all(toUpload.map((f) => uploadOne(f)));
+    const newImageUrls = results
+      .filter((r): r is { url: string; mediaType: string } => !!r && r.mediaType === "image")
+      .map((r) => r.url);
+    if (newImageUrls.length > 0) {
+      setPhotoUrls((prev) => [...prev, ...newImageUrls]);
+    }
+    if (results.some((r) => r && r.mediaType !== "image")) {
+      setUploadError("Use the video button for videos.");
+    } else if (oversized > 0) {
+      setUploadError(
+        `Skipped ${oversized} photo${oversized === 1 ? "" : "s"} over 10 MB.`
+      );
+    } else if (ok.length > toUpload.length) {
+      setUploadError(`Only the first ${toUpload.length} photo(s) added (max ${MAX_PHOTOS}).`);
     }
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const removeMedia = () => {
+  // Video button: single-file. Replaces any existing video; rejects if photos
+  // are already attached or the file exceeds MAX_VIDEO_BYTES.
+  const handleVideoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (photoUrls.length > 0) {
+      setUploadError("Remove photos before adding a video.");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > MAX_VIDEO_BYTES) {
+      setUploadError("Video must be under 100 MB.");
+      e.target.value = "";
+      return;
+    }
+    setUploadError("");
+    setUploading(true);
+    const result = await uploadOne(file);
+    if (result) {
+      setMediaUrl(result.url);
+      setMediaType(result.mediaType);
+    }
+    setUploading(false);
+    e.target.value = "";
+  };
+
+  const removePhotoAt = (idx: number) => {
+    setPhotoUrls((prev) => prev.filter((_, i) => i !== idx));
+    setUploadError("");
+  };
+
+  const removeVideo = () => {
     setMediaUrl("");
     setMediaType("");
     setUploadError("");
@@ -281,16 +374,21 @@ function ComposerModal({
     ? (playDate && playTime && courtLocation)
     : proposeTeam
     ? (teamName.trim() && teamPurpose.trim())
-    : (content.trim() || mediaUrl);
+    : (content.trim() || photoUrls.length > 0 || mediaUrl);
 
   const handleSubmit = async () => {
     if (!canSubmit || posting || uploading) return;
     setPosting(true);
+    setPostError("");
 
     const body: Record<string, unknown> = {
       content,
-      mediaUrl,
-      mediaType,
+      // For photo posts, send the array; the API maps photoUrls[0] into
+      // mediaUrl + mediaType="image" for backwards compat. For videos,
+      // continue sending mediaUrl + mediaType.
+      photoUrls: photoUrls.length > 0 ? photoUrls : undefined,
+      mediaUrl: photoUrls.length > 0 ? "" : mediaUrl,
+      mediaType: photoUrls.length > 0 ? "" : mediaType,
       groupIds: selectedGroupIds.size > 0 ? Array.from(selectedGroupIds) : undefined,
       friendGroupIds: selectedFriendGroupIds.size > 0 ? Array.from(selectedFriendGroupIds) : undefined,
     };
@@ -302,40 +400,67 @@ function ComposerModal({
       body.courtLocation = courtLocation;
       body.gameType = gameType;
       body.playersNeeded = playersNeeded;
+      body.playDuration = playDuration;
       body.courtBooked = courtBooked;
+      const bucketRanges: Record<typeof skillBucket, [number, number] | null> = {
+        any: null,
+        beginner: [2.5, 3.0],
+        intermediate: [3.0, 4.0],
+        advanced: [4.0, 5.0],
+        pro: [5.0, 7.0],
+      };
+      const range = bucketRanges[skillBucket];
+      if (range) {
+        body.skillMin = range[0];
+        body.skillMax = range[1];
+      }
       if (!content.trim()) {
-        body.content = `Looking for ${playersNeeded} ${playersNeeded === 1 ? "player" : "players"} for ${gameType} at ${courtLocation} on ${playDate} at ${playTime}`;
+        body.content = `Looking for ${playersNeeded} ${playersNeeded === 1 ? "player" : "players"} for ${gameType} at ${courtLocation} on ${playDate} at ${playTime} (${playDuration} min)`;
       }
     }
 
     if (proposeTeam) {
       body.postType = "propose_team";
-      body.courtLocation = teamName; // reuse courtLocation field for team name
-      body.gameType = "team";
+      body.courtLocation = teamName;
+      body.gameType = teamType;
+      body.playDate = teamSchedule || undefined;
+      body.playTime = `${skillSystem}:${skillMin}-${skillMax}`;
       body.playersNeeded = teamSize;
       body.content = teamPurpose;
     }
 
-    const res = await fetch("/api/posts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    try {
+      const res = await fetch("/api/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
 
-    if (res.ok) {
-      const post = await res.json();
-      onPost(post);
+      if (res.ok) {
+        const post = await res.json();
+        onPost(post);
+      } else {
+        let msg = `Post failed (${res.status})`;
+        try {
+          const data = await res.json();
+          if (data?.error) msg = data.error;
+        } catch {}
+        setPostError(msg);
+      }
+    } catch (err) {
+      setPostError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setPosting(false);
     }
-    setPosting(false);
   };
 
   return (
     <div
-      className="fixed inset-0 z-[999] bg-black/50 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
+      className="fixed inset-0 z-[10000] bg-black/50 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
       onClick={onClose}
     >
       <div
-        className="bg-white w-full sm:max-w-lg sm:rounded-2xl shadow-2xl min-h-screen sm:min-h-0 sm:my-8 flex flex-col"
+        className="bg-white w-full sm:max-w-lg sm:rounded-2xl shadow-2xl min-h-screen sm:min-h-0 sm:my-8 flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] sm:pt-0 sm:pb-0"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -390,13 +515,20 @@ function ComposerModal({
         </div>
 
         {/* Textarea */}
-        <div className="flex-1 px-5 py-3">
+        <div className="px-5 py-3">
           <textarea
             ref={textareaRef}
             value={content}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={(e) => {
+              if (e.target.value.length <= 280) setContent(e.target.value);
+              const el = e.target;
+              el.style.height = "auto";
+              el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
+            }}
+            maxLength={280}
             placeholder={placeholder}
-            className="w-full resize-none border-0 text-gray-700 text-base placeholder:text-gray-400 focus:outline-none focus:ring-0 min-h-[120px]"
+            className="w-full resize-none border-0 text-gray-700 text-base placeholder:text-gray-400 focus:outline-none focus:ring-0 overflow-y-auto"
+            rows={2}
           />
 
           {/* Group tags */}
@@ -424,17 +556,45 @@ function ComposerModal({
             </div>
           )}
 
-          {/* Media preview */}
-          {mediaUrl && (
+          {/* Photo grid preview (multi) */}
+          {photoUrls.length > 0 && (
+            <div className="mb-3">
+              <div className={`grid gap-1 ${
+                photoUrls.length === 1 ? "grid-cols-1" :
+                photoUrls.length === 2 ? "grid-cols-2" :
+                photoUrls.length <= 4 ? "grid-cols-2" :
+                "grid-cols-3"
+              }`}>
+                {photoUrls.map((url, i) => (
+                  <div key={i} className="relative aspect-square rounded-xl overflow-hidden border border-gray-200 bg-gray-50">
+                    <img src={url} alt={`Photo ${i + 1}`} className="w-full h-full object-cover" />
+                    <button
+                      onClick={() => removePhotoAt(i)}
+                      className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center transition-colors"
+                      aria-label={`Remove photo ${i + 1}`}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1.5">
+                {photoUrls.length} of {MAX_PHOTOS} photos
+              </p>
+            </div>
+          )}
+
+          {/* Video preview (single) */}
+          {mediaUrl && mediaType === "video" && (
             <div className="relative rounded-xl overflow-hidden border border-gray-200 bg-gray-50 mb-3">
-              {mediaType === "image" ? (
-                <img src={mediaUrl} alt="Attachment" className="max-h-72 w-full object-cover" />
-              ) : (
-                <video src={mediaUrl} className="max-h-72 w-full object-cover" controls preload="metadata" />
-              )}
+              <video src={`${mediaUrl}#t=0.1`} className="max-h-72 w-full object-cover" controls preload="metadata" playsInline />
               <button
-                onClick={removeMedia}
+                onClick={removeVideo}
                 className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center transition-colors"
+                aria-label="Remove video"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                   <line x1="18" y1="6" x2="6" y2="18" />
@@ -458,7 +618,7 @@ function ComposerModal({
 
           {/* Find Players form */}
           {findPlayers && (
-            <div className="bg-gradient-to-br from-court-green/5 to-ball-yellow/10 border border-court-green-pale/30 rounded-xl p-4 mb-3">
+            <div className="bg-gradient-to-br from-court-green/5 to-ball-yellow/10 border border-court-green-pale/30 rounded-xl p-4 mb-3 overflow-hidden">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-sm font-bold text-court-green flex items-center gap-1.5">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -474,26 +634,53 @@ function ComposerModal({
                   Remove
                 </button>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-full">
+                <div className="min-w-0">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
                   <input
                     type="date"
                     value={playDate}
                     onChange={(e) => setPlayDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                    className="w-full min-w-0 max-w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white box-border"
                   />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Time</label>
                   <input
                     type="time"
+                    lang="en-GB"
                     value={playTime}
                     onChange={(e) => setPlayTime(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                    className="w-full min-w-0 max-w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white box-border"
                   />
                 </div>
-                <div className="col-span-2">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Duration</label>
+                  <select
+                    value={playDuration}
+                    onChange={(e) => setPlayDuration(Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none"
+                  >
+                    {[60, 75, 90, 120].map((m) => (
+                      <option key={m} value={m}>{m} min</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Level Required</label>
+                  <select
+                    value={skillBucket}
+                    onChange={(e) => setSkillBucket(e.target.value as typeof skillBucket)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none"
+                  >
+                    <option value="any">Any</option>
+                    <option value="beginner">NTRP 2.5–3.0</option>
+                    <option value="intermediate">NTRP 3.0–4.0</option>
+                    <option value="advanced">NTRP 4.0–5.0</option>
+                    <option value="pro">NTRP 5.0+</option>
+                  </select>
+                </div>
+                <div className="sm:col-span-2">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Court Location</label>
                   <input
                     type="text"
@@ -581,6 +768,7 @@ function ComposerModal({
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Team Purpose / Description</label>
                   <textarea
+                    ref={teamPurposeRef}
                     value={teamPurpose}
                     onChange={(e) => setTeamPurpose(e.target.value)}
                     placeholder="What's this team about? (e.g. weekly doubles practice, tournament prep, beginners welcome...)"
@@ -599,6 +787,74 @@ function ComposerModal({
                       <option key={n} value={n}>{n} members</option>
                     ))}
                   </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Team Type</label>
+                  <select
+                    value={teamType}
+                    onChange={(e) => setTeamType(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none"
+                  >
+                    <option value="casual">Casual Practice</option>
+                    <option value="league">Competitive League</option>
+                    <option value="tournament">Tournament Prep</option>
+                    <option value="social">Social / Fun</option>
+                    <option value="drilling">Drilling / Training</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Skill Level</label>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="inline-flex bg-gray-100 rounded-lg p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => { setSkillSystem("NTRP"); setSkillMin("3.0"); setSkillMax("4.0"); }}
+                        className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${skillSystem === "NTRP" ? "bg-white text-court-green shadow-sm" : "text-gray-500"}`}
+                      >
+                        NTRP
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setSkillSystem("UTR"); setSkillMin("5"); setSkillMax("8"); }}
+                        className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${skillSystem === "UTR" ? "bg-white text-court-green shadow-sm" : "text-gray-500"}`}
+                      >
+                        UTR
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {skillSystem === "NTRP" ? (
+                      <>
+                        <select value={skillMin} onChange={(e) => setSkillMin(e.target.value)} className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none">
+                          {["2.0", "2.5", "3.0", "3.5", "4.0", "4.5", "5.0", "5.5"].map((v) => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                        <span className="text-xs text-gray-400">to</span>
+                        <select value={skillMax} onChange={(e) => setSkillMax(e.target.value)} className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none">
+                          {["2.5", "3.0", "3.5", "4.0", "4.5", "5.0", "5.5", "6.0+"].map((v) => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                      </>
+                    ) : (
+                      <>
+                        <input type="number" value={skillMin} onChange={(e) => setSkillMin(e.target.value)} min="1" max="16" step="0.5" className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" placeholder="Min" />
+                        <span className="text-xs text-gray-400">to</span>
+                        <input type="number" value={skillMax} onChange={(e) => setSkillMax(e.target.value)} min="1" max="16" step="0.5" className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" placeholder="Max" />
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Schedule</label>
+                  <input
+                    type="text"
+                    value={teamSchedule}
+                    onChange={(e) => setTeamSchedule(e.target.value)}
+                    placeholder="e.g. Weekends, Tuesdays 6-8pm, Twice a month"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                  />
                 </div>
               </div>
             </div>
@@ -619,8 +875,9 @@ function ComposerModal({
                 ref={fileInputRef}
                 type="file"
                 accept="image/jpeg,image/png,image/gif,image/webp"
-                onChange={handleFileSelect}
-                disabled={uploading}
+                multiple
+                onChange={handlePhotoSelect}
+                disabled={uploading || photoUrls.length >= MAX_PHOTOS}
                 className="hidden"
               />
             </label>
@@ -632,8 +889,8 @@ function ComposerModal({
               <input
                 type="file"
                 accept="video/mp4,video/webm,video/quicktime,video/mov"
-                onChange={handleFileSelect}
-                disabled={uploading}
+                onChange={handleVideoSelect}
+                disabled={uploading || photoUrls.length > 0}
                 className="hidden"
               />
             </label>
@@ -676,6 +933,11 @@ function ComposerModal({
 
         {/* Post button */}
         <div className="px-5 pb-5">
+          {postError && (
+            <div className="mb-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+              {postError}
+            </div>
+          )}
           <button
             onClick={handleSubmit}
             disabled={!canSubmit || posting || uploading}

@@ -1,40 +1,40 @@
 import { NextResponse } from "next/server";
-import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import bcrypt from "bcryptjs";
+import { validateHandle } from "@/lib/handle";
 
 export async function POST(request: Request) {
   try {
-    const { email, password, name, skillLevel, favoriteSurface } =
-      await request.json();
+    const { name, email, password, handle } = await request.json();
 
-    if (!email || !password || !name) {
-      return NextResponse.json(
-        { error: "Email, password, and name are required" },
-        { status: 400 }
-      );
+    if (!name || !email || !password) {
+      return NextResponse.json({ error: "Name, email, and password are required" }, { status: 400 });
+    }
+
+    let normalizedHandle: string | null = null;
+    if (handle && typeof handle === "string" && handle.trim()) {
+      const v = validateHandle(handle);
+      if (!v.ok) {
+        return NextResponse.json({ error: v.error, field: "handle" }, { status: 400 });
+      }
+      const taken = await prisma.user.findUnique({ where: { handle: v.value } });
+      if (taken) {
+        return NextResponse.json({ error: "Handle is already taken.", field: "handle" }, { status: 409 });
+      }
+      normalizedHandle = v.value;
     }
 
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {
-      return NextResponse.json(
-        { error: "Email already registered" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Email already in use" }, { status: 409 });
     }
 
-    const passwordHash = await bcrypt.hash(password, 12);
-
+    const passwordHash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
-      data: {
-        email,
-        passwordHash,
-        name,
-        skillLevel: skillLevel || "intermediate",
-        favoriteSurface: favoriteSurface || "hard",
-      },
+      data: { name, email, passwordHash, handle: normalizedHandle },
     });
 
-    return NextResponse.json({ id: user.id, email: user.email, name: user.name });
+    return NextResponse.json({ id: user.id, name: user.name, email: user.email, handle: user.handle });
   } catch {
     return NextResponse.json({ error: "Registration failed" }, { status: 500 });
   }

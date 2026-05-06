@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Avatar from "@/components/Avatar";
 import EmojiPicker from "@/components/EmojiPicker";
+import SplitCostSheet from "@/components/SplitCostSheet";
 
 type Message = {
   id: string;
@@ -21,6 +22,7 @@ type ChatInfo = {
   name: string;
   creatorId: string;
   participants: { id: string; name: string; profileImageUrl: string }[];
+  guestNames: string[];
 };
 
 function formatTime(date: string) {
@@ -52,6 +54,7 @@ export default function GroupChatThreadPage() {
   const [showRename, setShowRename] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [showMembers, setShowMembers] = useState(false);
+  const [showSplit, setShowSplit] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<{ url: string; type: string } | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -112,7 +115,8 @@ export default function GroupChatThreadPage() {
         if (!r.ok) { setError("Chat not found."); return null; }
         return r.json();
       })
-      .then((data) => { if (data) setChatInfo(data); });
+      .then((data) => { if (data) setChatInfo(data); })
+      .catch(() => {});
   }, [chatId]);
 
   // Load messages
@@ -122,7 +126,8 @@ export default function GroupChatThreadPage() {
         if (!r.ok) return;
         return r.json();
       })
-      .then((data) => { if (Array.isArray(data)) setMessages(data); });
+      .then((data) => { if (Array.isArray(data)) setMessages(data); })
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -286,6 +291,13 @@ export default function GroupChatThreadPage() {
               )}
             </div>
             <button
+              onClick={() => setShowSplit(true)}
+              className="text-xs font-medium text-court-green hover:text-court-green-light px-2 py-1"
+              title="Split a cost"
+            >
+              💵 Split
+            </button>
+            <button
               onClick={clearHistory}
               className="text-xs font-medium text-gray-500 hover:text-gray-700 px-2 py-1"
               title="Clear chat history (your view only)"
@@ -363,7 +375,7 @@ export default function GroupChatThreadPage() {
                     {msg.mediaUrl && (
                       <div className={`rounded-2xl overflow-hidden shadow-sm ${isMe ? "ml-auto" : ""}`}>
                         {msg.mediaType === "video" ? (
-                          <video src={msg.mediaUrl} controls className="max-w-full max-h-80 bg-black" />
+                          <video src={`${msg.mediaUrl}#t=0.1`} controls preload="metadata" playsInline className="max-w-full max-h-80 bg-black" />
                         ) : (
                           <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer">
                             <img src={msg.mediaUrl} alt="" className="max-w-full max-h-80 object-cover" />
@@ -406,7 +418,7 @@ export default function GroupChatThreadPage() {
             {pendingMedia.type === "image" ? (
               <img src={pendingMedia.url} alt="" className="w-20 h-20 object-cover rounded-lg" />
             ) : (
-              <video src={pendingMedia.url} className="w-20 h-20 object-cover rounded-lg bg-black" />
+              <video src={`${pendingMedia.url}#t=0.1`} preload="metadata" playsInline muted className="w-20 h-20 object-cover rounded-lg bg-black" />
             )}
             <button
               onClick={() => setPendingMedia(null)}
@@ -491,7 +503,10 @@ export default function GroupChatThreadPage() {
             <div className="p-4 border-b border-gray-100 flex items-center justify-between">
               <div>
                 <h3 className="font-display text-lg font-bold text-gray-800">Members</h3>
-                <p className="text-xs text-gray-400">{chatInfo.participants.length} in this chat</p>
+                <p className="text-xs text-gray-400">
+                  {chatInfo.participants.length} in this chat
+                  {chatInfo.guestNames.length > 0 && ` · ${chatInfo.guestNames.length} guest${chatInfo.guestNames.length === 1 ? "" : "s"}`}
+                </p>
               </div>
               <button
                 onClick={() => setShowMembers(false)}
@@ -535,9 +550,40 @@ export default function GroupChatThreadPage() {
                   </button>
                 );
               })}
+              {chatInfo.guestNames.length > 0 && (
+                <div className="border-t border-gray-100">
+                  <p className="px-5 pt-3 pb-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                    Guests · not on Tennis Friends
+                  </p>
+                  {chatInfo.guestNames.map((g, i) => (
+                    <div key={`guest-${i}`} className="flex items-center gap-3 px-5 py-3">
+                      <Avatar name={g} image="" size="md" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-gray-700 truncate">{g}</p>
+                          <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                            Guest
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-400">Counts toward split costs · pay in person</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
+      )}
+      {showSplit && chatInfo && (
+        <SplitCostSheet
+          chatId={chatId}
+          participants={chatInfo.participants}
+          guestNames={chatInfo.guestNames}
+          myId={myId}
+          onClose={() => setShowSplit(false)}
+          onExpenseCreated={loadMessages}
+        />
       )}
     </div>
   );

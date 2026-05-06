@@ -8,17 +8,39 @@ datasource db {
 }
 
 model User {
-  id             String   @id @default(cuid())
-  email          String   @unique
-  passwordHash   String
+  id             String    @id @default(cuid())
+  email          String?   @unique
+  emailVerified  DateTime?
+  phone          String?   @unique
+  phoneVerified  DateTime?
+  passwordHash   String?
   name           String
   bio            String   @default("")
   skillLevel     String   @default("intermediate")
   favoriteSurface String  @default("hard")
   profileImageUrl String  @default("")
+  coverImageUrl  String   @default("")
+  coverOffsetY   Int      @default(50)
+  coverScale     Int      @default(100)
+  customTags     String   @default("")
+  latitude       Float?
+  longitude      Float?
+  gender         String   @default("")
+  ageRange       String   @default("")
+  ratingSystem   String   @default("")
+  ntrpRating     Float?
+  utrRating      Float?
+  handle         String?  @unique
+  venmoHandle    String?
+  paypalHandle   String?
+  cashappHandle  String?
+  zelleHandle    String?
+  onboardingComplete Boolean @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  accounts         Account[]
+  sessions         Session[]
   sentRequests     Friendship[] @relation("Requester")
   receivedRequests Friendship[] @relation("Addressee")
   posts            Post[]
@@ -46,6 +68,21 @@ model User {
   courtsAdded         Court[]                @relation("CourtAdder")
   organizedBookings   Booking[]              @relation("BookingOrganizer")
   bookingPlayers      BookingPlayer[]        @relation("BookingPlayerUser")
+  paidExpenses        Expense[]              @relation("ExpensePayer")
+  expenseShares       ExpenseShare[]
+  highlights          Highlight[]
+}
+
+model Highlight {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mediaUrl  String
+  mediaType String   @default("image")
+  caption   String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model Friendship {
@@ -62,6 +99,17 @@ model Friendship {
   @@unique([requesterId, addresseeId])
 }
 
+model Photo {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  url       String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+}
+
 model Post {
   id        String   @id @default(cuid())
   content   String   @default("")
@@ -70,10 +118,13 @@ model Post {
   postType  String   @default("regular")
   playDate  String   @default("")
   playTime  String   @default("")
+  playDuration Int    @default(90)
   courtLocation String @default("")
   gameType  String   @default("")
   playersNeeded    Int     @default(0)
   playersConfirmed Int     @default(0)
+  skillMin         Float?
+  skillMax         Float?
   courtBooked      Boolean @default(false)
   isComplete       Boolean @default(false)
   commentsDisabled Boolean @default(false)
@@ -88,6 +139,7 @@ model Post {
   playRequests PlayRequest[]
   comments     Comment[]
   hiddenBy     HiddenPost[]
+  photos       Photo[]
 }
 
 model Like {
@@ -261,15 +313,62 @@ model PostFriendGroup {
 }
 
 model Chat {
-  id        String   @id @default(cuid())
-  name      String   @default("")
-  creatorId String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                 String    @id @default(cuid())
+  name               String    @default("")
+  creatorId          String
+  postId             String?
+  sessionEndAt       DateTime?
+  manualPlayerNames  String    @default("")
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   creator      User              @relation("ChatCreator", fields: [creatorId], references: [id])
   participants ChatParticipant[]
   messages     ChatMessage[]
+  expenses     Expense[]
+
+  @@index([sessionEndAt])
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  chatId      String
+  chat        Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  payerId     String
+  payer       User     @relation("ExpensePayer", fields: [payerId], references: [id])
+  amountCents Int
+  description String   @default("")
+  createdAt   DateTime @default(now())
+
+  shares       ExpenseShare[]
+  guestShares  GuestExpenseShare[]
+
+  @@index([chatId])
+}
+
+model GuestExpenseShare {
+  id          String    @id @default(cuid())
+  expenseId   String
+  expense     Expense   @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  guestName   String
+  amountCents Int
+  settledAt   DateTime?
+
+  @@unique([expenseId, guestName])
+  @@index([expenseId])
+}
+
+model ExpenseShare {
+  id          String    @id @default(cuid())
+  expenseId   String
+  expense     Expense   @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  amountCents Int
+  settledAt   DateTime?
+
+  @@unique([expenseId, userId])
+  @@index([userId])
 }
 
 model ChatParticipant {
@@ -450,4 +549,43 @@ model BookingPlayer {
   updatedAt DateTime @updatedAt
 
   @@unique([bookingId, userId])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId      String
+  expires     DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
 }
