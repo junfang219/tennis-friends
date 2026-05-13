@@ -64,13 +64,16 @@ model User {
   blocksMade         Block[]           @relation("Blocker")
   blocksReceived     Block[]           @relation("Blocked")
   matchAvailabilities MatchAvailability[]
-  proposedPractices   TeamPractice[]         @relation("PracticeCreator")
+  practiceAvailabilities PracticeAvailability[]
   courtsAdded         Court[]                @relation("CourtAdder")
   organizedBookings   Booking[]              @relation("BookingOrganizer")
   bookingPlayers      BookingPlayer[]        @relation("BookingPlayerUser")
   paidExpenses        Expense[]              @relation("ExpensePayer")
   expenseShares       ExpenseShare[]
   highlights          Highlight[]
+  messageReactions    MessageReaction[]
+  deviceTokens        DeviceToken[]
+  courtReviews        CourtReview[]          @relation("CourtReviewAuthor")
 }
 
 model Highlight {
@@ -129,6 +132,11 @@ model Post {
   isComplete       Boolean @default(false)
   commentsDisabled Boolean @default(false)
   manualPlayers    String  @default("")
+  teamGroupId      String  @default("")
+  isBroadcast       Boolean @default(false)
+  broadcastRadiusMi Int     @default(0)
+  broadcastLat      Float?
+  broadcastLng      Float?
   authorId  String
   createdAt DateTime @default(now())
 
@@ -140,6 +148,8 @@ model Post {
   comments     Comment[]
   hiddenBy     HiddenPost[]
   photos       Photo[]
+
+  @@index([isBroadcast, createdAt])
 }
 
 model Like {
@@ -155,19 +165,22 @@ model Like {
 }
 
 model Group {
-  id        String   @id @default(cuid())
-  name      String
-  imageUrl  String   @default("")
-  ownerId   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String   @id @default(cuid())
+  name          String
+  imageUrl      String   @default("")
+  coverImageUrl String   @default("")
+  coverOffsetY  Int      @default(50)
+  coverScale    Int      @default(100)
+  ownerId       String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   owner         User           @relation("GroupOwner", fields: [ownerId], references: [id])
   members       GroupMember[]
   postGroups    PostGroup[]
   groupMessages GroupMessage[]
-  matches       TeamMatch[]
-  practices     TeamPractice[]
+  matches         TeamMatch[]
+  practiceSeries  PracticeSeries[]
 }
 
 model GroupMember {
@@ -214,13 +227,14 @@ model Message {
 }
 
 model GroupMessage {
-  id        String   @id @default(cuid())
-  content   String
-  mediaUrl  String   @default("")
-  mediaType String   @default("")
-  groupId   String
-  senderId  String
-  createdAt DateTime @default(now())
+  id           String   @id @default(cuid())
+  content      String
+  mediaUrl     String   @default("")
+  mediaType    String   @default("")
+  sharedPostId String   @default("")
+  groupId      String
+  senderId     String
+  createdAt    DateTime @default(now())
 
   group  Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
   sender User  @relation(fields: [senderId], references: [id])
@@ -267,9 +281,11 @@ model Notification {
   id          String   @id @default(cuid())
   userId      String   // recipient
   actorId     String   // who triggered it
-  type        String   // "comment" | "like" | "join_request" | "request_approved" | "request_rejected"
+  type        String   // "comment" | "like" | "join_request" | "request_approved" | "request_rejected" | "message_reaction"
   postId      String   @default("")
   commentId   String   @default("")
+  messageId   String   @default("")
+  emoji       String   @default("")
   read        Boolean  @default(false)
   createdAt   DateTime @default(now())
 
@@ -287,6 +303,7 @@ model FriendGroup {
   owner            User                @relation("FriendGroupOwner", fields: [ownerId], references: [id])
   members          FriendGroupMember[]
   postFriendGroups PostFriendGroup[]
+  chat             Chat?
 }
 
 model FriendGroupMember {
@@ -317,12 +334,14 @@ model Chat {
   name               String    @default("")
   creatorId          String
   postId             String?
+  friendGroupId      String?   @unique
   sessionEndAt       DateTime?
   manualPlayerNames  String    @default("")
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
   creator      User              @relation("ChatCreator", fields: [creatorId], references: [id])
+  friendGroup  FriendGroup?      @relation(fields: [friendGroupId], references: [id], onDelete: SetNull)
   participants ChatParticipant[]
   messages     ChatMessage[]
   expenses     Expense[]
@@ -401,6 +420,38 @@ model ChatMessage {
   sender User @relation(fields: [senderId], references: [id])
 }
 
+// Per-device push token for APNs / FCM. The same physical device can re-register
+// under a different signed-in user; the unique constraint on token guarantees we
+// only ever route a push to the most recent owner of that token.
+model DeviceToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  platform  String   // "ios" | "android"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// Polymorphic per-user reactions for Message (DM), GroupMessage (GROUP), and ChatMessage (CHAT).
+// One row per (messageType, messageId, userId) — the unique constraint enforces the iMessage-style
+// single-reaction rule. No FK to message rows; orphans are filtered on read.
+model MessageReaction {
+  id          String   @id @default(cuid())
+  messageType String
+  messageId   String
+  userId      String
+  emoji       String
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageType, messageId, userId])
+  @@index([messageType, messageId])
+}
+
 model Block {
   id        String   @id @default(cuid())
   blockerId String
@@ -457,24 +508,43 @@ model MatchAvailability {
   @@unique([matchId, userId])
 }
 
-model TeamPractice {
+model PracticeSeries {
   id            String   @id @default(cuid())
   groupId       String
-  creatorId     String
-  postId        String   @default("")
-  practiceDate  String
-  practiceTime  String   @default("")
+  name          String
   location      String
-  playersNeeded Int      @default(0)
-  coach         String   @default("")
-  repeats       String   @default("")  // "" | "weekly" | "biweekly" | "monthly"
+  practiceTime  String   @default("")
   notes         String   @default("")
-  cancelled     Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  creator User  @relation("PracticeCreator", fields: [creatorId], references: [id])
+  group     Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  practices TeamPractice[]
+}
+
+model TeamPractice {
+  id            String   @id @default(cuid())
+  seriesId      String
+  practiceDate  String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  series          PracticeSeries         @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+  availabilities  PracticeAvailability[]
+}
+
+model PracticeAvailability {
+  id         String   @id @default(cuid())
+  practiceId String
+  userId     String
+  status     String   @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  practice TeamPractice @relation(fields: [practiceId], references: [id], onDelete: Cascade)
+  user     User         @relation(fields: [userId], references: [id])
+
+  @@unique([practiceId, userId])
 }
 
 model Court {
@@ -549,6 +619,32 @@ model BookingPlayer {
   updatedAt DateTime @updatedAt
 
   @@unique([bookingId, userId])
+}
+
+model CourtReview {
+  id        String             @id @default(cuid())
+  courtId   String
+  userId    String
+  user      User               @relation("CourtReviewAuthor", fields: [userId], references: [id], onDelete: Cascade)
+  stars     Int
+  content   String             @default("")
+  photos    CourtReviewPhoto[]
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  @@unique([courtId, userId])
+  @@index([courtId])
+}
+
+model CourtReviewPhoto {
+  id        String      @id @default(cuid())
+  reviewId  String
+  review    CourtReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  url       String
+  order     Int         @default(0)
+  createdAt DateTime    @default(now())
+
+  @@index([reviewId])
 }
 
 model Account {

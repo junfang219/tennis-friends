@@ -6,6 +6,11 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import EmojiPicker from "@/components/EmojiPicker";
+import SharedPostCard, { type SharedPost } from "@/components/SharedPostCard";
+import MessageReactionBar from "@/components/MessageReactionBar";
+import MessageReactions, { type MessageReaction as MsgReaction } from "@/components/MessageReactions";
+import { useLongPress } from "@/hooks/useLongPress";
+import type { ReactionKey } from "@/lib/reactions";
 
 type Message = {
   id: string;
@@ -14,7 +19,10 @@ type Message = {
   mediaType?: string;
   createdAt: string;
   senderId: string;
+  sharedPostId?: string | null;
+  sharedPost?: SharedPost | null;
   sender: { id: string; name: string; profileImageUrl: string };
+  reactions?: MsgReaction[];
 };
 
 type GroupInfo = {
@@ -53,6 +61,7 @@ export default function GroupChatPage() {
   const [pendingMedia, setPendingMedia] = useState<{ url: string; type: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [reactionPopover, setReactionPopover] = useState<{ msgId: string; rect: DOMRect } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -164,6 +173,38 @@ export default function GroupChatPage() {
     }
   };
 
+  const myId = session?.user?.id || "";
+
+  const applyReaction = async (msgId: string, key: ReactionKey | null) => {
+    if (!myId) return;
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== msgId) return m;
+        const without = (m.reactions || []).filter((r) => r.userId !== myId);
+        const next = key === null ? without : [...without, { emoji: key, userId: myId, userName: "You" }];
+        return { ...m, reactions: next };
+      }),
+    );
+    try {
+      await fetch("/api/messages/reactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageType: "GROUP", messageId: msgId, emoji: key }),
+      });
+    } catch {
+      // Polling will reconcile.
+    }
+  };
+
+  const longPress = useLongPress((rect, target) => {
+    const id = target.dataset.msgId;
+    if (!id) return;
+    setReactionPopover({ msgId: id, rect });
+  });
+
+  const popoverMsg = reactionPopover ? messages.find((m) => m.id === reactionPopover.msgId) : null;
+  const popoverCurrent = (popoverMsg?.reactions || []).find((r) => r.userId === myId)?.emoji as ReactionKey | undefined;
+
   if (error) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-16 text-center">
@@ -266,14 +307,23 @@ export default function GroupChatPage() {
                     </div>
                   )}
 
-                  <div className="max-w-[75%]">
+                  <div
+                    className="max-w-[75%] select-none"
+                    data-msg-id={msg.id}
+                    data-long-press-root
+                    style={{ touchAction: "pan-y" }}
+                    {...longPress}
+                  >
                     {showName && (
                       <p className="text-[11px] font-medium text-court-green-soft ml-1 mb-0.5">
                         {msg.sender.name}
                       </p>
                     )}
+                    {msg.sharedPost && (
+                      <SharedPostCard post={msg.sharedPost} />
+                    )}
                     {msg.mediaUrl && (
-                      <div className={`rounded-2xl overflow-hidden shadow-sm ${isMe ? "ml-auto" : ""}`}>
+                      <div className={`rounded-2xl overflow-hidden shadow-sm ${msg.sharedPost ? "mt-1" : ""} ${isMe ? "ml-auto" : ""}`}>
                         {msg.mediaType === "video" ? (
                           <video src={`${msg.mediaUrl}#t=0.1`} controls preload="metadata" playsInline className="max-w-full max-h-80 bg-black" />
                         ) : (
@@ -283,24 +333,36 @@ export default function GroupChatPage() {
                         )}
                       </div>
                     )}
-                    {msg.content && (
+                    {(msg.content || (!msg.sharedPost && !msg.mediaUrl)) && (
                       <div
-                        className={`px-4 py-2.5 text-sm leading-relaxed ${msg.mediaUrl ? "mt-1 " : ""}${
+                        className={`px-4 py-2.5 text-sm leading-relaxed ${msg.sharedPost || msg.mediaUrl ? "mt-1 " : ""}${
                           isMe
                             ? "bg-court-green text-white rounded-2xl rounded-br-md"
                             : "bg-white text-gray-800 rounded-2xl rounded-bl-md shadow-sm border border-gray-100"
                         }`}
                       >
-                        <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                        {msg.content && <p className="whitespace-pre-wrap break-words">{msg.content}</p>}
+                        {!msg.content && msg.sharedPost && <p className="whitespace-pre-wrap break-words opacity-70">Shared a post</p>}
                         <p className={`text-[10px] mt-1 ${isMe ? "text-white/60" : "text-gray-400"}`}>
                           {formatTime(msg.createdAt)}
                         </p>
                       </div>
                     )}
-                    {msg.mediaUrl && !msg.content && (
+                    {msg.mediaUrl && !msg.content && !msg.sharedPost && (
                       <p className={`text-[10px] mt-1 ${isMe ? "text-right" : ""} text-gray-400`}>
                         {formatTime(msg.createdAt)}
                       </p>
+                    )}
+                    {msg.reactions && msg.reactions.length > 0 && (
+                      <MessageReactions
+                        reactions={msg.reactions}
+                        myUserId={myId}
+                        align={isMe ? "right" : "left"}
+                        onToggle={(emojiKey) => {
+                          const mine = (msg.reactions || []).find((r) => r.userId === myId)?.emoji;
+                          applyReaction(msg.id, mine === emojiKey ? null : (emojiKey as ReactionKey));
+                        }}
+                      />
                     )}
                   </div>
                 </div>
@@ -389,6 +451,16 @@ export default function GroupChatPage() {
           </button>
         </div>
       </div>
+
+      <MessageReactionBar
+        anchorRect={reactionPopover?.rect ?? null}
+        currentReaction={popoverCurrent ?? null}
+        onSelect={(key) => {
+          if (reactionPopover) applyReaction(reactionPopover.msgId, key);
+          setReactionPopover(null);
+        }}
+        onClose={() => setReactionPopover(null)}
+      />
     </div>
   );
 }

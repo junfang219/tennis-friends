@@ -22,6 +22,30 @@ type CalendarEvent = {
   groups: { id: string; name: string }[];
 };
 
+type TeamMatchEvent = {
+  id: string;
+  teamId: string;
+  teamName: string;
+  matchDate: string;
+  matchTime: string;
+  location: string;
+  notes: string;
+  inLineup: boolean;
+  lineupSlot: string;
+};
+
+type TeamPracticeEvent = {
+  id: string;
+  teamId: string;
+  teamName: string;
+  seriesId: string;
+  seriesName: string;
+  practiceDate: string;
+  practiceTime: string;
+  location: string;
+  notes: string;
+};
+
 type GroupOption = { id: string; name: string };
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -42,6 +66,8 @@ function dateKey(d: Date): string {
 
 export default function CalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [matches, setMatches] = useState<TeamMatchEvent[]>([]);
+  const [practices, setPractices] = useState<TeamPracticeEvent[]>([]);
   const [groups, setGroups] = useState<GroupOption[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<string>("all");
   const [currentMonth, setCurrentMonth] = useState(() => {
@@ -59,6 +85,8 @@ export default function CalendarPage() {
       .then((r) => r.json())
       .then((data) => {
         setEvents(data.events || []);
+        setMatches(data.matches || []);
+        setPractices(data.practices || []);
         setGroups(data.userGroups || []);
       });
   };
@@ -76,6 +104,24 @@ export default function CalendarPage() {
       if (!eventsByDate.has(key)) eventsByDate.set(key, []);
       eventsByDate.get(key)!.push(ev);
     }
+  });
+
+  const matchesByDate = new Map<string, TeamMatchEvent[]>();
+  matches.forEach((m) => {
+    const d = parseDate(m.matchDate);
+    if (!d) return;
+    const key = dateKey(d);
+    if (!matchesByDate.has(key)) matchesByDate.set(key, []);
+    matchesByDate.get(key)!.push(m);
+  });
+
+  const practicesByDate = new Map<string, TeamPracticeEvent[]>();
+  practices.forEach((p) => {
+    const d = parseDate(p.practiceDate);
+    if (!d) return;
+    const key = dateKey(d);
+    if (!practicesByDate.has(key)) practicesByDate.set(key, []);
+    practicesByDate.get(key)!.push(p);
   });
 
   // Calendar grid
@@ -99,11 +145,27 @@ export default function CalendarPage() {
   const today = dateKey(new Date());
 
   const selectedEvents = selectedDate ? (eventsByDate.get(selectedDate) || []) : [];
+  const selectedMatches = selectedDate ? (matchesByDate.get(selectedDate) || []) : [];
+  const selectedPractices = selectedDate ? (practicesByDate.get(selectedDate) || []) : [];
+  const selectedTotal =
+    selectedEvents.length + selectedMatches.length + selectedPractices.length;
 
   // Today and future events only, sorted for list view
   const sortedEvents = events
     .filter((ev) => ev.playDate >= today)
     .sort((a, b) => a.playDate.localeCompare(b.playDate) || a.playTime.localeCompare(b.playTime));
+  const sortedMatches = matches
+    .filter((m) => m.matchDate >= today)
+    .sort((a, b) =>
+      a.matchDate.localeCompare(b.matchDate) || (a.matchTime || "").localeCompare(b.matchTime || "")
+    );
+  const sortedPractices = practices
+    .filter((p) => p.practiceDate >= today)
+    .sort((a, b) =>
+      a.practiceDate.localeCompare(b.practiceDate) ||
+      (a.practiceTime || "").localeCompare(b.practiceTime || "")
+    );
+  const sortedTotal = sortedEvents.length + sortedMatches.length + sortedPractices.length;
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
@@ -181,10 +243,14 @@ export default function CalendarPage() {
                 const day = i + 1;
                 const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
                 const dayEvents = eventsByDate.get(key) || [];
+                const dayMatches = matchesByDate.get(key) || [];
+                const dayPractices = practicesByDate.get(key) || [];
                 const isToday = key === today;
                 const isSelected = key === selectedDate;
                 const hasComplete = dayEvents.some((e) => e.isComplete);
                 const hasOpen = dayEvents.some((e) => !e.isComplete);
+                const hasMatch = dayMatches.length > 0;
+                const hasPractice = dayPractices.length > 0;
 
                 return (
                   <button
@@ -199,10 +265,12 @@ export default function CalendarPage() {
                     }`}>
                       {day}
                     </span>
-                    {dayEvents.length > 0 && (
+                    {(dayEvents.length > 0 || hasMatch || hasPractice) && (
                       <div className="flex items-center gap-0.5 mt-1">
                         {hasOpen && <div className="w-1.5 h-1.5 rounded-full bg-ball-yellow" />}
                         {hasComplete && <div className="w-1.5 h-1.5 rounded-full bg-green-500" />}
+                        {hasMatch && <div className="w-1.5 h-1.5 rounded-full bg-court-green" />}
+                        {hasPractice && <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />}
                       </div>
                     )}
                   </button>
@@ -211,12 +279,18 @@ export default function CalendarPage() {
             </div>
 
             {/* Legend */}
-            <div className="px-5 py-3 border-t border-gray-100 flex items-center gap-4">
+            <div className="px-5 py-3 border-t border-gray-100 flex items-center gap-3 flex-wrap">
               <span className="flex items-center gap-1.5 text-xs text-gray-500">
                 <div className="w-2 h-2 rounded-full bg-ball-yellow" /> Open Game
               </span>
               <span className="flex items-center gap-1.5 text-xs text-gray-500">
                 <div className="w-2 h-2 rounded-full bg-green-500" /> Confirmed
+              </span>
+              <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                <div className="w-2 h-2 rounded-full bg-court-green" /> Team Match
+              </span>
+              <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                <div className="w-2 h-2 rounded-full bg-blue-500" /> Team Practice
               </span>
             </div>
           </div>
@@ -227,10 +301,14 @@ export default function CalendarPage() {
               <h3 className="text-sm font-bold text-gray-700">
                 {new Date(selectedDate + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
               </h3>
-              {selectedEvents.length === 0 ? (
+              {selectedTotal === 0 ? (
                 <p className="text-sm text-gray-400 bg-white rounded-xl p-4 shadow-sm border border-court-green-pale/20">No games on this day.</p>
               ) : (
-                selectedEvents.map((ev) => <EventCard key={ev.id} event={ev} />)
+                <>
+                  {selectedMatches.map((m) => <TeamMatchCard key={`m-${m.id}`} match={m} />)}
+                  {selectedPractices.map((p) => <TeamPracticeCard key={`p-${p.id}`} practice={p} />)}
+                  {selectedEvents.map((ev) => <EventCard key={ev.id} event={ev} />)}
+                </>
               )}
             </div>
           )}
@@ -238,18 +316,22 @@ export default function CalendarPage() {
       ) : (
         /* List view */
         <div className="space-y-3 animate-fade-in-up stagger-2">
-          {sortedEvents.length === 0 ? (
+          {sortedTotal === 0 ? (
             <div className="text-center py-16 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
               <div className="w-14 h-14 bg-ball-yellow/20 rounded-full flex items-center justify-center mx-auto mb-4">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-court-green-soft" strokeLinecap="round">
                   <rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
                 </svg>
               </div>
-              <h3 className="font-display text-lg font-bold text-gray-800 mb-2">No games yet</h3>
-              <p className="text-gray-500 text-sm">Create a &quot;Find Players&quot; post to schedule a game!</p>
+              <h3 className="font-display text-lg font-bold text-gray-800 mb-2">Nothing scheduled yet</h3>
+              <p className="text-gray-500 text-sm">Create a &quot;Find Players&quot; post or join a team to see events here.</p>
             </div>
           ) : (
-            sortedEvents.map((ev) => <EventCard key={ev.id} event={ev} />)
+            <>
+              {sortedMatches.map((m) => <TeamMatchCard key={`m-${m.id}`} match={m} />)}
+              {sortedPractices.map((p) => <TeamPracticeCard key={`p-${p.id}`} practice={p} />)}
+              {sortedEvents.map((ev) => <EventCard key={ev.id} event={ev} />)}
+            </>
           )}
         </div>
       )}
@@ -354,4 +436,112 @@ function EventCard({ event: ev }: { event: CalendarEvent }) {
     const d = new Date(dateStr + "T00:00:00");
     return isNaN(d.getTime()) ? null : d;
   }
+}
+
+function parseDateLocal(dateStr: string): Date | null {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + "T00:00:00");
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function StarIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className={className} aria-label="You're in">
+      <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+    </svg>
+  );
+}
+
+function TeamMatchCard({ match }: { match: TeamMatchEvent }) {
+  return (
+    <Link
+      href={`/groups/${match.teamId}/availability?focus=${match.id}`}
+      className="block bg-white rounded-xl shadow-sm border border-court-green-pale/30 p-4 card-hover"
+    >
+      <div className="flex items-start gap-3">
+        <div className="w-14 shrink-0 rounded-xl text-center py-2 bg-court-green/10">
+          <p className="text-[10px] font-bold text-gray-400 uppercase">
+            {parseDateLocal(match.matchDate)?.toLocaleDateString("en-US", { month: "short" })}
+          </p>
+          <p className="text-xl font-bold text-gray-800">
+            {parseDateLocal(match.matchDate)?.getDate()}
+          </p>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-xs font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-court-green text-white inline-flex items-center gap-1">
+              {match.inLineup && <StarIcon />}
+              Match
+            </span>
+            {match.inLineup && match.lineupSlot && (
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-court-green-pale/40 text-court-green">
+                {match.lineupSlot}
+              </span>
+            )}
+            <span className="text-xs font-semibold text-gray-800 truncate">{match.teamName}</span>
+          </div>
+          <div className="flex items-center gap-3 text-xs text-gray-500 mb-1">
+            {match.matchTime && (
+              <span className="flex items-center gap-1">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" /></svg>
+                {match.matchTime}
+              </span>
+            )}
+            <span className="flex items-center gap-1 truncate">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg>
+              {match.location}
+            </span>
+          </div>
+          {match.notes && (
+            <p className="text-[11px] text-gray-400 italic truncate">{match.notes}</p>
+          )}
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function TeamPracticeCard({ practice }: { practice: TeamPracticeEvent }) {
+  return (
+    <Link
+      href={`/groups/${practice.teamId}/practice?focus=${practice.id}`}
+      className="block bg-white rounded-xl shadow-sm border border-blue-200 p-4 card-hover"
+    >
+      <div className="flex items-start gap-3">
+        <div className="w-14 shrink-0 rounded-xl text-center py-2 bg-blue-50">
+          <p className="text-[10px] font-bold text-gray-400 uppercase">
+            {parseDateLocal(practice.practiceDate)?.toLocaleDateString("en-US", { month: "short" })}
+          </p>
+          <p className="text-xl font-bold text-gray-800">
+            {parseDateLocal(practice.practiceDate)?.getDate()}
+          </p>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-xs font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-blue-500 text-white inline-flex items-center gap-1">
+              <StarIcon />
+              Practice
+            </span>
+            <span className="text-xs font-semibold text-gray-800 truncate">{practice.seriesName}</span>
+            <span className="text-[10px] text-gray-400">· {practice.teamName}</span>
+          </div>
+          <div className="flex items-center gap-3 text-xs text-gray-500 mb-1">
+            {practice.practiceTime && (
+              <span className="flex items-center gap-1">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" /></svg>
+                {practice.practiceTime}
+              </span>
+            )}
+            <span className="flex items-center gap-1 truncate">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg>
+              {practice.location}
+            </span>
+          </div>
+          {practice.notes && (
+            <p className="text-[11px] text-gray-400 italic truncate">{practice.notes}</p>
+          )}
+        </div>
+      </div>
+    </Link>
+  );
 }

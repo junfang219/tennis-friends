@@ -23,6 +23,9 @@ type Post = {
   playersConfirmed?: number;
   courtBooked?: boolean;
   isComplete?: boolean;
+  isBroadcast?: boolean;
+  broadcastRadiusMi?: number;
+  distanceMiles?: number | null;
   pendingRequestCount?: number;
   myPlayRequest?: { id: string; status: string; note: string } | null;
   createdAt: string;
@@ -42,7 +45,13 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [highlightedPostId, setHighlightedPostId] = useState<string | null>(null);
   // null = show all categories; otherwise show only the selected category
-  const [activeFilter, setActiveFilter] = useState<"find_players" | "propose_team" | "social" | null>(null);
+  const [activeFilter, setActiveFilter] = useState<"find_players" | "propose_team" | "social" | "nearby" | null>(null);
+
+  // Lazy-checked once when the user first opens the Nearby filter. Null = unknown.
+  const [hasLocation, setHasLocation] = useState<boolean | null>(null);
+  const [locationSaving, setLocationSaving] = useState(false);
+  const [locationError, setLocationError] = useState("");
+  const [confirmingTurnOff, setConfirmingTurnOff] = useState(false);
 
   // Pull-to-refresh state
   const [refreshing, setRefreshing] = useState(false);
@@ -154,13 +163,13 @@ export default function HomePage() {
     if (el && observerRef.current) observerRef.current.observe(el);
   }, []);
 
-  const toggleFilter = (key: "find_players" | "propose_team" | "social") => {
+  const toggleFilter = (key: "find_players" | "propose_team" | "social" | "nearby") => {
     setActiveFilter(activeFilter === key ? null : key);
   };
 
   // Chip "active" state — only highlights the currently selected filter
   const filters = {
-    has: (k: "find_players" | "propose_team" | "social") => activeFilter === k,
+    has: (k: "find_players" | "propose_team" | "social" | "nearby") => activeFilter === k,
   };
 
   useEffect(() => {
@@ -173,6 +182,78 @@ export default function HomePage() {
         });
     }
   }, [status]);
+
+  // First time the user activates the Nearby filter, check whether they have
+  // location set. Needed to decide between showing broadcasts and showing the
+  // "Add your location" empty-state banner.
+  useEffect(() => {
+    if (activeFilter !== "nearby" || hasLocation !== null) return;
+    fetch("/api/profile")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        setHasLocation(!!(data?.latitude != null && data?.longitude != null));
+      })
+      .catch(() => setHasLocation(false));
+  }, [activeFilter, hasLocation]);
+
+  const turnOffLocation = async () => {
+    setLocationError("");
+    setLocationSaving(true);
+    try {
+      const res = await fetch("/api/profile/location", { method: "DELETE" });
+      if (res.ok) {
+        setHasLocation(false);
+        setConfirmingTurnOff(false);
+        // Refetch feed: the viewer's broadcasts (and broadcasts from others
+        // requiring viewer lat/lng) should drop out of the response.
+        const feedRes = await fetch("/api/posts");
+        if (feedRes.ok) setPosts(await feedRes.json());
+      } else {
+        setLocationError("Could not turn off location.");
+      }
+    } catch {
+      setLocationError("Could not turn off location.");
+    }
+    setLocationSaving(false);
+  };
+
+  const useMyLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationError("Your browser doesn't support geolocation.");
+      return;
+    }
+    setLocationError("");
+    setLocationSaving(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const res = await fetch("/api/profile", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+          });
+          if (res.ok) {
+            setHasLocation(true);
+            // Re-fetch the home feed so broadcasts (which require viewer lat/lng
+            // server-side) start appearing without a page reload.
+            const feedRes = await fetch("/api/posts");
+            if (feedRes.ok) setPosts(await feedRes.json());
+          } else {
+            setLocationError("Could not save location.");
+          }
+        } catch {
+          setLocationError("Could not save location.");
+        }
+        setLocationSaving(false);
+      },
+      (err) => {
+        setLocationSaving(false);
+        if (err.code === err.PERMISSION_DENIED) setLocationError("Location permission denied.");
+        else setLocationError("Could not get your location.");
+      },
+      { timeout: 10000, maximumAge: 60_000 }
+    );
+  };
 
   // Scroll to + highlight a post when linked via ?post=<id> (e.g. from calendar)
   useEffect(() => {
@@ -250,7 +331,7 @@ export default function HomePage() {
       </div>
       <div className="space-y-5">
         <div className="animate-fade-in-up stagger-1">
-          <PostComposer onPost={(post) => setPosts([post as Post, ...posts])} />
+          <PostComposer onPost={(post) => setPosts((prev) => [post as Post, ...prev])} />
         </div>
 
         {/* Filter chips */}
@@ -302,7 +383,68 @@ export default function HomePage() {
             </svg>
             Teams
           </button>
+          <button
+            onClick={() => toggleFilter("nearby")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
+              filters.has("nearby")
+                ? "bg-ball-yellow text-court-green border-ball-yellow shadow-sm"
+                : "bg-white text-gray-500 border-gray-200 hover:border-ball-yellow"
+            }`}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 11a9 9 0 0118 0" />
+              <path d="M6.5 11a5.5 5.5 0 0111 0" />
+              <circle cx="12" cy="11" r="1.5" fill="currentColor" />
+              <path d="M12 13v7" />
+            </svg>
+            Nearby
+          </button>
         </div>
+
+        {/* Inline turn-off control: only visible when viewing Nearby broadcasts
+            with location set. Mirrors the per-context affordance we previously
+            had on the dedicated /nearby page. */}
+        {activeFilter === "nearby" && hasLocation === true && (
+          <div className="flex flex-wrap items-center gap-2 text-xs -mt-2">
+            <span className="inline-flex items-center gap-1.5 text-gray-500">
+              <span className="w-1.5 h-1.5 rounded-full bg-court-green" />
+              Location on
+            </span>
+            {confirmingTurnOff ? (
+              <>
+                <span className="text-gray-400">·</span>
+                <span className="text-gray-600">Turn off? Active broadcasts will be disabled.</span>
+                <button
+                  onClick={turnOffLocation}
+                  disabled={locationSaving}
+                  className="font-semibold text-red-600 hover:underline disabled:opacity-60"
+                >
+                  {locationSaving ? "..." : "Confirm"}
+                </button>
+                <button
+                  onClick={() => setConfirmingTurnOff(false)}
+                  disabled={locationSaving}
+                  className="text-gray-500 hover:underline"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="text-gray-400">·</span>
+                <button
+                  onClick={() => setConfirmingTurnOff(true)}
+                  className="font-semibold text-court-green hover:underline"
+                >
+                  Turn off
+                </button>
+              </>
+            )}
+            {locationError && (
+              <span className="w-full text-red-500">{locationError}</span>
+            )}
+          </div>
+        )}
 
         {/* Filtered posts */}
         {(() => {
@@ -310,6 +452,9 @@ export default function HomePage() {
             if (activeFilter === null) return true;
             if (activeFilter === "find_players") return p.postType === "find_players";
             if (activeFilter === "propose_team") return p.postType === "propose_team";
+            if (activeFilter === "nearby") {
+              return p.isBroadcast === true && p.author.id !== session?.user?.id;
+            }
             return p.postType !== "find_players" && p.postType !== "propose_team";
           });
 
@@ -328,6 +473,37 @@ export default function HomePage() {
                     <div className="skeleton w-full h-16" />
                   </div>
                 ))}
+              </div>
+            );
+          }
+
+          if (activeFilter === "nearby" && hasLocation === false) {
+            return (
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-orange-200 animate-fade-in-up">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full bg-orange-50 flex items-center justify-center shrink-0">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-500">
+                      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
+                      <circle cx="12" cy="10" r="3" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-semibold text-gray-800 mb-1">Add your location</p>
+                    <p className="text-sm text-gray-500 mb-3">
+                      Broadcasts are matched by distance. Share your location so we can find players nearby.
+                    </p>
+                    <button
+                      onClick={useMyLocation}
+                      disabled={locationSaving}
+                      className="btn-primary text-sm disabled:opacity-60"
+                    >
+                      {locationSaving ? "Getting location…" : "Use my location"}
+                    </button>
+                    {locationError && (
+                      <p className="text-xs text-red-500 mt-2">{locationError}</p>
+                    )}
+                  </div>
+                </div>
               </div>
             );
           }
@@ -357,8 +533,8 @@ export default function HomePage() {
             >
               <PostCard
                 post={post}
-                onDelete={(id) => setPosts(posts.filter(p => p.id !== id))}
-                onUpdate={(id, updates) => setPosts(posts.map(p => p.id === id ? { ...p, ...updates } : p))}
+                onDelete={(id) => setPosts((prev) => prev.filter((p) => p.id !== id))}
+                onUpdate={(id, updates) => setPosts((prev) => prev.map((p) => p.id === id ? { ...p, ...updates } : p))}
               />
             </div>
           ));

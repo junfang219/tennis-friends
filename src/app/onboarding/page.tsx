@@ -37,8 +37,38 @@ export default function OnboardingPage() {
   const [club, setClub] = useState<string>("");
   const [city, setCity] = useState<string>("");
 
+  const [locationLat, setLocationLat] = useState<number | null>(null);
+  const [locationLng, setLocationLng] = useState<number | null>(null);
+  const [locationSaving, setLocationSaving] = useState(false);
+  const [locationError, setLocationError] = useState("");
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  const captureLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationError("Your browser doesn't support geolocation. You can add this later in your profile.");
+      return;
+    }
+    setLocationError("");
+    setLocationSaving(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocationLat(pos.coords.latitude);
+        setLocationLng(pos.coords.longitude);
+        setLocationSaving(false);
+      },
+      (err) => {
+        setLocationSaving(false);
+        if (err.code === err.PERMISSION_DENIED) {
+          setLocationError("Permission denied. You can add this later in your profile.");
+        } else {
+          setLocationError("Could not get your location. You can add this later in your profile.");
+        }
+      },
+      { timeout: 10000, maximumAge: 60_000 }
+    );
+  };
 
   const ratingValid =
     (ratingSystem === "ntrp" && typeof ntrp === "number") ||
@@ -59,6 +89,10 @@ export default function OnboardingPage() {
     if (ratingSystem === "self") payload.skillLevel = selfLevel;
     if (club.trim()) payload.club = club.trim();
     if (city.trim()) payload.city = city.trim();
+    if (locationLat != null && locationLng != null) {
+      payload.latitude = locationLat;
+      payload.longitude = locationLng;
+    }
 
     const res = await fetch("/api/onboarding", {
       method: "POST",
@@ -243,6 +277,50 @@ export default function OnboardingPage() {
               maxLength={30}
               className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm bg-surface/50"
             />
+          </section>
+
+          <section>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Your location</label>
+            <p className="text-xs text-gray-500 mb-3">
+              Used to match you with broadcasts from players nearby. Optional — you can skip and add it later.
+            </p>
+            {locationLat != null && locationLng != null ? (
+              <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl border border-court-green/30 bg-court-green-pale/20">
+                <div className="flex items-center gap-2 text-sm font-semibold text-court-green">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 6L9 17l-5-5" />
+                  </svg>
+                  Location set
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLocationLat(null);
+                    setLocationLng(null);
+                    setLocationError("");
+                  }}
+                  className="text-xs text-gray-500 hover:text-gray-700"
+                >
+                  Clear
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={captureLocation}
+                disabled={locationSaving}
+                className="w-full px-4 py-3 rounded-xl text-sm font-semibold border border-court-green/30 bg-white text-court-green hover:bg-court-green-pale/30 disabled:opacity-60 inline-flex items-center justify-center gap-2"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
+                  <circle cx="12" cy="10" r="3" />
+                </svg>
+                {locationSaving ? "Getting location…" : "Use my current location"}
+              </button>
+            )}
+            {locationError && (
+              <p className="text-xs text-gray-500 mt-2">{locationError}</p>
+            )}
           </section>
 
           <button

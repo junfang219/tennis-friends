@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Avatar from "./Avatar";
 import EmojiPicker from "./EmojiPicker";
@@ -34,7 +35,11 @@ type Post = {
   playersConfirmed?: number;
   courtBooked?: boolean;
   isComplete?: boolean;
+  isBroadcast?: boolean;
+  broadcastRadiusMi?: number;
+  distanceMiles?: number | null;
   sessionChatId?: string | null;
+  teamGroupId?: string | null;
   commentsDisabled?: boolean;
   manualPlayers?: string;
   pendingRequestCount?: number;
@@ -92,7 +97,7 @@ function timeAgo(date: string) {
   return new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export default function PostCard({ post, onDelete, onUpdate, initialExpanded = false, initialShowComments = false }: { post: Post; onDelete?: (id: string) => void; onUpdate?: (id: string, updates: Partial<Post>) => void; initialExpanded?: boolean; initialShowComments?: boolean }) {
+export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initialExpanded = false, initialShowComments = false }: { post: Post; onDelete?: (id: string) => void; onUpdate?: (id: string, updates: Partial<Post>) => void; onOpenChat?: () => void; initialExpanded?: boolean; initialShowComments?: boolean }) {
   const { data: session } = useSession();
   const isAuthor = session?.user?.id === post.author.id;
   const isFindPlayers = post.postType === "find_players";
@@ -123,6 +128,7 @@ export default function PostCard({ post, onDelete, onUpdate, initialExpanded = f
   const [confirmed, setConfirmed] = useState(Math.max(post.playersConfirmed || 0, approvedCount + manualCount));
   const [complete, setComplete] = useState(post.isComplete || false);
   const [liveSessionChatId, setLiveSessionChatId] = useState<string | null>(post.sessionChatId || null);
+  const [liveTeamGroupId, setLiveTeamGroupId] = useState<string | null>(post.teamGroupId || null);
 
   // Comments
   const [showComments, setShowComments] = useState(initialShowComments);
@@ -191,9 +197,9 @@ export default function PostCard({ post, onDelete, onUpdate, initialExpanded = f
   // Send to friend
   const [showSendToFriend, setShowSendToFriend] = useState(false);
 
-  // Collapsed state for complete find_players posts
+  // Collapsed state for completed recruiting posts (game posts + team requests)
   const [expanded, setExpanded] = useState(initialExpanded);
-  const isCollapsible = isFindPlayers && complete;
+  const isCollapsible = isRecruiting && complete;
 
   // Derive end time from start + duration ("14:00" + 90 → "15:30")
   const endTime = (() => {
@@ -301,64 +307,104 @@ export default function PostCard({ post, onDelete, onUpdate, initialExpanded = f
 
   if (deleted) return null;
 
-  // Collapsed view for completed find_players posts — highlighted confirmation
-  // card with a direct link to the auto-created group chat. Tap the main body
-  // to expand back to the full post for details; tap "Open chat" to jump into
-  // the group chat where confirmed players coordinate.
+  // Collapsed view for completed recruiting posts — highlighted confirmation
+  // card. Find-players gets a chat link to the auto-created session group;
+  // team requests don't have a session chat so they show a Details button.
+  // Tap the main body to expand back to the full post.
   if (isCollapsible && !expanded) {
     const collapsedRole: "creator" | "player" | "bystander" = isAuthor
       ? "creator"
       : myRequest?.status === "APPROVED"
       ? "player"
       : "bystander";
-    const roleStyles = {
-      creator: {
-        container: "bg-green-50 ring-court-green/60",
-        icon: "bg-court-green",
-        title: "text-court-green",
-        subtitle: "text-gray-600",
-        meta: "text-gray-500",
-        dot: "text-gray-400",
-      },
-      player: {
-        container: "bg-ball-yellow/60 ring-ball-yellow",
-        icon: "bg-ball-yellow",
-        title: "text-court-green",
-        subtitle: "text-court-green",
-        meta: "text-court-green/80",
-        dot: "text-court-green/60",
-      },
-      bystander: {
-        container: "bg-gray-50 ring-gray-200",
-        icon: "bg-gray-400",
-        title: "text-gray-600",
-        subtitle: "text-gray-600",
-        meta: "text-gray-500",
-        dot: "text-gray-400",
-      },
-    }[collapsedRole];
+    const roleStyles = isProposeTeam
+      ? {
+          creator: {
+            container: "bg-orange-50 ring-clay/60",
+            icon: "bg-clay",
+            title: "text-clay",
+            subtitle: "text-gray-700",
+            meta: "text-gray-600",
+            dot: "text-gray-400",
+            button: "text-clay hover:bg-clay/10",
+          },
+          player: {
+            container: "bg-orange-100 ring-clay/70",
+            icon: "bg-clay",
+            title: "text-clay",
+            subtitle: "text-gray-800",
+            meta: "text-gray-700",
+            dot: "text-gray-500",
+            button: "text-clay hover:bg-clay/10",
+          },
+          bystander: {
+            container: "bg-gray-50 ring-gray-200",
+            icon: "bg-gray-400",
+            title: "text-gray-700",
+            subtitle: "text-gray-600",
+            meta: "text-gray-500",
+            dot: "text-gray-400",
+            button: "text-gray-600 hover:bg-gray-100",
+          },
+        }[collapsedRole]
+      : {
+          creator: {
+            container: "bg-green-50 ring-court-green/60",
+            icon: "bg-court-green",
+            title: "text-court-green",
+            subtitle: "text-gray-600",
+            meta: "text-gray-500",
+            dot: "text-gray-400",
+            button: "text-court-green hover:bg-court-green/10",
+          },
+          player: {
+            container: "bg-ball-yellow/60 ring-ball-yellow",
+            icon: "bg-ball-yellow",
+            title: "text-court-green",
+            subtitle: "text-court-green",
+            meta: "text-court-green/80",
+            dot: "text-court-green/60",
+            button: "text-court-green hover:bg-court-green/10",
+          },
+          bystander: {
+            container: "bg-gray-50 ring-gray-200",
+            icon: "bg-gray-400",
+            title: "text-gray-600",
+            subtitle: "text-gray-600",
+            meta: "text-gray-500",
+            dot: "text-gray-400",
+            button: "text-gray-600 hover:bg-gray-100",
+          },
+        }[collapsedRole];
+    const titleText = isProposeTeam
+      ? `${isAuthor ? "Your" : `${post.author.name}'s`} Team formed`
+      : `${isAuthor ? "Your" : `${post.author.name}'s`} Game confirmed`;
     return (
       <div className={`w-full rounded-2xl shadow-md ring-2 px-4 py-3 flex items-center gap-3 ${roleStyles.container}`}>
         <button
           onClick={() => setExpanded(true)}
           className="flex-1 min-w-0 flex items-center gap-3 text-left group"
-          aria-label="Show full game details"
+          aria-label={isProposeTeam ? "Show full team details" : "Show full game details"}
         >
           <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 shadow-sm ${roleStyles.icon}`}>
-            <span className="text-base leading-none">🎾</span>
+            <span className="text-base leading-none">{isProposeTeam ? "🏆" : "🎾"}</span>
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className={`text-sm font-bold truncate ${roleStyles.title}`}>
-                {isAuthor ? "Your" : `${post.author.name}'s`} Game confirmed
+                {titleText}
               </span>
-              <span className={`text-xs ${roleStyles.dot}`}>·</span>
-              <span className={`text-xs truncate capitalize font-medium ${roleStyles.subtitle}`}>
-                {livePlayDate} {livePlayTime}{endTime ? `–${endTime}` : ""}
-              </span>
+              {(livePlayDate || livePlayTime) && (
+                <>
+                  <span className={`text-xs ${roleStyles.dot}`}>·</span>
+                  <span className={`text-xs truncate capitalize font-medium ${roleStyles.subtitle}`}>
+                    {livePlayDate} {livePlayTime}{endTime ? `–${endTime}` : ""}
+                  </span>
+                </>
+              )}
             </div>
             <div className={`text-[11px] truncate mt-0.5 font-medium ${roleStyles.meta}`}>
-              {liveCourtLocation || "Location TBD"}
+              {liveCourtLocation || (isProposeTeam ? `${confirmed} member${confirmed === 1 ? "" : "s"}` : "Location TBD")}
               {((post.approvedPlayerNames && post.approvedPlayerNames.length > 0) || liveManualPlayers) && (
                 <>
                   {" · "}
@@ -371,9 +417,10 @@ export default function PostCard({ post, onDelete, onUpdate, initialExpanded = f
             </div>
           </div>
         </button>
-        {liveSessionChatId ? (
+        {!isProposeTeam && liveSessionChatId ? (
           <Link
             href={`/chat/group/${liveSessionChatId}`}
+            onClick={() => onOpenChat?.()}
             className="shrink-0 inline-flex items-center gap-1.5 bg-court-green text-white text-xs font-bold px-3 py-2 rounded-full hover:bg-court-green-light transition-colors shadow-sm"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
@@ -381,10 +428,23 @@ export default function PostCard({ post, onDelete, onUpdate, initialExpanded = f
             </svg>
             Open chat
           </Link>
+        ) : isProposeTeam && liveTeamGroupId && collapsedRole !== "bystander" ? (
+          <Link
+            href={`/groups/${liveTeamGroupId}`}
+            className="shrink-0 inline-flex items-center gap-1.5 bg-clay text-white text-xs font-bold px-3 py-2 rounded-full hover:opacity-90 transition-opacity shadow-sm"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
+              <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
+              <path d="M4 22h16" />
+              <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+            </svg>
+            Open team
+          </Link>
         ) : (
           <button
             onClick={() => setExpanded(true)}
-            className="shrink-0 text-xs text-court-green font-semibold px-2 py-1 rounded-full hover:bg-court-green/10"
+            className={`shrink-0 text-xs font-semibold px-2 py-1 rounded-full transition-colors ${roleStyles.button}`}
           >
             Details
           </button>
@@ -397,12 +457,12 @@ export default function PostCard({ post, onDelete, onUpdate, initialExpanded = f
     <>
       <div className={`bg-white rounded-2xl shadow-sm border overflow-hidden card-hover ${complete ? "border-green-200" : "border-court-green-pale/20"}`}>
         {/* Complete banner */}
-        {complete && isFindPlayers && (
+        {complete && isRecruiting && (
           <button onClick={() => setExpanded(false)} className="w-full bg-green-50 px-5 py-2 flex items-center justify-between border-b border-green-100 hover:bg-green-100/50 transition-colors">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-green-600 shrink-0"><polyline points="20,6 9,17 4,12" /></svg>
-                <span className="text-xs font-bold text-green-700 uppercase tracking-wide">Game Full — All Players Found</span>
+                <span className="text-xs font-bold text-green-700 uppercase tracking-wide">{isProposeTeam ? "Team Formed — All Members Joined" : "Game Full — All Players Found"}</span>
               </div>
             </div>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-green-400 shrink-0"><polyline points="18,15 12,9 6,15" /></svg>
@@ -485,13 +545,28 @@ export default function PostCard({ post, onDelete, onUpdate, initialExpanded = f
 
           {/* Find Players badge */}
           {isFindPlayers && (
-            <div className="mb-3">
+            <div className="mb-3 flex items-center gap-2 flex-wrap">
               <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide ${complete ? "bg-green-600 text-white" : "bg-court-green text-ball-yellow"}`}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                   {complete ? <polyline points="20,6 9,17 4,12" /> : <><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" /></>}
                 </svg>
                 {complete ? "Game Full" : "Looking for Players"}
               </span>
+              {post.isBroadcast && (
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide bg-ball-yellow text-court-green">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 11a9 9 0 0118 0" />
+                    <path d="M6.5 11a5.5 5.5 0 0111 0" />
+                    <circle cx="12" cy="11" r="1.5" fill="currentColor" />
+                    <path d="M12 13v7" />
+                  </svg>
+                  {isAuthor
+                    ? `Broadcast · ${post.broadcastRadiusMi} mi reach`
+                    : post.distanceMiles != null
+                    ? `Broadcast · ${post.distanceMiles} mi away`
+                    : "Broadcast"}
+                </span>
+              )}
             </div>
           )}
 
@@ -896,15 +971,16 @@ export default function PostCard({ post, onDelete, onUpdate, initialExpanded = f
           playersNeeded={livePlayersNeeded || 0}
           currentlyComplete={complete}
           onClose={() => setShowRequests(false)}
-          onUpdate={(newConfirmed, isNowComplete, sessionChatId) => {
+          onUpdate={(newConfirmed, isNowComplete, sessionChatId, teamGroupId) => {
             setConfirmed(newConfirmed);
             setComplete(isNowComplete);
             if (sessionChatId) setLiveSessionChatId(sessionChatId);
+            if (teamGroupId) setLiveTeamGroupId(teamGroupId);
             // Snap back to the compact confirmation card so the creator sees
             // the final state immediately, instead of staying in the tall
             // expanded view until they refresh.
             if (isNowComplete) setExpanded(false);
-            onUpdate?.(post.id, { isComplete: isNowComplete, playersConfirmed: newConfirmed, sessionChatId: sessionChatId ?? undefined });
+            onUpdate?.(post.id, { isComplete: isNowComplete, playersConfirmed: newConfirmed, sessionChatId: sessionChatId ?? undefined, teamGroupId: teamGroupId ?? undefined });
           }}
           onManualPlayersUpdate={(names) => setLiveManualPlayers(names)}
           manualPlayers={liveManualPlayers}
@@ -975,7 +1051,7 @@ export default function PostCard({ post, onDelete, onUpdate, initialExpanded = f
                   <line x1="22" y1="2" x2="11" y2="13" />
                   <polygon points="22,2 15,22 11,13 2,9" />
                 </svg>
-                Send to Friend
+                Send to Friend or Group
               </button>
 
               {/* Delete */}
@@ -1347,12 +1423,10 @@ export default function PostCard({ post, onDelete, onUpdate, initialExpanded = f
         document.body
       )}
 
-      {/* Send to Friend modal */}
+      {/* Send to Friend or Group modal */}
       {showSendToFriend && createPortal(
-        <SendToFriendModal
+        <SendToModal
           postId={post.id}
-          postContent={currentContent}
-          postAuthor={post.author.name}
           onClose={() => setShowSendToFriend(false)}
         />,
         document.body
@@ -1361,91 +1435,160 @@ export default function PostCard({ post, onDelete, onUpdate, initialExpanded = f
   );
 }
 
-/* ────── Send to Friend Modal ────── */
+/* ────── Send to Friend or Group Modal ────── */
 
-function SendToFriendModal({
+type SendTarget = { kind: "friend" | "group"; id: string };
+
+function SendToModal({
   postId,
-  postContent,
-  postAuthor,
   onClose,
 }: {
   postId: string;
-  postContent: string;
-  postAuthor: string;
   onClose: () => void;
 }) {
+  const router = useRouter();
   const [friends, setFriends] = useState<{ id: string; name: string; profileImageUrl: string }[]>([]);
+  const [groups, setGroups] = useState<{ id: string; name: string; imageUrl?: string; _count?: { members: number } }[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sendingTo, setSendingTo] = useState<string | null>(null);
-  const [sentTo, setSentTo] = useState<Set<string>>(new Set());
+  const [sendingKey, setSendingKey] = useState<string | null>(null);
+  const [sentKeys, setSentKeys] = useState<Set<string>>(new Set());
+  const [sendError, setSendError] = useState<string>("");
+
+  const targetKey = (t: SendTarget) => `${t.kind}:${t.id}`;
 
   useEffect(() => {
-    fetch("/api/friends")
-      .then((r) => r.json())
-      .then((data) => {
-        setFriends(data.friends?.map((f: { user: { id: string; name: string; profileImageUrl: string } }) => f.user) || []);
-        setLoading(false);
-      });
+    Promise.all([
+      fetch("/api/friends").then((r) => (r.ok ? r.json() : { friends: [] })).catch(() => ({ friends: [] })),
+      fetch("/api/groups").then((r) => (r.ok ? r.json() : [])).catch(() => []),
+    ]).then(([friendsData, groupsData]) => {
+      setFriends(
+        friendsData.friends?.map(
+          (f: { user: { id: string; name: string; profileImageUrl: string } }) => f.user
+        ) || []
+      );
+      setGroups(Array.isArray(groupsData) ? groupsData : []);
+      setLoading(false);
+    });
   }, []);
 
-  const sendToFriend = async (friendId: string) => {
-    setSendingTo(friendId);
+  const send = async (target: SendTarget) => {
+    const key = targetKey(target);
+    setSendingKey(key);
+    setSendError("");
 
-    const res = await fetch("/api/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ receiverId: friendId, content: "", sharedPostId: postId }),
-    });
+    const res = target.kind === "friend"
+      ? await fetch("/api/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ receiverId: target.id, content: "", sharedPostId: postId }),
+        })
+      : await fetch(`/api/groups/${target.id}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: "", sharedPostId: postId }),
+        });
 
     if (res.ok) {
-      setSentTo((prev) => new Set(prev).add(friendId));
+      setSentKeys((prev) => new Set(prev).add(key));
+      router.push(target.kind === "friend" ? `/chat/${target.id}` : `/groups/${target.id}/chat`);
+      return;
     }
-    setSendingTo(null);
+
+    const data = await res.json().catch(() => ({}));
+    setSendError(data.error || `Failed to send (${res.status})`);
+    setSendingKey(null);
   };
+
+  const SendBtn = ({ target }: { target: SendTarget }) => {
+    const key = targetKey(target);
+    if (sentKeys.has(key)) {
+      return (
+        <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-100 px-3 py-1.5 rounded-lg">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>
+          Sent
+        </span>
+      );
+    }
+    return (
+      <button
+        onClick={() => send(target)}
+        disabled={sendingKey === key}
+        className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-court-green px-3 py-1.5 rounded-lg hover:bg-court-green-light transition-colors disabled:opacity-50"
+      >
+        {sendingKey === key ? "..." : (
+          <>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22,2 15,22 11,13 2,9" />
+            </svg>
+            Send
+          </>
+        )}
+      </button>
+    );
+  };
+
+  const nothingToSendTo = !loading && friends.length === 0 && groups.length === 0;
 
   return (
     <div className="fixed inset-0 z-[999] bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in-up" onClick={(e) => e.stopPropagation()}>
         <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-          <h3 className="font-display text-lg font-bold text-gray-800">Send to Friend</h3>
+          <h3 className="font-display text-lg font-bold text-gray-800">Send to...</h3>
           <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-400">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
 
-        <div className="max-h-80 overflow-y-auto">
+        {sendError && (
+          <div className="px-5 py-2 bg-red-50 border-b border-red-100">
+            <p className="text-xs text-red-600">{sendError}</p>
+          </div>
+        )}
+
+        <div className="max-h-96 overflow-y-auto">
           {loading ? (
             <div className="p-4 space-y-3">{[1, 2, 3].map((i) => <div key={i} className="skeleton h-12 rounded-xl" />)}</div>
-          ) : friends.length === 0 ? (
-            <div className="text-center py-8 px-4"><p className="text-gray-400 text-sm">No friends to send to</p></div>
+          ) : nothingToSendTo ? (
+            <div className="text-center py-8 px-4"><p className="text-gray-400 text-sm">No friends or groups to send to</p></div>
           ) : (
-            friends.map((friend) => (
-              <div key={friend.id} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
-                <Avatar name={friend.name} image={friend.profileImageUrl} size="md" />
-                <span className="flex-1 text-sm font-semibold text-gray-800 truncate">{friend.name}</span>
-                {sentTo.has(friend.id) ? (
-                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-100 px-3 py-1.5 rounded-lg">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>
-                    Sent
-                  </span>
-                ) : (
-                  <button
-                    onClick={() => sendToFriend(friend.id)}
-                    disabled={sendingTo === friend.id}
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-court-green px-3 py-1.5 rounded-lg hover:bg-court-green-light transition-colors disabled:opacity-50"
-                  >
-                    {sendingTo === friend.id ? "..." : (
-                      <>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                          <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22,2 15,22 11,13 2,9" />
-                        </svg>
-                        Send
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
-            ))
+            <>
+              {groups.length > 0 && (
+                <>
+                  <div className="px-5 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                    Groups & Teams
+                  </div>
+                  {groups.map((g) => (
+                    <div key={g.id} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-court-green to-court-green-soft flex items-center justify-center text-white font-bold text-sm shadow-md shrink-0">
+                        {g.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 truncate">{g.name}</p>
+                        {g._count?.members != null && (
+                          <p className="text-[11px] text-gray-400">{g._count.members} members</p>
+                        )}
+                      </div>
+                      <SendBtn target={{ kind: "group", id: g.id }} />
+                    </div>
+                  ))}
+                </>
+              )}
+
+              {friends.length > 0 && (
+                <>
+                  <div className="px-5 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                    Friends
+                  </div>
+                  {friends.map((friend) => (
+                    <div key={friend.id} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
+                      <Avatar name={friend.name} image={friend.profileImageUrl} size="md" />
+                      <span className="flex-1 text-sm font-semibold text-gray-800 truncate">{friend.name}</span>
+                      <SendBtn target={{ kind: "friend", id: friend.id }} />
+                    </div>
+                  ))}
+                </>
+              )}
+            </>
           )}
         </div>
 
@@ -1465,7 +1608,7 @@ function ManageRequestsModal({
   postId, playersNeeded, currentlyComplete, onClose, onUpdate, onManualPlayersUpdate, manualPlayers,
 }: {
   postId: string; playersNeeded: number; currentlyComplete: boolean; onClose: () => void;
-  onUpdate: (confirmed: number, complete: boolean, sessionChatId?: string | null) => void;
+  onUpdate: (confirmed: number, complete: boolean, sessionChatId?: string | null, teamGroupId?: string | null) => void;
   onManualPlayersUpdate: (names: string) => void;
   manualPlayers: string;
 }) {
@@ -1494,11 +1637,15 @@ function ManageRequestsModal({
   }, []);
 
   const approvedCount = requests.filter((r) => r.status === "APPROVED").length;
+  const manualCount = manualPlayers
+    ? manualPlayers.split(",").filter((n) => n.trim()).length
+    : 0;
+  const totalConfirmed = approvedCount + manualCount;
 
   useEffect(() => {
-    setCurrentConfirmedCount(approvedCount);
-    setDropdownValue(approvedCount);
-  }, [approvedCount]);
+    setCurrentConfirmedCount(totalConfirmed);
+    setDropdownValue(totalConfirmed);
+  }, [totalConfirmed]);
 
   const handleRespond = async (requestId: string, action: "approve" | "reject", note?: string) => {
     setRespondingTo(requestId);
@@ -1511,7 +1658,7 @@ function ManageRequestsModal({
       const data = await res.json();
       loadRequests();
       if (action === "approve") {
-        onUpdate(approvedCount + 1, data.isComplete, data.sessionChatId ?? null);
+        onUpdate(approvedCount + 1 + manualCount, data.isComplete, data.sessionChatId ?? null, data.teamGroupId ?? null);
         // Close the modal when this approval just filled the game — the
         // underlying PostCard will snap back to its compact confirmation
         // state, which is the signal the creator needs to see.
@@ -1529,7 +1676,7 @@ function ManageRequestsModal({
         <div className="p-4 border-b border-gray-100 flex items-center justify-between">
           <div>
             <h3 className="font-display text-lg font-bold text-gray-800">Player Requests</h3>
-            <p className="text-xs text-gray-400">{approvedCount}/{playersNeeded} players confirmed</p>
+            <p className="text-xs text-gray-400">{totalConfirmed}/{playersNeeded} players confirmed</p>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-400">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
@@ -1581,7 +1728,7 @@ function ManageRequestsModal({
                 {savingManual ? "..." : "Save"}
               </button>
             )}
-            {!isMarkedFull ? (
+            {!isMarkedFull && !showMarkFullForm ? (
               <button
                 onClick={() => {
                   if (approvedCount >= playersNeeded) {
@@ -1594,7 +1741,7 @@ function ManageRequestsModal({
                     }).then(async (res) => {
                       if (res.ok) {
                         const data = await res.json().catch(() => ({}));
-                        onUpdate(playersNeeded, true, data.sessionChatId ?? null);
+                        onUpdate(playersNeeded, true, data.sessionChatId ?? null, data.teamGroupId ?? null);
                         setCurrentConfirmedCount(playersNeeded);
                         setDropdownValue(playersNeeded);
                         setIsMarkedFull(true);
@@ -1615,7 +1762,7 @@ function ManageRequestsModal({
               >
                 Mark Full
               </button>
-            ) : (
+            ) : isMarkedFull ? (
               <button
                 onClick={() => {
                   setSavingManual(true);
@@ -1639,7 +1786,7 @@ function ManageRequestsModal({
               >
                 Reopen Game
               </button>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -1717,7 +1864,7 @@ function ManageRequestsModal({
                   }).then(async (res) => {
                     if (res.ok) {
                       const data = await res.json().catch(() => ({}));
-                      onUpdate(playersNeeded, true, data.sessionChatId ?? null);
+                      onUpdate(playersNeeded, true, data.sessionChatId ?? null, data.teamGroupId ?? null);
                       setCurrentConfirmedCount(playersNeeded);
                       setDropdownValue(playersNeeded);
                       setIsMarkedFull(true);

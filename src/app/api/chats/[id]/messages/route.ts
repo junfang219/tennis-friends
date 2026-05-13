@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { emitToUsers } from "@/lib/eventBus";
+import { pushToUsers } from "@/lib/push";
+
+function chatPreviewForPush(content: string, mediaUrl: string | undefined, mediaType: string | undefined): string {
+  if (content && content.trim()) return content.trim().slice(0, 140);
+  if (mediaUrl) return mediaType === "video" ? "🎥 Video" : "📷 Photo";
+  return "New message";
+}
 
 async function verifyParticipant(userId: string, chatId: string) {
   const participant = await prisma.chatParticipant.findUnique({
@@ -48,7 +56,25 @@ export async function GET(
     data: { lastReadAt: new Date() },
   });
 
-  return NextResponse.json(messages);
+  const reactionRows = messages.length
+    ? await prisma.messageReaction.findMany({
+        where: { messageType: "CHAT", messageId: { in: messages.map((m) => m.id) } },
+        include: { user: { select: { id: true, name: true } } },
+      })
+    : [];
+  const reactionsByMessage = new Map<string, { emoji: string; userId: string; userName: string }[]>();
+  for (const r of reactionRows) {
+    const list = reactionsByMessage.get(r.messageId) || [];
+    list.push({ emoji: r.emoji, userId: r.userId, userName: r.user.name });
+    reactionsByMessage.set(r.messageId, list);
+  }
+
+  const result = messages.map((m) => ({
+    ...m,
+    reactions: reactionsByMessage.get(m.id) || [],
+  }));
+
+  return NextResponse.json(result);
 }
 
 // POST send a message
@@ -93,5 +119,21 @@ export async function POST(
     data: { lastReadAt: new Date() },
   });
 
-  return NextResponse.json(message);
+  // Notify all other chat participants in real time.
+  const others = await prisma.chatParticipant.findMany({
+    where: { chatId: id, userId: { not: userId }, muted: false },
+    select: { userId: true },
+  });
+  const otherIds = others.map((p) => p.userId);
+  emitToUsers(otherIds, { kind: "inbox" });
+
+  const chat = await prisma.chat.findUnique({ where: { id }, select: { name: true } });
+  void pushToUsers(otherIds, {
+    title: chat?.name || "Game chat",
+    body: `${message.sender.name}: ${chatPreviewForPush(message.content, mediaUrl, mediaType)}`,
+    threadId: `chat:${id}`,
+    data: { kind: "chat", chatId: id },
+  });
+
+  return NextResponse.json({ ...message, reactions: [] });
 }

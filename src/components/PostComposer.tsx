@@ -208,6 +208,61 @@ function ComposerModal({
   const [skillBucket, setSkillBucket] = useState<"any" | "beginner" | "intermediate" | "advanced" | "pro">("any");
   const [playDuration, setPlayDuration] = useState(90);
   const [courtBooked, setCourtBooked] = useState(false);
+  const [isBroadcast, setIsBroadcast] = useState(false);
+  const [broadcastRadius, setBroadcastRadius] = useState<5 | 10 | 25>(10);
+  const [hasLocation, setHasLocation] = useState<boolean | null>(null);
+  const [locationSaving, setLocationSaving] = useState(false);
+  const [locationError, setLocationError] = useState("");
+
+  // One-shot probe for the viewer's stored coords — needed because broadcasts
+  // require a server-side lat/lng on the author profile. We only check when
+  // the user actually opens the broadcast toggle to avoid a needless API call.
+  useEffect(() => {
+    if (!isBroadcast || hasLocation !== null) return;
+    fetch("/api/profile")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        setHasLocation(!!(data?.latitude != null && data?.longitude != null));
+      })
+      .catch(() => setHasLocation(false));
+  }, [isBroadcast, hasLocation]);
+
+  const useMyLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationError("Your browser doesn't support geolocation.");
+      return;
+    }
+    setLocationError("");
+    setLocationSaving(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const res = await fetch("/api/profile", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+            }),
+          });
+          if (res.ok) {
+            setHasLocation(true);
+          } else {
+            setLocationError("Could not save location.");
+          }
+        } catch {
+          setLocationError("Could not save location.");
+        }
+        setLocationSaving(false);
+      },
+      (err) => {
+        setLocationSaving(false);
+        if (err.code === err.PERMISSION_DENIED) setLocationError("Location permission denied.");
+        else setLocationError("Could not get your location.");
+      },
+      { timeout: 10000, maximumAge: 60_000 }
+    );
+  };
 
   // Propose Team fields
   const [proposeTeam, setProposeTeam] = useState(initialProposeTeam || false);
@@ -416,6 +471,10 @@ function ComposerModal({
       }
       if (!content.trim()) {
         body.content = `Looking for ${playersNeeded} ${playersNeeded === 1 ? "player" : "players"} for ${gameType} at ${courtLocation} on ${playDate} at ${playTime} (${playDuration} min)`;
+      }
+      if (isBroadcast) {
+        body.isBroadcast = true;
+        body.broadcastRadiusMi = broadcastRadius;
       }
     }
 
@@ -667,17 +726,17 @@ function ComposerModal({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Level Required</label>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">NTRP Level Required</label>
                   <select
                     value={skillBucket}
                     onChange={(e) => setSkillBucket(e.target.value as typeof skillBucket)}
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none"
                   >
                     <option value="any">Any</option>
-                    <option value="beginner">NTRP 2.5–3.0</option>
-                    <option value="intermediate">NTRP 3.0–4.0</option>
-                    <option value="advanced">NTRP 4.0–5.0</option>
-                    <option value="pro">NTRP 5.0+</option>
+                    <option value="beginner">2.5–3.0</option>
+                    <option value="intermediate">3.0–4.0</option>
+                    <option value="advanced">4.0–5.0</option>
+                    <option value="pro">5.0+</option>
                   </select>
                 </div>
                 <div className="sm:col-span-2">
@@ -734,6 +793,87 @@ function ComposerModal({
                 />
                 <span className="text-sm font-medium text-gray-700">Court booked</span>
               </label>
+
+              {/* Broadcast section — reach players beyond friends list */}
+              <div className="mt-3 pt-3 border-t border-court-green-pale/20">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <div className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all ${
+                    isBroadcast ? "bg-ball-yellow border-ball-yellow" : "border-gray-300 bg-white"
+                  }`}>
+                    {isBroadcast && (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round">
+                        <polyline points="20,6 9,17 4,12" />
+                      </svg>
+                    )}
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={isBroadcast}
+                    onChange={(e) => setIsBroadcast(e.target.checked)}
+                    className="sr-only"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-court-green">
+                        <path d="M3 11a9 9 0 0118 0" />
+                        <path d="M6.5 11a5.5 5.5 0 0111 0" />
+                        <circle cx="12" cy="11" r="1.5" fill="currentColor" />
+                        <path d="M12 13v7" />
+                      </svg>
+                      <span className="text-sm font-semibold text-gray-800">Broadcast to nearby players</span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Non-friends within range can see and request to join.
+                    </p>
+                  </div>
+                </label>
+
+                {isBroadcast && (
+                  <div className="mt-3 pl-8">
+                    {hasLocation === false ? (
+                      <div className="text-xs text-orange-600 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 flex flex-wrap items-center gap-2">
+                        <span className="flex-1 min-w-0">Set your location to broadcast.</span>
+                        <button
+                          type="button"
+                          onClick={useMyLocation}
+                          disabled={locationSaving}
+                          className="font-semibold underline disabled:opacity-60"
+                        >
+                          {locationSaving ? "Getting location…" : "Use my location"}
+                        </button>
+                        {locationError && (
+                          <span className="w-full text-red-600">{locationError}</span>
+                        )}
+                      </div>
+                    ) : (selectedGroupIds.size > 0 || selectedFriendGroupIds.size > 0) ? (
+                      <div className="text-xs text-orange-600 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
+                        Broadcasts can&apos;t be limited to specific groups. Switch the audience to <b>All Friends</b> to broadcast.
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-xs font-semibold text-gray-600 mb-1.5">Radius</p>
+                        <div className="inline-flex bg-gray-100 rounded-lg p-0.5">
+                          {([5, 10, 25] as const).map((r) => (
+                            <button
+                              key={r}
+                              type="button"
+                              onClick={() => setBroadcastRadius(r)}
+                              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                                broadcastRadius === r ? "bg-white text-court-green shadow-sm" : "text-gray-500"
+                              }`}
+                            >
+                              {r} mi
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-[11px] text-gray-400 mt-1.5">
+                          Visible to players within {broadcastRadius} miles. Limit: 5 broadcasts per day.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

@@ -3,6 +3,7 @@ import "./globals.css";
 import SessionProvider from "@/components/SessionProvider";
 import Navbar from "@/components/Navbar";
 import BottomNav from "@/components/BottomNav";
+import PushRegistrar from "@/components/PushRegistrar";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -26,6 +27,7 @@ export default function RootLayout({
     <html lang="en" className="h-full">
       <body className="min-h-full flex flex-col bg-surface">
         <SessionProvider>
+          <PushRegistrar />
           <Navbar />
           <main className="flex-1">{children}</main>
           <BottomNav />

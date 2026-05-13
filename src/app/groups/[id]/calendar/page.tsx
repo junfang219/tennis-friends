@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
 
 type TeamMatch = {
@@ -10,29 +11,29 @@ type TeamMatch = {
   matchTime: string;
   location: string;
   notes: string;
+  availabilities: { userId: string; lineupSlot: string }[];
 };
 
-type TeamPractice = {
+type PracticeSeries = {
   id: string;
-  practiceDate: string;
-  practiceTime: string;
+  name: string;
   location: string;
-  coach: string;
-  cancelled: boolean;
-  postId: string;
+  practiceTime: string;
+  notes: string;
+  practices: { id: string; practiceDate: string; availabilities: { userId: string; status: string }[] }[];
 };
 
 type CalendarEvent =
-  | { kind: "match"; id: string; date: string; time: string; location: string; notes: string }
+  | { kind: "match"; id: string; date: string; time: string; location: string; notes: string; imIn: boolean }
   | {
       kind: "practice";
       id: string;
       date: string;
       time: string;
       location: string;
-      coach: string;
-      cancelled: boolean;
-      postId: string;
+      notes: string;
+      name: string;
+      imIn: boolean;
     };
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -64,11 +65,13 @@ function formatLongDate(s: string) {
 export default function TeamCalendarPage() {
   const params = useParams();
   const router = useRouter();
+  const { data: session } = useSession();
   const groupId = params.id as string;
+  const myId = session?.user?.id || "";
 
   const [teamName, setTeamName] = useState("");
   const [matches, setMatches] = useState<TeamMatch[]>([]);
-  const [practices, setPractices] = useState<TeamPractice[]>([]);
+  const [seriesList, setSeriesList] = useState<PracticeSeries[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -99,7 +102,7 @@ export default function TeamCalendarPage() {
       }
       if (practicesRes.ok) {
         const p = await practicesRes.json();
-        setPractices(Array.isArray(p) ? p : []);
+        setSeriesList(Array.isArray(p) ? p : []);
       }
     } catch {
       setError("Something went wrong.");
@@ -116,6 +119,9 @@ export default function TeamCalendarPage() {
     const map = new Map<string, CalendarEvent[]>();
     for (const m of matches) {
       if (!m.matchDate) continue;
+      const imIn = !!myId && m.availabilities.some(
+        (a) => a.userId === myId && a.lineupSlot && a.lineupSlot.trim()
+      );
       const arr = map.get(m.matchDate) || [];
       arr.push({
         kind: "match",
@@ -124,29 +130,35 @@ export default function TeamCalendarPage() {
         time: m.matchTime,
         location: m.location,
         notes: m.notes,
+        imIn,
       });
       map.set(m.matchDate, arr);
     }
-    for (const p of practices) {
-      if (!p.practiceDate) continue;
-      const arr = map.get(p.practiceDate) || [];
-      arr.push({
-        kind: "practice",
-        id: p.id,
-        date: p.practiceDate,
-        time: p.practiceTime,
-        location: p.location,
-        coach: p.coach,
-        cancelled: p.cancelled,
-        postId: p.postId,
-      });
-      map.set(p.practiceDate, arr);
+    for (const series of seriesList) {
+      for (const p of series.practices) {
+        if (!p.practiceDate) continue;
+        const imIn = !!myId && p.availabilities.some(
+          (a) => a.userId === myId && a.status === "im_in"
+        );
+        const arr = map.get(p.practiceDate) || [];
+        arr.push({
+          kind: "practice",
+          id: p.id,
+          date: p.practiceDate,
+          time: series.practiceTime,
+          location: series.location,
+          notes: series.notes,
+          name: series.name,
+          imIn,
+        });
+        map.set(p.practiceDate, arr);
+      }
     }
     for (const [, v] of map) {
       v.sort((a, b) => (a.time || "").localeCompare(b.time || ""));
     }
     return map;
-  }, [matches, practices]);
+  }, [matches, seriesList, myId]);
 
   // Build the cells for the current month
   const calendarCells = useMemo(() => {
@@ -279,18 +291,16 @@ export default function TeamCalendarPage() {
                 </span>
                 <div className="flex flex-col gap-0.5 overflow-hidden">
                   {visible.map((e, idx) => {
-                    const cancelled = e.kind === "practice" && e.cancelled;
                     const cls =
                       e.kind === "match"
                         ? "bg-court-green text-white"
-                        : cancelled
-                        ? "bg-gray-200 text-gray-400 line-through"
                         : "bg-ball-yellow text-court-green";
                     return (
                       <span
                         key={`${e.kind}-${e.id}-${idx}`}
                         className={`text-[8px] leading-tight font-semibold px-1 py-0.5 rounded truncate ${cls}`}
                       >
+                        {e.imIn ? "⭐ " : ""}
                         {e.kind === "match" ? "Match" : "Practice"}
                         {e.time ? ` ${e.time}` : ""}
                       </span>
@@ -313,9 +323,7 @@ export default function TeamCalendarPage() {
           <span className="inline-flex items-center gap-1">
             <span className="inline-block w-3 h-3 rounded-sm bg-ball-yellow" /> Practice
           </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="inline-block w-3 h-3 rounded-sm bg-gray-200" /> Cancelled
-          </span>
+          <span className="inline-flex items-center gap-1">⭐ You&apos;re in</span>
         </div>
       </div>
 
@@ -346,7 +354,12 @@ export default function TeamCalendarPage() {
                     >
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-white bg-court-green px-2 py-0.5 rounded">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-white bg-court-green px-2 py-0.5 rounded inline-flex items-center gap-1">
+                            {e.imIn && (
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-label="You're in">
+                                <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                              </svg>
+                            )}
                             Match
                           </span>
                           {e.time && <span className="text-xs font-semibold text-gray-700">{e.time}</span>}
@@ -363,38 +376,26 @@ export default function TeamCalendarPage() {
                     </div>
                   );
                 }
-                const cancelled = e.cancelled;
                 return (
                   <div
                     key={`${e.kind}-${e.id}-${i}`}
-                    className={`flex items-center justify-between gap-3 p-3 rounded-lg border ${
-                      cancelled
-                        ? "border-gray-200 bg-gray-50 opacity-70"
-                        : "border-ball-yellow/40 bg-ball-yellow/10"
-                    }`}
+                    className="flex items-center justify-between gap-3 p-3 rounded-lg border border-ball-yellow/40 bg-ball-yellow/10"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span
-                          className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                            cancelled
-                              ? "text-gray-500 bg-gray-200"
-                              : "text-court-green bg-ball-yellow"
-                          } ${cancelled ? "line-through" : ""}`}
-                        >
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded text-court-green bg-ball-yellow inline-flex items-center gap-1">
+                          {e.imIn && (
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-label="You're in">
+                              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                            </svg>
+                          )}
                           Practice
                         </span>
+                        <span className="text-xs font-semibold text-gray-800 truncate">{e.name}</span>
                         {e.time && <span className="text-xs font-semibold text-gray-700">{e.time}</span>}
-                        {cancelled && (
-                          <span className="text-[10px] font-bold tracking-wider text-red-600 bg-red-100 px-2 py-0.5 rounded uppercase">
-                            Cancelled
-                          </span>
-                        )}
                       </div>
                       <p className="text-xs text-gray-600 mt-1">📍 {e.location}</p>
-                      {e.coach && (
-                        <p className="text-[11px] text-gray-500 mt-1">👨‍🏫 Coach: {e.coach}</p>
-                      )}
+                      {e.notes && <p className="text-[11px] text-gray-400 italic mt-1">{e.notes}</p>}
                     </div>
                     <Link
                       href={`/groups/${groupId}/practice?focus=${e.id}`}
@@ -423,7 +424,7 @@ export default function TeamCalendarPage() {
               <Link href={`/groups/${groupId}/availability`} className="text-court-green font-semibold hover:underline">
                 Availability
               </Link>{" "}
-              or propose practices via{" "}
+              or add practices via{" "}
               <Link href={`/groups/${groupId}/practice`} className="text-court-green font-semibold hover:underline">
                 Team Practice
               </Link>

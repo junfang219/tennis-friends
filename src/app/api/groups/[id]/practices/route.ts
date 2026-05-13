@@ -9,9 +9,55 @@ async function verifyMembership(userId: string, groupId: string) {
   return !!m;
 }
 
-const REPEAT_OPTIONS = ["", "weekly", "biweekly", "monthly"];
+const REPEAT_OPTIONS = ["", "weekly", "twice_weekly", "biweekly", "monthly"];
+const MAX_OCCURRENCES = 52;
 
-// GET all practices for a team (any member)
+const FREQUENCY_LABELS: Record<string, string> = {
+  weekly: "once a week",
+  twice_weekly: "twice a week",
+  biweekly: "every other week",
+  monthly: "once a month",
+};
+
+function ymd(d: Date) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatDateLabel(iso: string) {
+  if (!iso) return "";
+  const d = new Date(`${iso}T00:00`);
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+function buildAnnouncement(opts: {
+  name: string;
+  location: string;
+  practiceTime: string;
+  notes: string;
+  dates: string[];
+  repeats: string;
+}) {
+  const { name, location, practiceTime, notes, dates, repeats } = opts;
+  const lines: string[] = [];
+  lines.push(`📣 New practice scheduled: ${name}`);
+  if (dates.length === 1) {
+    lines.push(`📅 ${formatDateLabel(dates[0])}`);
+  } else {
+    const freq = FREQUENCY_LABELS[repeats] || `${dates.length} sessions`;
+    lines.push(`📅 Starting ${formatDateLabel(dates[0])} — ${dates.length} sessions, ${freq}`);
+  }
+  if (practiceTime) lines.push(`🕒 ${practiceTime}`);
+  lines.push(`📍 ${location}`);
+  if (notes) lines.push(`📝 ${notes}`);
+  lines.push("");
+  lines.push("Head to the Team Practice tab to mark your availability.");
+  return lines.join("\n");
+}
+
+// GET all practice series for a team (any member)
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -26,18 +72,27 @@ export async function GET(
     return NextResponse.json({ error: "Not a member" }, { status: 403 });
   }
 
-  const practices = await prisma.teamPractice.findMany({
+  const series = await prisma.practiceSeries.findMany({
     where: { groupId: id },
-    orderBy: [{ practiceDate: "asc" }, { practiceTime: "asc" }],
+    orderBy: { createdAt: "asc" },
     include: {
-      creator: { select: { id: true, name: true, profileImageUrl: true } },
+      practices: {
+        orderBy: [{ practiceDate: "asc" }],
+        include: {
+          availabilities: {
+            include: {
+              user: { select: { id: true, name: true, profileImageUrl: true } },
+            },
+          },
+        },
+      },
     },
   });
 
-  return NextResponse.json(practices);
+  return NextResponse.json(series);
 }
 
-// POST create a new practice (any member)
+// POST create a new practice series + N practices (captain only)
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -48,15 +103,29 @@ export async function POST(
   }
 
   const { id } = await params;
-  const userId = session.user.id;
 
-  if (!(await verifyMembership(userId, id))) {
-    return NextResponse.json({ error: "Not a member" }, { status: 403 });
+  const group = await prisma.group.findUnique({ where: { id } });
+  if (!group) {
+    return NextResponse.json({ error: "Team not found" }, { status: 404 });
+  }
+  if (group.ownerId !== session.user.id) {
+    return NextResponse.json({ error: "Only the team captain can add practices" }, { status: 403 });
   }
 
-  const { practiceDate, practiceTime, location, playersNeeded, coach, repeats, repeatUntil, notes } =
-    await request.json();
+  const {
+    name,
+    practiceDate,
+    practiceTime,
+    location,
+    notes,
+    repeats,
+    repeatUntil,
+    weekdays,
+  } = await request.json();
 
+  if (!name || typeof name !== "string" || !name.trim()) {
+    return NextResponse.json({ error: "name is required" }, { status: 400 });
+  }
   if (!practiceDate || typeof practiceDate !== "string") {
     return NextResponse.json({ error: "practiceDate is required" }, { status: 400 });
   }
@@ -65,108 +134,148 @@ export async function POST(
   }
 
   const repeatsVal = typeof repeats === "string" && REPEAT_OPTIONS.includes(repeats) ? repeats : "";
-  const playersNeededInt = Number.isInteger(playersNeeded) ? playersNeeded : parseInt(playersNeeded) || 0;
-  const cleanCoach = typeof coach === "string" ? coach.trim() : "";
-  const cleanNotes = typeof notes === "string" ? notes.trim() : "";
+  const cleanName = name.trim();
   const cleanLocation = location.trim();
+  const cleanNotes = typeof notes === "string" ? notes.trim() : "";
   const cleanTime = typeof practiceTime === "string" ? practiceTime : "";
 
-  // For a repeated practice, expand into one occurrence per cadence between the start
-  // date and the end date (inclusive). For one-time, we just create the single date.
-  if (repeatsVal && (!repeatUntil || typeof repeatUntil !== "string")) {
-    return NextResponse.json(
-      { error: "repeatUntil is required for repeating practices" },
-      { status: 400 }
-    );
-  }
-  if (repeatsVal && repeatUntil < practiceDate) {
-    return NextResponse.json(
-      { error: "repeatUntil must be on or after the start date" },
-      { status: 400 }
-    );
-  }
-
-  // Build the list of dates to create
   const dates: string[] = [];
   if (!repeatsVal) {
     dates.push(practiceDate);
   } else {
-    // Parse start as a local date (YYYY-MM-DD) — append T00:00 to avoid TZ issues
-    const start = new Date(`${practiceDate}T00:00`);
-    const end = new Date(`${repeatUntil}T00:00`);
-    let cursor = new Date(start);
-    let safety = 0;
-    while (cursor <= end && safety < 200) {
-      const yyyy = cursor.getFullYear();
-      const mm = String(cursor.getMonth() + 1).padStart(2, "0");
-      const dd = String(cursor.getDate()).padStart(2, "0");
-      dates.push(`${yyyy}-${mm}-${dd}`);
-      // Advance the cursor
-      if (repeatsVal === "weekly") cursor.setDate(cursor.getDate() + 7);
-      else if (repeatsVal === "biweekly") cursor.setDate(cursor.getDate() + 14);
-      else if (repeatsVal === "monthly") cursor.setMonth(cursor.getMonth() + 1);
-      else break;
-      safety++;
-    }
-    if (dates.length === 0) {
+    if (!repeatUntil || typeof repeatUntil !== "string") {
       return NextResponse.json(
-        { error: "No practice dates produced — check the start and end dates" },
+        { error: "repeatUntil is required for repeating practices" },
         { status: 400 }
       );
     }
-    if (dates.length > 52) {
+    if (repeatUntil < practiceDate) {
       return NextResponse.json(
-        { error: "Too many occurrences (max 52). Please shorten the date range." },
+        { error: "repeatUntil must be on or after the start date" },
+        { status: 400 }
+      );
+    }
+
+    const start = new Date(`${practiceDate}T00:00`);
+    const end = new Date(`${repeatUntil}T00:00`);
+
+    if (repeatsVal === "twice_weekly") {
+      if (
+        !Array.isArray(weekdays) ||
+        weekdays.length !== 2 ||
+        !weekdays.every((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+      ) {
+        return NextResponse.json(
+          { error: "Pick exactly 2 weekdays for twice-a-week practice" },
+          { status: 400 }
+        );
+      }
+      const wdSet = new Set<number>(weekdays as number[]);
+
+      const cursor = new Date(start);
+      let safety = 0;
+      while (!wdSet.has(cursor.getDay()) && cursor <= end && safety < 14) {
+        cursor.setDate(cursor.getDate() + 1);
+        safety++;
+      }
+
+      while (cursor <= end && dates.length <= MAX_OCCURRENCES) {
+        if (wdSet.has(cursor.getDay())) {
+          dates.push(ymd(cursor));
+        }
+        cursor.setDate(cursor.getDate() + 1);
+      }
+    } else {
+      const cursor = new Date(start);
+      let safety = 0;
+      while (cursor <= end && safety <= MAX_OCCURRENCES + 1) {
+        dates.push(ymd(cursor));
+        if (repeatsVal === "weekly") cursor.setDate(cursor.getDate() + 7);
+        else if (repeatsVal === "biweekly") cursor.setDate(cursor.getDate() + 14);
+        else if (repeatsVal === "monthly") cursor.setMonth(cursor.getMonth() + 1);
+        else break;
+        safety++;
+      }
+    }
+
+    if (dates.length === 0) {
+      return NextResponse.json(
+        { error: "No practice dates produced — check the start/end dates and weekdays" },
+        { status: 400 }
+      );
+    }
+    if (dates.length > MAX_OCCURRENCES) {
+      return NextResponse.json(
+        { error: `Too many occurrences (max ${MAX_OCCURRENCES}). Shorten the date range.` },
         { status: 400 }
       );
     }
   }
 
-  // Build a friendly post body that surfaces practice-specific details
-  const REPEAT_LABELS: Record<string, string> = {
-    weekly: "🔁 Weekly",
-    biweekly: "🔁 Every 2 weeks",
-    monthly: "🔁 Monthly",
-  };
-  const baseLines: string[] = ["🎾 Team Practice"];
-  if (cleanCoach) baseLines.push(`👨‍🏫 Coach: ${cleanCoach}`);
-  if (repeatsVal && REPEAT_LABELS[repeatsVal]) baseLines.push(REPEAT_LABELS[repeatsVal]);
-  if (cleanNotes) baseLines.push(cleanNotes);
-  const postContent = baseLines.join("\n");
+  const series = await prisma.practiceSeries.create({
+    data: {
+      groupId: id,
+      name: cleanName,
+      location: cleanLocation,
+      practiceTime: cleanTime,
+      notes: cleanNotes,
+      practices: {
+        create: dates.map((d) => ({ practiceDate: d })),
+      },
+    },
+    include: {
+      practices: {
+        orderBy: [{ practiceDate: "asc" }],
+        include: {
+          availabilities: {
+            include: {
+              user: { select: { id: true, name: true, profileImageUrl: true } },
+            },
+          },
+        },
+      },
+    },
+  });
 
-  // Create one Post + TeamPractice per occurrence date.
-  const created: { id: string }[] = [];
-  for (const date of dates) {
-    const post = await prisma.post.create({
+  // Post an announcement to the team chat AND the team feed.
+  // Failures here don't roll back the series — captain can re-share manually.
+  const announcement = buildAnnouncement({
+    name: cleanName,
+    location: cleanLocation,
+    practiceTime: cleanTime,
+    notes: cleanNotes,
+    dates,
+    repeats: repeatsVal,
+  });
+
+  try {
+    await prisma.groupMessage.create({
       data: {
-        content: postContent,
-        postType: "find_players",
-        playDate: date,
+        content: announcement,
+        groupId: id,
+        senderId: session.user.id,
+      },
+    });
+  } catch (e) {
+    console.error("[practices POST] failed to post chat announcement:", e);
+  }
+
+  try {
+    await prisma.post.create({
+      data: {
+        content: announcement,
+        postType: "announcement",
+        playDate: dates[0] || "",
         playTime: cleanTime,
         courtLocation: cleanLocation,
-        gameType: "practice",
-        playersNeeded: Math.max(0, playersNeededInt),
-        authorId: userId,
+        teamGroupId: id,
+        authorId: session.user.id,
         postGroups: { create: [{ groupId: id }] },
       },
     });
-
-    const practice = await prisma.teamPractice.create({
-      data: {
-        groupId: id,
-        creatorId: userId,
-        postId: post.id,
-        practiceDate: date,
-        practiceTime: cleanTime,
-        location: cleanLocation,
-        playersNeeded: Math.max(0, playersNeededInt),
-        coach: cleanCoach,
-        repeats: repeatsVal,
-        notes: cleanNotes,
-      },
-    });
-    created.push({ id: practice.id });
+  } catch (e) {
+    console.error("[practices POST] failed to post feed announcement:", e);
   }
 
-  return NextResponse.json({ count: created.length });
+  return NextResponse.json(series);
 }

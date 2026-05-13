@@ -5,12 +5,16 @@ import { createPortal } from "react-dom";
 import { useRouter, usePathname } from "next/navigation";
 import Avatar from "./Avatar";
 import PostCard from "./PostCard";
+import { emojiFor } from "@/lib/reactions";
+import { onAppEvent } from "@/lib/eventStream";
 
 type Notification = {
   id: string;
   type: string;
   postId: string;
   commentId: string;
+  messageId: string;
+  emoji: string;
   read: boolean;
   createdAt: string;
   actor: { id: string; name: string; profileImageUrl: string };
@@ -25,8 +29,8 @@ function timeAgo(date: string) {
   return new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function notificationText(type: string) {
-  switch (type) {
+function notificationText(n: { type: string; emoji?: string }) {
+  switch (n.type) {
     case "comment": return "commented on your post";
     case "reply": return "also commented on a post you commented on";
     case "like": return "liked your post";
@@ -35,6 +39,10 @@ function notificationText(type: string) {
     case "request_rejected": return "declined your request to join";
     case "friend_request": return "sent you a friend request";
     case "friend_accepted": return "accepted your friend request — you're now friends!";
+    case "message_reaction": {
+      const symbol = n.emoji ? (emojiFor(n.emoji) || n.emoji) : "";
+      return symbol ? `reacted ${symbol} to your message` : "reacted to your message";
+    }
     default: return "interacted with your post";
   }
 }
@@ -103,6 +111,14 @@ function notificationIcon(type: string) {
           </svg>
         </div>
       );
+    case "message_reaction":
+      return (
+        <div className="w-6 h-6 rounded-full bg-pink-100 flex items-center justify-center">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-pink-500">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+          </svg>
+        </div>
+      );
     default:
       return null;
   }
@@ -159,6 +175,12 @@ export default function NotificationBell() {
     if (n.type === "friend_request" || n.type === "friend_accepted") {
       setOpen(false);
       router.push(`/profile/${n.actor.id}`);
+      return;
+    }
+    if (n.type === "message_reaction") {
+      setOpen(false);
+      const target = n.messageId ? `/chat/${n.actor.id}?msg=${n.messageId}` : `/chat/${n.actor.id}`;
+      router.push(target);
       return;
     }
     const wantsComments = n.type === "comment" || n.type === "reply";
@@ -230,8 +252,16 @@ export default function NotificationBell() {
 
   useEffect(() => {
     loadNotifications();
-    pollRef.current = setInterval(loadNotifications, 15000); // Poll every 15s
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    // Real-time refresh via SSE; the safety poll covers any gap when the
+    // connection is briefly down (mobile network change, proxy timeout).
+    const unsubscribe = onAppEvent((e) => {
+      if (e.kind === "notifications" || e.kind === "hello") loadNotifications();
+    });
+    pollRef.current = setInterval(loadNotifications, 60000);
+    return () => {
+      unsubscribe();
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, []);
 
   // Close any open modal/dropdown when the route changes (e.g. tapping
@@ -442,7 +472,7 @@ export default function NotificationBell() {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-gray-700">
                           <span className="font-semibold text-gray-900">{n.actor.name}</span>{" "}
-                          {notificationText(n.type)}
+                          {notificationText(n)}
                         </p>
                         <p className="text-xs text-gray-400 mt-0.5">{timeAgo(n.createdAt)}</p>
                       </div>
@@ -488,6 +518,7 @@ export default function NotificationBell() {
                 post={openPost as Parameters<typeof PostCard>[0]["post"]}
                 initialExpanded={openWithComments}
                 initialShowComments={openWithComments}
+                onOpenChat={() => setOpenPost(null)}
               />
             )}
           </div>

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { emitToUser } from "@/lib/eventBus";
 
 export async function GET(request: Request) {
   const session = await auth();
@@ -61,6 +62,7 @@ export async function POST(request: Request) {
         commentId: comment.id,
       },
     });
+    emitToUser(post.authorId, { kind: "notifications" });
   }
 
   // Notify other commenters on the same post (excluding the current user and the post author)
@@ -82,6 +84,7 @@ export async function POST(request: Request) {
         commentId: comment.id,
       },
     });
+    emitToUser(c.authorId, { kind: "notifications" });
   }
 
   return NextResponse.json(comment);

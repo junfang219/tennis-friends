@@ -4,12 +4,15 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Avatar from "@/components/Avatar";
+import { emojiFor } from "@/lib/reactions";
 
 type Notification = {
   id: string;
   type: string;
   postId: string;
   commentId: string;
+  messageId: string;
+  emoji: string;
   read: boolean;
   createdAt: string;
   actor: { id: string; name: string; profileImageUrl: string };
@@ -24,8 +27,8 @@ function timeAgo(date: string) {
   return new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function notificationText(type: string) {
-  switch (type) {
+function notificationText(n: { type: string; emoji?: string }) {
+  switch (n.type) {
     case "comment": return "commented on your post";
     case "reply": return "also commented on a post you commented on";
     case "like": return "liked your post";
@@ -34,6 +37,10 @@ function notificationText(type: string) {
     case "request_rejected": return "declined your request to join";
     case "friend_request": return "sent you a friend request";
     case "friend_accepted": return "accepted your friend request";
+    case "message_reaction": {
+      const symbol = n.emoji ? (emojiFor(n.emoji) || n.emoji) : "";
+      return symbol ? `reacted ${symbol} to your message` : "reacted to your message";
+    }
     default: return "interacted with your post";
   }
 }
@@ -102,6 +109,14 @@ function notificationIcon(type: string) {
           </svg>
         </div>
       );
+    case "message_reaction":
+      return (
+        <div className="w-8 h-8 rounded-full bg-pink-100 flex items-center justify-center">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-pink-500">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+          </svg>
+        </div>
+      );
     default:
       return (
         <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
@@ -159,6 +174,9 @@ export default function NotificationsPage() {
   const handleTap = (n: Notification) => {
     if (n.type === "friend_request" || n.type === "friend_accepted") {
       router.push(`/profile/${n.actor.id}`);
+    } else if (n.type === "message_reaction") {
+      const target = n.messageId ? `/chat/${n.actor.id}?msg=${n.messageId}` : `/chat/${n.actor.id}`;
+      router.push(target);
     } else if (n.postId) {
       router.push(`/?post=${n.postId}`);
     }
@@ -198,7 +216,7 @@ export default function NotificationsPage() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-800">
                   <span className="font-semibold">{n.actor.name}</span>{" "}
-                  {notificationText(n.type)}
+                  {notificationText(n)}
                 </p>
                 <p className="text-xs text-gray-400 mt-1">{timeAgo(n.createdAt)}</p>
               </div>

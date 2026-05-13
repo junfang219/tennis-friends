@@ -1,6 +1,18 @@
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { ensureTeamGroup } from "@/lib/teamGroup";
+import { haversineMiles } from "@/lib/distance";
+import { rateLimit } from "@/lib/rateLimit";
+
+const BROADCAST_RADII = [5, 10, 25] as const;
+const MAX_BROADCAST_RADIUS = 25;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function roundDistance(mi: number): number {
+  return mi < 10 ? Math.round(mi * 10) / 10 : Math.round(mi);
+}
 
 export async function GET() {
   const session = await auth();
@@ -22,9 +34,10 @@ export async function GET() {
     f.requesterId === userId ? f.addresseeId : f.requesterId
   );
 
-  // Get group IDs the user is a member of
+  // Get group IDs the user is an active member of (archived teams are hidden
+  // from the feed — posts targeted only to those teams won't surface).
   const userGroupMemberships = await prisma.groupMember.findMany({
-    where: { userId },
+    where: { userId, archivedAt: null },
     select: { groupId: true },
   });
   const userGroupIds = userGroupMemberships.map((m) => m.groupId);
@@ -52,6 +65,35 @@ export async function GET() {
   const blockedUserIds = Array.from(
     new Set(blocks.map((b) => (b.blockerId === userId ? b.blockedId : b.blockerId)))
   );
+
+  // Viewer coords power the broadcast bounding box and distance calculation.
+  // Viewers without a location can't be matched against any broadcast — they
+  // simply won't see any until they set one in their profile.
+  const me = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { latitude: true, longitude: true },
+  });
+  const haveMyLocation = me?.latitude != null && me?.longitude != null;
+
+  // Bounding-box prefilter to keep the SQL query cheap; exact Haversine runs
+  // in JS below since SQLite has no trig functions readily available.
+  let broadcastClause: Prisma.PostWhereInput | null = null;
+  if (haveMyLocation) {
+    const latDelta = MAX_BROADCAST_RADIUS / 69; // ~1° lat = 69 mi
+    const cosLat = Math.cos((me!.latitude as number) * Math.PI / 180);
+    const lonDelta = MAX_BROADCAST_RADIUS / (69 * Math.max(0.01, cosLat));
+    const myLat = me!.latitude as number;
+    const myLng = me!.longitude as number;
+    broadcastClause = {
+      authorId: { notIn: [...friendIds, userId, ...blockedUserIds] },
+      isBroadcast: true,
+      isComplete: false,
+      postGroups: { none: {} },
+      postFriendGroups: { none: {} },
+      broadcastLat: { gte: myLat - latDelta, lte: myLat + latDelta },
+      broadcastLng: { gte: myLng - lonDelta, lte: myLng + lonDelta },
+    };
+  }
 
   // Fetch posts:
   // 1. Own posts (always visible)
@@ -83,10 +125,14 @@ export async function GET() {
           authorId: { in: friendIds },
           postFriendGroups: { some: { friendGroupId: { in: userFriendGroupIds } } },
         },
+        // Broadcasts from non-friends within range (bounding-box; exact
+        // distance filtered post-fetch). Skipped entirely when viewer has
+        // no location.
+        ...(broadcastClause ? [broadcastClause] : []),
       ],
     },
     orderBy: { createdAt: "desc" },
-    take: 50,
+    take: 100,
     include: {
       author: {
         select: { id: true, name: true, profileImageUrl: true },
@@ -113,9 +159,31 @@ export async function GET() {
     },
   });
 
+  // Exact distance filter for broadcasts. The SQL bounding box keeps the
+  // query cheap but lets in posts up to ~25mi away; here we tighten to each
+  // post's own broadcastRadiusMi and stash the rounded distance for the UI.
+  const distanceByPost = new Map<string, number>();
+  const filteredPosts = posts.filter((post) => {
+    if (!post.isBroadcast || post.authorId === userId || friendIds.includes(post.authorId)) {
+      return true;
+    }
+    if (!haveMyLocation || post.broadcastLat == null || post.broadcastLng == null) {
+      return false;
+    }
+    const d = haversineMiles(
+      me!.latitude as number,
+      me!.longitude as number,
+      post.broadcastLat,
+      post.broadcastLng
+    );
+    if (d > post.broadcastRadiusMi) return false;
+    distanceByPost.set(post.id, d);
+    return true;
+  });
+
   // For every completed find-players post, look up its auto-created session
   // chat so the card can link straight to /chat/group/<id>. One bounded query.
-  const completePostIds = posts
+  const completePostIds = filteredPosts
     .filter((p) => p.postType === "find_players" && p.isComplete)
     .map((p) => p.id);
   const sessionChats = completePostIds.length
@@ -131,7 +199,29 @@ export async function GET() {
     sessionChats.map((c) => [c.postId as string, c.id])
   );
 
-  const formatted = posts.map((post) => ({
+  // Back-fill: any complete propose_team post that doesn't have a team group
+  // yet — create it lazily, but only when the viewer is a participant
+  // (author or approved player). Catches posts that filled before this
+  // feature shipped.
+  const teamBackfillByPost = new Map<string, string>();
+  const teamBackfillTargets = filteredPosts.filter(
+    (p) =>
+      p.postType === "propose_team" &&
+      p.isComplete &&
+      !p.teamGroupId &&
+      (p.authorId === userId ||
+        p.playRequests.some((r) => r.userId === userId && r.status === "APPROVED"))
+  );
+  for (const p of teamBackfillTargets) {
+    try {
+      const gid = await ensureTeamGroup(p.id);
+      if (gid) teamBackfillByPost.set(p.id, gid);
+    } catch (err) {
+      console.error("ensureTeamGroup (feed back-fill) failed:", err);
+    }
+  }
+
+  const formatted = filteredPosts.map((post) => ({
     id: post.id,
     content: post.content,
     mediaUrl: post.mediaUrl,
@@ -154,7 +244,13 @@ export async function GET() {
     playersConfirmed: post.playersConfirmed,
     courtBooked: post.courtBooked,
     isComplete: post.isComplete,
+    isBroadcast: post.isBroadcast,
+    broadcastRadiusMi: post.broadcastRadiusMi,
+    distanceMiles: distanceByPost.has(post.id)
+      ? roundDistance(distanceByPost.get(post.id) as number)
+      : null,
     sessionChatId: sessionChatByPost.get(post.id) || null,
+    teamGroupId: post.teamGroupId || teamBackfillByPost.get(post.id) || null,
     commentsDisabled: post.commentsDisabled,
     createdAt: post.createdAt,
     author: post.author,
@@ -186,7 +282,54 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { content, mediaUrl, mediaType, photoUrls, groupIds, friendGroupIds, postType, playDate, playTime, playDuration, courtLocation, gameType, playersNeeded, courtBooked, skillMin, skillMax } = await request.json();
+  const { content, mediaUrl, mediaType, photoUrls, groupIds, friendGroupIds, postType, playDate, playTime, playDuration, courtLocation, gameType, playersNeeded, courtBooked, skillMin, skillMax, isBroadcast, broadcastRadiusMi } = await request.json();
+
+  // Broadcast validation: only valid on find_players, requires author lat/lng,
+  // radius must be one of the allowed values. Rate-limited per user/day.
+  // NOTE: today we snapshot the author's home coords; a future iteration could
+  // geocode courtLocation and prefer those coords for "near this court" matching.
+  let broadcastLat: number | null = null;
+  let broadcastLng: number | null = null;
+  const wantsBroadcast = isBroadcast === true;
+  let normalizedRadius = 0;
+  if (wantsBroadcast) {
+    if (postType !== "find_players") {
+      return NextResponse.json({ error: "Broadcast is only available on Find Players posts" }, { status: 400 });
+    }
+    if ((Array.isArray(groupIds) && groupIds.length > 0) ||
+        (Array.isArray(friendGroupIds) && friendGroupIds.length > 0)) {
+      return NextResponse.json(
+        { error: "Broadcasts can't be limited to specific groups" },
+        { status: 400 }
+      );
+    }
+    const r = Number(broadcastRadiusMi);
+    if (!BROADCAST_RADII.includes(r as typeof BROADCAST_RADII[number])) {
+      return NextResponse.json({ error: "Invalid broadcast radius" }, { status: 400 });
+    }
+    normalizedRadius = r;
+
+    const author = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { latitude: true, longitude: true },
+    });
+    if (author?.latitude == null || author?.longitude == null) {
+      return NextResponse.json(
+        { error: "Set your location in your profile before broadcasting" },
+        { status: 400 }
+      );
+    }
+    broadcastLat = author.latitude;
+    broadcastLng = author.longitude;
+
+    const rl = rateLimit(`broadcast:${session.user.id}`, 5, DAY_MS);
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: "Daily broadcast limit reached. Try again tomorrow." },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } }
+      );
+    }
+  }
 
   // Normalize photoUrls (cap at 9). Falls back to legacy single-image
   // mediaUrl/mediaType pair when photoUrls isn't provided.
@@ -225,6 +368,10 @@ export async function POST(request: Request) {
       courtBooked: courtBooked || false,
       skillMin: typeof skillMin === "number" ? skillMin : null,
       skillMax: typeof skillMax === "number" ? skillMax : null,
+      isBroadcast: wantsBroadcast,
+      broadcastRadiusMi: normalizedRadius,
+      broadcastLat,
+      broadcastLng,
       authorId: session.user.id,
       // Multi-photo: persist the full array (including the first one duplicated
       // in mediaUrl) so the read path can return them in order.
@@ -290,6 +437,10 @@ export async function POST(request: Request) {
     playersConfirmed: 0,
     courtBooked: post.courtBooked,
     isComplete: false,
+    isBroadcast: post.isBroadcast,
+    broadcastRadiusMi: post.broadcastRadiusMi,
+    distanceMiles: null,
+    teamGroupId: null,
     createdAt: post.createdAt,
     author: post.author,
     likeCount: 0,

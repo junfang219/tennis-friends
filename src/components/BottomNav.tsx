@@ -17,24 +17,32 @@ export default function BottomNav() {
 
   const isActive = (path: string) => pathname === path || pathname.startsWith(path + "/");
 
+  const fetchUnread = () => {
+    fetch("/api/inbox")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { totalUnread?: number } | null) => {
+        setUnreadMessages(data?.totalUnread ?? 0);
+      })
+      .catch(() => {});
+  };
+
   // Fetch unread message count
   useEffect(() => {
     if (status !== "authenticated" || !isNative) return;
-    const fetchUnread = () => {
-      fetch("/api/inbox")
-        .then((r) => r.ok ? r.json() : [])
-        .then((data: { unreadCount?: number }[]) => {
-          const total = Array.isArray(data)
-            ? data.reduce((sum: number, c: { unreadCount?: number }) => sum + (c.unreadCount || 0), 0)
-            : 0;
-          setUnreadMessages(total);
-        })
-        .catch(() => {});
-    };
     fetchUnread();
     const interval = setInterval(fetchUnread, 30000);
     return () => clearInterval(interval);
   }, [status, isNative]);
+
+  // Re-fetch when entering a chat route. The chat page marks messages read on
+  // mount, so refetching shortly after lets the tab badge update without
+  // waiting for the 30s poll.
+  useEffect(() => {
+    if (status !== "authenticated" || !isNative) return;
+    if (!pathname.startsWith("/chat")) return;
+    const t = setTimeout(fetchUnread, 500);
+    return () => clearTimeout(t);
+  }, [pathname, status, isNative]);
 
   // Add bottom padding to body so content isn't hidden behind the nav
   useEffect(() => {

@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import ConversationRow, { type InboxItem, type InboxAction } from "./ConversationRow";
+import { onAppEvent } from "@/lib/eventStream";
 
 // Per-user localStorage key so dismissals are scoped to the signed-in user.
 const DISMISS_KEY = (userId: string) => `tf_msg_tray_dismissed_${userId}`;
@@ -56,8 +57,14 @@ export default function MessageBell() {
 
   useEffect(() => {
     loadInbox();
-    pollRef.current = setInterval(loadInbox, 15000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    const unsubscribe = onAppEvent((e) => {
+      if (e.kind === "inbox" || e.kind === "hello") loadInbox();
+    });
+    pollRef.current = setInterval(loadInbox, 60000);
+    return () => {
+      unsubscribe();
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, [loadInbox]);
 
   // Load persisted dismissals once we know the user
@@ -136,6 +143,16 @@ export default function MessageBell() {
 
   const handleSelect = (item: InboxItem) => {
     closeDropdown();
+    // Optimistically clear this conversation's unread count so the bell badge
+    // updates immediately. The chat page will mark messages read on the server;
+    // the next poll will reconcile.
+    if (item.unreadCount > 0) {
+      setItems((prev) =>
+        prev.map((it) =>
+          it.type === item.type && it.id === item.id ? { ...it, unreadCount: 0 } : it,
+        ),
+      );
+    }
     router.push(item.href);
   };
 

@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { emitToUser } from "@/lib/eventBus";
+import { pushToUser } from "@/lib/push";
+
+function previewForPush(content: string, mediaUrl: string | undefined, mediaType: string | undefined): string {
+  if (content && content.trim()) return content.trim().slice(0, 140);
+  if (mediaUrl) return mediaType === "video" ? "🎥 Video" : "📷 Photo";
+  return "Sent you a message";
+}
 
 export async function GET(request: Request) {
   const session = await auth();
@@ -52,6 +60,19 @@ export async function GET(request: Request) {
 
   const postMap = new Map(sharedPosts.map((p) => [p.id, p]));
 
+  const reactionRows = messages.length
+    ? await prisma.messageReaction.findMany({
+        where: { messageType: "DM", messageId: { in: messages.map((m) => m.id) } },
+        include: { user: { select: { id: true, name: true } } },
+      })
+    : [];
+  const reactionsByMessage = new Map<string, { emoji: string; userId: string; userName: string }[]>();
+  for (const r of reactionRows) {
+    const list = reactionsByMessage.get(r.messageId) || [];
+    list.push({ emoji: r.emoji, userId: r.userId, userName: r.user.name });
+    reactionsByMessage.set(r.messageId, list);
+  }
+
   const result = messages.map((m) => ({
     id: m.id,
     content: m.content,
@@ -62,6 +83,7 @@ export async function GET(request: Request) {
     sharedPost: m.sharedPostId ? (postMap.get(m.sharedPostId) || null) : null,
     createdAt: m.createdAt,
     sender: m.sender,
+    reactions: reactionsByMessage.get(m.id) || [],
   }));
 
   return NextResponse.json(result);
@@ -117,6 +139,20 @@ export async function POST(request: Request) {
     });
   }
 
+  // Wake the recipient's bells in real time. Sender's own UI updates via the
+  // local optimistic insert in the chat page; no need to emit to self.
+  emitToUser(receiverId, { kind: "inbox" });
+  emitToUser(receiverId, { kind: "messages", with: session.user.id });
+
+  // Background push for the recipient. SSE handles foreground; this fires the
+  // banner when the iOS app is backgrounded or killed.
+  void pushToUser(receiverId, {
+    title: message.sender.name || "New message",
+    body: previewForPush(message.content, mediaUrl, mediaType),
+    threadId: `dm:${session.user.id}`,
+    data: { kind: "dm", from: session.user.id },
+  });
+
   return NextResponse.json({
     id: message.id,
     content: message.content,
@@ -127,5 +163,6 @@ export async function POST(request: Request) {
     sharedPost,
     createdAt: message.createdAt,
     sender: message.sender,
+    reactions: [],
   });
 }

@@ -59,3 +59,11 @@ next-env.d.ts
 # uploaded files
 /public/uploads/*
 !/public/uploads/.gitkeep
+secrets/
+
+# local sqlite backups
+prisma/dev.db.*
+
+# macOS finder duplicates
+* 2.ts
+* 2.tsx

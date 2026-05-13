@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { ensureSessionChat } from "@/lib/sessionChat";
+import { ensureTeamGroup } from "@/lib/teamGroup";
+import { emitToUser } from "@/lib/eventBus";
 
 // POST: Approve or reject a play request
 export async function POST(request: Request) {
@@ -61,11 +63,13 @@ export async function POST(request: Request) {
         postId: playRequest.postId,
       },
     });
+    emitToUser(playRequest.userId, { kind: "notifications" });
 
     // When the session just filled up AND it's a find-players post, spin up a
     // group chat with the author + every approved player. Idempotent helper
     // also covers re-trigger paths (manual fill via PATCH).
     let sessionChatId: string | null = null;
+    let teamGroupId: string | null = null;
     if (isNowComplete && playRequest.post.postType === "find_players") {
       try {
         sessionChatId = await ensureSessionChat(playRequest.postId);
@@ -73,8 +77,18 @@ export async function POST(request: Request) {
         console.error("ensureSessionChat (respond) failed:", err);
       }
     }
+    // When a propose_team post just filled up, auto-create a Team (Group)
+    // owned by the post author with all approved players as members. The
+    // returned id powers the "View team" link on the collapsed post card.
+    if (isNowComplete && playRequest.post.postType === "propose_team") {
+      try {
+        teamGroupId = await ensureTeamGroup(playRequest.postId);
+      } catch (err) {
+        console.error("ensureTeamGroup (respond) failed:", err);
+      }
+    }
 
-    return NextResponse.json({ status: "APPROVED", isComplete: isNowComplete, sessionChatId });
+    return NextResponse.json({ status: "APPROVED", isComplete: isNowComplete, sessionChatId, teamGroupId });
   } else {
     await prisma.playRequest.update({
       where: { id: requestId },
@@ -90,6 +104,7 @@ export async function POST(request: Request) {
         postId: playRequest.postId,
       },
     });
+    emitToUser(playRequest.userId, { kind: "notifications" });
 
     return NextResponse.json({ status: "REJECTED" });
   }

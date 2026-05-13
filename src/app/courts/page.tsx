@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import {
+  CourtSummaryCard,
+  type CourtSummary,
+} from "@/components/courts/CourtSummaryCard";
 
 type CourtData = {
   id: string;
@@ -129,8 +133,16 @@ export default function CourtsPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const userMarkerRef = useRef<any>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const summaryDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchTokenRef = useRef(0);
   const courtsMapRef = useRef<Map<string, CourtData>>(new Map());
+
+  // Aggregate review summaries (avg / count / thumbs) keyed by court id.
+  // Populated by /api/courts/reviews/summary after each viewport fetch.
+  const [summaries, setSummaries] = useState<Record<string, CourtSummary>>({});
+
+  // Which court (if any) the user tapped — drives the slide-up card.
+  const [selectedCourtId, setSelectedCourtId] = useState<string | null>(null);
 
   const runFetch = useCallback(async () => {
     const map = mapInstanceRef.current;
@@ -358,30 +370,48 @@ export default function CourtsPage() {
 
     for (const c of courts) {
       const marker = L.marker([c.lat, c.lng], { icon: courtIcon }).addTo(map);
-      const safeName = escapeHtml(c.name);
-
-      const detailBits: string[] = [];
-      if (c.courts && c.courts > 0) detailBits.push(`${c.courts} court${c.courts === 1 ? "" : "s"}`);
-      if (c.surface) detailBits.push(escapeHtml(c.surface));
-      if (c.lit) detailBits.push("lit");
-      const detailLine = detailBits.length
-        ? `<div style="color:#6b7280;font-size:11px;margin-top:2px">${detailBits.join(" · ")}</div>`
-        : "";
-      const addressLine = c.address ? mapsLink(c) : "";
-      const accessLine = c.access && c.access !== "yes" && c.access !== "public"
-        ? `<div style="color:#b45309;font-size:11px;margin-top:2px">access: ${escapeHtml(c.access)}</div>`
-        : "";
-      const osmLine = c.source === "osm"
-        ? `<div style="margin-top:4px"><a href="https://www.openstreetmap.org/${c.type}/${c.osmId}" target="_blank" rel="noopener noreferrer" style="color:#9ca3af;font-size:10px">View on OSM ↗</a></div>`
-        : "";
-
-      marker.bindPopup(
-        `<div style="min-width:180px"><b style="font-size:13px">${safeName}</b>${detailLine}${addressLine}${accessLine}${osmLine}</div>`
-      );
-
+      // Tap → open the slide-up summary card. Replaces the old Leaflet popup
+      // so we can render React (photos, ratings, actions) inside it.
+      marker.on("click", () => setSelectedCourtId(c.id));
       markersRef.current.push(marker);
     }
   }, [courts, mapReady]);
+
+  // Whenever the visible court set changes, batch-fetch review summaries so
+  // the slide-up card has rating + thumbs ready when the user taps a pin.
+  useEffect(() => {
+    if (courts.length === 0) return;
+    if (summaryDebounceRef.current) clearTimeout(summaryDebounceRef.current);
+    summaryDebounceRef.current = setTimeout(async () => {
+      // Only fetch ids we don't already have a summary for
+      const ids = courts
+        .map((c) => c.id)
+        .filter((id) => summaries[id] === undefined)
+        .slice(0, 200);
+      if (ids.length === 0) return;
+      try {
+        const res = await fetch(
+          `/api/courts/reviews/summary?ids=${encodeURIComponent(ids.join(","))}`
+        );
+        if (!res.ok) return;
+        const data: Record<string, CourtSummary> = await res.json();
+        setSummaries((prev) => ({ ...prev, ...data }));
+      } catch {
+        // best-effort — pin still works without summary
+      }
+    }, 350);
+    return () => {
+      if (summaryDebounceRef.current) clearTimeout(summaryDebounceRef.current);
+    };
+    // We intentionally watch only `courts` length+identity, not `summaries`,
+    // to avoid an effect loop when summaries fill in.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courts]);
+
+  const selectedCourt =
+    selectedCourtId !== null
+      ? courtsMapRef.current.get(selectedCourtId) ?? null
+      : null;
 
   return (
     <div className="relative w-full" style={{ height: isNative ? "calc(100vh - 64px - 5rem)" : "calc(100vh - 64px)" }}>
@@ -582,22 +612,6 @@ export default function CourtsPage() {
             </div>
           )}
 
-          {/* Reopen side panel button (only when closed) */}
-          {!sidePanelOpen && (
-            <button
-              onClick={() => setSidePanelOpen(true)}
-              className="absolute top-[60px] left-4 z-[450] flex items-center gap-2 px-3 py-2 bg-court-green text-white text-xs font-semibold rounded-lg shadow-lg hover:bg-court-green-light transition-colors"
-              title="Open Seattle Parks booking"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <line x1="3" y1="12" x2="21" y2="12" />
-                <polyline points="3 6 21 6" />
-                <polyline points="3 18 21 18" />
-              </svg>
-              Book on Seattle Parks
-            </button>
-          )}
-
           {/* Zoom hint */}
           {mapReady && zoomTooLow && !fetching && (
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[400] bg-white rounded-xl shadow-lg border border-court-green-pale/30 px-4 py-2 text-xs text-gray-600">
@@ -623,10 +637,24 @@ export default function CourtsPage() {
           )}
 
           {/* Court count */}
-          {mapReady && courts.length > 0 && (
+          {mapReady && courts.length > 0 && !selectedCourt && (
             <div className="absolute bottom-4 right-4 z-[400] bg-white rounded-full shadow-md border border-court-green-pale/30 px-3 py-1 text-[11px] text-gray-500">
               {courts.length} court{courts.length === 1 ? "" : "s"}
             </div>
+          )}
+
+          {/* Google-Maps-style slide-up card for the tapped pin */}
+          {selectedCourt && (
+            <CourtSummaryCard
+              courtId={selectedCourt.id}
+              name={selectedCourt.name}
+              address={selectedCourt.address}
+              details={courtDetailLine(selectedCourt)}
+              lat={selectedCourt.lat}
+              lng={selectedCourt.lng}
+              summary={summaries[selectedCourt.id] ?? null}
+              onClose={() => setSelectedCourtId(null)}
+            />
           )}
         </div>
       </div>
@@ -634,32 +662,11 @@ export default function CourtsPage() {
   );
 }
 
-function escapeHtml(s: string) {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+function courtDetailLine(c: CourtData): string {
+  const bits: string[] = [];
+  if (c.courts && c.courts > 0) bits.push(`${c.courts} court${c.courts === 1 ? "" : "s"}`);
+  if (c.surface) bits.push(c.surface);
+  if (c.lit) bits.push("lit");
+  return bits.join(" · ");
 }
 
-function mapsLink(c: CourtData): string {
-  const isIOS =
-    typeof navigator !== "undefined" &&
-    /iPad|iPhone|iPod/.test(navigator.userAgent);
-  const dest = `${c.lat},${c.lng}`;
-  const style =
-    "display:block;margin-top:2px;color:#2D6A4F;font-size:11px;text-decoration:underline;text-underline-offset:2px";
-  const inner = `${escapeHtml(c.address ?? "")} <span style="white-space:nowrap">↗</span>`;
-  if (isIOS) {
-    // Open Apple Maps to the court's pin rather than requesting a route.
-    // `daddr=&dirflg=d` makes Apple Maps compute directions from "current
-    // location", which stalls forever if the Capacitor app hasn't been
-    // granted Location Services. Dropping a pin (q + ll) works with no
-    // permission; the user taps Directions inside Apple Maps and Apple
-    // handles the permission prompt natively.
-    const label = encodeURIComponent(c.address || c.name);
-    return `<a href="maps://?q=${label}&ll=${dest}" style="${style}">${inner}</a>`;
-  }
-  return `<a href="https://www.google.com/maps/dir/?api=1&destination=${dest}" target="_blank" rel="noopener noreferrer" style="${style}">${inner}</a>`;
-}

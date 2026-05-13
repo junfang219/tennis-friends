@@ -90,6 +90,8 @@ export default function FriendsPage() {
   const [showFriendGroupShortcut, setShowFriendGroupShortcut] = useState(false);
   const [creatingChat, setCreatingChat] = useState(false);
   const [swipedChatKey, setSwipedChatKey] = useState<string | null>(null);
+  const [openingChatId, setOpeningChatId] = useState<string | null>(null);
+  const [openChatError, setOpenChatError] = useState<{ id: string; message: string } | null>(null);
 
   // Friend search (Friends list tab)
   const [friendSearch, setFriendSearch] = useState("");
@@ -232,6 +234,29 @@ export default function FriendsPage() {
     const ids = g.members.map((m) => m.user.id);
     setNewChatMembers(Array.from(new Set([...newChatMembers, ...ids])));
     setShowFriendGroupShortcut(false);
+  };
+
+  const openFriendGroupChat = async (g: FriendGroup) => {
+    if (g._count.members < 1 || openingChatId) return;
+    setOpenChatError(null);
+    setOpeningChatId(g.id);
+    try {
+      const res = await fetch(`/api/friend-groups/${g.id}/chat`, { method: "POST" });
+      if (res.ok) {
+        const { id } = await res.json();
+        router.push(`/chat/group/${id}`);
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      const msg = data?.error || `Could not open chat (HTTP ${res.status}).`;
+      console.error("openFriendGroupChat failed:", res.status, data);
+      setOpenChatError({ id: g.id, message: msg });
+    } catch (err) {
+      console.error("openFriendGroupChat threw:", err);
+      setOpenChatError({ id: g.id, message: "Network error — could not open chat." });
+    } finally {
+      setOpeningChatId(null);
+    }
   };
 
   const createChat = async () => {
@@ -637,6 +662,25 @@ export default function FriendsPage() {
                         </p>
                       </div>
                       <div className="flex items-center gap-1.5">
+                        {g._count.members > 0 && (
+                          <button
+                            onClick={() => openFriendGroupChat(g)}
+                            disabled={openingChatId === g.id}
+                            className="p-2 rounded-lg hover:bg-court-green-pale/30 text-court-green disabled:opacity-60"
+                            title="Open group chat"
+                          >
+                            {openingChatId === g.id ? (
+                              <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none">
+                                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
+                                <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                              </svg>
+                            ) : (
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+                              </svg>
+                            )}
+                          </button>
+                        )}
                         <button
                           onClick={() => startEditGroup(g)}
                           className="p-2 rounded-lg hover:bg-gray-100 text-gray-500"
@@ -659,6 +703,9 @@ export default function FriendsPage() {
                         </button>
                       </div>
                     </div>
+                    {openChatError?.id === g.id && (
+                      <p className="text-xs text-red-600 mb-2">{openChatError.message}</p>
+                    )}
                     {g.members.length > 0 && (
                       <div className="flex flex-wrap gap-1.5">
                         {g.members.slice(0, 8).map((m) => (

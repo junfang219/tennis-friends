@@ -1,6 +1,7 @@
 "use client";
 
 import { useSession, signOut } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import Avatar from "@/components/Avatar";
@@ -62,6 +63,8 @@ type Profile = {
   coverOffsetY: number;
   coverScale: number;
   customTags: string[];
+  latitude: number | null;
+  longitude: number | null;
   createdAt: string;
   highlights: Highlight[];
   _count: { sentRequests: number; receivedRequests: number };
@@ -69,6 +72,7 @@ type Profile = {
 };
 
 export default function ProfilePage() {
+  const router = useRouter();
   const { update: updateSession } = useSession();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [editing, setEditing] = useState(false);
@@ -113,6 +117,60 @@ export default function ProfilePage() {
   const [isNative, setIsNative] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [locationSaving, setLocationSaving] = useState(false);
+  const [locationError, setLocationError] = useState("");
+  const [confirmingTurnOffLocation, setConfirmingTurnOffLocation] = useState(false);
+
+  const turnOnLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationError("Your browser doesn't support geolocation.");
+      return;
+    }
+    setLocationError("");
+    setLocationSaving(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const res = await fetch("/api/profile", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+          });
+          if (res.ok) {
+            setProfile((p) => p ? { ...p, latitude: pos.coords.latitude, longitude: pos.coords.longitude } : p);
+          } else {
+            setLocationError("Could not save location.");
+          }
+        } catch {
+          setLocationError("Could not save location.");
+        }
+        setLocationSaving(false);
+      },
+      (err) => {
+        setLocationSaving(false);
+        if (err.code === err.PERMISSION_DENIED) setLocationError("Location permission denied.");
+        else setLocationError("Could not get your location.");
+      },
+      { timeout: 10000, maximumAge: 60_000 }
+    );
+  };
+
+  const turnOffLocation = async () => {
+    setLocationError("");
+    setLocationSaving(true);
+    try {
+      const res = await fetch("/api/profile/location", { method: "DELETE" });
+      if (res.ok) {
+        setProfile((p) => p ? { ...p, latitude: null, longitude: null } : p);
+        setConfirmingTurnOffLocation(false);
+      } else {
+        setLocationError("Could not turn off location.");
+      }
+    } catch {
+      setLocationError("Could not turn off location.");
+    }
+    setLocationSaving(false);
+  };
 
   useEffect(() => {
     setIsNative(!!(window as unknown as { Capacitor?: unknown }).Capacitor);
@@ -139,8 +197,15 @@ export default function ProfilePage() {
 
   useEffect(() => {
     fetch("/api/profile")
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (r.status === 401) {
+          router.replace("/login");
+          return null;
+        }
+        return r.json();
+      })
       .then((data) => {
+        if (!data || data.error) return;
         setProfile(data);
         setForm({
           name: data.name,
@@ -677,6 +742,14 @@ export default function ProfilePage() {
                 onCancel={() => setEditing(false)}
                 saving={saving}
                 handleError={handleError}
+                latitude={profile.latitude}
+                longitude={profile.longitude}
+                locationSaving={locationSaving}
+                locationError={locationError}
+                confirmingTurnOffLocation={confirmingTurnOffLocation}
+                onTurnOnLocation={turnOnLocation}
+                onTurnOffLocation={turnOffLocation}
+                onSetConfirmingTurnOff={setConfirmingTurnOffLocation}
               />
             ) : (
               <>
@@ -1263,6 +1336,14 @@ function EditForm({
   onCancel,
   saving,
   handleError,
+  latitude,
+  longitude,
+  locationSaving,
+  locationError,
+  confirmingTurnOffLocation,
+  onTurnOnLocation,
+  onTurnOffLocation,
+  onSetConfirmingTurnOff,
 }: {
   form: {
     name: string;
@@ -1285,7 +1366,16 @@ function EditForm({
   onCancel: () => void;
   saving: boolean;
   handleError?: string;
+  latitude: number | null;
+  longitude: number | null;
+  locationSaving: boolean;
+  locationError: string;
+  confirmingTurnOffLocation: boolean;
+  onTurnOnLocation: () => void;
+  onTurnOffLocation: () => Promise<void>;
+  onSetConfirmingTurnOff: (v: boolean) => void;
 }) {
+  const locationOn = latitude != null && longitude != null;
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
 
@@ -1534,6 +1624,79 @@ function EditForm({
           />
         </div>
       </div>
+      <div>
+        <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+          Location <span className="font-normal text-gray-400">(used to match by distance for nearby broadcasts)</span>
+        </label>
+        <div className="rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-3">
+          <div className="flex items-center gap-3">
+            <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${locationOn ? "bg-court-green-pale/30 text-court-green" : "bg-gray-200 text-gray-500"}`}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
+                <circle cx="12" cy="10" r="3" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-800">
+                Location sharing {locationOn ? "is on" : "is off"}
+              </p>
+              <p className="text-xs text-gray-500">
+                {locationOn
+                  ? "Players nearby can match with your broadcasts."
+                  : "Turn on to see broadcasts and match by distance."}
+              </p>
+            </div>
+            {locationOn ? (
+              <button
+                type="button"
+                onClick={() => onSetConfirmingTurnOff(true)}
+                disabled={locationSaving}
+                className="btn-secondary btn-sm whitespace-nowrap disabled:opacity-60"
+              >
+                Turn off
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onTurnOnLocation}
+                disabled={locationSaving}
+                className="btn-primary btn-sm whitespace-nowrap disabled:opacity-60"
+              >
+                {locationSaving ? "..." : "Turn on"}
+              </button>
+            )}
+          </div>
+          {locationError && (
+            <p className="text-xs text-red-500 mt-2">{locationError}</p>
+          )}
+          {confirmingTurnOffLocation && (
+            <div className="mt-3 pt-3 border-t border-gray-200">
+              <p className="text-xs text-gray-600 mb-2">
+                This will also turn off any active broadcasts you have. You can re-share later.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={onTurnOffLocation}
+                  disabled={locationSaving}
+                  className="btn-danger btn-sm disabled:opacity-60"
+                >
+                  {locationSaving ? "Turning off..." : "Turn off location"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSetConfirmingTurnOff(false)}
+                  disabled={locationSaving}
+                  className="btn-secondary btn-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="flex items-center gap-3 pt-2">
         <button onClick={onSave} disabled={saving || uploading} className="btn-primary">
           {saving ? "Saving..." : "Save Changes"}

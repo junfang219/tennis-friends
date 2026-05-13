@@ -58,8 +58,16 @@ const SEATTLE_COURTS = [
   { id: "sea-53", name: "Meadowbrook Playfield",        lat: 47.7062, lng: -122.2955, courts: 6,  address: "10533 35th Ave NE",                 surface: "hard", lit: true  },
 ];
 
-// Map court names to ActiveNet resource IDs (populated lazily from ActiveNet API)
+// Map normalized venue names → ActiveNet resource ID. Indexed by `centerName`
+// (the venue, e.g. "Amy Yee Tennis Center") — not the per-resource `name`
+// (e.g. "Amy Yee Tennis Center - Court 1"), which never matches our venue
+// records exactly. fetchCourtDetail returns center-scoped info, so any
+// resource ID belonging to the center yields the right description/hours.
 let activeNetMapping: Map<string, number> | null = null;
+
+function normalizeName(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
 
 async function getActiveNetMapping(): Promise<Map<string, number>> {
   if (activeNetMapping) return activeNetMapping;
@@ -67,7 +75,16 @@ async function getActiveNetMapping(): Promise<Map<string, number>> {
     const courts = await fetchBookableCourts();
     activeNetMapping = new Map();
     for (const c of courts) {
-      activeNetMapping.set(c.name.toLowerCase(), c.id);
+      const center = normalizeName(c.centerName || "");
+      if (center && !activeNetMapping.has(center)) {
+        activeNetMapping.set(center, c.id);
+      }
+      // Also index the per-resource name as a fallback, in case a venue's
+      // own row happens to be named the same as our static record.
+      const resource = normalizeName(c.name || "");
+      if (resource && !activeNetMapping.has(resource)) {
+        activeNetMapping.set(resource, c.id);
+      }
     }
     return activeNetMapping;
   } catch {
@@ -86,24 +103,14 @@ export async function GET(
     return NextResponse.json({ error: "Court not found" }, { status: 404 });
   }
 
-  // Try to enrich with ActiveNet detail data
+  // Enrich with ActiveNet detail data only on an exact (normalized) match.
+  // The previous substring/keyword fallback caused wrong attribution — e.g.
+  // "Discovery Park" matched the first ActiveNet entry containing "park",
+  // which happened to be David Rodgers Park.
   let activeNetDetail = null;
   try {
     const mapping = await getActiveNetMapping();
-    // Try matching by name (lowercase partial match)
-    const courtNameLower = court.name.toLowerCase();
-    let resourceId: number | undefined;
-    for (const [name, rid] of mapping) {
-      if (
-        courtNameLower.includes(name) ||
-        name.includes(courtNameLower) ||
-        // Try matching key words
-        courtNameLower.split(/\s+/).some((w) => w.length > 3 && name.includes(w))
-      ) {
-        resourceId = rid;
-        break;
-      }
-    }
+    const resourceId = mapping.get(normalizeName(court.name));
     if (resourceId) {
       activeNetDetail = await fetchCourtDetail(resourceId);
     }

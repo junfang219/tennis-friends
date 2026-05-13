@@ -18,6 +18,7 @@ type GroupMember = {
 type Group = {
   id: string;
   name: string;
+  imageUrl?: string;
   ownerId: string;
   owner: { id: string; name: string; profileImageUrl: string };
   members: GroupMember[];
@@ -142,7 +143,7 @@ export default function GroupsPage() {
 
         {!showCreate && groups.length > 0 && (
           <p className="text-xs text-gray-400 px-1">
-            Tip: swipe left on a team to archive it.
+            Tip: swipe left on a team to archive it. Archived teams are hidden from your feed and calendar filters.
           </p>
         )}
 
@@ -240,9 +241,17 @@ function TeamCardBody({ group }: { group: Group }) {
     <div className="bg-white p-5 pb-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-court-green to-court-green-soft flex items-center justify-center text-white font-bold text-sm shadow-md">
-            {group.name.charAt(0).toUpperCase()}
-          </div>
+          {group.imageUrl ? (
+            <img
+              src={group.imageUrl}
+              alt={group.name}
+              className="w-11 h-11 rounded-xl object-cover shadow-md"
+            />
+          ) : (
+            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-court-green to-court-green-soft flex items-center justify-center text-white font-bold text-sm shadow-md">
+              {group.name.charAt(0).toUpperCase()}
+            </div>
+          )}
           <div className="min-w-0">
             <h3 className="font-semibold text-gray-900 text-sm truncate">{group.name}</h3>
             <p className="text-xs text-gray-400">

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { emitToUser } from "@/lib/eventBus";
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
       type: "friend_request",
     },
   });
+  emitToUser(addresseeId, { kind: "notifications" });
 
   return NextResponse.json(friendship);
 }

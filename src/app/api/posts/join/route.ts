@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { emitToUser } from "@/lib/eventBus";
 
 // POST: Send a join request for a find_players post
 export async function POST(request: Request) {
@@ -48,6 +49,7 @@ export async function POST(request: Request) {
       postId,
     },
   });
+  emitToUser(post.authorId, { kind: "notifications" });
 
   return NextResponse.json(playRequest);
 }

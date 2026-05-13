@@ -29,6 +29,10 @@ type Post = {
 type GroupData = {
   id: string;
   name: string;
+  imageUrl: string;
+  coverImageUrl: string;
+  coverOffsetY: number;
+  coverScale: number;
   ownerId: string;
   owner: { id: string; name: string; profileImageUrl: string };
   members: Member[];
@@ -104,14 +108,23 @@ export default function GroupPage() {
       <div className="animate-fade-in-up">
         <div className="bg-white rounded-3xl shadow-sm border border-court-green-pale/20 overflow-hidden">
           {/* Banner */}
-          <div className="h-28 bg-gradient-to-br from-court-green via-court-green-light to-court-green-soft court-pattern relative">
-            <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent" />
-          </div>
+          <TeamCoverEditor
+            groupId={group.id}
+            coverImageUrl={group.coverImageUrl}
+            coverOffsetY={group.coverOffsetY}
+            coverScale={group.coverScale}
+            canEdit={session?.user?.id === group.ownerId}
+            onUpdate={(patch) => setGroup({ ...group, ...patch })}
+          />
 
           <div className="px-6 -mt-8 relative">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-court-green to-court-green-soft flex items-center justify-center text-white font-bold text-2xl shadow-xl ring-4 ring-white">
-              {group.name.charAt(0).toUpperCase()}
-            </div>
+            <TeamAvatarEditor
+              groupId={group.id}
+              name={group.name}
+              imageUrl={group.imageUrl}
+              canEdit={session?.user?.id === group.ownerId}
+              onUpdate={(imageUrl) => setGroup({ ...group, imageUrl })}
+            />
           </div>
 
           <div className="px-6 pb-6 pt-3">
@@ -232,6 +245,410 @@ export default function GroupPage() {
           ))
         )}
       </div>
+    </div>
+  );
+}
+
+/* ────── Team cover editor ────── */
+
+function TeamCoverEditor({
+  groupId,
+  coverImageUrl,
+  coverOffsetY,
+  coverScale,
+  canEdit,
+  onUpdate,
+}: {
+  groupId: string;
+  coverImageUrl: string;
+  coverOffsetY: number;
+  coverScale: number;
+  canEdit: boolean;
+  onUpdate: (patch: { coverImageUrl?: string; coverOffsetY?: number; coverScale?: number }) => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+  const [repositioning, setRepositioning] = useState(false);
+  const [draftOffsetY, setDraftOffsetY] = useState(coverOffsetY);
+  const [draftScale, setDraftScale] = useState(coverScale);
+
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const dragStartRef = useRef<{ clientY: number; startOffsetY: number; bannerH: number } | null>(null);
+  const pinchStartRef = useRef<{ distance: number; startScale: number } | null>(null);
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError("");
+    if (!file.type.startsWith("image/")) {
+      setError("Cover must be an image.");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setError("Cover must be under 10 MB.");
+      e.target.value = "";
+      return;
+    }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const upRes = await fetch("/api/upload", { method: "POST", body: fd });
+      if (!upRes.ok) {
+        const d = await upRes.json().catch(() => ({}));
+        setError(d.error || "Upload failed.");
+        setUploading(false);
+        e.target.value = "";
+        return;
+      }
+      const { url } = await upRes.json();
+      const putRes = await fetch("/api/groups", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ groupId, coverImageUrl: url, coverOffsetY: 50, coverScale: 100 }),
+      });
+      if (!putRes.ok) {
+        const d = await putRes.json().catch(() => ({}));
+        setError(d.error || "Could not save cover.");
+      } else {
+        onUpdate({ coverImageUrl: url, coverOffsetY: 50, coverScale: 100 });
+        setDraftOffsetY(50);
+        setDraftScale(100);
+        setRepositioning(true);
+      }
+    } catch {
+      setError("Network error.");
+    }
+    setUploading(false);
+    e.target.value = "";
+  };
+
+  const startRepositioning = () => {
+    setDraftOffsetY(coverOffsetY);
+    setDraftScale(coverScale);
+    setRepositioning(true);
+  };
+
+  const distanceBetween = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+    Math.hypot(a.x - b.x, a.y - b.y);
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!repositioning) return;
+    const t = e.target as HTMLElement;
+    if (t.closest("button") || t.closest("input")) return;
+    e.preventDefault();
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    e.currentTarget.setPointerCapture(e.pointerId);
+
+    if (pointersRef.current.size === 2) {
+      const [a, b] = Array.from(pointersRef.current.values());
+      pinchStartRef.current = { distance: distanceBetween(a, b), startScale: draftScale };
+      dragStartRef.current = null;
+    } else if (pointersRef.current.size === 1) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      dragStartRef.current = { clientY: e.clientY, startOffsetY: draftOffsetY, bannerH: rect.height };
+      pinchStartRef.current = null;
+    }
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!repositioning) return;
+    if (!pointersRef.current.has(e.pointerId)) return;
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointersRef.current.size === 2 && pinchStartRef.current) {
+      const [a, b] = Array.from(pointersRef.current.values());
+      const ratio = distanceBetween(a, b) / pinchStartRef.current.distance;
+      const next = Math.max(100, Math.min(300, Math.round(pinchStartRef.current.startScale * ratio)));
+      setDraftScale(next);
+      return;
+    }
+    if (pointersRef.current.size === 1 && dragStartRef.current) {
+      const { clientY, startOffsetY, bannerH } = dragStartRef.current;
+      const delta = ((e.clientY - clientY) / bannerH) * 100 * 1.5;
+      const next = Math.max(0, Math.min(100, startOffsetY - delta));
+      setDraftOffsetY(next);
+    }
+  };
+
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!repositioning) return;
+    if (!pointersRef.current.has(e.pointerId)) return;
+    pointersRef.current.delete(e.pointerId);
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+
+    if (pointersRef.current.size < 2) pinchStartRef.current = null;
+    if (pointersRef.current.size === 1) {
+      const remaining = Array.from(pointersRef.current.values())[0];
+      const rect = e.currentTarget.getBoundingClientRect();
+      dragStartRef.current = { clientY: remaining.y, startOffsetY: draftOffsetY, bannerH: rect.height };
+    }
+    if (pointersRef.current.size === 0) dragStartRef.current = null;
+  };
+
+  const saveFraming = async () => {
+    const offsetY = Math.round(draftOffsetY);
+    const scale = Math.round(draftScale);
+    const res = await fetch("/api/groups", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupId, coverOffsetY: offsetY, coverScale: scale }),
+    });
+    if (res.ok) {
+      onUpdate({ coverOffsetY: offsetY, coverScale: scale });
+      setRepositioning(false);
+    } else {
+      setError("Could not save framing.");
+    }
+  };
+
+  const cancelRepositioning = () => {
+    setDraftOffsetY(coverOffsetY);
+    setDraftScale(coverScale);
+    setRepositioning(false);
+    pointersRef.current.clear();
+    dragStartRef.current = null;
+    pinchStartRef.current = null;
+  };
+
+  return (
+    <>
+      <div
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        className={`h-28 relative overflow-hidden select-none ${repositioning ? "cursor-grabbing" : ""} ${coverImageUrl ? "" : "bg-gradient-to-br from-court-green via-court-green-light to-court-green-soft court-pattern"}`}
+        style={{ touchAction: repositioning ? "none" : undefined }}
+      >
+        {coverImageUrl ? (
+          <img
+            src={coverImageUrl}
+            alt=""
+            draggable={false}
+            className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+            style={{
+              objectPosition: `center ${repositioning ? draftOffsetY : coverOffsetY}%`,
+              transform: `scale(${(repositioning ? draftScale : coverScale) / 100})`,
+              transformOrigin: "center",
+            }}
+          />
+        ) : (
+          <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent" />
+        )}
+        {coverImageUrl && !repositioning && (
+          <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent pointer-events-none" />
+        )}
+
+        {repositioning && (
+          <>
+            <div className="absolute inset-0 bg-black/20 pointer-events-none flex items-center justify-center">
+              <p className="text-white text-xs font-semibold bg-black/50 backdrop-blur px-3 py-1 rounded-full">
+                Drag · pinch · or use the slider
+              </p>
+            </div>
+            <div
+              className="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 bg-black/50 backdrop-blur px-3 py-1.5 rounded-full"
+              onPointerDown={(e) => e.stopPropagation()}
+              onPointerMove={(e) => e.stopPropagation()}
+              onPointerUp={(e) => e.stopPropagation()}
+            >
+              <span className="text-white text-[10px] font-bold">1×</span>
+              <input
+                type="range"
+                min={100}
+                max={300}
+                step={5}
+                value={draftScale}
+                onChange={(e) => setDraftScale(Number(e.target.value))}
+                className="w-32 accent-court-green"
+                aria-label="Zoom"
+              />
+              <span className="text-white text-[10px] font-bold">3×</span>
+            </div>
+          </>
+        )}
+
+        {canEdit && !repositioning && (
+          <>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="absolute bottom-3 right-3 z-10 w-9 h-9 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur text-white flex items-center justify-center transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              title="Change cover photo"
+              aria-label="Change cover photo"
+            >
+              {uploading ? (
+                <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
+                  <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
+                  <circle cx="12" cy="13" r="4" />
+                </svg>
+              )}
+            </button>
+            {coverImageUrl && (
+              <button
+                type="button"
+                onClick={startRepositioning}
+                className="absolute bottom-3 right-14 z-10 w-8 h-8 rounded-full bg-black/25 hover:bg-black/45 backdrop-blur text-white/80 hover:text-white flex items-center justify-center transition-colors"
+                title="Edit cover"
+                aria-label="Edit cover"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                </svg>
+              </button>
+            )}
+          </>
+        )}
+
+        {canEdit && repositioning && (
+          <div className="absolute bottom-3 right-3 z-10 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={cancelRepositioning}
+              className="px-3 h-9 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur text-white text-xs font-semibold transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={saveFraming}
+              className="px-3 h-9 rounded-full bg-court-green hover:bg-court-green-light text-white text-xs font-bold transition-colors"
+            >
+              Save
+            </button>
+          </div>
+        )}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/gif,image/webp"
+          onChange={handleFileSelect}
+          disabled={uploading}
+          className="hidden"
+        />
+      </div>
+      {error && <p className="text-xs text-red-600 px-6 pt-2">{error}</p>}
+    </>
+  );
+}
+
+/* ────── Team avatar editor ────── */
+
+function TeamAvatarEditor({
+  groupId,
+  name,
+  imageUrl,
+  canEdit,
+  onUpdate,
+}: {
+  groupId: string;
+  name: string;
+  imageUrl: string;
+  canEdit: boolean;
+  onUpdate: (imageUrl: string) => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError("");
+    setUploading(true);
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const upRes = await fetch("/api/upload", { method: "POST", body: fd });
+      if (!upRes.ok) {
+        const d = await upRes.json().catch(() => ({}));
+        setError(d.error || "Upload failed");
+        setUploading(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+      const { url } = await upRes.json();
+      const putRes = await fetch("/api/groups", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ groupId, imageUrl: url }),
+      });
+      if (!putRes.ok) {
+        const d = await putRes.json().catch(() => ({}));
+        setError(d.error || "Failed to update photo");
+      } else {
+        onUpdate(url);
+      }
+    } catch {
+      setError("Upload failed. Please try again.");
+    }
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const inner = imageUrl ? (
+    <img
+      src={imageUrl}
+      alt={name}
+      className="w-16 h-16 rounded-2xl object-cover shadow-xl ring-4 ring-white"
+    />
+  ) : (
+    <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-court-green to-court-green-soft flex items-center justify-center text-white font-bold text-2xl shadow-xl ring-4 ring-white">
+      {name.charAt(0).toUpperCase()}
+    </div>
+  );
+
+  if (!canEdit) {
+    return inner;
+  }
+
+  return (
+    <div className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => fileInputRef.current?.click()}
+        disabled={uploading}
+        className="block group rounded-2xl focus:outline-none focus:ring-2 focus:ring-court-green-soft"
+        aria-label="Change team photo"
+      >
+        {inner}
+        <span className="absolute inset-0 rounded-2xl bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
+            <circle cx="12" cy="13" r="4" />
+          </svg>
+        </span>
+        {uploading && (
+          <span className="absolute inset-0 rounded-2xl bg-black/50 flex items-center justify-center pointer-events-none">
+            <svg className="animate-spin w-5 h-5 text-white" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
+              <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+            </svg>
+          </span>
+        )}
+      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/gif,image/webp"
+        onChange={handleFileSelect}
+        disabled={uploading}
+        className="hidden"
+      />
+      {error && (
+        <p className="absolute top-full left-0 mt-1 text-xs text-red-500 whitespace-nowrap">{error}</p>
+      )}
     </div>
   );
 }

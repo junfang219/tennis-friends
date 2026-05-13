@@ -1,6 +1,7 @@
 "use client";
 
-import { signIn } from "next-auth/react";
+import { useEffect, useState } from "react";
+import { signIn, getProviders } from "next-auth/react";
 
 type Props = {
   callbackUrl?: string;
@@ -11,11 +12,34 @@ export default function OAuthButtons({
   callbackUrl = "/onboarding",
   providers = { google: true, apple: true },
 }: Props) {
+  // Hide buttons for OAuth providers that aren't configured server-side. Without
+  // matching .env credentials, NextAuth doesn't register the provider, so
+  // signIn() silently fails. Better to not render the button at all.
+  const [available, setAvailable] = useState<{ google: boolean; apple: boolean } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getProviders()
+      .then((p) => {
+        if (cancelled) return;
+        setAvailable({ google: Boolean(p?.google), apple: Boolean(p?.apple) });
+      })
+      .catch(() => {
+        if (!cancelled) setAvailable({ google: false, apple: false });
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const showGoogle = providers.google && available?.google === true;
+  const showApple = providers.apple && available?.apple === true;
+
   if (!providers.google && !providers.apple) return null;
+  if (available && !showGoogle && !showApple) return null;
+  if (!available) return null; // Don't flash the buttons before we know what's configured
 
   return (
     <div className="space-y-2.5">
-      {providers.google && (
+      {showGoogle && (
         <button
           type="button"
           onClick={() => signIn("google", { callbackUrl })}
@@ -30,7 +54,7 @@ export default function OAuthButtons({
           Continue with Google
         </button>
       )}
-      {providers.apple && (
+      {showApple && (
         <button
           type="button"
           onClick={() => signIn("apple", { callbackUrl })}
@@ -42,6 +66,14 @@ export default function OAuthButtons({
           Continue with Apple
         </button>
       )}
+      <div className="relative pt-2">
+        <div className="absolute inset-0 flex items-center pt-2">
+          <div className="w-full border-t border-gray-200" />
+        </div>
+        <div className="relative flex justify-center">
+          <span className="px-3 text-xs uppercase tracking-wider text-gray-400 bg-white font-semibold">or</span>
+        </div>
+      </div>
     </div>
   );
 }

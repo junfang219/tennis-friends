@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { ensureSessionChat } from "@/lib/sessionChat";
+import { ensureTeamGroup } from "@/lib/teamGroup";
 
 export async function GET(
   _request: Request,
@@ -59,6 +60,21 @@ export async function GET(
     }
   }
 
+  let teamGroupId: string | null = post.teamGroupId || null;
+  if (!teamGroupId && post.postType === "propose_team" && post.isComplete) {
+    // Lazy back-fill for posts that completed before this feature shipped.
+    const isParticipant =
+      post.authorId === userId ||
+      post.playRequests.some((r) => r.userId === userId && r.status === "APPROVED");
+    if (isParticipant) {
+      try {
+        teamGroupId = await ensureTeamGroup(post.id);
+      } catch (err) {
+        console.error("ensureTeamGroup (lazy) failed:", err);
+      }
+    }
+  }
+
   return NextResponse.json({
     id: post.id,
     content: post.content,
@@ -83,6 +99,7 @@ export async function GET(
     courtBooked: post.courtBooked,
     isComplete: post.isComplete,
     sessionChatId,
+    teamGroupId,
     commentsDisabled: post.commentsDisabled,
     createdAt: post.createdAt,
     author: post.author,
@@ -201,10 +218,19 @@ export async function PATCH(
       console.error("ensureSessionChat failed:", err);
     }
   }
+  let teamGroupId: string | null = updated.teamGroupId || null;
+  if (!teamGroupId && updated.postType === "propose_team" && updated.isComplete) {
+    try {
+      teamGroupId = await ensureTeamGroup(updated.id);
+    } catch (err) {
+      console.error("ensureTeamGroup failed:", err);
+    }
+  }
 
   return NextResponse.json({
     ...updated,
     sessionChatId,
+    teamGroupId,
     groups: updated.postGroups.map((pg) => ({ id: pg.group.id, name: pg.group.name })),
     friendGroups: updated.postFriendGroups.map((pfg) => ({ id: pfg.friendGroup.id, name: pfg.friendGroup.name })),
   });

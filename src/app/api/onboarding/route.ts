@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   if (!body) return NextResponse.json({ error: "Invalid body" }, { status: 400 });
 
-  const { gender, ageRange, ratingSystem, ntrpRating, utrRating, skillLevel, club, city } = body as {
+  const { gender, ageRange, ratingSystem, ntrpRating, utrRating, skillLevel, club, city, latitude, longitude } = body as {
     gender?: string;
     ageRange?: string;
     ratingSystem?: string;
@@ -25,6 +25,8 @@ export async function POST(request: Request) {
     skillLevel?: string;
     club?: string;
     city?: string;
+    latitude?: number;
+    longitude?: number;
   };
 
   if (!gender || !GENDERS.has(gender)) {
@@ -67,6 +69,12 @@ export async function POST(request: Request) {
   }
 
   updates.onboardingComplete = true;
+
+  if (typeof latitude === "number" && Number.isFinite(latitude) &&
+      typeof longitude === "number" && Number.isFinite(longitude)) {
+    updates.latitude = latitude;
+    updates.longitude = longitude;
+  }
 
   // Merge optional onboarding extras (home club + current city) into the
   // user's customTags so they show up as chips on the profile. Preserve any

@@ -1,30 +1,16 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { createPortal } from "react-dom";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
-import PostCard from "@/components/PostCard";
 import EmojiPicker from "@/components/EmojiPicker";
-
-type SharedPost = {
-  id: string;
-  content: string;
-  mediaUrl: string;
-  mediaType: string;
-  postType: string;
-  playDate: string;
-  playTime: string;
-  courtLocation: string;
-  gameType: string;
-  playersNeeded: number;
-  playersConfirmed: number;
-  courtBooked: boolean;
-  isComplete: boolean;
-  author: { id: string; name: string; profileImageUrl: string };
-};
+import SharedPostCard, { type SharedPost } from "@/components/SharedPostCard";
+import MessageReactionBar from "@/components/MessageReactionBar";
+import MessageReactions, { type MessageReaction as MsgReaction } from "@/components/MessageReactions";
+import { useLongPress } from "@/hooks/useLongPress";
+import type { ReactionKey } from "@/lib/reactions";
 
 type Message = {
   id: string;
@@ -36,6 +22,7 @@ type Message = {
   sharedPostId?: string | null;
   sharedPost?: SharedPost | null;
   sender: { id: string; name: string; profileImageUrl: string };
+  reactions?: MsgReaction[];
 };
 
 type ChatUser = {
@@ -74,6 +61,15 @@ export default function ChatPage() {
   const [pendingMedia, setPendingMedia] = useState<{ url: string; type: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [reactionPopover, setReactionPopover] = useState<{ msgId: string; rect: DOMRect } | null>(null);
+  const searchParams = useSearchParams();
+  // Read the deep-link target once on mount (e.g. /chat/<id>?msg=<msgId> from a
+  // tapped notification). useRef-with-initial-value snapshots the param so
+  // later renders don't keep re-triggering the focus effect.
+  const focusTargetRef = useRef<string | null>(searchParams.get("msg"));
+  // Track resolution as a ref (not state) so flipping it does NOT re-fire the
+  // bottom-scroll effect — that race was scrolling us past the centered bubble.
+  const focusHandledRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -159,10 +155,33 @@ export default function ChatPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
-  // Scroll to bottom on new messages
+  // Scroll to bottom on new messages — but skip the *initial* load when a
+  // deep-link target is set, so we land in the middle of the thread instead
+  // of bouncing past it. After the target is centered, future arrivals scroll
+  // to bottom as usual.
   useEffect(() => {
+    if (focusTargetRef.current && !focusHandledRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
+
+  // Deep-link: scroll to and briefly highlight the message referenced by ?msg=…
+  useEffect(() => {
+    const targetId = focusTargetRef.current;
+    if (!targetId || focusHandledRef.current) return;
+    if (!messages.some((m) => m.id === targetId)) return;
+    // requestAnimationFrame so the bubble is laid out before measuring/scrolling.
+    const raf = requestAnimationFrame(() => {
+      const el = document.getElementById(`msg-${targetId}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("ring-4", "ring-amber-300", "ring-offset-2", "ring-offset-transparent", "rounded-2xl");
+      setTimeout(() => {
+        el.classList.remove("ring-4", "ring-amber-300", "ring-offset-2", "ring-offset-transparent", "rounded-2xl");
+      }, 1800);
+      focusHandledRef.current = true;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [messages]);
 
   const handleSend = async () => {
     if ((!input.trim() && !pendingMedia) || sending || uploading) return;
@@ -208,6 +227,38 @@ export default function ChatPage() {
       loadMessages();
     }
   };
+
+  const myId = session?.user?.id || "";
+
+  const applyReaction = async (msgId: string, key: ReactionKey | null) => {
+    if (!myId) return;
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== msgId) return m;
+        const without = (m.reactions || []).filter((r) => r.userId !== myId);
+        const next = key === null ? without : [...without, { emoji: key, userId: myId, userName: "You" }];
+        return { ...m, reactions: next };
+      }),
+    );
+    try {
+      await fetch("/api/messages/reactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageType: "DM", messageId: msgId, emoji: key }),
+      });
+    } catch {
+      // Polling will reconcile.
+    }
+  };
+
+  const longPress = useLongPress((rect, target) => {
+    const id = target.dataset.msgId;
+    if (!id) return;
+    setReactionPopover({ msgId: id, rect });
+  });
+
+  const popoverMsg = reactionPopover ? messages.find((m) => m.id === reactionPopover.msgId) : null;
+  const popoverCurrent = (popoverMsg?.reactions || []).find((r) => r.userId === myId)?.emoji as ReactionKey | undefined;
 
   // Group messages by date
   const messagesByDate: { date: string; messages: Message[] }[] = [];
@@ -301,7 +352,14 @@ export default function ChatPage() {
                     </div>
                   )}
 
-                  <div className="max-w-[75%]">
+                  <div
+                    id={`msg-${msg.id}`}
+                    className="max-w-[75%] select-none transition-shadow"
+                    data-msg-id={msg.id}
+                    data-long-press-root
+                    style={{ touchAction: "pan-y" }}
+                    {...longPress}
+                  >
                     {/* Shared post card */}
                     {msg.sharedPost && (
                       <SharedPostCard post={msg.sharedPost} />
@@ -341,6 +399,17 @@ export default function ChatPage() {
                       <p className={`text-[10px] mt-1 ${isMe ? "text-right text-gray-400" : "text-gray-400"}`}>
                         {formatTime(msg.createdAt)}
                       </p>
+                    )}
+                    {msg.reactions && msg.reactions.length > 0 && (
+                      <MessageReactions
+                        reactions={msg.reactions}
+                        myUserId={myId}
+                        align={isMe ? "right" : "left"}
+                        onToggle={(emojiKey) => {
+                          const mine = (msg.reactions || []).find((r) => r.userId === myId)?.emoji;
+                          applyReaction(msg.id, mine === emojiKey ? null : (emojiKey as ReactionKey));
+                        }}
+                      />
                     )}
                   </div>
                 </div>
@@ -430,116 +499,17 @@ export default function ChatPage() {
           </button>
         </div>
       </div>
+
+      <MessageReactionBar
+        anchorRect={reactionPopover?.rect ?? null}
+        currentReaction={popoverCurrent ?? null}
+        onSelect={(key) => {
+          if (reactionPopover) applyReaction(reactionPopover.msgId, key);
+          setReactionPopover(null);
+        }}
+        onClose={() => setReactionPopover(null)}
+      />
     </div>
   );
 }
 
-function SharedPostCard({ post }: { post: SharedPost }) {
-  const [showFullPost, setShowFullPost] = useState(false);
-  const [fullPostData, setFullPostData] = useState<Record<string, unknown> | null>(null);
-  const [loadingPost, setLoadingPost] = useState(false);
-  const isFindPlayers = post.postType === "find_players";
-
-  const openFullPost = async () => {
-    setShowFullPost(true);
-    if (!fullPostData) {
-      setLoadingPost(true);
-      const res = await fetch(`/api/posts/${post.id}`);
-      if (res.ok) {
-        const data = await res.json();
-        setFullPostData(data);
-      }
-      setLoadingPost(false);
-    }
-  };
-
-  return (
-    <>
-      <button onClick={openFullPost} className="text-left bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden max-w-full hover:shadow-md transition-shadow w-full">
-        {/* Author */}
-        <div className="px-3 pt-3 pb-2 flex items-center gap-2">
-          <Avatar name={post.author.name} image={post.author.profileImageUrl} size="sm" />
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-gray-900 truncate">{post.author.name}</p>
-            {isFindPlayers && (
-              <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase ${post.isComplete ? "bg-green-100 text-green-700" : "bg-court-green text-ball-yellow"}`}>
-                {post.isComplete ? "Game Full" : "Looking for Players"}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Content */}
-        {post.content && (
-          <p className="px-3 pb-2 text-xs text-gray-700 line-clamp-3">{post.content}</p>
-        )}
-
-        {/* Media thumbnail */}
-        {post.mediaUrl && post.mediaType === "image" && (
-          <img src={post.mediaUrl} alt="Post" className="w-full max-h-40 object-cover" />
-        )}
-
-        {/* Find Players summary */}
-        {isFindPlayers && (
-          <div className="px-3 py-2 bg-court-green/5 border-t border-gray-100">
-            <div className="flex items-center gap-3 text-[11px] text-gray-600">
-              {post.playDate && <span>{post.playDate}</span>}
-              {post.playTime && <span>{post.playTime}</span>}
-              {post.courtLocation && <span className="truncate">{post.courtLocation}</span>}
-            </div>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-[11px] text-gray-500 capitalize">{post.gameType}</span>
-              <span className="text-[11px] text-gray-500">{post.playersConfirmed}/{post.playersNeeded} players</span>
-            </div>
-          </div>
-        )}
-
-        {/* Tap to open hint */}
-        <div className="px-3 py-1.5 border-t border-gray-100 text-center">
-          <span className="text-[10px] text-gray-400 font-medium">Tap to open post</span>
-        </div>
-      </button>
-
-      {/* Full post modal */}
-      {showFullPost && createPortal(
-        <div
-          className="fixed inset-0 z-[999] bg-black/50 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
-          onClick={() => setShowFullPost(false)}
-        >
-          <div
-            className="w-full sm:max-w-lg sm:my-8"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Close button */}
-            <div className="flex justify-end mb-2 px-2 sm:px-0">
-              <button
-                onClick={() => setShowFullPost(false)}
-                className="w-9 h-9 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center transition-colors"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-
-            {loadingPost ? (
-              <div className="bg-white rounded-2xl p-8 text-center">
-                <svg className="animate-spin w-6 h-6 text-court-green mx-auto" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
-                  <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                </svg>
-              </div>
-            ) : fullPostData ? (
-              <PostCard post={fullPostData as Parameters<typeof PostCard>[0]["post"]} />
-            ) : (
-              <div className="bg-white rounded-2xl p-8 text-center">
-                <p className="text-gray-500 text-sm">Post not found</p>
-              </div>
-            )}
-          </div>
-        </div>,
-        document.body
-      )}
-    </>
-  );
-}

@@ -12,9 +12,10 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const groupId = searchParams.get("groupId"); // optional filter
 
-  // Get groups user is in
+  // Get groups user is in (non-archived only — archived teams shouldn't appear
+  // in the filter dropdown or contribute team events to the calendar).
   const userGroups = await prisma.groupMember.findMany({
-    where: { userId },
+    where: { userId, archivedAt: null },
     include: { group: { select: { id: true, name: true } } },
   });
   const userGroupIds = userGroups.map((m) => m.groupId);
@@ -75,8 +76,87 @@ export async function GET(request: Request) {
     };
   });
 
+  // Team matches: include every match for the teams the user is in (filtered by groupId
+  // if the dropdown is active). Honor the dropdown only if the picked group is in the
+  // user's non-archived membership list — otherwise treat as no filter.
+  const teamGroupFilter =
+    groupId && userGroupIds.includes(groupId) ? [groupId] : userGroupIds;
+  const teamMatches = teamGroupFilter.length
+    ? await prisma.teamMatch.findMany({
+        where: { groupId: { in: teamGroupFilter } },
+        include: {
+          availabilities: {
+            where: { userId },
+            select: { lineupSlot: true },
+            take: 1,
+          },
+          group: { select: { id: true, name: true } },
+        },
+        orderBy: [{ matchDate: "asc" }, { matchTime: "asc" }],
+      })
+    : [];
+
+  const matches = teamMatches.map((m) => {
+    const slot = m.availabilities[0]?.lineupSlot || "";
+    return {
+      id: m.id,
+      teamId: m.groupId,
+      teamName: m.group.name,
+      matchDate: m.matchDate,
+      matchTime: m.matchTime,
+      location: m.location,
+      notes: m.notes,
+      inLineup: !!slot.trim(),
+      lineupSlot: slot,
+    };
+  });
+
+  // Practices: only ones the user marked "I'm in", scoped to teams (and active group filter).
+  const myPracticeAvails = teamGroupFilter.length
+    ? await prisma.practiceAvailability.findMany({
+        where: {
+          userId,
+          status: "im_in",
+          practice: {
+            series: { groupId: { in: teamGroupFilter } },
+          },
+        },
+        include: {
+          practice: {
+            include: {
+              series: {
+                include: { group: { select: { id: true, name: true } } },
+              },
+            },
+          },
+        },
+      })
+    : [];
+
+  const practices = myPracticeAvails
+    .map((a) => {
+      const p = a.practice;
+      const s = p.series;
+      return {
+        id: p.id,
+        teamId: s.groupId,
+        teamName: s.group.name,
+        seriesId: s.id,
+        seriesName: s.name,
+        practiceDate: p.practiceDate,
+        practiceTime: s.practiceTime,
+        location: s.location,
+        notes: s.notes,
+      };
+    })
+    .sort((a, b) =>
+      (a.practiceDate + a.practiceTime).localeCompare(b.practiceDate + b.practiceTime)
+    );
+
   return NextResponse.json({
     events,
+    matches,
+    practices,
     userGroups: userGroups.map((m) => m.group),
   });
 }

@@ -134,7 +134,16 @@ export async function PUT(request: Request) {
   }
 
   const userId = session.user.id;
-  const { groupId, name, addMemberIds, removeMemberIds } = await request.json();
+  const {
+    groupId,
+    name,
+    imageUrl,
+    coverImageUrl,
+    coverOffsetY,
+    coverScale,
+    addMemberIds,
+    removeMemberIds,
+  } = await request.json();
 
   const group = await prisma.group.findUnique({ where: { id: groupId } });
   if (!group) {
@@ -161,6 +170,36 @@ export async function PUT(request: Request) {
     await prisma.group.update({
       where: { id: groupId },
       data: { name: name.trim() },
+    });
+  }
+
+  // Only the owner can change the team picture (empty string clears it)
+  if (typeof imageUrl === "string") {
+    if (!isOwner) {
+      return NextResponse.json({ error: "Only the team creator can change the team picture" }, { status: 403 });
+    }
+    await prisma.group.update({
+      where: { id: groupId },
+      data: { imageUrl },
+    });
+  }
+
+  // Only the owner can change the team cover image / framing
+  const coverData: { coverImageUrl?: string; coverOffsetY?: number; coverScale?: number } = {};
+  if (typeof coverImageUrl === "string") coverData.coverImageUrl = coverImageUrl;
+  if (typeof coverOffsetY === "number" && Number.isFinite(coverOffsetY)) {
+    coverData.coverOffsetY = Math.max(0, Math.min(100, Math.round(coverOffsetY)));
+  }
+  if (typeof coverScale === "number" && Number.isFinite(coverScale)) {
+    coverData.coverScale = Math.max(100, Math.min(300, Math.round(coverScale)));
+  }
+  if (Object.keys(coverData).length > 0) {
+    if (!isOwner) {
+      return NextResponse.json({ error: "Only the team creator can change the team cover" }, { status: 403 });
+    }
+    await prisma.group.update({
+      where: { id: groupId },
+      data: coverData,
     });
   }
 

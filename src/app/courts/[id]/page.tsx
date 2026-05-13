@@ -3,8 +3,11 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import AvailabilityGrid from "@/components/courts/AvailabilityGrid";
 import PrivacyNotice from "@/components/courts/PrivacyNotice";
+import { StarRating } from "@/components/courts/StarRating";
+import { CourtPhotoGrid } from "@/components/courts/CourtPhotoGrid";
+import { ReviewList, type Review } from "@/components/courts/ReviewList";
+import { ReviewComposer } from "@/components/courts/ReviewComposer";
 
 interface CourtDetail {
   id: string;
@@ -31,33 +34,18 @@ interface CourtDetail {
   } | null;
 }
 
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function tomorrowStr(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0, 10);
-}
-
-// Quick date buttons (today, tomorrow, next 5 days)
-function getDateOptions(): Array<{ label: string; value: string }> {
-  const options: Array<{ label: string; value: string }> = [];
-  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date();
-    d.setDate(d.getDate() + i);
-    const value = d.toISOString().slice(0, 10);
-    const label =
-      i === 0 ? "Today" : i === 1 ? "Tomorrow" : days[d.getDay()];
-    options.push({ label, value });
-  }
-  return options;
-}
+type ReviewsPayload = {
+  avg: number;
+  count: number;
+  distribution: { 1: number; 2: number; 3: number; 4: number; 5: number };
+  mine: Review | null;
+  reviews: Review[];
+};
 
 const BOOKING_BASE =
   "https://anc.apm.activecommunities.com/seattle/reservation/search";
+
+type Tab = "overview" | "reviews";
 
 export default function CourtDetailPage() {
   const params = useParams<{ id: string }>();
@@ -65,7 +53,11 @@ export default function CourtDetailPage() {
   const [court, setCourt] = useState<CourtDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [selectedDate, setSelectedDate] = useState(todayStr());
+  const [tab, setTab] = useState<Tab>("overview");
+
+  const [reviews, setReviews] = useState<ReviewsPayload | null>(null);
+  const [reviewsLoading, setReviewsLoading] = useState(true);
+  const [composerOpen, setComposerOpen] = useState(false);
 
   const popupRef = useRef<Window | null>(null);
   const openSeattleParksPopup = useCallback((url: string) => {
@@ -86,8 +78,6 @@ export default function CourtDetailPage() {
     popupRef.current = window.open(url, "seattleParks", features);
   }, []);
 
-  const dateOptions = getDateOptions();
-
   const fetchCourt = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -106,9 +96,29 @@ export default function CourtDetailPage() {
     }
   }, [id]);
 
+  const fetchReviews = useCallback(async () => {
+    setReviewsLoading(true);
+    try {
+      const res = await fetch(`/api/courts/${encodeURIComponent(id)}/reviews`);
+      if (!res.ok) throw new Error();
+      const data: ReviewsPayload = await res.json();
+      setReviews(data);
+    } catch {
+      setReviews({ avg: 0, count: 0, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }, mine: null, reviews: [] });
+    } finally {
+      setReviewsLoading(false);
+    }
+  }, [id]);
+
   useEffect(() => {
     fetchCourt();
-  }, [fetchCourt]);
+    fetchReviews();
+  }, [fetchCourt, fetchReviews]);
+
+  const deleteReview = useCallback(async () => {
+    await fetch(`/api/courts/${encodeURIComponent(id)}/reviews`, { method: "DELETE" });
+    fetchReviews();
+  }, [id, fetchReviews]);
 
   if (loading) {
     return (
@@ -146,6 +156,7 @@ export default function CourtDetailPage() {
   }
 
   const bookingUrl = `${BOOKING_BASE}?keyword=${encodeURIComponent(court.name)}&resourceType=0&equipmentQty=0`;
+  const reviewPhotos = reviews?.reviews.flatMap((r) => r.photoUrls) ?? [];
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
@@ -168,12 +179,41 @@ export default function CourtDetailPage() {
         All Courts
       </Link>
 
+      {/* Hero photos */}
+      {reviewPhotos.length > 0 && (
+        <div className="mt-3">
+          <CourtPhotoGrid photos={reviewPhotos.slice(0, 7)} />
+        </div>
+      )}
+
       {/* Header */}
-      <div className="mt-3 mb-6">
+      <div className="mt-4 mb-5">
         <h1 className="font-display text-2xl font-bold text-court-green">
           {court.name}
         </h1>
         <p className="text-gray-500 text-sm mt-1">{court.address}</p>
+
+        {/* Rating row */}
+        {reviews && (
+          <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+            {reviews.count > 0 ? (
+              <>
+                <span className="text-base font-semibold text-gray-800">
+                  {reviews.avg.toFixed(1)}
+                </span>
+                <StarRating value={reviews.avg} size={16} />
+                <button
+                  onClick={() => setTab("reviews")}
+                  className="text-sm text-gray-500 hover:underline"
+                >
+                  ({reviews.count} review{reviews.count === 1 ? "" : "s"})
+                </button>
+              </>
+            ) : (
+              <span className="text-sm text-gray-400">No reviews yet</span>
+            )}
+          </div>
+        )}
 
         {/* Quick stats */}
         <div className="flex flex-wrap items-center gap-2 mt-3">
@@ -209,146 +249,185 @@ export default function CourtDetailPage() {
             </span>
           )}
         </div>
+
+        {/* Quick action: write/edit review */}
+        <div className="mt-4">
+          <button
+            onClick={() => setComposerOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-court-green text-white text-sm font-semibold hover:bg-court-green-light transition-colors shadow-sm"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <polygon points="12 2 15.1 8.6 22 9.6 17 14.5 18.2 21.5 12 18.2 5.8 21.5 7 14.5 2 9.6 8.9 8.6" />
+            </svg>
+            {reviews?.mine ? "Edit your review" : "Write a review"}
+          </button>
+        </div>
       </div>
 
-      {/* ActiveNet details */}
-      {court.activeNet && (
-        <div className="mb-6 bg-white rounded-xl border border-gray-100 overflow-hidden">
-          {court.activeNet.description && (
-            <div className="px-4 py-3 border-b border-gray-50">
-              <p className="text-sm text-gray-600">
-                {court.activeNet.description}
-              </p>
-            </div>
-          )}
+      {/* Tabs */}
+      <div className="border-b border-gray-200 mb-5 flex gap-6">
+        <TabButton active={tab === "overview"} onClick={() => setTab("overview")}>
+          Overview
+        </TabButton>
+        <TabButton active={tab === "reviews"} onClick={() => setTab("reviews")}>
+          Reviews{reviews?.count ? ` (${reviews.count})` : ""}
+        </TabButton>
+      </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-px bg-gray-100">
-            {court.activeNet.phone && (
-              <div className="bg-white px-4 py-3">
-                <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">
-                  Phone
-                </p>
-                <p className="text-sm text-gray-800 mt-0.5">
-                  {court.activeNet.phone}
-                </p>
-              </div>
-            )}
-            <div className="bg-white px-4 py-3">
-              <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">
-                Min Booking
-              </p>
-              <p className="text-sm text-gray-800 mt-0.5">
-                {court.activeNet.minTime} min
-              </p>
-            </div>
-            <div className="bg-white px-4 py-3">
-              <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">
-                Max Booking
-              </p>
-              <p className="text-sm text-gray-800 mt-0.5">
-                {court.activeNet.maxTime} min
-              </p>
-            </div>
-          </div>
+      {tab === "overview" && (
+        <>
+          {/* ActiveNet details */}
+          {court.activeNet && (
+            <div className="mb-6 bg-white rounded-xl border border-gray-100 overflow-hidden">
+              {court.activeNet.description && (
+                <div className="px-4 py-3 border-b border-gray-50">
+                  <p className="text-sm text-gray-600">
+                    {court.activeNet.description}
+                  </p>
+                </div>
+              )}
 
-          {court.activeNet.openingHours.length > 0 && (
-            <div className="px-4 py-3 border-t border-gray-100">
-              <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-2">
-                Hours
-              </p>
-              <div className="space-y-1">
-                {court.activeNet.openingHours.map((h, i) => (
-                  <div key={i} className="text-sm text-gray-700 flex gap-2">
-                    <span className="text-gray-500 min-w-[100px]">
-                      {h.daysOfWeek}
-                    </span>
-                    <span>{h.openingTimes}</span>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-px bg-gray-100">
+                {court.activeNet.phone && (
+                  <div className="bg-white px-4 py-3">
+                    <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">
+                      Phone
+                    </p>
+                    <p className="text-sm text-gray-800 mt-0.5">
+                      {court.activeNet.phone}
+                    </p>
                   </div>
-                ))}
+                )}
+                <div className="bg-white px-4 py-3">
+                  <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">
+                    Min Booking
+                  </p>
+                  <p className="text-sm text-gray-800 mt-0.5">
+                    {court.activeNet.minTime} min
+                  </p>
+                </div>
+                <div className="bg-white px-4 py-3">
+                  <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">
+                    Max Booking
+                  </p>
+                  <p className="text-sm text-gray-800 mt-0.5">
+                    {court.activeNet.maxTime} min
+                  </p>
+                </div>
               </div>
+
+              {court.activeNet.openingHours.length > 0 && (
+                <div className="px-4 py-3 border-t border-gray-100">
+                  <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-2">
+                    Hours
+                  </p>
+                  <div className="space-y-1">
+                    {court.activeNet.openingHours.map((h, i) => (
+                      <div key={i} className="text-sm text-gray-700 flex gap-2">
+                        <span className="text-gray-500 min-w-[100px]">
+                          {h.daysOfWeek}
+                        </span>
+                        <span>{h.openingTimes}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {court.activeNet.amenities.length > 0 && (
+                <div className="px-4 py-3 border-t border-gray-100">
+                  <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-2">
+                    Amenities
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {court.activeNet.amenities.map((a) => (
+                      <span
+                        key={a}
+                        className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-[11px] font-medium"
+                      >
+                        {a}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {court.activeNet.amenities.length > 0 && (
-            <div className="px-4 py-3 border-t border-gray-100">
-              <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-2">
-                Amenities
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {court.activeNet.amenities.map((a) => (
-                  <span
-                    key={a}
-                    className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-[11px] font-medium"
-                  >
-                    {a}
-                  </span>
-                ))}
-              </div>
-            </div>
+          {/* Book button — opens Seattle Parks in a side popup */}
+          <div className="mb-6">
+            <button
+              onClick={() => openSeattleParksPopup(bookingUrl)}
+              className="btn-primary w-full flex items-center justify-center gap-2 py-3"
+            >
+              Book on Seattle Parks
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              >
+                <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                <polyline points="15 3 21 3 21 9" />
+                <line x1="10" y1="14" x2="21" y2="3" />
+              </svg>
+            </button>
+          </div>
+        </>
+      )}
+
+      {tab === "reviews" && (
+        <div className="mb-6">
+          {reviewsLoading || !reviews ? (
+            <div className="py-8 text-center text-gray-400 text-sm">Loading reviews…</div>
+          ) : (
+            <>
+              {reviews.count > 0 && (
+                <div className="mb-5 bg-white rounded-xl border border-gray-100 p-4">
+                  <div className="flex items-baseline gap-3">
+                    <span className="text-3xl font-bold text-gray-900">
+                      {reviews.avg.toFixed(1)}
+                    </span>
+                    <div>
+                      <StarRating value={reviews.avg} size={16} />
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {reviews.count} review{reviews.count === 1 ? "" : "s"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-1">
+                    {[5, 4, 3, 2, 1].map((s) => {
+                      const c = reviews.distribution[s as 1 | 2 | 3 | 4 | 5];
+                      const pct = reviews.count === 0 ? 0 : (c / reviews.count) * 100;
+                      return (
+                        <div key={s} className="flex items-center gap-2 text-xs">
+                          <span className="w-3 text-right text-gray-500">{s}</span>
+                          <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-amber-400"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <span className="w-6 text-right text-gray-400">{c}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <ReviewList
+                reviews={reviews.reviews}
+                onEdit={() => setComposerOpen(true)}
+                onDelete={deleteReview}
+              />
+            </>
           )}
         </div>
       )}
-
-      {/* Date picker */}
-      <div className="mb-4">
-        <h2 className="font-semibold text-sm text-gray-800 mb-2">
-          Check Availability
-        </h2>
-        <div className="flex flex-wrap gap-1.5">
-          {dateOptions.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setSelectedDate(opt.value)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                selectedDate === opt.value
-                  ? "bg-court-green text-white shadow-sm"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-          <input
-            type="date"
-            value={selectedDate}
-            min={todayStr()}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            className="px-3 py-1.5 rounded-lg text-xs border border-gray-200 focus:outline-none focus:border-court-green"
-          />
-        </div>
-      </div>
-
-      {/* Availability grid */}
-      <div className="mb-6">
-        <AvailabilityGrid
-          venueId={court.id}
-          venueName={court.name}
-          date={selectedDate}
-        />
-      </div>
-
-      {/* Book button — opens Seattle Parks in a side popup */}
-      <div className="mb-6">
-        <button
-          onClick={() => openSeattleParksPopup(bookingUrl)}
-          className="btn-primary w-full flex items-center justify-center gap-2 py-3"
-        >
-          Book on Seattle Parks
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-          >
-            <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-            <polyline points="15 3 21 3 21 9" />
-            <line x1="10" y1="14" x2="21" y2="3" />
-          </svg>
-        </button>
-      </div>
 
       {/* Directions */}
       <div className="mb-6">
@@ -376,6 +455,51 @@ export default function CourtDetailPage() {
 
       {/* Privacy */}
       <PrivacyNotice />
+
+      {composerOpen && (
+        <ReviewComposer
+          courtId={court.id}
+          courtName={court.name}
+          initial={
+            reviews?.mine
+              ? {
+                  stars: reviews.mine.stars,
+                  content: reviews.mine.content,
+                  photoUrls: reviews.mine.photoUrls,
+                }
+              : null
+          }
+          onClose={() => setComposerOpen(false)}
+          onSaved={() => {
+            setComposerOpen(false);
+            fetchReviews();
+            setTab("reviews");
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`pb-3 -mb-px text-sm font-semibold border-b-2 transition-colors ${
+        active
+          ? "border-court-green text-court-green"
+          : "border-transparent text-gray-500 hover:text-gray-700"
+      }`}
+    >
+      {children}
+    </button>
   );
 }

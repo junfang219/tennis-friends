@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { emitToUser } from "@/lib/eventBus";
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -29,6 +30,7 @@ export async function POST(request: Request) {
       type: "friend_accepted",
     },
   });
+  emitToUser(friendship.requesterId, { kind: "notifications" });
 
   // Clean up the original friend_request notification on the accepter's side
   await prisma.notification.deleteMany({
@@ -38,6 +40,7 @@ export async function POST(request: Request) {
       type: "friend_request",
     },
   });
+  emitToUser(session.user.id, { kind: "notifications" });
 
   return NextResponse.json(updated);
 }

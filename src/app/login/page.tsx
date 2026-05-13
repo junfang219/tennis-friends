@@ -61,16 +61,7 @@ export default function LoginPage() {
         <div className="bg-white rounded-3xl shadow-xl shadow-court-green/5 border border-court-green-pale/20 p-8">
           <OAuthButtons callbackUrl="/" />
 
-          <div className="relative my-6">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-200" />
-            </div>
-            <div className="relative flex justify-center">
-              <span className="px-3 text-xs uppercase tracking-wider text-gray-400 bg-white font-semibold">or</span>
-            </div>
-          </div>
-
-          <div className="flex bg-surface/70 rounded-xl p-1 mb-5">
+          <div className="flex bg-surface/70 rounded-xl p-1 mb-5 mt-6">
             <button
               type="button"
               onClick={() => setTab("email")}

@@ -110,8 +110,12 @@ export default function AvailabilityPage() {
   const [notes, setNotes] = useState("");
   const [adding, setAdding] = useState(false);
 
-  // Inline editor for self-availability
-  const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
+  // Inline editor for self-availability — portal-anchored to avoid clipping by overflow-x table
+  const [statusPopover, setStatusPopover] = useState<{
+    matchId: string;
+    top: number;
+    left: number;
+  } | null>(null);
 
   // Lineup popover (captain only) — opens via portal anchored to clicked cell
   const [lineupPopover, setLineupPopover] = useState<{
@@ -265,12 +269,11 @@ export default function AvailabilityPage() {
       body: JSON.stringify({ content }),
     });
     if (res.ok) {
-      setLineupSentId(match.id);
-      setTimeout(() => setLineupSentId(null), 2500);
-    } else {
-      const data = await res.json().catch(() => ({}));
-      alert(data.error || "Failed to send to team chat");
+      router.push(`/groups/${groupId}/chat`);
+      return;
     }
+    const data = await res.json().catch(() => ({}));
+    alert(data.error || "Failed to send to team chat");
     setSendingLineupId(null);
   };
 
@@ -540,82 +543,32 @@ export default function AvailabilityPage() {
                         const a = getAvail(match, m.user.id);
                         const meta = a && a.status ? statusMeta(a.status) : null;
                         const cellKey = `${match.id}-${m.user.id}`;
-                        const editing = editingMatchId === match.id && isMe;
                         return (
                           <Fragment key={cellKey}>
                           <td className="p-3 border-r border-gray-100 align-top min-w-[130px]">
                             {isMe ? (
-                              <div className="relative">
-                                <button
-                                  onClick={() => setEditingMatchId(editing ? null : match.id)}
-                                  className={`w-full text-left px-2 py-1.5 rounded-lg border ${
-                                    meta
-                                      ? `${meta.bg} ${meta.text} border-transparent`
-                                      : "border-dashed border-gray-300 text-gray-400 hover:border-court-green hover:text-court-green"
-                                  } text-xs font-semibold flex items-center justify-between gap-1`}
-                                >
-                                  <span className="truncate">{meta?.label || "Set status"}</span>
-                                  {a?.matchTypes && (
-                                    <span className="text-[9px] font-bold bg-white/30 px-1 rounded">
-                                      {typeChip(a.matchTypes)}
-                                    </span>
-                                  )}
-                                </button>
-                                {editing && (
-                                  <>
-                                    <div
-                                      className="fixed inset-0 z-40"
-                                      onClick={() => setEditingMatchId(null)}
-                                    />
-                                    <div className="absolute left-0 top-full mt-1 z-50 w-44 bg-white rounded-xl shadow-2xl border border-gray-200 p-2">
-                                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-1">
-                                        Status
-                                      </p>
-                                      <div className="grid grid-cols-2 gap-1 mb-2">
-                                        {STATUS_OPTIONS.map((opt) => (
-                                          <button
-                                            key={opt.value}
-                                            onClick={() => {
-                                              setMyAvailability(match.id, opt.value, a?.matchTypes || "");
-                                            }}
-                                            className={`text-[10px] font-semibold px-2 py-1.5 rounded ${
-                                              a?.status === opt.value
-                                                ? `${opt.bg} ${opt.text} ring-2 ring-court-green/40`
-                                                : `${opt.bg} ${opt.text} opacity-70 hover:opacity-100`
-                                            }`}
-                                          >
-                                            {opt.label}
-                                          </button>
-                                        ))}
-                                      </div>
-                                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-1">
-                                        Match type
-                                      </p>
-                                      <div className="grid grid-cols-3 gap-1">
-                                        {TYPE_OPTIONS.map((opt) => (
-                                          <button
-                                            key={opt.value}
-                                            onClick={() => {
-                                              if (!a?.status) {
-                                                setMyAvailability(match.id, "available", opt.value);
-                                              } else {
-                                                setMyAvailability(match.id, a.status, opt.value);
-                                              }
-                                            }}
-                                            className={`text-[10px] font-semibold px-2 py-1.5 rounded border ${
-                                              a?.matchTypes === opt.value
-                                                ? "border-court-green bg-court-green text-white"
-                                                : "border-gray-200 text-gray-600 hover:border-court-green-pale"
-                                            }`}
-                                          >
-                                            {opt.label}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  </>
+                              <button
+                                onClick={(e) => {
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  setStatusPopover({
+                                    matchId: match.id,
+                                    top: rect.bottom + 4,
+                                    left: rect.left,
+                                  });
+                                }}
+                                className={`w-full text-left px-2 py-1.5 rounded-lg border ${
+                                  meta
+                                    ? `${meta.bg} ${meta.text} border-transparent`
+                                    : "border-dashed border-gray-300 text-gray-400 hover:border-court-green hover:text-court-green"
+                                } text-xs font-semibold flex items-center justify-between gap-1`}
+                              >
+                                <span className="truncate">{meta?.label || "Set status"}</span>
+                                {a?.matchTypes && (
+                                  <span className="text-[9px] font-bold bg-white/30 px-1 rounded">
+                                    {typeChip(a.matchTypes)}
+                                  </span>
                                 )}
-                              </div>
+                              </button>
                             ) : (
                               <div
                                 className={`px-2 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-between gap-1 ${
@@ -697,6 +650,70 @@ export default function AvailabilityPage() {
         </div>
       )}
 
+      {/* Status popover (self, portal) — escapes the table's overflow clipping */}
+      {statusPopover && typeof document !== "undefined" && (() => {
+        const m = matches.find((mm) => mm.id === statusPopover.matchId);
+        const a = m?.availabilities.find((aa) => aa.userId === myId);
+        return createPortal(
+          <>
+            <div className="fixed inset-0 z-[998]" onClick={() => setStatusPopover(null)} />
+            <div
+              className="fixed z-[999] w-44 bg-white rounded-xl shadow-2xl border border-gray-200 p-2"
+              style={{ top: statusPopover.top, left: statusPopover.left }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-1">
+                Status
+              </p>
+              <div className="grid grid-cols-2 gap-1 mb-2">
+                {STATUS_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => {
+                      setMyAvailability(statusPopover.matchId, opt.value, a?.matchTypes || "");
+                      setStatusPopover(null);
+                    }}
+                    className={`text-[10px] font-semibold px-2 py-1.5 rounded ${
+                      a?.status === opt.value
+                        ? `${opt.bg} ${opt.text} ring-2 ring-court-green/40`
+                        : `${opt.bg} ${opt.text} opacity-70 hover:opacity-100`
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-1">
+                Match type
+              </p>
+              <div className="grid grid-cols-3 gap-1">
+                {TYPE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => {
+                      if (!a?.status) {
+                        setMyAvailability(statusPopover.matchId, "available", opt.value);
+                      } else {
+                        setMyAvailability(statusPopover.matchId, a.status, opt.value);
+                      }
+                      setStatusPopover(null);
+                    }}
+                    className={`text-[10px] font-semibold px-2 py-1.5 rounded border ${
+                      a?.matchTypes === opt.value
+                        ? "border-court-green bg-court-green text-white"
+                        : "border-gray-200 text-gray-600 hover:border-court-green-pale"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>,
+          document.body
+        );
+      })()}
+
       {/* Lineup popover (captain only, portal) */}
       {lineupPopover && typeof document !== "undefined" && createPortal(
         <>
@@ -719,7 +736,10 @@ export default function AvailabilityPage() {
                 return (
                   <button
                     key={opt}
-                    onClick={() => setLineupSlot(lineupPopover.matchId, lineupPopover.userId, opt)}
+                    onClick={() => {
+                      setLineupSlot(lineupPopover.matchId, lineupPopover.userId, opt);
+                      setLineupPopover(null);
+                    }}
                     className={`text-[11px] font-semibold px-2 py-1.5 rounded ${
                       active
                         ? "bg-court-green text-white ring-2 ring-court-green/40"
@@ -744,6 +764,7 @@ export default function AvailabilityPage() {
                 onClick={() => {
                   if (customSlotInput.trim()) {
                     setLineupSlot(lineupPopover.matchId, lineupPopover.userId, customSlotInput.trim());
+                    setLineupPopover(null);
                   }
                 }}
                 disabled={!customSlotInput.trim()}
@@ -756,6 +777,7 @@ export default function AvailabilityPage() {
               onClick={() => {
                 setLineupSlot(lineupPopover.matchId, lineupPopover.userId, "");
                 setCustomSlotInput("");
+                setLineupPopover(null);
               }}
               className="w-full text-[11px] font-semibold px-2 py-1.5 text-red-500 hover:bg-red-50 rounded border border-red-100"
             >
