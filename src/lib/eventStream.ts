@@ -12,7 +12,7 @@ const handlers = new Set<Handler>();
 function ensureSource(): EventSource | null {
   if (typeof window === "undefined") return null;
   if (source) return source;
-  source = new EventSource("/api/events");
+  source = new EventSource("/api/notifications/stream");
   source.onmessage = (msg) => {
     try {
       const data = JSON.parse(msg.data) as AppEvent;

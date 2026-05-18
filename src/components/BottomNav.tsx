@@ -86,8 +86,8 @@ export default function BottomNav() {
     },
     {
       href: "/groups",
-      label: "Teams",
-      active: isActive("/groups"),
+      label: "Communities",
+      active: isActive("/groups") || isActive("/events"),
       icon: (active: boolean) => (
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
           <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />

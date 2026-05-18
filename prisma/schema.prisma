@@ -76,6 +76,8 @@ model User {
   deviceTokens        DeviceToken[]
   courtReviews        CourtReview[]          @relation("CourtReviewAuthor")
   courtAvailabilityReports CourtAvailabilityReport[] @relation("CourtAvailabilityReporter")
+  eventsOwned         Event[]                @relation("EventOwner")
+  eventParticipations EventParticipant[]     @relation("EventParticipantUser")
 }
 
 model Highlight {
@@ -184,6 +186,7 @@ model Group {
   groupMessages GroupMessage[]
   matches         TeamMatch[]
   practiceSeries  PracticeSeries[]
+  event           Event?         @relation("GroupEvent")
 }
 
 model GroupMember {
@@ -701,4 +704,96 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+model Event {
+  id              String    @id @default(cuid())
+  ownerId         String
+  owner           User      @relation("EventOwner", fields: [ownerId], references: [id])
+
+  // Backing chat/feed group, auto-created via ensureEventGroup()
+  groupId         String?   @unique
+  group           Group?    @relation("GroupEvent", fields: [groupId], references: [id])
+
+  title           String
+  description     String    @default("")
+  eventType       String    // "tournament" | "round_robin" | "mixer" | "clinic"
+
+  startDate       DateTime
+  endDate         DateTime
+  signupDeadline  DateTime?
+
+  isPublicSignup  Boolean   @default(true)
+  maxParticipants Int?
+  ntrpMin         Float?
+  ntrpMax         Float?
+
+  status          String    @default("open") // "open" | "closed" | "active" | "completed" | "cancelled"
+  venueName       String    @default("")
+  venueAddress    String    @default("")
+
+  // Loose JSON for type-specific config (bracket shape, mixer rounds, etc.).
+  config          String    @default("")
+
+  coverImageUrl   String    @default("")
+
+  participants    EventParticipant[]
+  matches         EventMatch[]
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status, startDate])
+  @@index([ownerId])
+}
+
+model EventParticipant {
+  id           String    @id @default(cuid())
+  eventId      String
+  event        Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User      @relation("EventParticipantUser", fields: [userId], references: [id])
+
+  status       String    @default("registered") // "registered" | "waitlist" | "withdrawn"
+  registeredAt DateTime  @default(now())
+  checkedInAt  DateTime?
+
+  // Per-event standings (filled by match results).
+  wins         Int       @default(0)
+  losses       Int       @default(0)
+  setsWon      Int       @default(0)
+  setsLost     Int       @default(0)
+  points       Int       @default(0)
+
+  @@unique([eventId, userId])
+  @@index([eventId, status])
+}
+
+model EventMatch {
+  id          String    @id @default(cuid())
+  eventId     String
+  event       Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  // Up to 4 players (singles = 2, doubles = 4). Side 1 = players 1+3, side 2 = players 2+4.
+  // No Prisma relations on these to avoid 4 back-relations on User; fetch users by id in API.
+  player1Id   String
+  player2Id   String
+  player3Id   String?
+  player4Id   String?
+
+  round       Int?     // round number for round-robin and tournament
+  bracketSlot String   @default("") // e.g. "QF-1", "SF-2" for tournament
+
+  scheduledAt DateTime?
+  courtAssign String   @default("")
+
+  score       String   @default("") // e.g. "6-4,3-6,7-5"
+  winnerSide  Int?     // 1 or 2
+  reportedBy  String   @default("") // userId who entered score
+  confirmedBy String   @default("") // userId who confirmed
+
+  status      String   @default("scheduled") // "scheduled" | "in_progress" | "completed" | "cancelled"
+  createdAt   DateTime @default(now())
+
+  @@index([eventId, status])
 }

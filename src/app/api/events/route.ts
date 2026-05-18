@@ -1,77 +1,137 @@
+import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
-import { subscribe, type AppEvent } from "@/lib/eventBus";
+import { prisma } from "@/lib/prisma";
+import { ensureEventGroup } from "@/lib/eventGroup";
 
-export const dynamic = "force-dynamic";
-// Disable Next.js / Vercel Edge wrapping that buffers responses.
-export const runtime = "nodejs";
+const VALID_EVENT_TYPES = new Set(["tournament", "round_robin", "mixer", "clinic"]);
 
-const KEEPALIVE_MS = 25_000;
-
+// GET /api/events?filter=upcoming|past|joined&type=tournament
 export async function GET(request: Request) {
   const session = await auth();
   if (!session?.user?.id) {
-    return new Response("Unauthorized", { status: 401 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const userId = session.user.id;
+  const { searchParams } = new URL(request.url);
+  const filter = searchParams.get("filter") ?? "upcoming";
+  const type = searchParams.get("type") ?? undefined;
 
-  let unsubscribe: (() => void) | null = null;
-  let pingTimer: ReturnType<typeof setInterval> | null = null;
-  let closed = false;
+  const now = new Date();
+  const where: Record<string, unknown> = {};
+  if (type && VALID_EVENT_TYPES.has(type)) where.eventType = type;
 
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const encoder = new TextEncoder();
+  if (filter === "past") {
+    where.endDate = { lt: now };
+  } else if (filter === "joined") {
+    where.participants = { some: { userId, status: { in: ["registered", "waitlist"] } } };
+  } else {
+    // upcoming = currently open or running
+    where.endDate = { gte: now };
+    where.status = { in: ["open", "closed", "active"] };
+  }
 
-      const send = (event: AppEvent) => {
-        if (closed) return;
-        try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-        } catch {
-          cleanup();
-        }
-      };
-
-      const ping = () => {
-        if (closed) return;
-        try {
-          // SSE comment lines (start with ":") double as keep-alive pings.
-          controller.enqueue(encoder.encode(`: ping\n\n`));
-        } catch {
-          cleanup();
-        }
-      };
-
-      const cleanup = () => {
-        if (closed) return;
-        closed = true;
-        if (pingTimer) clearInterval(pingTimer);
-        if (unsubscribe) unsubscribe();
-        try { controller.close(); } catch {}
-      };
-
-      // Initial hello so clients know the connection is live.
-      send({ kind: "hello" });
-
-      pingTimer = setInterval(ping, KEEPALIVE_MS);
-      unsubscribe = subscribe(userId, send);
-
-      // Browser navigation away triggers AbortSignal on the request.
-      request.signal.addEventListener("abort", cleanup);
+  const events = await prisma.event.findMany({
+    where,
+    include: {
+      owner: { select: { id: true, name: true, profileImageUrl: true } },
+      _count: { select: { participants: { where: { status: "registered" } } } },
     },
-    cancel() {
-      closed = true;
-      if (pingTimer) clearInterval(pingTimer);
-      if (unsubscribe) unsubscribe();
+    orderBy: [{ startDate: filter === "past" ? "desc" : "asc" }],
+    take: 100,
+  });
+
+  const myParticipations = await prisma.eventParticipant.findMany({
+    where: { userId, eventId: { in: events.map((e) => e.id) } },
+    select: { eventId: true, status: true },
+  });
+  const myStatusByEvent = new Map(myParticipations.map((p) => [p.eventId, p.status]));
+
+  return NextResponse.json(
+    events.map((e) => ({
+      ...e,
+      myStatus: myStatusByEvent.get(e.id) ?? null,
+      registeredCount: e._count.participants,
+    }))
+  );
+}
+
+// POST /api/events — create event
+export async function POST(request: Request) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const userId = session.user.id;
+  const body = await request.json().catch(() => null);
+  if (!body) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+
+  const {
+    title,
+    description,
+    eventType,
+    startDate,
+    endDate,
+    signupDeadline,
+    isPublicSignup,
+    maxParticipants,
+    ntrpMin,
+    ntrpMax,
+    venueName,
+    venueAddress,
+    coverImageUrl,
+  } = body;
+
+  if (!title?.trim()) {
+    return NextResponse.json({ error: "Title is required" }, { status: 400 });
+  }
+  if (!VALID_EVENT_TYPES.has(eventType)) {
+    return NextResponse.json({ error: "Invalid eventType" }, { status: 400 });
+  }
+  const start = startDate ? new Date(startDate) : null;
+  const end = endDate ? new Date(endDate) : null;
+  if (!start || isNaN(start.getTime()) || !end || isNaN(end.getTime())) {
+    return NextResponse.json({ error: "Valid startDate and endDate required" }, { status: 400 });
+  }
+  if (end < start) {
+    return NextResponse.json({ error: "endDate must be on or after startDate" }, { status: 400 });
+  }
+  const deadline = signupDeadline ? new Date(signupDeadline) : null;
+  if (deadline && (isNaN(deadline.getTime()) || deadline > start)) {
+    return NextResponse.json({ error: "signupDeadline must be before startDate" }, { status: 400 });
+  }
+  if (typeof maxParticipants === "number" && maxParticipants <= 0) {
+    return NextResponse.json({ error: "maxParticipants must be positive" }, { status: 400 });
+  }
+  if (
+    typeof ntrpMin === "number" &&
+    typeof ntrpMax === "number" &&
+    ntrpMin > ntrpMax
+  ) {
+    return NextResponse.json({ error: "ntrpMin cannot exceed ntrpMax" }, { status: 400 });
+  }
+
+  const event = await prisma.event.create({
+    data: {
+      ownerId: userId,
+      title: title.trim(),
+      description: typeof description === "string" ? description : "",
+      eventType,
+      startDate: start,
+      endDate: end,
+      signupDeadline: deadline,
+      isPublicSignup: isPublicSignup !== false,
+      maxParticipants: typeof maxParticipants === "number" ? maxParticipants : null,
+      ntrpMin: typeof ntrpMin === "number" ? ntrpMin : null,
+      ntrpMax: typeof ntrpMax === "number" ? ntrpMax : null,
+      venueName: typeof venueName === "string" ? venueName : "",
+      venueAddress: typeof venueAddress === "string" ? venueAddress : "",
+      coverImageUrl: typeof coverImageUrl === "string" ? coverImageUrl : "",
+      // Auto-register the organizer.
+      participants: { create: [{ userId, status: "registered" }] },
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      // Disable proxy buffering (e.g., nginx) so events flush immediately.
-      "X-Accel-Buffering": "no",
-    },
-  });
+  await ensureEventGroup(event.id);
+
+  return NextResponse.json(event, { status: 201 });
 }

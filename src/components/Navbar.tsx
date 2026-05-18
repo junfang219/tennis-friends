@@ -23,12 +23,19 @@ export default function Navbar() {
     setIsNative(!!cap?.isNativePlatform?.());
   }, []);
 
-  const isActive = (path: string) => pathname === path;
+  const isActive = (path: string) => {
+    if (pathname === path) return true;
+    // Communities hub spans /groups and /events (Teams + Events tabs).
+    if (path === "/groups" && (pathname.startsWith("/groups/") || pathname.startsWith("/events"))) {
+      return true;
+    }
+    return false;
+  };
 
   const navLinks = [
     { href: "/", label: "Feed", icon: FeedIcon },
     { href: "/friends", label: "Friends", icon: FriendsIcon },
-    { href: "/groups", label: "Teams", icon: GroupsIcon },
+    { href: "/groups", label: "Communities", icon: GroupsIcon },
     { href: "/courts", label: "Courts", icon: CourtsIcon },
     { href: "/calendar", label: "Calendar", icon: CalendarIcon },
     { href: "/search", label: "Discover", icon: SearchIcon },
