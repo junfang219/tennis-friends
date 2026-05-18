@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { ensureTeamGroup } from "@/lib/teamGroup";
 import { haversineMiles } from "@/lib/distance";
 import { rateLimit } from "@/lib/rateLimit";
+import { getAcceptedFriendIds } from "@/lib/friendship";
 
 const BROADCAST_RADII = [5, 10, 25] as const;
 const MAX_BROADCAST_RADIUS = 25;
@@ -22,57 +23,51 @@ export async function GET() {
 
   const userId = session.user.id;
 
-  // Get accepted friend IDs
-  const friendships = await prisma.friendship.findMany({
-    where: {
-      status: "ACCEPTED",
-      OR: [{ requesterId: userId }, { addresseeId: userId }],
-    },
-  });
+  // All six prefix lookups are independent — fire in parallel so the feed
+  // pays the cost of the slowest one rather than the sum.
+  const [
+    friendIds,
+    userGroupMemberships,
+    userFriendGroupMemberships,
+    hiddenPosts,
+    blocks,
+    me,
+  ] = await Promise.all([
+    getAcceptedFriendIds(userId),
+    // Active memberships only — archived teams are hidden from the feed, so
+    // posts targeted only to those teams won't surface.
+    prisma.groupMember.findMany({
+      where: { userId, archivedAt: null },
+      select: { groupId: true },
+    }),
+    prisma.friendGroupMember.findMany({
+      where: { userId },
+      select: { friendGroupId: true },
+    }),
+    prisma.hiddenPost.findMany({
+      where: { userId },
+      select: { postId: true },
+    }),
+    prisma.block.findMany({
+      where: {
+        OR: [{ blockerId: userId }, { blockedId: userId }],
+      },
+    }),
+    // Viewer coords power the broadcast bounding box and distance calc.
+    // Viewers without a location can't match any broadcast — they simply
+    // won't see any until they set one in their profile.
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { latitude: true, longitude: true },
+    }),
+  ]);
 
-  const friendIds = friendships.map((f) =>
-    f.requesterId === userId ? f.addresseeId : f.requesterId
-  );
-
-  // Get group IDs the user is an active member of (archived teams are hidden
-  // from the feed — posts targeted only to those teams won't surface).
-  const userGroupMemberships = await prisma.groupMember.findMany({
-    where: { userId, archivedAt: null },
-    select: { groupId: true },
-  });
   const userGroupIds = userGroupMemberships.map((m) => m.groupId);
-
-  // Get friend group IDs the user is a member of
-  const userFriendGroupMemberships = await prisma.friendGroupMember.findMany({
-    where: { userId },
-    select: { friendGroupId: true },
-  });
   const userFriendGroupIds = userFriendGroupMemberships.map((m) => m.friendGroupId);
-
-  // Get hidden post IDs
-  const hiddenPosts = await prisma.hiddenPost.findMany({
-    where: { userId },
-    select: { postId: true },
-  });
   const hiddenPostIds = hiddenPosts.map((h) => h.postId);
-
-  // Get blocked user IDs (in either direction)
-  const blocks = await prisma.block.findMany({
-    where: {
-      OR: [{ blockerId: userId }, { blockedId: userId }],
-    },
-  });
   const blockedUserIds = Array.from(
     new Set(blocks.map((b) => (b.blockerId === userId ? b.blockedId : b.blockerId)))
   );
-
-  // Viewer coords power the broadcast bounding box and distance calculation.
-  // Viewers without a location can't be matched against any broadcast — they
-  // simply won't see any until they set one in their profile.
-  const me = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { latitude: true, longitude: true },
-  });
   const haveMyLocation = me?.latitude != null && me?.longitude != null;
 
   // Bounding-box prefilter to keep the SQL query cheap; exact Haversine runs

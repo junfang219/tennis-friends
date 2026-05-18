@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { parseTags } from "@/lib/tags";
+import { areFriends } from "@/lib/friendship";
 
 export async function GET(
   _request: Request,
@@ -59,6 +60,16 @@ export async function GET(
   });
   const userGroupIds = userGroupMemberships.map((m) => m.groupId);
 
+  // Privacy gate: untargeted posts are visible to non-friends only when the
+  // profile owner has not enabled isPrivate. Group-targeted posts always remain
+  // visible to members of those groups (explicit-share wins).
+  const isOwner = session.user.id === id;
+  const ownerPrivacy = isOwner
+    ? null
+    : await prisma.user.findUnique({ where: { id }, select: { isPrivate: true } });
+  const isFriendOfOwner = !isOwner && (await areFriends(session.user.id, id));
+  const canSeeOpenPosts = isOwner || isFriendOfOwner || ownerPrivacy?.isPrivate === false;
+
   const user = await prisma.user.findUnique({
     where: { id },
     select: {
@@ -79,14 +90,17 @@ export async function GET(
       ntrpRating: true,
       utrRating: true,
       handle: true,
+      isPrivate: true,
       createdAt: true,
       highlights: { orderBy: { createdAt: "desc" } },
       posts: {
         where: {
           OR: [
-            // Posts with no group targeting (visible to all friends)
-            { postGroups: { none: {} } },
-            // Posts targeted to groups I'm in
+            // Posts with no group targeting — gated by privacy when viewer is
+            // neither the owner nor a friend.
+            ...(canSeeOpenPosts ? [{ postGroups: { none: {} } }] : []),
+            // Posts targeted to groups I'm in (explicit-share wins; visible to
+            // group members regardless of the author's privacy setting).
             { postGroups: { some: { groupId: { in: userGroupIds } } } },
           ],
         },

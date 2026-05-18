@@ -3,6 +3,7 @@ import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { ensureSessionChat } from "@/lib/sessionChat";
 import { ensureTeamGroup } from "@/lib/teamGroup";
+import { areFriends } from "@/lib/friendship";
 
 export async function GET(
   _request: Request,
@@ -19,7 +20,7 @@ export async function GET(
   const post = await prisma.post.findUnique({
     where: { id },
     include: {
-      author: { select: { id: true, name: true, profileImageUrl: true } },
+      author: { select: { id: true, name: true, profileImageUrl: true, isPrivate: true } },
       likes: { where: { userId }, select: { id: true } },
       postGroups: { include: { group: { select: { id: true, name: true } } } },
       postFriendGroups: { include: { friendGroup: { select: { id: true, name: true } } } },
@@ -30,6 +31,42 @@ export async function GET(
   });
 
   if (!post) {
+    return NextResponse.json({ error: "Post not found" }, { status: 404 });
+  }
+
+  // Visibility gate. Order of precedence:
+  //   1. Owner / friend / broadcast post — always allowed.
+  //   2. Explicit-share channels win: if post is targeted to groups/friend-
+  //      groups, viewer must be a member of at least one targeted group.
+  //   3. Otherwise (untargeted post): allowed only if the author is public.
+  // We return 404 (not 403) so private posts don't leak their existence.
+  const isOwner = post.authorId === userId;
+  const hasGroupTarget = post.postGroups.length > 0 || post.postFriendGroups.length > 0;
+  let allowed = isOwner || post.isBroadcast;
+  if (!allowed && hasGroupTarget) {
+    const [groupMembership, friendGroupMembership] = await Promise.all([
+      post.postGroups.length > 0
+        ? prisma.groupMember.findFirst({
+            where: { userId, groupId: { in: post.postGroups.map((pg) => pg.group.id) } },
+            select: { id: true },
+          })
+        : null,
+      post.postFriendGroups.length > 0
+        ? prisma.friendGroupMember.findFirst({
+            where: { userId, friendGroupId: { in: post.postFriendGroups.map((pfg) => pfg.friendGroup.id) } },
+            select: { id: true },
+          })
+        : null,
+    ]);
+    allowed = groupMembership !== null || friendGroupMembership !== null;
+  } else if (!allowed && !hasGroupTarget) {
+    if (!post.author.isPrivate) {
+      allowed = true;
+    } else {
+      allowed = await areFriends(userId, post.authorId);
+    }
+  }
+  if (!allowed) {
     return NextResponse.json({ error: "Post not found" }, { status: 404 });
   }
 

@@ -28,6 +28,7 @@ type Message = {
 type GroupInfo = {
   id: string;
   name: string;
+  imageUrl?: string | null;
   _count: { members: number };
 };
 
@@ -247,9 +248,18 @@ export default function GroupChatPage() {
         </Link>
         {groupInfo ? (
           <Link href={`/groups/${groupId}`} className="flex items-center gap-3 flex-1 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-court-green to-court-green-soft flex items-center justify-center text-white font-bold text-sm shadow-md shrink-0">
-              {groupInfo.name.charAt(0).toUpperCase()}
-            </div>
+            {groupInfo.imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={groupInfo.imageUrl}
+                alt={groupInfo.name}
+                className="w-10 h-10 rounded-xl object-cover shadow-md shrink-0"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-court-green to-court-green-soft flex items-center justify-center text-white font-bold text-sm shadow-md shrink-0">
+                {groupInfo.name.charAt(0).toUpperCase()}
+              </div>
+            )}
             <div className="min-w-0">
               <p className="text-sm font-semibold text-gray-900 truncate">{groupInfo.name}</p>
               <p className="text-xs text-gray-400">{groupInfo._count.members} members</p>
@@ -308,7 +318,7 @@ export default function GroupChatPage() {
                   )}
 
                   <div
-                    className="max-w-[75%] select-none"
+                    className="max-w-[75%] select-none sm:select-text"
                     data-msg-id={msg.id}
                     data-long-press-root
                     style={{ touchAction: "pan-y" }}
@@ -429,7 +439,6 @@ export default function GroupChatPage() {
             onKeyDown={handleKeyDown}
             placeholder={`Message ${groupInfo?.name || "group"}...`}
             className="flex-1 px-4 py-2.5 border border-gray-200 rounded-full text-sm bg-surface/50 focus:bg-white transition-colors"
-            autoFocus
           />
           <EmojiPicker open={emojiOpen} onOpenChange={setEmojiOpen} onSelect={insertEmoji} />
           <button

@@ -13,7 +13,7 @@
  */
 
 import type { CuratedRegion } from "./types";
-import { SEATTLE_BBOX, SEATTLE_COURTS } from "./seattle";
+import { SEATTLE_BBOX } from "./seattle";
 import { BAY_AREA_BBOX, BAY_AREA_COURTS } from "./bay-area";
 import { EASTSIDE_BBOX, EASTSIDE_COURTS } from "./eastside";
 import { LOS_ANGELES_BBOX, LOS_ANGELES_COURTS } from "./los-angeles";
@@ -30,7 +30,12 @@ import { SOCAL_EXTENDED_BBOX, SOCAL_EXTENDED_COURTS } from "./socal-extended";
 // region's courts array, so order only affects which bbox the OSM-skip
 // logic considers first — but it's still good hygiene to go narrow→broad.)
 export const CURATED_REGIONS: CuratedRegion[] = [
-  { key: "seattle",        label: "Seattle",           bbox: SEATTLE_BBOX,        courts: SEATTLE_COURTS },
+  // Seattle is served by the scraped 268-venue facility dataset (see
+  // src/lib/facilities.ts), so its `courts` array here is empty — the
+  // courts list API injects facilities for the Seattle bbox separately.
+  // The entry is kept so `pointInsideAnyCuratedBbox` still suppresses
+  // Overpass/OSM results inside Seattle.
+  { key: "seattle",        label: "Seattle",           bbox: SEATTLE_BBOX,        courts: [] },
   { key: "eastside",       label: "Seattle Eastside",  bbox: EASTSIDE_BBOX,       courts: EASTSIDE_COURTS },
   { key: "wa-puget-sound", label: "WA Puget Sound",    bbox: WA_PUGET_SOUND_BBOX, courts: WA_PUGET_SOUND_COURTS },
   { key: "bay-area",       label: "SF Bay Area",       bbox: BAY_AREA_BBOX,       courts: BAY_AREA_COURTS },

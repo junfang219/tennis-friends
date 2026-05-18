@@ -1,37 +1,54 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useState, useCallback } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import PrivacyNotice from "@/components/courts/PrivacyNotice";
 import { StarRating } from "@/components/courts/StarRating";
 import { CourtPhotoGrid } from "@/components/courts/CourtPhotoGrid";
 import { ReviewList, type Review } from "@/components/courts/ReviewList";
 import { ReviewComposer } from "@/components/courts/ReviewComposer";
+import { ReportIssueModal } from "@/components/courts/ReportIssueModal";
 
+// Mirrors `Facility` in src/lib/facilities.ts plus the dashboard URL the
+// detail API attaches conditionally.
 interface CourtDetail {
-  id: string;
+  courtId: string;
+  externalId: number;
   name: string;
   address: string;
-  lat: number;
-  lng: number;
-  courts: number;
-  surface: string;
-  lit: boolean;
-  activeNet: {
-    phone: string;
-    description: string;
-    minTime: number;
-    maxTime: number;
-    maxCapacity: number;
-    openingHours: Array<{
-      dateRange: string;
-      daysOfWeek: string;
-      openingTimes: string;
-    }>;
-    amenities: string[];
-    restrictions: string[];
-  } | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  courtCount: number | null;
+  lighted: boolean | null;
+  hittingWall: boolean | null;
+  pickleballLined: boolean | null;
+  indoorOutdoor: "outdoor" | "indoor" | "both";
+  managedBy: string | null;
+  reservationPolicy: string | null;
+  contactPhone: string | null;
+  bookingUrl: string | null;
+  courtLevelBookingUrl: string | null;
+  bookingLabel: string | null;
+  bookingLinks: Array<{ label: string; url: string }> | null;
+  eventsLink: { label: string; url: string } | null;
+  hours: string | null;
+  description: string | null;
+  notes: string | null;
+  category:
+    | "public_park"
+    | "school"
+    | "private_club"
+    | "hoa_community"
+    | "college"
+    | "indoor_facility";
+  status: "active" | "temporarily_closed";
+  bucket: "city" | "club" | "school";
+  /** Power BI dashboard URL when the venue is a reservable Seattle Parks court. */
+  dashboardUrl: string | null;
 }
 
 type ReviewsPayload = {
@@ -42,41 +59,65 @@ type ReviewsPayload = {
   reviews: Review[];
 };
 
-const BOOKING_BASE =
-  "https://anc.apm.activecommunities.com/seattle/reservation/search";
+const CATEGORY_LABEL: Record<CourtDetail["category"], string> = {
+  public_park: "Public Park",
+  school: "School",
+  private_club: "Private Club",
+  hoa_community: "HOA / Residents Only",
+  college: "College",
+  indoor_facility: "Indoor Facility",
+};
+
+const INDOOR_LABEL: Record<CourtDetail["indoorOutdoor"], string> = {
+  outdoor: "Outdoor",
+  indoor: "Indoor",
+  both: "Indoor + Outdoor",
+};
 
 type Tab = "overview" | "reviews";
 
 export default function CourtDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
+  // Pass-through query params: `z`, `lat`, `lng` carry the user's previous
+  // map view (set by the summary card's Details link). We append them to the
+  // breadcrumb so /courts can restore the exact zoom on return.
+  const searchParams = useSearchParams();
+  const backHref = (() => {
+    const parts: string[] = [`selected=${encodeURIComponent(id)}`];
+    for (const k of ["z", "lat", "lng"] as const) {
+      const v = searchParams.get(k);
+      if (v) parts.push(`${k}=${encodeURIComponent(v)}`);
+    }
+    return `/courts?${parts.join("&")}`;
+  })();
   const [court, setCourt] = useState<CourtDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<Tab>("overview");
+  const [dashboardOpen, setDashboardOpen] = useState(false);
+  // Geolocation for the Directions link's `origin` param — Google Maps then
+  // opens with the route already drawn instead of asking "from where?".
+  // Silent on denial; the link still works (Google falls back to prompting).
+  const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(null);
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("geolocation" in navigator)) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setMyLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: false, timeout: 7000, maximumAge: 5 * 60_000 }
+    );
+  }, []);
 
   const [reviews, setReviews] = useState<ReviewsPayload | null>(null);
   const [reviewsLoading, setReviewsLoading] = useState(true);
   const [composerOpen, setComposerOpen] = useState(false);
-
-  const popupRef = useRef<Window | null>(null);
-  const openSeattleParksPopup = useCallback((url: string) => {
-    if (typeof window === "undefined") return;
-    if (popupRef.current && !popupRef.current.closed) {
-      try {
-        popupRef.current.location.href = url;
-        popupRef.current.focus();
-        return;
-      } catch {
-        // cross-origin fallback
-      }
-    }
-    const width = 720;
-    const height = Math.min(900, window.screen?.availHeight || 900);
-    const left = Math.max(0, (window.screen?.availWidth || 1400) - width);
-    const features = `width=${width},height=${height},left=${left},top=0,resizable=yes,scrollbars=yes`;
-    popupRef.current = window.open(url, "seattleParks", features);
-  }, []);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [recentReports, setRecentReports] = useState<{
+    count: number;
+    emptyCount: number;
+    lastReportedAt: string | null;
+  } | null>(null);
 
   const fetchCourt = useCallback(async () => {
     setLoading(true);
@@ -87,7 +128,7 @@ export default function CourtDetailPage() {
         if (res.status === 404) throw new Error("Court not found");
         throw new Error("Failed to load court details");
       }
-      const data = await res.json();
+      const data: CourtDetail = await res.json();
       setCourt(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
@@ -115,6 +156,27 @@ export default function CourtDetailPage() {
     fetchReviews();
   }, [fetchCourt, fetchReviews]);
 
+  useEffect(() => {
+    if (!court) return;
+    if (court.category !== "public_park" && court.category !== "school" && court.category !== "college") {
+      setRecentReports(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/courts/${encodeURIComponent(id)}/availability-reports/recent`, {
+      cache: "no-store",
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        setRecentReports(data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [court, id]);
+
   const deleteReview = useCallback(async () => {
     await fetch(`/api/courts/${encodeURIComponent(id)}/reviews`, { method: "DELETE" });
     fetchReviews();
@@ -137,7 +199,7 @@ export default function CourtDetailPage() {
     return (
       <div className="max-w-3xl mx-auto px-4 py-8">
         <Link
-          href="/courts"
+          href={backHref}
           className="text-sm text-court-green hover:underline mb-4 inline-block"
         >
           &larr; Back to Courts
@@ -155,14 +217,17 @@ export default function CourtDetailPage() {
     );
   }
 
-  const bookingUrl = `${BOOKING_BASE}?keyword=${encodeURIComponent(court.name)}&resourceType=0&equipmentQty=0`;
   const reviewPhotos = reviews?.reviews.flatMap((r) => r.photoUrls) ?? [];
+  const isClosed = court.status === "temporarily_closed";
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
-      {/* Breadcrumb */}
+      {/* Breadcrumb — preserves which court was viewed (and the user's
+          previous zoom + center) so the map reopens its summary card at
+          the exact view they left, instead of resetting to user's location
+          or jumping to street-level. */}
       <Link
-        href="/courts"
+        href={backHref}
         className="text-sm text-court-green hover:underline mb-4 inline-flex items-center gap-1"
       >
         <svg
@@ -193,9 +258,26 @@ export default function CourtDetailPage() {
         </h1>
         <p className="text-gray-500 text-sm mt-1">{court.address}</p>
 
+        {/* Category + status chips */}
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-700 text-xs font-medium">
+            {CATEGORY_LABEL[court.category]}
+          </span>
+          {court.managedBy && court.managedBy !== "School" && (
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-gray-50 text-gray-500 text-xs">
+              {court.managedBy}
+            </span>
+          )}
+          {isClosed && (
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-semibold uppercase tracking-wide">
+              Temporarily closed
+            </span>
+          )}
+        </div>
+
         {/* Rating row */}
         {reviews && (
-          <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+          <div className="flex items-center gap-2 mt-3 flex-wrap">
             {reviews.count > 0 ? (
               <>
                 <span className="text-base font-semibold text-gray-800">
@@ -215,39 +297,17 @@ export default function CourtDetailPage() {
           </div>
         )}
 
-        {/* Quick stats */}
+        {/* Amenities row */}
         <div className="flex flex-wrap items-center gap-2 mt-3">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-court-green/10 text-court-green text-sm font-medium">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-            </svg>
-            {court.courts} court{court.courts !== 1 ? "s" : ""}
-          </span>
-
-          <span className="inline-flex items-center px-3 py-1 rounded-full bg-gray-100 text-gray-700 text-sm font-medium capitalize">
-            {court.surface} surface
-          </span>
-
-          {court.lit && (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-ball-yellow/20 text-amber-700 text-sm font-medium">
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <path d="M12 2v3m0 14v3M4.93 4.93l2.12 2.12m9.9 9.9l2.12 2.12M2 12h3m14 0h3M4.93 19.07l2.12-2.12m9.9-9.9l2.12-2.12M12 8a4 4 0 100 8 4 4 0 000-8z" />
-              </svg>
-              Lighted
-            </span>
+          {court.courtCount != null && (
+            <Chip>
+              {court.courtCount} court{court.courtCount === 1 ? "" : "s"}
+            </Chip>
           )}
+          <Chip>{INDOOR_LABEL[court.indoorOutdoor]}</Chip>
+          {court.lighted && <Chip tone="amber">Lighted</Chip>}
+          {court.hittingWall && <Chip>Hitting wall</Chip>}
+          {court.pickleballLined && <Chip>Pickleball-lined</Chip>}
         </div>
 
         {/* Quick action: write/edit review */}
@@ -276,106 +336,164 @@ export default function CourtDetailPage() {
 
       {tab === "overview" && (
         <>
-          {/* ActiveNet details */}
-          {court.activeNet && (
-            <div className="mb-6 bg-white rounded-xl border border-gray-100 overflow-hidden">
-              {court.activeNet.description && (
-                <div className="px-4 py-3 border-b border-gray-50">
-                  <p className="text-sm text-gray-600">
-                    {court.activeNet.description}
-                  </p>
-                </div>
-              )}
+          {/* `notes` is dev-only metadata (source conflicts, scraper caveats);
+              the public "Temporarily closed" chip above already conveys
+              status to users. */}
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-px bg-gray-100">
-                {court.activeNet.phone && (
-                  <div className="bg-white px-4 py-3">
-                    <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">
-                      Phone
-                    </p>
-                    <p className="text-sm text-gray-800 mt-0.5">
-                      {court.activeNet.phone}
-                    </p>
-                  </div>
-                )}
-                <div className="bg-white px-4 py-3">
-                  <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">
-                    Min Booking
-                  </p>
-                  <p className="text-sm text-gray-800 mt-0.5">
-                    {court.activeNet.minTime} min
-                  </p>
-                </div>
-                <div className="bg-white px-4 py-3">
-                  <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">
-                    Max Booking
-                  </p>
-                  <p className="text-sm text-gray-800 mt-0.5">
-                    {court.activeNet.maxTime} min
-                  </p>
-                </div>
-              </div>
-
-              {court.activeNet.openingHours.length > 0 && (
-                <div className="px-4 py-3 border-t border-gray-100">
-                  <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-2">
-                    Hours
-                  </p>
-                  <div className="space-y-1">
-                    {court.activeNet.openingHours.map((h, i) => (
-                      <div key={i} className="text-sm text-gray-700 flex gap-2">
-                        <span className="text-gray-500 min-w-[100px]">
-                          {h.daysOfWeek}
-                        </span>
-                        <span>{h.openingTimes}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {court.activeNet.amenities.length > 0 && (
-                <div className="px-4 py-3 border-t border-gray-100">
-                  <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-2">
-                    Amenities
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {court.activeNet.amenities.map((a) => (
-                      <span
-                        key={a}
-                        className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-[11px] font-medium"
-                      >
-                        {a}
-                      </span>
-                    ))}
-                  </div>
-                </div>
+          {/* Primary CTA: booking.
+              Per-venue `bookingLinks` (e.g. Aubrey Davis Park, where each
+              court has its own PerfectMind URL) renders as a row of buttons
+              and replaces the single "Book this court". Otherwise: single
+              button + optional Seattle Parks availability dashboard. */}
+          {!isClosed && court.bookingLinks && court.bookingLinks.length > 0 && (
+            <div className="mb-5 flex flex-col sm:flex-row flex-wrap gap-2">
+              {court.bookingLinks.map((link) => (
+                <a
+                  key={link.url}
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-primary flex-1 min-w-[10rem] flex items-center justify-center gap-2 py-3"
+                >
+                  {link.label}
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                  >
+                    <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                    <polyline points="15 3 21 3 21 9" />
+                    <line x1="10" y1="14" x2="21" y2="3" />
+                  </svg>
+                </a>
+              ))}
+            </div>
+          )}
+          {!isClosed && !court.bookingLinks && court.bookingUrl && (
+            <div className="mb-5 flex flex-col sm:flex-row gap-2">
+              <a
+                href={court.bookingUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-primary flex-1 flex items-center justify-center gap-2 py-3"
+              >
+                {court.bookingLabel ?? "Book this court"}
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                >
+                  <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+              </a>
+              {court.dashboardUrl && (
+                <button
+                  onClick={() => setDashboardOpen(true)}
+                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-ball-yellow/30 hover:bg-ball-yellow/50 text-amber-800 font-semibold text-sm"
+                >
+                  📊 Check court availability
+                </button>
               )}
             </div>
           )}
 
-          {/* Book button — opens Seattle Parks in a side popup */}
-          <div className="mb-6">
-            <button
-              onClick={() => openSeattleParksPopup(bookingUrl)}
-              className="btn-primary w-full flex items-center justify-center gap-2 py-3"
-            >
-              Book on Seattle Parks
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
+          {/* How to book / reservation policy */}
+          {court.reservationPolicy && (
+            <Section title="How to book">
+              <p className="text-sm text-gray-700 whitespace-pre-line">
+                {court.reservationPolicy}
+              </p>
+            </Section>
+          )}
+
+          {/* Hours */}
+          {court.hours && (
+            <Section title="Hours">
+              <p className="text-sm text-gray-700 whitespace-pre-line">
+                {court.hours}
+              </p>
+            </Section>
+          )}
+
+          {/* Events / external schedule link (e.g. UW IMA). Sits alongside
+              Hours since both are scheduling info. */}
+          {court.eventsLink && (
+            <Section title="Events">
+              <a
+                href={court.eventsLink.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-ball-yellow/30 hover:bg-ball-yellow/50 text-amber-800 font-semibold text-sm"
               >
-                <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-                <polyline points="15 3 21 3 21 9" />
-                <line x1="10" y1="14" x2="21" y2="3" />
-              </svg>
-            </button>
-          </div>
+                📅 {court.eventsLink.label}
+              </a>
+            </Section>
+          )}
+
+          {/* Description */}
+          {court.description && (
+            <Section title="About this court">
+              <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
+                {court.description}
+              </p>
+            </Section>
+          )}
+
+          {/* Crowd-sourced empty-court reports (last 60 min). Only shows
+              when players have actually reported open courts recently. */}
+          {recentReports && recentReports.emptyCount > 0 && recentReports.lastReportedAt && (
+            <Section title="Recent activity">
+              <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2.5">
+                <span className="mt-1 w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                <p className="text-sm text-amber-900">
+                  {recentReports.emptyCount === 1
+                    ? "1 player reported empty courts here in the last hour"
+                    : `${recentReports.emptyCount} players reported empty courts here in the last hour`}
+                  {" — "}
+                  <span className="text-amber-700">
+                    most recent at{" "}
+                    {new Date(recentReports.lastReportedAt).toLocaleTimeString([], {
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                </p>
+              </div>
+            </Section>
+          )}
+
+          {/* Contact */}
+          {court.contactPhone && (
+            <Section title="Contact">
+              <a
+                href={`tel:${court.contactPhone.replace(/[^\d+]/g, "")}`}
+                className="text-sm text-court-green hover:underline inline-flex items-center gap-2"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                >
+                  <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.95.37 1.87.72 2.74a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.34-1.34a2 2 0 012.11-.45c.87.35 1.79.59 2.74.72A2 2 0 0122 16.92z" />
+                </svg>
+                {court.contactPhone}
+              </a>
+            </Section>
+          )}
         </>
       )}
 
@@ -429,28 +547,59 @@ export default function CourtDetailPage() {
         </div>
       )}
 
-      {/* Directions */}
-      <div className="mb-6">
-        <a
-          href={`https://www.google.com/maps/dir/?api=1&destination=${court.lat},${court.lng}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-court-green transition-colors"
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
+      {/* Directions use the venue's stored lat/lng as destination — the
+          dataset is hand-maintained so coords are authoritative. When we
+          have the user's geolocation, pass it as `origin` so the map opens
+          with the route already drawn. */}
+      {court.latitude != null && court.longitude != null &&
+        (() => {
+          const params = new URLSearchParams({ api: "1" });
+          if (myLocation) {
+            params.set("origin", `${myLocation.lat},${myLocation.lng}`);
+          }
+          params.set("destination", `${court.latitude},${court.longitude}`);
+          const href = `https://www.google.com/maps/dir/?${params.toString()}`;
+          return (
+        <div className="mb-6">
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-court-green transition-colors"
           >
-            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
-            <circle cx="12" cy="10" r="3" />
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
+              <circle cx="12" cy="10" r="3" />
+            </svg>
+            Get Directions
+          </a>
+        </div>
+          );
+        })()}
+
+      {/* Report-an-issue: opens an in-app modal that POSTs to
+          /api/report-issue → developer's email. Low-prominence footer link. */}
+      <div className="mb-4">
+        <button
+          type="button"
+          onClick={() => setReportOpen(true)}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-court-green transition-colors"
+          aria-label={`Report an issue with ${court.name}`}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+            <line x1="4" y1="22" x2="4" y2="15" />
           </svg>
-          Get Directions
-        </a>
+          Report an issue with this court
+        </button>
       </div>
 
       {/* Privacy */}
@@ -458,7 +607,7 @@ export default function CourtDetailPage() {
 
       {composerOpen && (
         <ReviewComposer
-          courtId={court.id}
+          courtId={court.courtId}
           courtName={court.name}
           initial={
             reviews?.mine
@@ -476,6 +625,57 @@ export default function CourtDetailPage() {
             setTab("reviews");
           }}
         />
+      )}
+
+      {reportOpen && (
+        <ReportIssueModal
+          courtId={court.courtId}
+          courtName={court.name}
+          courtAddress={court.address ?? null}
+          onClose={() => setReportOpen(false)}
+        />
+      )}
+
+      {/* Seattle Parks Power BI availability dashboard (lazy iframe).
+          The dashboard is built for desktop landscape (≈16:10) but Power BI
+          collapses to a short intrinsic height when given only max-h, so we
+          pin a definite height to keep the iframe usable on both layouts. */}
+      {dashboardOpen && court.dashboardUrl && (
+        <div
+          className="fixed inset-0 z-[600] bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => setDashboardOpen(false)}
+        >
+          <div
+            className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-5xl h-[90vh] sm:h-[85vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+              <div>
+                <h3 className="font-semibold text-gray-900 text-sm">Court availability</h3>
+                <p className="text-[11px] text-gray-500">
+                  Powered by Seattle Parks &amp; Recreation
+                </p>
+              </div>
+              <button
+                onClick={() => setDashboardOpen(false)}
+                className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center"
+                aria-label="Close availability"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <iframe
+              src={court.dashboardUrl}
+              title="Seattle Parks tennis court availability"
+              className="w-full flex-1 border-0"
+              loading="lazy"
+              allowFullScreen
+            />
+          </div>
+        </div>
       )}
     </div>
   );
@@ -501,5 +701,36 @@ function TabButton({
     >
       {children}
     </button>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="mb-6">
+      <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+        {title}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
+function Chip({
+  children,
+  tone = "neutral",
+}: {
+  children: React.ReactNode;
+  tone?: "neutral" | "amber";
+}) {
+  const cls =
+    tone === "amber"
+      ? "bg-ball-yellow/20 text-amber-700"
+      : "bg-gray-100 text-gray-700";
+  return (
+    <span
+      className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium capitalize ${cls}`}
+    >
+      {children}
+    </span>
   );
 }

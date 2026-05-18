@@ -520,7 +520,6 @@ export default function GroupChatThreadPage() {
             onKeyDown={handleKeyDown}
             placeholder={`Message ${title || "group"}...`}
             className="flex-1 px-4 py-2.5 border border-gray-200 rounded-full text-sm bg-surface/50 focus:bg-white transition-colors"
-            autoFocus
           />
           <EmojiPicker open={emojiOpen} onOpenChange={setEmojiOpen} onSelect={insertEmoji} />
           <button

@@ -10,83 +10,87 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      bio: true,
-      skillLevel: true,
-      favoriteSurface: true,
-      profileImageUrl: true,
-      coverImageUrl: true,
-      coverOffsetY: true,
-      coverScale: true,
-      customTags: true,
-      latitude: true,
-      longitude: true,
-      gender: true,
-      ageRange: true,
-      ratingSystem: true,
-      ntrpRating: true,
-      utrRating: true,
-      handle: true,
-      venmoHandle: true,
-      paypalHandle: true,
-      cashappHandle: true,
-      zelleHandle: true,
-      createdAt: true,
-      highlights: { orderBy: { createdAt: "desc" } },
-      _count: { select: { sentRequests: { where: { status: "ACCEPTED" } }, receivedRequests: { where: { status: "ACCEPTED" } } } },
-      posts: {
-        orderBy: { createdAt: "desc" },
-        take: 20,
-        include: {
-          likes: {
-            where: { userId: session.user.id },
-            select: { id: true },
+  // User profile + joined-posts are independent — fetch in parallel.
+  const [user, joinedPosts] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        bio: true,
+        skillLevel: true,
+        favoriteSurface: true,
+        profileImageUrl: true,
+        coverImageUrl: true,
+        coverOffsetY: true,
+        coverScale: true,
+        customTags: true,
+        latitude: true,
+        longitude: true,
+        gender: true,
+        ageRange: true,
+        ratingSystem: true,
+        ntrpRating: true,
+        utrRating: true,
+        handle: true,
+        venmoHandle: true,
+        paypalHandle: true,
+        cashappHandle: true,
+        zelleHandle: true,
+        isPrivate: true,
+        createdAt: true,
+        highlights: { orderBy: { createdAt: "desc" } },
+        _count: { select: { sentRequests: { where: { status: "ACCEPTED" } }, receivedRequests: { where: { status: "ACCEPTED" } } } },
+        posts: {
+          orderBy: { createdAt: "desc" },
+          take: 20,
+          include: {
+            likes: {
+              where: { userId: session.user.id },
+              select: { id: true },
+            },
+            postGroups: {
+              include: { group: { select: { id: true, name: true } } },
+            },
+            playRequests: {
+              select: { id: true, status: true, note: true, userId: true, user: { select: { name: true } } },
+            },
+            photos: { orderBy: { order: "asc" }, select: { url: true } },
+            _count: { select: { likes: true, comments: true, playRequests: { where: { status: "PENDING" } } } },
           },
-          postGroups: {
-            include: { group: { select: { id: true, name: true } } },
-          },
-          playRequests: {
-            select: { id: true, status: true, note: true, userId: true, user: { select: { name: true } } },
-          },
-          photos: { orderBy: { order: "asc" }, select: { url: true } },
-          _count: { select: { likes: true, comments: true, playRequests: { where: { status: "PENDING" } } } },
         },
       },
-    },
-  });
+    }),
+    // Posts where the viewer is an approved player on someone else's
+    // find_players post — surfaced on their profile so they can see the
+    // games they're in.
+    prisma.post.findMany({
+      where: {
+        postType: "find_players",
+        authorId: { not: session.user.id },
+        playRequests: {
+          some: { userId: session.user.id, status: "APPROVED" },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      include: {
+        author: { select: { id: true, name: true, profileImageUrl: true } },
+        likes: { where: { userId: session.user.id }, select: { id: true } },
+        postGroups: { include: { group: { select: { id: true, name: true } } } },
+        playRequests: {
+          select: { id: true, status: true, note: true, userId: true, user: { select: { name: true } } },
+        },
+        photos: { orderBy: { order: "asc" }, select: { url: true } },
+        _count: { select: { likes: true, comments: true, playRequests: { where: { status: "PENDING" } } } },
+      },
+    }),
+  ]);
 
   if (!user) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
-
-  // Posts where the viewer is an approved player on someone else's find_players
-  // post — surfaced on their profile so they can see the games they're in.
-  const joinedPosts = await prisma.post.findMany({
-    where: {
-      postType: "find_players",
-      authorId: { not: session.user.id },
-      playRequests: {
-        some: { userId: session.user.id, status: "APPROVED" },
-      },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 20,
-    include: {
-      author: { select: { id: true, name: true, profileImageUrl: true } },
-      likes: { where: { userId: session.user.id }, select: { id: true } },
-      postGroups: { include: { group: { select: { id: true, name: true } } } },
-      playRequests: {
-        select: { id: true, status: true, note: true, userId: true, user: { select: { name: true } } },
-      },
-      photos: { orderBy: { order: "asc" }, select: { url: true } },
-      _count: { select: { likes: true, comments: true, playRequests: { where: { status: "PENDING" } } } },
-    },
-  });
 
   const completePostIds = [
     ...user.posts.filter((p) => p.postType === "find_players" && p.isComplete).map((p) => p.id),
@@ -197,12 +201,16 @@ export async function PUT(request: Request) {
   const data = await request.json();
   const stringFields = ["name", "bio", "skillLevel", "favoriteSurface", "profileImageUrl", "coverImageUrl", "gender", "ageRange", "ratingSystem", "venmoHandle", "paypalHandle", "cashappHandle", "zelleHandle"];
   const numberFields = ["ntrpRating", "utrRating", "coverOffsetY", "coverScale", "latitude", "longitude"];
+  const booleanFields = ["isPrivate"];
   const updates: Record<string, unknown> = {};
   for (const key of stringFields) {
     if (data[key] !== undefined) updates[key] = data[key];
   }
   for (const key of numberFields) {
     if (data[key] !== undefined) updates[key] = data[key] === null ? null : Number(data[key]);
+  }
+  for (const key of booleanFields) {
+    if (data[key] !== undefined) updates[key] = data[key] === true;
   }
 
   // customTags: accept array of strings; serialize to CSV with caps applied.

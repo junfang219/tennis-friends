@@ -354,7 +354,7 @@ export default function ChatPage() {
 
                   <div
                     id={`msg-${msg.id}`}
-                    className="max-w-[75%] select-none transition-shadow"
+                    className="max-w-[75%] select-none sm:select-text transition-shadow"
                     data-msg-id={msg.id}
                     data-long-press-root
                     style={{ touchAction: "pan-y" }}
@@ -477,7 +477,6 @@ export default function ChatPage() {
             onKeyDown={handleKeyDown}
             placeholder="Type a message..."
             className="flex-1 px-4 py-2.5 border border-gray-200 rounded-full text-sm bg-surface/50 focus:bg-white transition-colors"
-            autoFocus
           />
           <EmojiPicker open={emojiOpen} onOpenChange={setEmojiOpen} onSelect={insertEmoji} />
           <button

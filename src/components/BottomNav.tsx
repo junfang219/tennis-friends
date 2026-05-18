@@ -1,19 +1,38 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
+
+const TAB_ROUTES = ["/", "/groups", "/courts", "/chat", "/profile"] as const;
 
 export default function BottomNav() {
   const { status } = useSession();
   const pathname = usePathname();
+  const router = useRouter();
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [isNative, setIsNative] = useState(false);
 
   useEffect(() => {
-    setIsNative(!!(window as unknown as { Capacitor?: unknown }).Capacitor);
+    // `window.Capacitor` is populated even on the web (the @capacitor/core
+    // module assigns a stub when imported, which PushRegistrar pulls in for
+    // its native-detection check). Use `isNativePlatform()` — it returns
+    // false in the browser and true only inside the iOS/Android shell.
+    const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+    setIsNative(!!cap?.isNativePlatform?.());
   }, []);
+
+  // Warm the client-side route cache for every tab once we're logged in, so
+  // tab taps render from cache instead of waiting on a fresh fetch. The
+  // built-in <Link> prefetch is unreliable inside the Capacitor WebView, so
+  // we trigger it imperatively.
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    for (const route of TAB_ROUTES) {
+      router.prefetch(route);
+    }
+  }, [status, router]);
 
   const isActive = (path: string) => pathname === path || pathname.startsWith(path + "/");
 

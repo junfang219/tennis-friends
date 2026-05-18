@@ -93,6 +93,7 @@ export default function ProfilePage() {
     paypalHandle: "",
     cashappHandle: "",
     zelleHandle: "",
+    isPrivate: false,
   });
   const [handleError, setHandleError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -222,6 +223,7 @@ export default function ProfilePage() {
           paypalHandle: data.paypalHandle || "",
           cashappHandle: data.cashappHandle || "",
           zelleHandle: data.zelleHandle || "",
+          isPrivate: data.isPrivate === true,
         });
       });
   }, []);
@@ -244,6 +246,7 @@ export default function ProfilePage() {
       paypalHandle: form.paypalHandle.trim(),
       cashappHandle: form.cashappHandle.trim(),
       zelleHandle: form.zelleHandle.trim(),
+      isPrivate: form.isPrivate,
     };
     const res = await fetch("/api/profile", {
       method: "PUT",
@@ -1360,6 +1363,7 @@ function EditForm({
     paypalHandle: string;
     cashappHandle: string;
     zelleHandle: string;
+    isPrivate: boolean;
   };
   setForm: (f: typeof form) => void;
   onSave: () => void;
@@ -1622,6 +1626,27 @@ function EditForm({
             placeholder="Zelle phone or email"
             className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm"
           />
+        </div>
+      </div>
+      <div>
+        <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+          Privacy
+        </label>
+        <div className="rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-3">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.isPrivate}
+              onChange={(e) => setForm({ ...form, isPrivate: e.target.checked })}
+              className="mt-0.5 h-5 w-5 accent-court-green shrink-0"
+            />
+            <span className="flex-1 min-w-0">
+              <span className="block text-sm font-semibold text-gray-800">Private account</span>
+              <span className="block text-xs text-gray-500 mt-0.5">
+                Only friends can see your posts. Your profile card and highlights stay visible to everyone. Posts you share to teams or as nearby broadcasts still reach their audience.
+              </span>
+            </span>
+          </label>
         </div>
       </div>
       <div>

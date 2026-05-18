@@ -66,6 +66,7 @@ type UserProfile = {
   friendshipId: string | null;
   friendshipStatus: string | null;
   isRequester: boolean;
+  isPrivate?: boolean;
   highlights: Highlight[];
   posts: UserPost[];
 };
@@ -299,6 +300,18 @@ export default function UserProfilePage() {
 
               {/* Tab content */}
               {filtered.length === 0 ? (
+                user.isPrivate && user.friendshipStatus !== "ACCEPTED" ? (
+                  <div className="text-center py-12 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
+                    <div className="w-12 h-12 bg-ball-yellow/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-court-green-soft" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                        <path d="M7 11V7a5 5 0 0110 0v4" />
+                      </svg>
+                    </div>
+                    <p className="text-gray-700 text-sm font-semibold">This profile is private</p>
+                    <p className="text-gray-500 text-xs mt-1">Only friends can see {user.name}&rsquo;s posts.</p>
+                  </div>
+                ) : (
                 <div className="text-center py-12 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
                   <div className="w-12 h-12 bg-ball-yellow/20 rounded-full flex items-center justify-center mx-auto mb-3">
                     {tab === "find_players" && (
@@ -327,6 +340,7 @@ export default function UserProfilePage() {
                     {tab === "videos" && `${user.name} hasn't shared any videos.`}
                   </p>
                 </div>
+                )
               ) : tab === "posts" ? (
                 <div className="grid grid-cols-3 gap-1">
                   {photoPosts.map((post) => {

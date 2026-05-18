@@ -4,6 +4,7 @@ import SessionProvider from "@/components/SessionProvider";
 import Navbar from "@/components/Navbar";
 import BottomNav from "@/components/BottomNav";
 import PushRegistrar from "@/components/PushRegistrar";
+import ArrivalDetector from "@/components/ArrivalDetector";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -25,9 +26,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="h-full">
-      <body className="min-h-full flex flex-col bg-surface">
+      <body className="min-h-full flex flex-col bg-surface" suppressHydrationWarning>
         <SessionProvider>
           <PushRegistrar />
+          <ArrivalDetector />
           <Navbar />
           <main className="flex-1">{children}</main>
           <BottomNav />

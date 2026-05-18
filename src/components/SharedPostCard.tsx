@@ -85,13 +85,14 @@ export default function SharedPostCard({ post }: { post: SharedPost }) {
 
       {showFullPost && typeof document !== "undefined" && createPortal(
         <div
-          className="fixed inset-0 z-[999] bg-black/50 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
+          className="fixed inset-0 z-[999] bg-black/50 overflow-y-auto"
           onClick={() => setShowFullPost(false)}
         >
-          <div
-            className="w-full sm:max-w-lg sm:my-8"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="min-h-full flex items-center justify-center p-4">
+            <div
+              className="w-full max-w-lg"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="flex justify-end mb-2 px-2 sm:px-0">
               <button
                 onClick={() => setShowFullPost(false)}
@@ -117,6 +118,7 @@ export default function SharedPostCard({ post }: { post: SharedPost }) {
                 <p className="text-gray-500 text-sm">Post not found</p>
               </div>
             )}
+            </div>
           </div>
         </div>,
         document.body

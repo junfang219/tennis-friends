@@ -16,7 +16,11 @@ export default function Navbar() {
   const [isNative, setIsNative] = useState(false);
 
   useEffect(() => {
-    setIsNative(!!(window as unknown as { Capacitor?: unknown }).Capacitor);
+    // `window.Capacitor` exists in the web bundle too (the @capacitor/core
+    // stub assigns itself when imported). `isNativePlatform()` is the only
+    // reliable way to tell apart the iOS/Android shell from the browser.
+    const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+    setIsNative(!!cap?.isNativePlatform?.());
   }, []);
 
   const isActive = (path: string) => pathname === path;

@@ -9,7 +9,7 @@ import { AGE_LABELS, GENDER_LABELS, formatRating } from "@/lib/profileLabels";
 
 type Bucket = "beginner" | "intermediate" | "advanced" | "pro";
 type AgeKey = "under_18" | "18_29" | "30_49" | "50_plus";
-type GenderKey = "male" | "female" | "non_binary" | "prefer_not_to_say";
+type GenderKey = "male" | "female";
 type SortKey = "distance" | "recent";
 
 const BUCKET_OPTIONS: { value: Bucket; label: string }[] = [
@@ -29,8 +29,6 @@ const AGE_OPTIONS: { value: AgeKey; label: string }[] = [
 const GENDER_OPTIONS: { value: GenderKey; label: string }[] = [
   { value: "male", label: "Male" },
   { value: "female", label: "Female" },
-  { value: "non_binary", label: "Non-binary" },
-  { value: "prefer_not_to_say", label: "Prefer not to say" },
 ];
 
 type UserResult = {

@@ -46,6 +46,8 @@ export default function HomePage() {
   const [highlightedPostId, setHighlightedPostId] = useState<string | null>(null);
   // null = show all categories; otherwise show only the selected category
   const [activeFilter, setActiveFilter] = useState<"find_players" | "propose_team" | "social" | "nearby" | null>(null);
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const filterMenuRef = useRef<HTMLDivElement>(null);
 
   // Lazy-checked once when the user first opens the Nearby filter. Null = unknown.
   const [hasLocation, setHasLocation] = useState<boolean | null>(null);
@@ -163,14 +165,24 @@ export default function HomePage() {
     if (el && observerRef.current) observerRef.current.observe(el);
   }, []);
 
-  const toggleFilter = (key: "find_players" | "propose_team" | "social" | "nearby") => {
-    setActiveFilter(activeFilter === key ? null : key);
-  };
-
-  // Chip "active" state — only highlights the currently selected filter
-  const filters = {
-    has: (k: "find_players" | "propose_team" | "social" | "nearby") => activeFilter === k,
-  };
+  // Close filter dropdown when clicking outside or pressing Escape
+  useEffect(() => {
+    if (!filterMenuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (filterMenuRef.current && !filterMenuRef.current.contains(e.target as Node)) {
+        setFilterMenuOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFilterMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [filterMenuOpen]);
 
   useEffect(() => {
     if (status === "authenticated") {
@@ -334,71 +346,144 @@ export default function HomePage() {
           <PostComposer onPost={(post) => setPosts((prev) => [post as Post, ...prev])} />
         </div>
 
-        {/* Filter chips */}
-        <div className="flex items-center gap-2 flex-wrap animate-fade-in-up stagger-2">
+        {/* Filter dropdown */}
+        <div className="flex items-center gap-2 animate-fade-in-up stagger-2 relative z-30" ref={filterMenuRef}>
           <span className="text-gray-400 flex items-center">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polygon points="22,3 2,3 10,12.46 10,19 14,21 14,12.46" />
             </svg>
           </span>
-          <button
-            onClick={() => toggleFilter("social")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
-              filters.has("social")
-                ? "bg-court-green-soft text-white border-court-green-soft shadow-sm"
-                : "bg-white text-gray-500 border-gray-200 hover:border-court-green-pale"
-            }`}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21,15 16,10 5,21" />
-            </svg>
-            Social
-          </button>
-          <button
-            onClick={() => toggleFilter("find_players")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
-              filters.has("find_players")
-                ? "bg-court-green text-white border-court-green shadow-sm"
-                : "bg-white text-gray-500 border-gray-200 hover:border-court-green-pale"
-            }`}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
-            </svg>
-            Find Players
-          </button>
-          <button
-            onClick={() => toggleFilter("propose_team")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
-              filters.has("propose_team")
-                ? "bg-clay text-white border-clay shadow-sm"
-                : "bg-white text-gray-500 border-gray-200 hover:border-clay/50"
-            }`}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
-              <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
-              <path d="M4 22h16" />
-              <path d="M18 2H6v7a6 6 0 0012 0V2z" />
-            </svg>
-            Teams
-          </button>
-          <button
-            onClick={() => toggleFilter("nearby")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
-              filters.has("nearby")
-                ? "bg-ball-yellow text-court-green border-ball-yellow shadow-sm"
-                : "bg-white text-gray-500 border-gray-200 hover:border-ball-yellow"
-            }`}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 11a9 9 0 0118 0" />
-              <path d="M6.5 11a5.5 5.5 0 0111 0" />
-              <circle cx="12" cy="11" r="1.5" fill="currentColor" />
-              <path d="M12 13v7" />
-            </svg>
-            Nearby
-          </button>
+          {(() => {
+            const FILTER_OPTIONS: {
+              id: "find_players" | "propose_team" | "social" | "nearby" | null;
+              label: string;
+              activeClass: string;
+              icon: React.ReactNode;
+            }[] = [
+              {
+                id: null,
+                label: "All",
+                activeClass: "bg-gray-900 text-white border-gray-900 shadow-sm",
+                icon: (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="3" y1="6" x2="21" y2="6" />
+                    <line x1="3" y1="12" x2="21" y2="12" />
+                    <line x1="3" y1="18" x2="21" y2="18" />
+                  </svg>
+                ),
+              },
+              {
+                id: "social",
+                label: "Social",
+                activeClass: "bg-court-green-soft text-white border-court-green-soft shadow-sm",
+                icon: (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21,15 16,10 5,21" />
+                  </svg>
+                ),
+              },
+              {
+                id: "find_players",
+                label: "Find Players",
+                activeClass: "bg-court-green text-white border-court-green shadow-sm",
+                icon: (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
+                  </svg>
+                ),
+              },
+              {
+                id: "propose_team",
+                label: "Teams",
+                activeClass: "bg-clay text-white border-clay shadow-sm",
+                icon: (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
+                    <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
+                    <path d="M4 22h16" />
+                    <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+                  </svg>
+                ),
+              },
+              {
+                id: "nearby",
+                label: "Nearby",
+                activeClass: "bg-ball-yellow text-court-green border-ball-yellow shadow-sm",
+                icon: (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 11a9 9 0 0118 0" />
+                    <path d="M6.5 11a5.5 5.5 0 0111 0" />
+                    <circle cx="12" cy="11" r="1.5" fill="currentColor" />
+                    <path d="M12 13v7" />
+                  </svg>
+                ),
+              },
+            ];
+            const current = FILTER_OPTIONS.find((o) => o.id === activeFilter) ?? FILTER_OPTIONS[0];
+            return (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setFilterMenuOpen((open) => !open)}
+                  aria-haspopup="listbox"
+                  aria-expanded={filterMenuOpen}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
+                    activeFilter === null
+                      ? "bg-white text-gray-600 border-gray-200 hover:border-court-green-pale"
+                      : current.activeClass
+                  }`}
+                >
+                  {current.icon}
+                  {current.label}
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className={`transition-transform ${filterMenuOpen ? "rotate-180" : ""}`}
+                  >
+                    <polyline points="6,9 12,15 18,9" />
+                  </svg>
+                </button>
+                {filterMenuOpen && (
+                  <div
+                    role="listbox"
+                    className="absolute left-7 top-full mt-2 z-50 min-w-[180px] bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden py-1"
+                  >
+                    {FILTER_OPTIONS.map((option) => {
+                      const selected = activeFilter === option.id;
+                      return (
+                        <button
+                          key={option.id ?? "all"}
+                          role="option"
+                          aria-selected={selected}
+                          onClick={() => {
+                            setActiveFilter(option.id);
+                            setFilterMenuOpen(false);
+                          }}
+                          className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-left transition-colors ${
+                            selected ? "bg-gray-50 text-gray-900" : "text-gray-600 hover:bg-gray-50"
+                          }`}
+                        >
+                          <span className={selected ? "text-court-green" : "text-gray-500"}>{option.icon}</span>
+                          <span className="flex-1">{option.label}</span>
+                          {selected && (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-court-green">
+                              <polyline points="20,6 9,17 4,12" />
+                            </svg>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
 
         {/* Inline turn-off control: only visible when viewing Nearby broadcasts

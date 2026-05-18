@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type FriendshipState = {
@@ -18,7 +18,27 @@ export default function FriendRequestButton({
 }) {
   const [state, setState] = useState(initial);
   const [loading, setLoading] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [menuOpen]);
 
   const sendRequest = async () => {
     setLoading(true);
@@ -57,6 +77,20 @@ export default function FriendRequestButton({
     setLoading(false);
   };
 
+  const cancelRequest = async () => {
+    setMenuOpen(false);
+    setLoading(true);
+    const res = await fetch("/api/friends/withdraw", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ friendshipId: state.friendshipId }),
+    });
+    if (res.ok) {
+      setState({ friendshipId: null, friendshipStatus: null, isRequester: false });
+    }
+    setLoading(false);
+  };
+
   if (loading) {
     return (
       <button disabled className="btn-secondary btn-sm opacity-60">
@@ -83,16 +117,52 @@ export default function FriendRequestButton({
     );
   }
 
-  // Pending - I sent the request
+  // Pending - I sent the request. Tapping opens a small dropdown with a
+  // "Cancel request" action that withdraws the pending friendship.
   if (state.friendshipStatus === "PENDING" && state.isRequester) {
     return (
-      <button disabled className="btn-secondary btn-sm opacity-70 cursor-default">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="10" />
-          <polyline points="12,6 12,12 16,14" />
-        </svg>
-        Request Sent
-      </button>
+      <div ref={menuRef} className="relative">
+        <button
+          type="button"
+          onClick={() => setMenuOpen((o) => !o)}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          className="btn-secondary btn-sm"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12,6 12,12 16,14" />
+          </svg>
+          Request Sent
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={`transition-transform ${menuOpen ? "rotate-180" : ""}`}
+          >
+            <polyline points="6,9 12,15 18,9" />
+          </svg>
+        </button>
+        {menuOpen && (
+          <div
+            role="menu"
+            className="absolute right-0 top-full mt-2 z-50 min-w-[160px] bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden py-1"
+          >
+            <button
+              role="menuitem"
+              onClick={cancelRequest}
+              className="w-full text-left px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+            >
+              Cancel request
+            </button>
+          </div>
+        )}
+      </div>
     );
   }
 

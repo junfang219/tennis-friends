@@ -1,0 +1,134 @@
+[
+  {
+    "id": 15,
+    "name": "Green Lake Park West",
+    "address": "Green Lake Park7201 E Green Lake Dr N, Seattle, WA 98115",
+    "reason": "no result"
+  },
+  {
+    "id": 21,
+    "name": "Madison Park",
+    "address": "1800 42nd Ave E, Seattle, WA 98112",
+    "reason": "no result"
+  },
+  {
+    "id": 24,
+    "name": "Magnolia Playfield",
+    "address": "2518 W 34th W, Seattle, WA 98199",
+    "reason": "no result"
+  },
+  {
+    "id": 33,
+    "name": "Rogers Playfield",
+    "address": "Rogers (Eastlake) Playfieldeastlake Ave E & E Roanoke St, Seattle, WA 98112",
+    "reason": "no result"
+  },
+  {
+    "id": 34,
+    "name": "Sam Smith (I90 Lid) Park",
+    "address": "Sam Smith Park (I-90 Lid)1400 Martin Luther King Jr Way S, Seattle, WA 98144",
+    "reason": "no result"
+  },
+  {
+    "id": 62,
+    "name": "Gorin Sports Redmond",
+    "address": "10600 231st Way NE Suite B, Redmond, WA 98053",
+    "reason": "no result"
+  },
+  {
+    "id": 68,
+    "name": "Woodinville Sports Club",
+    "address": "15327 140th Pl NE, Woodinville, WA 98072",
+    "reason": "no result"
+  },
+  {
+    "id": 75,
+    "name": "Columbia Athletic Club (Silver lake)",
+    "address": "505 128th St SE, Everett, WA 98208",
+    "reason": "no result"
+  },
+  {
+    "id": 93,
+    "name": "Highland Community Park",
+    "address": "14224 NE Bel Red Rd, Bellevue, WA 98007",
+    "reason": "no result"
+  },
+  {
+    "id": 99,
+    "name": "Silverleaf Park",
+    "address": "4961 164th Ave SE, Bellevue, WA 98006",
+    "reason": "no result"
+  },
+  {
+    "id": 104,
+    "name": "Highland Middle School Tennis Courts",
+    "address": "15027 NE Bel Red Rd, Bellevue, WA 98007",
+    "reason": "no result"
+  },
+  {
+    "id": 105,
+    "name": "Aubrey Davis Park Tennis Courts",
+    "address": "7000-7088 SE 22nd St, Mercer Island, WA 98040",
+    "reason": "no result"
+  },
+  {
+    "id": 122,
+    "name": "Taluswood Tennis courts",
+    "address": "Building R, 4214 236th St SW, Mountlake Terrace, WA 98043",
+    "reason": "no result"
+  },
+  {
+    "id": 142,
+    "name": "Redmond Ridge East Tennis Court",
+    "address": "Redmond Ridge East Tennis Court, 22815 NE Alder Crest Dr, Redmond, WA 98053",
+    "reason": "no result"
+  },
+  {
+    "id": 146,
+    "name": "Hunts Point Tennis Courts",
+    "address": "Points Loop Trail, Hunts Point, WA 98004",
+    "reason": "no result"
+  },
+  {
+    "id": 147,
+    "name": "Tennis at PRO Club",
+    "address": "Tennis Dept, 4455 148th Ave NE, Bellevue, WA 98007",
+    "reason": "no result"
+  },
+  {
+    "id": 156,
+    "name": "Central Park Multi-Use Courts",
+    "address": "Issaquah Highlands Tennis Courts, 1907 NE Park Dr, Issaquah, WA 98029",
+    "reason": "no result"
+  },
+  {
+    "id": 157,
+    "name": "Klahanie Mountainview Tennis (HOA)",
+    "address": "4280 Klahanie Dr. SE, Issaquah, WA 98029",
+    "reason": "no result"
+  },
+  {
+    "id": 167,
+    "name": "Hampton Woods Tennis Court",
+    "address": "Hampton Woods Park, 4001 244th Pl SE, Sammamish, WA 98029",
+    "reason": "no result"
+  },
+  {
+    "id": 231,
+    "name": "Roanoke Park (Mercer Island)",
+    "address": "70th Ave SE & W Mercer Way, Mercer Island, WA 98040",
+    "reason": "no result"
+  },
+  {
+    "id": 235,
+    "name": "Klahanie Summit Tennis (HOA)",
+    "address": "4400 Klahanie Dr SE, Issaquah, WA 98029",
+    "reason": "no result"
+  },
+  {
+    "id": 239,
+    "name": "Browns Point Playfield",
+    "address": "4915 La Hal Da Ln NE, Tacoma, WA 98422",
+    "reason": "no result"
+  }
+]

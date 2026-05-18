@@ -36,6 +36,7 @@ model User {
   cashappHandle  String?
   zelleHandle    String?
   onboardingComplete Boolean @default(false)
+  isPrivate      Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -74,6 +75,7 @@ model User {
   messageReactions    MessageReaction[]
   deviceTokens        DeviceToken[]
   courtReviews        CourtReview[]          @relation("CourtReviewAuthor")
+  courtAvailabilityReports CourtAvailabilityReport[] @relation("CourtAvailabilityReporter")
 }
 
 model Highlight {
@@ -148,6 +150,7 @@ model Post {
   comments     Comment[]
   hiddenBy     HiddenPost[]
   photos       Photo[]
+  availabilityReports CourtAvailabilityReport[]
 
   @@index([isBroadcast, createdAt])
 }
@@ -634,6 +637,20 @@ model CourtReview {
 
   @@unique([courtId, userId])
   @@index([courtId])
+}
+
+model CourtAvailabilityReport {
+  id         String   @id @default(cuid())
+  courtId    String
+  userId     String
+  user       User     @relation("CourtAvailabilityReporter", fields: [userId], references: [id], onDelete: Cascade)
+  hasEmpty   Boolean
+  reportedAt DateTime @default(now())
+  postId     String?
+  post       Post?    @relation(fields: [postId], references: [id], onDelete: SetNull)
+
+  @@index([courtId, reportedAt])
+  @@index([userId, reportedAt])
 }
 
 model CourtReviewPhoto {

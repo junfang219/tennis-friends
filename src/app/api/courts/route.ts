@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CURATED_REGIONS, type BBox, type CuratedCourt } from "@/lib/courts-data";
+import {
+  filterFacilitiesByBbox,
+  descriptionPreview,
+  type Facility,
+  type ManagedByBucket,
+} from "@/lib/facilities";
 
 // ── Types ───────────────────────────────────────────────────────────
 type CourtResult = {
@@ -14,7 +20,13 @@ type CourtResult = {
   lit?: boolean;
   courts?: number;
   address?: string;
-  source: "official" | "osm";
+  source: "official" | "osm" | "facility";
+  /** Only present on facility results. Drives marker color on the map. */
+  bucket?: ManagedByBucket;
+  bookingUrl?: string | null;
+  category?: Facility["category"];
+  status?: Facility["status"];
+  descriptionPreview?: string | null;
 };
 
 // Wrap a CuratedCourt into the API shape
@@ -31,6 +43,33 @@ function curatedToResult(c: CuratedCourt): CourtResult {
     courts: c.courts,
     address: c.address,
     source: "official",
+  };
+}
+
+function facilityToResult(f: Facility): CourtResult {
+  // Caller already filtered to facilities with lat/lng populated, but the
+  // type is still nullable.
+  return {
+    id: f.courtId,
+    type: "facility",
+    osmId: 0,
+    lat: f.latitude!,
+    lng: f.longitude!,
+    name: f.name,
+    surface: f.indoorOutdoor === "indoor" ? "indoor" : undefined,
+    lit: f.lighted ?? undefined,
+    courts: f.courtCount ?? undefined,
+    address: f.address,
+    source: "facility",
+    bucket: f.bucket,
+    // Suppress the card's "Book" button when the venue is info-only
+    // (`bookable: false`) OR has multiple per-court booking links (the card
+    // can't show >1 button — direct the user to Details). Detail page still
+    // gets the URL from /api/courts/[id].
+    bookingUrl: f.bookable && !f.bookingLinks ? f.bookingUrl : null,
+    category: f.category,
+    status: f.status,
+    descriptionPreview: descriptionPreview(f.description),
   };
 }
 
@@ -204,6 +243,17 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // 1b. Inject scraped facilities (data/tennis_courts_geocoded.json, ~267
+  // venues across King/Pierce/Snohomish/Kitsap counties). The lib filters
+  // by viewport, so calling it on every request is cheap. This supersedes
+  // the old hand-curated SEATTLE_COURTS / EASTSIDE_COURTS / WA_PUGET_SOUND
+  // arrays for Greater Seattle — those regional entries in CURATED_REGIONS
+  // are intentionally empty now and only contribute their bboxes for OSM
+  // suppression.
+  for (const f of filterFacilitiesByBbox(requestBounds)) {
+    allCourts.push(facilityToResult(f));
+  }
+
   // 2. If viewport is entirely within a single curated region that claims
   //    comprehensive coverage (suppressOsm !== false), skip Overpass — the
   //    curated data is authoritative and OSM would just add noise.
@@ -278,18 +328,20 @@ export async function GET(request: NextRequest) {
     return true;
   });
 
-  // Proximity dedup: drop any OSM marker within 80m of a curated marker.
-  // This handles the overlap between additive regions (like WA Puget Sound)
-  // and OSM, where the same park can be both curated and OSM-tagged.
+  // Proximity dedup: drop any OSM marker within 80m of a curated/facility
+  // marker. Handles overlap between additive regions (like WA Puget Sound)
+  // or scraped facilities and OSM-tagged duplicates of the same park.
   const PROXIMITY_M = 80;
-  const curated = unique.filter((c) => c.source === "official");
+  const authoritative = unique.filter(
+    (c) => c.source === "official" || c.source === "facility"
+  );
   const osm = unique.filter((c) => c.source === "osm");
   const filteredOsm = osm.filter((o) => {
-    for (const c of curated) {
+    for (const c of authoritative) {
       if (metersBetween(o.lat, o.lng, c.lat, c.lng) < PROXIMITY_M) return false;
     }
     return true;
   });
 
-  return NextResponse.json([...curated, ...filteredOsm]);
+  return NextResponse.json([...authoritative, ...filteredOsm]);
 }

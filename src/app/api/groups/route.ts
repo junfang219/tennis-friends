@@ -12,24 +12,19 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const archived = searchParams.get("archived") === "true";
 
-  // Per-user archive state lives on GroupMember.archivedAt — query through it
-  // to honor the filter. Note: a team owner is also a GroupMember row, so this
-  // single query handles both owner and non-owner cases uniformly.
-  const memberships = await prisma.groupMember.findMany({
-    where: {
-      userId: session.user.id,
-      ...(archived ? { archivedAt: { not: null } } : { archivedAt: null }),
-    },
-    select: { groupId: true },
-  });
-  const groupIds = memberships.map((m) => m.groupId);
-
-  if (groupIds.length === 0) {
-    return NextResponse.json([]);
-  }
-
+  // Per-user archive state lives on GroupMember.archivedAt — filter the
+  // calling user's membership row inline so we get the right teams in a
+  // single query (Owner is also a GroupMember row, so this handles both
+  // owner and non-owner cases uniformly).
   const groups = await prisma.group.findMany({
-    where: { id: { in: groupIds } },
+    where: {
+      members: {
+        some: {
+          userId: session.user.id,
+          ...(archived ? { archivedAt: { not: null } } : { archivedAt: null }),
+        },
+      },
+    },
     include: {
       owner: { select: { id: true, name: true, profileImageUrl: true } },
       members: {
