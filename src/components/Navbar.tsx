@@ -76,24 +76,31 @@ export default function Navbar() {
             </span>
           </button>
 
-          {/* Desktop Nav */}
+          {/* Desktop Nav — icon-only with hover tooltip */}
           {status === "authenticated" && (
-            <div className="hidden md:flex items-center gap-1">
+            <div className="hidden md:flex flex-1 max-w-2xl items-center justify-between px-4 mx-4">
               {navLinks.map((link) => (
                 <Link
                   key={link.href}
                   href={link.href}
                   prefetch={true}
+                  aria-label={link.label}
+                  title={link.label}
                   onMouseEnter={() => router.prefetch(link.href)}
                   onFocus={() => router.prefetch(link.href)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                  className={`group relative flex items-center justify-center p-2.5 rounded-xl transition-all ${
                     isActive(link.href)
                       ? "bg-white/15 text-ball-yellow"
                       : "text-white/70 hover:text-white hover:bg-white/8"
                   }`}
                 >
                   <link.icon active={isActive(link.href)} />
-                  {link.label}
+                  <span
+                    role="tooltip"
+                    className="pointer-events-none absolute top-full left-1/2 mt-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-court-green-light px-2 py-1 text-xs font-medium text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
+                  >
+                    {link.label}
+                  </span>
                 </Link>
               ))}
             </div>
