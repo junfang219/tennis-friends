@@ -33,6 +33,13 @@ export async function POST(
   const body = await request.json().catch(() => null);
   const accept = !!body?.accept;
 
+  const [responder, challenger] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { name: true } }),
+    prisma.user.findUnique({ where: { id: match.proposedBy }, select: { name: true } }),
+  ]);
+  const responderName = responder?.name ?? "A player";
+  const challengerName = challenger?.name ?? "the challenger";
+
   if (accept) {
     await prisma.eventMatch.update({
       where: { id: matchId },
@@ -46,13 +53,21 @@ export async function POST(
           typeof body?.courtAssign === "string" ? body.courtAssign : match.courtAssign,
       },
     });
-    await postEventSystemMessage(eventId, `🪜 Challenge accepted — match scheduled.`);
+    await postEventSystemMessage(
+      eventId,
+      `🪜 ${responderName} accepted ${challengerName}'s challenge — match scheduled.`,
+      userId
+    );
   } else {
     await prisma.eventMatch.update({
       where: { id: matchId },
       data: { status: "declined" },
     });
-    await postEventSystemMessage(eventId, `🪜 Challenge declined.`);
+    await postEventSystemMessage(
+      eventId,
+      `🪜 ${responderName} declined ${challengerName}'s challenge.`,
+      userId
+    );
   }
 
   await prisma.notification.create({

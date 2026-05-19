@@ -42,7 +42,16 @@ export async function POST(
     },
   });
 
-  await postEventSystemMessage(eventId, `✅ Score confirmed: ${match.score}.`);
+  const confirmer = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { name: true },
+  });
+  const confirmerName = confirmer?.name ?? "A player";
+  await postEventSystemMessage(
+    eventId,
+    `✅ ${confirmerName} confirmed: ${match.score}.`,
+    userId
+  );
 
   // Notify the reporter so they see their submission was accepted.
   await prisma.notification.create({

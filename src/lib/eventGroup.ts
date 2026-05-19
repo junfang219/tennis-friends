@@ -78,13 +78,15 @@ export async function syncEventGroupMembers(eventId: string): Promise<void> {
 
 /**
  * Post a system message into the event's backing group chat.
- * Used by Phase 2 flows (match confirmed, challenge sent, dispute raised, etc.)
- * Senderless system posts are attributed to the event organizer to satisfy the
- * GroupMessage.senderId FK without inventing a synthetic user.
+ * Used by Phase 2 flows (match reported/confirmed, challenge sent, etc.)
+ * Attribute the message to the user who actually performed the action so the
+ * chat shows their avatar; fall back to the organizer for organizer-driven
+ * system events (bracket seeding, mixer rotations, champion announcement).
  */
 export async function postEventSystemMessage(
   eventId: string,
-  content: string
+  content: string,
+  actorId?: string
 ): Promise<void> {
   const event = await prisma.event.findUnique({
     where: { id: eventId },
@@ -94,7 +96,7 @@ export async function postEventSystemMessage(
   await prisma.groupMessage.create({
     data: {
       groupId: event.groupId,
-      senderId: event.ownerId,
+      senderId: actorId ?? event.ownerId,
       content,
     },
   });

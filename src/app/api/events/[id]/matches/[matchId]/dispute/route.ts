@@ -33,6 +33,7 @@ export async function POST(
     return NextResponse.json({ error: "You can't dispute your own report" }, { status: 409 });
   }
 
+  const previousScore = match.score;
   await prisma.eventMatch.update({
     where: { id: matchId },
     data: {
@@ -45,9 +46,15 @@ export async function POST(
     },
   });
 
+  const disputer = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { name: true },
+  });
+  const disputerName = disputer?.name ?? "A player";
   await postEventSystemMessage(
     eventId,
-    `⚠️ Score disputed (was ${match.score}). Please re-enter the result together.`
+    `⚠️ ${disputerName} disputed the score (was ${previousScore}). Please re-enter together.`,
+    userId
   );
 
   // Notify the original reporter that their score was challenged.

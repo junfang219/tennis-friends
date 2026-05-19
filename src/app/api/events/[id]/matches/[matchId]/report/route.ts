@@ -52,9 +52,16 @@ export async function POST(
   });
 
   const otherId = userId === match.player1Id ? match.player2Id : match.player1Id;
+  const [reporter, opponent] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { name: true } }),
+    prisma.user.findUnique({ where: { id: otherId }, select: { name: true } }),
+  ]);
+  const reporterName = reporter?.name ?? "A player";
+  const opponentName = opponent?.name ?? "the other player";
   await postEventSystemMessage(
     eventId,
-    `📝 Score reported: ${score} — awaiting confirmation from the other player.`
+    `📝 ${reporterName} reported: ${score} — waiting for ${opponentName} to confirm.`,
+    userId
   );
 
   // Notify the other player so they can confirm or dispute.

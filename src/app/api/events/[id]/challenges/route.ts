@@ -105,12 +105,16 @@ export async function POST(
     },
   });
 
-  const challengerName = (
-    await prisma.user.findUnique({ where: { id: userId }, select: { name: true } })
-  )?.name;
+  const [challenger, opponent] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { name: true } }),
+    prisma.user.findUnique({ where: { id: opponentId }, select: { name: true } }),
+  ]);
+  const challengerName = challenger?.name ?? "A player";
+  const opponentName = opponent?.name ?? "another player";
   await postEventSystemMessage(
     eventId,
-    `🪜 ${challengerName ?? "A player"} challenged a player up the ladder.`
+    `🪜 ${challengerName} challenged ${opponentName} up the ladder.`,
+    userId
   );
 
   await prisma.notification.create({
