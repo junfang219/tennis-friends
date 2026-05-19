@@ -123,8 +123,11 @@ export default function EventDetailPage() {
 
   const typeMeta = EVENT_TYPE_META[event.eventType] ?? EVENT_TYPE_META.mixer;
   const isOwner = session?.user?.id === event.ownerId;
-  const showMatchesAction = event.eventType !== "clinic";
-  const showStandingsAction = event.eventType !== "clinic" && event.eventType !== "mixer";
+  const showMatchesAction = event.eventType !== "clinic" && event.eventType !== "custom";
+  const showStandingsAction =
+    event.eventType !== "clinic" &&
+    event.eventType !== "mixer" &&
+    event.eventType !== "custom";
   const registered = event.participants.filter((p) => p.status === "registered");
   const waitlist = event.participants.filter((p) => p.status === "waitlist");
   const signupDeadlinePassed =

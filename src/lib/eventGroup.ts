@@ -82,6 +82,7 @@ function welcomeMessage(title: string, type: string): string {
     round_robin: "🔁 Round-robin — you'll play everyone, good luck!",
     mixer: "🤝 Social mixer — partners rotate, just have fun.",
     clinic: "🎾 Clinic — show up ready to learn.",
+    custom: "✨ See you there!",
   };
   const tag = flair[type] ?? "🎾 Let's play!";
   return `Welcome to ${title}! ${tag}`;

@@ -2045,6 +2045,7 @@ const EVENT_TYPE_LABEL: Record<string, { label: string; emoji: string }> = {
   round_robin: { label: "Round Robin", emoji: "🔁" },
   mixer: { label: "Social Mixer", emoji: "🤝" },
   clinic: { label: "Clinic", emoji: "🎾" },
+  custom: { label: "Custom", emoji: "✨" },
 };
 
 function EventChip({

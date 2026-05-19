@@ -26,4 +26,10 @@ export const EVENT_TYPE_META: Record<
     bg: "bg-court-green-soft/15",
     text: "text-court-green-soft",
   },
+  custom: {
+    label: "Custom",
+    emoji: "✨",
+    bg: "bg-gray-100",
+    text: "text-gray-700",
+  },
 };
