@@ -27,17 +27,23 @@ export async function GET(
         },
         orderBy: [{ status: "asc" }, { registeredAt: "asc" }],
       },
+      _count: { select: { matches: true } },
     },
   });
 
   if (!event) return NextResponse.json({ error: "Event not found" }, { status: 404 });
 
   const me = event.participants.find((p) => p.userId === userId);
+  // A tournament with any matches at all has a seeded bracket — seed creates
+  // round-1 rows in one shot, so existence implies seeded.
+  const hasBracket = event.eventType === "tournament" && event._count.matches > 0;
   return NextResponse.json({
     ...event,
     myStatus: me?.status ?? null,
     registeredCount: event.participants.filter((p) => p.status === "registered").length,
     waitlistCount: event.participants.filter((p) => p.status === "waitlist").length,
+    matchCount: event._count.matches,
+    hasBracket,
   });
 }
 

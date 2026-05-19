@@ -796,9 +796,12 @@ model EventMatch {
   winnerSide  Int?     // 1 or 2
   reportedBy  String   @default("") // userId who entered score
   confirmedBy String   @default("") // userId who confirmed
+  proposedBy  String   @default("") // userId of the ladder challenger; empty for auto-generated
+  disputedAt  DateTime?
 
-  status      String   @default("scheduled") // "scheduled" | "in_progress" | "completed" | "cancelled"
+  status      String   @default("scheduled") // "proposed" | "declined" | "scheduled" | "in_progress" | "completed" | "cancelled"
   createdAt   DateTime @default(now())
 
   @@index([eventId, status])
+  @@index([eventId, round])
 }

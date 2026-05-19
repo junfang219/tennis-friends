@@ -1,0 +1,104 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import Avatar from "@/components/Avatar";
+import type { StandingsRowView } from "./types";
+import ChallengeModal from "./ChallengeModal";
+
+const DEFAULT_MAX_GAP = 3;
+
+export default function LadderList({
+  eventId,
+  currentUserId,
+  maxGap = DEFAULT_MAX_GAP,
+}: {
+  eventId: string;
+  currentUserId: string | null;
+  maxGap?: number;
+}) {
+  const [rows, setRows] = useState<StandingsRowView[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [challengeTarget, setChallengeTarget] = useState<StandingsRowView | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    fetch(`/api/events/${eventId}/standings`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => {
+        setRows(data);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventId]);
+
+  if (loading) return <div className="text-sm text-gray-500 py-6 text-center">Loading ladder…</div>;
+  if (!rows || rows.length === 0) {
+    return <div className="text-sm text-gray-500 py-6 text-center">No ladder yet.</div>;
+  }
+
+  const myRank = currentUserId
+    ? rows.find((r) => r.userId === currentUserId)?.rank ?? null
+    : null;
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+      <ul>
+        {rows.map((row) => {
+          const isMe = currentUserId === row.userId;
+          const canChallenge =
+            !isMe &&
+            myRank != null &&
+            row.rank < myRank &&
+            myRank - row.rank <= maxGap;
+          return (
+            <li
+              key={row.userId}
+              className={`flex items-center gap-3 px-4 py-3 border-b border-gray-100 last:border-b-0 ${isMe ? "bg-indigo-50/30" : ""}`}
+            >
+              <span className="text-sm font-bold w-6 text-indigo-700">
+                #{row.rank}
+              </span>
+              {row.user && (
+                <Avatar name={row.user.name} image={row.user.profileImageUrl} size="sm" />
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-gray-900 truncate">
+                  {row.user?.name ?? "—"}
+                  {isMe && <span className="ml-2 text-[10px] text-indigo-600">you</span>}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {row.wins}–{row.losses} · {row.points} pts
+                </div>
+              </div>
+              {canChallenge && (
+                <button
+                  onClick={() => setChallengeTarget(row)}
+                  className="px-3 py-1 rounded-full bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700"
+                >
+                  Challenge
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      {challengeTarget && (
+        <ChallengeModal
+          eventId={eventId}
+          opponent={challengeTarget}
+          onClose={() => setChallengeTarget(null)}
+          onSent={() => {
+            setChallengeTarget(null);
+            load();
+          }}
+        />
+      )}
+    </div>
+  );
+}

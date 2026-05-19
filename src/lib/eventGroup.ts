@@ -76,6 +76,30 @@ export async function syncEventGroupMembers(eventId: string): Promise<void> {
   }
 }
 
+/**
+ * Post a system message into the event's backing group chat.
+ * Used by Phase 2 flows (match confirmed, challenge sent, dispute raised, etc.)
+ * Senderless system posts are attributed to the event organizer to satisfy the
+ * GroupMessage.senderId FK without inventing a synthetic user.
+ */
+export async function postEventSystemMessage(
+  eventId: string,
+  content: string
+): Promise<void> {
+  const event = await prisma.event.findUnique({
+    where: { id: eventId },
+    select: { groupId: true, ownerId: true },
+  });
+  if (!event?.groupId) return;
+  await prisma.groupMessage.create({
+    data: {
+      groupId: event.groupId,
+      senderId: event.ownerId,
+      content,
+    },
+  });
+}
+
 function welcomeMessage(title: string, type: string): string {
   const flair: Record<string, string> = {
     tournament: "🏆 Tournament time — bring your A game!",

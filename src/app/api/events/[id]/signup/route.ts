@@ -26,6 +26,8 @@ export async function POST(
       ntrpMax: true,
       isPublicSignup: true,
       ownerId: true,
+      eventType: true,
+      _count: { select: { matches: true } },
     },
   });
   if (!event) return NextResponse.json({ error: "Event not found" }, { status: 404 });
@@ -34,6 +36,13 @@ export async function POST(
   }
   if (event.signupDeadline && event.signupDeadline < new Date()) {
     return NextResponse.json({ error: "Signup deadline has passed" }, { status: 409 });
+  }
+  // Tournaments lock signups once the bracket is seeded.
+  if (event.eventType === "tournament" && event._count.matches > 0) {
+    return NextResponse.json(
+      { error: "Bracket is live — signups are locked" },
+      { status: 409 }
+    );
   }
   // Public signup gate; invite-only is a follow-up so we only allow the organizer for now.
   if (!event.isPublicSignup && userId !== event.ownerId) {

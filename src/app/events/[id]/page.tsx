@@ -6,12 +6,20 @@ import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import Avatar from "@/components/Avatar";
 import { EVENT_TYPE_META } from "@/lib/eventTypeMeta";
+import MatchList from "@/components/events/MatchList";
+import BracketView from "@/components/events/BracketView";
+import StandingsTable from "@/components/events/StandingsTable";
+import LadderList from "@/components/events/LadderList";
+import RotationCard from "@/components/events/RotationCard";
+import CheckinDrawer from "@/components/events/CheckinDrawer";
+import FindPartnerComposer from "@/components/events/FindPartnerComposer";
 
 type Participant = {
   id: string;
   userId: string;
   status: "registered" | "waitlist" | "withdrawn";
   registeredAt: string;
+  checkedInAt: string | null;
   user: {
     id: string;
     name: string;
@@ -43,7 +51,11 @@ type EventDetail = {
   myStatus: "registered" | "waitlist" | "withdrawn" | null;
   registeredCount: number;
   waitlistCount: number;
+  matchCount: number;
+  hasBracket: boolean;
 };
+
+type PanelKey = "matches" | "bracket" | "standings" | "rotations" | "roster";
 
 export default function EventDetailPage() {
   const params = useParams<{ id: string }>();
@@ -53,8 +65,10 @@ export default function EventDetailPage() {
   const [loading, setLoading] = useState(true);
   const [actionInFlight, setActionInFlight] = useState(false);
   const [error, setError] = useState("");
-  const [showRoster, setShowRoster] = useState(false);
+  const [activePanel, setActivePanel] = useState<PanelKey | null>(null);
   const [showInvite, setShowInvite] = useState(false);
+  const [showCheckin, setShowCheckin] = useState(false);
+  const [showFindPartner, setShowFindPartner] = useState(false);
 
   const load = () => {
     fetch(`/api/events/${params.id}`)
@@ -123,23 +137,46 @@ export default function EventDetailPage() {
 
   const typeMeta = EVENT_TYPE_META[event.eventType] ?? EVENT_TYPE_META.mixer;
   const isOwner = session?.user?.id === event.ownerId;
-  const showMatchesAction = event.eventType !== "clinic" && event.eventType !== "custom";
-  const showStandingsAction =
-    event.eventType !== "clinic" &&
-    event.eventType !== "mixer" &&
-    event.eventType !== "custom";
+  const currentUserId = session?.user?.id ?? null;
   const registered = event.participants.filter((p) => p.status === "registered");
   const waitlist = event.participants.filter((p) => p.status === "waitlist");
   const signupDeadlinePassed =
     event.signupDeadline != null && new Date(event.signupDeadline) < new Date();
   const eventEnded = new Date(event.endDate) < new Date();
+  const tournamentLocked = event.eventType === "tournament" && event.hasBracket;
   const canSignup =
     !isOwner &&
     !signupDeadlinePassed &&
     !eventEnded &&
+    !tournamentLocked &&
     event.status !== "cancelled" &&
     event.status !== "completed" &&
     (event.myStatus == null || event.myStatus === "withdrawn");
+
+  const surfaceKey: PanelKey | null =
+    typeMeta.competitiveSurface === "bracket"
+      ? "bracket"
+      : typeMeta.competitiveSurface === "standings"
+      ? "standings"
+      : typeMeta.competitiveSurface === "rotations"
+      ? "rotations"
+      : null;
+  const surfaceLabel =
+    surfaceKey === "bracket"
+      ? "Bracket"
+      : surfaceKey === "standings"
+      ? "Standings"
+      : surfaceKey === "rotations"
+      ? "Rotations"
+      : "";
+  const surfaceEmoji =
+    surfaceKey === "bracket"
+      ? "🏆"
+      : surfaceKey === "standings"
+      ? "📊"
+      : surfaceKey === "rotations"
+      ? "🔁"
+      : "";
 
   return (
     <div className="max-w-2xl mx-auto pb-12">
@@ -179,6 +216,13 @@ export default function EventDetailPage() {
       </div>
 
       <div className="px-4 pt-5 space-y-5">
+        {/* Tournament lock banner */}
+        {tournamentLocked && (
+          <div className="bg-clay/10 border border-clay/30 text-clay text-sm rounded-xl px-4 py-3">
+            🔒 Bracket is live — signups are locked.
+          </div>
+        )}
+
         {/* Meta line */}
         <div className="text-sm text-gray-600 space-y-1">
           <div className="flex items-center gap-2">
@@ -266,7 +310,13 @@ export default function EventDetailPage() {
             </button>
           ) : (
             <span className="inline-flex items-center px-3 py-1.5 rounded-full bg-gray-100 text-gray-500 text-xs font-semibold">
-              {signupDeadlinePassed ? "Signup closed" : eventEnded ? "Event ended" : "Not available"}
+              {tournamentLocked
+                ? "Bracket locked"
+                : signupDeadlinePassed
+                ? "Signup closed"
+                : eventEnded
+                ? "Event ended"
+                : "Not available"}
             </span>
           )}
         </div>
@@ -283,7 +333,7 @@ export default function EventDetailPage() {
         )}
 
         {/* Action grid */}
-        <div className="grid grid-cols-4 gap-2">
+        <div className={`grid ${isOwner ? "grid-cols-5" : "grid-cols-4"} gap-2`}>
           <ActionButton
             label="Chat"
             emoji="💬"
@@ -293,25 +343,40 @@ export default function EventDetailPage() {
           <ActionButton
             label="Roster"
             emoji="👥"
-            onClick={() => setShowRoster((v) => !v)}
-            active={showRoster}
+            active={activePanel === "roster"}
+            onClick={() => togglePanel("roster", activePanel, setActivePanel)}
           />
-          <ActionButton
-            label="Matches"
-            emoji="🎾"
-            disabled={!showMatchesAction}
-            comingSoon={showMatchesAction}
-          />
-          <ActionButton
-            label={event.eventType === "tournament" ? "Bracket" : "Standings"}
-            emoji={event.eventType === "tournament" ? "🏆" : "📊"}
-            disabled={!showStandingsAction}
-            comingSoon={showStandingsAction}
-          />
+          {typeMeta.supportsMatches ? (
+            <ActionButton
+              label="Matches"
+              emoji="🎾"
+              active={activePanel === "matches"}
+              onClick={() => togglePanel("matches", activePanel, setActivePanel)}
+            />
+          ) : (
+            <ActionButton label="Matches" emoji="🎾" disabled />
+          )}
+          {surfaceKey ? (
+            <ActionButton
+              label={surfaceLabel}
+              emoji={surfaceEmoji}
+              active={activePanel === surfaceKey}
+              onClick={() => togglePanel(surfaceKey, activePanel, setActivePanel)}
+            />
+          ) : (
+            <ActionButton label="Standings" emoji="📊" disabled />
+          )}
+          {isOwner && (
+            <ActionButton
+              label="Check-in"
+              emoji="✅"
+              onClick={() => setShowCheckin(true)}
+            />
+          )}
         </div>
 
         {/* Roster section */}
-        {showRoster && (
+        {activePanel === "roster" && (
           <section className="bg-white rounded-2xl p-5 shadow-sm">
             <h3 className="font-semibold text-gray-900 mb-3">
               Signed up · {registered.length}
@@ -340,13 +405,61 @@ export default function EventDetailPage() {
           </section>
         )}
 
-        {/* Find-a-partner placeholder (Phase 2) */}
+        {/* Matches panel */}
+        {activePanel === "matches" && typeMeta.supportsMatches && (
+          <section className="bg-white rounded-2xl p-4 shadow-sm">
+            <MatchList
+              eventId={event.id}
+              currentUserId={currentUserId}
+              onChanged={load}
+            />
+          </section>
+        )}
+
+        {/* Bracket panel */}
+        {activePanel === "bracket" && surfaceKey === "bracket" && (
+          <BracketView
+            eventId={event.id}
+            isOwner={isOwner}
+            onSeeded={load}
+          />
+        )}
+
+        {/* Standings panel */}
+        {activePanel === "standings" && surfaceKey === "standings" && (
+          <StandingsTable eventId={event.id} currentUserId={currentUserId} />
+        )}
+
+        {/* Rotations panel */}
+        {activePanel === "rotations" && surfaceKey === "rotations" && (
+          <RotationCard
+            eventId={event.id}
+            isOwner={isOwner}
+            onChanged={load}
+          />
+        )}
+
+        {/* Ladder always-on inline list — challenges live here, not in a modal */}
+        {event.eventType === "ladder" && (
+          <section>
+            <h3 className="font-semibold text-gray-900 mb-2 px-1">Ladder</h3>
+            <LadderList eventId={event.id} currentUserId={currentUserId} />
+          </section>
+        )}
+
+        {/* Find-a-partner CTA — registered participants only */}
         {event.myStatus === "registered" && (
-          <section className="bg-white rounded-2xl p-5 shadow-sm border border-dashed border-gray-200">
+          <section className="bg-white rounded-2xl p-5 shadow-sm border border-court-green-pale/30">
             <h3 className="font-semibold text-gray-900 mb-1">Find a match partner</h3>
-            <p className="text-sm text-gray-500">
-              Match-within-event posts arrive in Phase 2. For now, use the event chat to coordinate.
+            <p className="text-sm text-gray-500 mb-3">
+              Post a quick note to the event chat and the discover feed.
             </p>
+            <button
+              onClick={() => setShowFindPartner(true)}
+              className="px-4 py-2 rounded-full bg-court-green text-white text-sm font-semibold hover:bg-court-green-light"
+            >
+              + New post
+            </button>
           </section>
         )}
       </div>
@@ -362,8 +475,39 @@ export default function EventDetailPage() {
           }}
         />
       )}
+
+      {showCheckin && (
+        <CheckinDrawer
+          eventId={event.id}
+          participants={event.participants}
+          onClose={() => setShowCheckin(false)}
+          onChanged={load}
+        />
+      )}
+
+      {showFindPartner && (
+        <FindPartnerComposer
+          eventId={event.id}
+          eventTitle={event.title}
+          defaultSkillMin={event.ntrpMin}
+          defaultSkillMax={event.ntrpMax}
+          onClose={() => setShowFindPartner(false)}
+          onPosted={() => {
+            setShowFindPartner(false);
+            load();
+          }}
+        />
+      )}
     </div>
   );
+}
+
+function togglePanel(
+  next: PanelKey,
+  current: PanelKey | null,
+  setActive: (k: PanelKey | null) => void
+) {
+  setActive(current === next ? null : next);
 }
 
 function InviteFriendsModal({
@@ -602,7 +746,6 @@ function ActionButton({
   onClick,
   disabled,
   active,
-  comingSoon,
 }: {
   label: string;
   emoji: string;
@@ -610,7 +753,6 @@ function ActionButton({
   onClick?: () => void;
   disabled?: boolean;
   active?: boolean;
-  comingSoon?: boolean;
 }) {
   const base =
     "flex flex-col items-center justify-center py-3 rounded-xl text-xs font-semibold transition-colors";
@@ -623,7 +765,6 @@ function ActionButton({
     <>
       <span className="text-lg mb-0.5">{emoji}</span>
       <span>{label}</span>
-      {comingSoon && <span className="text-[9px] text-gray-400 font-normal">Soon</span>}
     </>
   );
   if (href && !disabled) {
@@ -655,6 +796,11 @@ function RosterRow({ participant }: { participant: Participant }) {
       >
         {participant.user.name}
       </Link>
+      {participant.checkedInAt && (
+        <span className="text-[10px] text-court-green font-semibold shrink-0">
+          ✓ in
+        </span>
+      )}
       {participant.user.ntrpRating != null && (
         <span className="text-[11px] text-gray-500 shrink-0">
           NTRP {participant.user.ntrpRating.toFixed(1)}

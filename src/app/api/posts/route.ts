@@ -307,7 +307,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { content, mediaUrl, mediaType, photoUrls, groupIds, friendGroupIds, postType, playDate, playTime, playDuration, courtLocation, gameType, playersNeeded, courtBooked, skillMin, skillMax, isBroadcast, broadcastRadiusMi } = await request.json();
+  const { content, mediaUrl, mediaType, photoUrls, groupIds, friendGroupIds, postType, playDate, playTime, playDuration, courtLocation, gameType, playersNeeded, courtBooked, skillMin, skillMax, isBroadcast, broadcastRadiusMi, eventId } = await request.json();
 
   // Broadcast validation: only valid on find_players, requires author lat/lng,
   // radius must be one of the allowed values. Rate-limited per user/day.
@@ -397,6 +397,7 @@ export async function POST(request: Request) {
       broadcastRadiusMi: normalizedRadius,
       broadcastLat,
       broadcastLng,
+      eventId: typeof eventId === "string" && eventId ? eventId : null,
       authorId: session.user.id,
       // Multi-photo: persist the full array (including the first one duplicated
       // in mediaUrl) so the read path can return them in order.
