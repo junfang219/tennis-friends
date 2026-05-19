@@ -76,6 +76,7 @@ export async function POST(
       actorId: userId,
       type: accept ? "event_challenge_accepted" : "event_challenge_declined",
       eventId,
+      matchId,
     },
   });
   emitToUsers([match.proposedBy], { kind: "notifications" });

@@ -64,6 +64,7 @@ export async function POST(
       actorId: userId,
       type: "event_match_disputed",
       eventId,
+      matchId,
     },
   });
   emitToUsers([match.reportedBy], { kind: "notifications" });

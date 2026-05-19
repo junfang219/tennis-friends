@@ -60,6 +60,7 @@ export async function POST(
       actorId: userId,
       type: "event_match_confirmed",
       eventId,
+      matchId,
     },
   });
   emitToUsers([match.reportedBy], { kind: "notifications" });

@@ -15,6 +15,7 @@ type Notification = {
   commentId: string;
   messageId: string;
   eventId: string;
+  matchId: string;
   emoji: string;
   read: boolean;
   createdAt: string;
@@ -242,7 +243,8 @@ export default function NotificationBell() {
     ]);
     if (eventTypes.has(n.type) && n.eventId) {
       setOpen(false);
-      router.push(`/events/${n.eventId}`);
+      const qs = n.matchId ? `?match=${n.matchId}` : "";
+      router.push(`/events/${n.eventId}${qs}`);
       return;
     }
     const wantsComments = n.type === "comment" || n.type === "reply";

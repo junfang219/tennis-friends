@@ -123,6 +123,7 @@ export async function POST(
       actorId: userId,
       type: "event_ladder_challenge",
       eventId,
+      matchId: match.id,
     },
   });
   emitToUsers([opponentId], { kind: "notifications" });

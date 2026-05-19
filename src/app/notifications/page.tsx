@@ -13,6 +13,7 @@ type Notification = {
   commentId: string;
   messageId: string;
   eventId: string;
+  matchId: string;
   emoji: string;
   read: boolean;
   createdAt: string;
@@ -201,7 +202,8 @@ export default function NotificationsPage() {
       "event_challenge_declined",
     ]);
     if (eventTypes.has(n.type) && n.eventId) {
-      router.push(`/events/${n.eventId}`);
+      const qs = n.matchId ? `?match=${n.matchId}` : "";
+      router.push(`/events/${n.eventId}${qs}`);
       return;
     }
     if (n.postId) {

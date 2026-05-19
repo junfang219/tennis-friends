@@ -295,6 +295,7 @@ model Notification {
   commentId   String   @default("")
   messageId   String   @default("")
   eventId     String   @default("")
+  matchId     String   @default("") // EventMatch id; used for deep-linking to a specific match
   emoji       String   @default("")
   read        Boolean  @default(false)
   createdAt   DateTime @default(now())

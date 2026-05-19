@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import Avatar from "@/components/Avatar";
@@ -60,6 +60,8 @@ type PanelKey = "matches" | "bracket" | "standings" | "rotations" | "roster";
 export default function EventDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const focusMatchId = searchParams.get("match") ?? null;
   const { data: session } = useSession();
   const [event, setEvent] = useState<EventDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -69,6 +71,11 @@ export default function EventDetailPage() {
   const [showInvite, setShowInvite] = useState(false);
   const [showCheckin, setShowCheckin] = useState(false);
   const [showFindPartner, setShowFindPartner] = useState(false);
+
+  // If we arrived via a match-deep-link, auto-open the Matches panel.
+  useEffect(() => {
+    if (focusMatchId) setActivePanel("matches");
+  }, [focusMatchId]);
 
   const load = () => {
     fetch(`/api/events/${params.id}`)
@@ -411,6 +418,7 @@ export default function EventDetailPage() {
             <MatchList
               eventId={event.id}
               currentUserId={currentUserId}
+              focusMatchId={focusMatchId}
               onChanged={load}
             />
           </section>

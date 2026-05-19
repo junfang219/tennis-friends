@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Avatar from "@/components/Avatar";
 import type { EventMatchView, PlayerMini } from "./types";
 import ScoreEntryModal from "./ScoreEntryModal";
@@ -8,10 +8,12 @@ import ScoreEntryModal from "./ScoreEntryModal";
 export default function MatchList({
   eventId,
   currentUserId,
+  focusMatchId,
   onChanged,
 }: {
   eventId: string;
   currentUserId: string | null;
+  focusMatchId?: string | null;
   onChanged?: () => void;
 }) {
   const [matches, setMatches] = useState<EventMatchView[] | null>(null);
@@ -19,6 +21,14 @@ export default function MatchList({
   const [reportMatch, setReportMatch] = useState<EventMatchView | null>(null);
   const [actionInFlight, setActionInFlight] = useState(false);
   const [error, setError] = useState("");
+  const focusedRowRef = useRef<HTMLLIElement | null>(null);
+
+  // Scroll the focused row into view once the matches have loaded.
+  useEffect(() => {
+    if (!focusMatchId || !matches) return;
+    const node = focusedRowRef.current;
+    if (node) node.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusMatchId, matches]);
 
   const load = () => {
     setLoading(true);
@@ -107,6 +117,8 @@ export default function MatchList({
               match={m}
               currentUserId={currentUserId}
               actionInFlight={actionInFlight}
+              focused={m.id === focusMatchId}
+              focusedRef={m.id === focusMatchId ? focusedRowRef : null}
               onReport={() => setReportMatch(m)}
               onConfirm={() => confirm(m)}
               onDispute={() => dispute(m)}
@@ -123,6 +135,8 @@ export default function MatchList({
               match={m}
               currentUserId={currentUserId}
               actionInFlight={actionInFlight}
+              focused={m.id === focusMatchId}
+              focusedRef={m.id === focusMatchId ? focusedRowRef : null}
               onReport={() => setReportMatch(m)}
               onConfirm={() => confirm(m)}
               onDispute={() => dispute(m)}
@@ -139,6 +153,8 @@ export default function MatchList({
               match={m}
               currentUserId={currentUserId}
               actionInFlight={actionInFlight}
+              focused={m.id === focusMatchId}
+              focusedRef={m.id === focusMatchId ? focusedRowRef : null}
               onReport={() => setReportMatch(m)}
               onConfirm={() => confirm(m)}
               onDispute={() => dispute(m)}
@@ -178,6 +194,8 @@ function MatchRow({
   match,
   currentUserId,
   actionInFlight,
+  focused,
+  focusedRef,
   onReport,
   onConfirm,
   onDispute,
@@ -185,6 +203,8 @@ function MatchRow({
   match: EventMatchView;
   currentUserId: string | null;
   actionInFlight: boolean;
+  focused?: boolean;
+  focusedRef?: React.RefObject<HTMLLIElement | null> | null;
   onReport: () => void;
   onConfirm: () => void;
   onDispute: () => void;
@@ -198,7 +218,10 @@ function MatchRow({
   const canDispute = canConfirm;
 
   return (
-    <li className="bg-white rounded-xl px-4 py-3 shadow-sm">
+    <li
+      ref={focusedRef ?? undefined}
+      className={`bg-white rounded-xl px-4 py-3 shadow-sm transition-all ${focused ? "ring-2 ring-court-green shadow-md" : ""}`}
+    >
       <div className="flex items-center gap-2">
         <PlayerChip player={match.player1} highlight={match.winnerSide === 1} />
         <span className="text-xs text-gray-400 font-bold px-1">vs</span>

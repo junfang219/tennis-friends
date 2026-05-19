@@ -71,6 +71,7 @@ export async function POST(
       actorId: userId,
       type: "event_match_report",
       eventId,
+      matchId,
     },
   });
   emitToUsers([otherId], { kind: "notifications" });
