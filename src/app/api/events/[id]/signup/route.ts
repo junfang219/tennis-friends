@@ -86,6 +86,20 @@ export async function POST(
     await syncEventGroupMembers(id);
   }
 
+  // Notify the organizer (skip if the signer-upper *is* the organizer, which
+  // shouldn't happen via this route since we auto-register on create, but
+  // defensive guard is cheap).
+  if (event.ownerId !== userId) {
+    await prisma.notification.create({
+      data: {
+        userId: event.ownerId,
+        actorId: userId,
+        type: "event_signup",
+        eventId: id,
+      },
+    });
+  }
+
   return NextResponse.json({ status });
 }
 

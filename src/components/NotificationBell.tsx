@@ -45,6 +45,7 @@ function notificationText(n: { type: string; emoji?: string }) {
       return symbol ? `reacted ${symbol} to your message` : "reacted to your message";
     }
     case "event_invite": return "invited you to an event";
+    case "event_signup": return "signed up for your event";
     default: return "interacted with your post";
   }
 }
@@ -132,6 +133,17 @@ function notificationIcon(type: string) {
           </svg>
         </div>
       );
+    case "event_signup":
+      return (
+        <div className="w-6 h-6 rounded-full bg-court-green flex items-center justify-center">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-ball-yellow" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+            <circle cx="8.5" cy="7" r="4" />
+            <line x1="20" y1="8" x2="20" y2="14" />
+            <line x1="23" y1="11" x2="17" y2="11" />
+          </svg>
+        </div>
+      );
     default:
       return null;
   }
@@ -196,7 +208,7 @@ export default function NotificationBell() {
       router.push(target);
       return;
     }
-    if (n.type === "event_invite" && n.eventId) {
+    if ((n.type === "event_invite" || n.type === "event_signup") && n.eventId) {
       setOpen(false);
       router.push(`/events/${n.eventId}`);
       return;
