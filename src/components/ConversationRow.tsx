@@ -298,19 +298,34 @@ export default function ConversationRow({
                   alt={item.title}
                   className={`${layout === "page" ? "w-12 h-12" : "w-10 h-10"} rounded-xl object-cover shadow-sm`}
                 />
+              ) : item.eventId ? (
+                <div className={`${layout === "page" ? "w-12 h-12 text-lg" : "w-10 h-10 text-sm"} rounded-xl bg-gradient-to-br from-court-green-soft to-court-green flex items-center justify-center text-white font-bold shadow-sm`}>
+                  {item.title.charAt(0).toUpperCase()}
+                </div>
               ) : (
                 <div className={`${layout === "page" ? "w-12 h-12 text-lg" : "w-10 h-10 text-sm"} rounded-xl bg-gradient-to-br from-clay to-clay-light flex items-center justify-center text-white font-bold shadow-sm`}>
                   {item.title.charAt(0).toUpperCase()}
                 </div>
               )}
-              <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-clay flex items-center justify-center">
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
-                  <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
-                  <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
-                  <path d="M4 22h16" />
-                  <path d="M18 2H6v7a6 6 0 0012 0V2z" />
-                </svg>
-              </span>
+              {item.eventId ? (
+                <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-ball-yellow flex items-center justify-center">
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-court-green">
+                    <ellipse cx="7" cy="6.5" rx="3" ry="4" transform="rotate(-25 7 6.5)" />
+                    <line x1="9" y1="9.5" x2="17" y2="21.5" />
+                    <ellipse cx="17" cy="6.5" rx="3" ry="4" transform="rotate(25 17 6.5)" />
+                    <line x1="15" y1="9.5" x2="7" y2="21.5" />
+                  </svg>
+                </span>
+              ) : (
+                <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-clay flex items-center justify-center">
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+                    <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
+                    <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
+                    <path d="M4 22h16" />
+                    <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+                  </svg>
+                </span>
+              )}
             </div>
           ) : (
             <div className="flex -space-x-3">

@@ -61,6 +61,8 @@ type InboxItem = {
   // team only
   imageUrl?: string;
   creatorId?: string;
+  // team only — set when this is the backing group for an event
+  eventId?: string | null;
   lastMessage:
     | { content: string; createdAt: string; fromSelf: boolean; senderName?: string }
     | null;
@@ -797,6 +799,8 @@ export default function FriendsPage() {
                   <div className={`p-4 flex items-center gap-3 ${
                     chat.type === "group" && chat.kind === "session"
                       ? "bg-gradient-to-r from-court-green-pale/25 to-white border-l-4 border-l-court-green"
+                      : chat.type === "team" && chat.eventId
+                      ? "bg-gradient-to-r from-ball-yellow/20 to-white border-l-4 border-l-ball-yellow"
                       : chat.type === "team"
                       ? "bg-gradient-to-r from-clay/15 to-white border-l-4 border-l-clay"
                       : "bg-white"
@@ -817,20 +821,36 @@ export default function FriendsPage() {
                               alt={chat.title}
                               className="w-11 h-11 rounded-xl object-cover shadow-md ring-2 ring-white"
                             />
+                          ) : chat.eventId ? (
+                            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-court-green-soft to-court-green flex items-center justify-center text-white font-bold text-base shadow-md ring-2 ring-white">
+                              {chat.title.charAt(0).toUpperCase()}
+                            </div>
                           ) : (
                             <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-clay to-clay-light flex items-center justify-center text-white font-bold text-base shadow-md ring-2 ring-white">
                               {chat.title.charAt(0).toUpperCase()}
                             </div>
                           )}
-                          {/* Trophy badge */}
-                          <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-clay flex items-center justify-center shadow-sm ring-2 ring-white">
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
-                              <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
-                              <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
-                              <path d="M4 22h16" />
-                              <path d="M18 2H6v7a6 6 0 0012 0V2z" />
-                            </svg>
-                          </span>
+                          {chat.eventId ? (
+                            /* Event badge — crossed rackets */
+                            <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-ball-yellow flex items-center justify-center shadow-sm ring-2 ring-white">
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-court-green">
+                                <ellipse cx="7" cy="6.5" rx="3" ry="4" transform="rotate(-25 7 6.5)" />
+                                <line x1="9" y1="9.5" x2="17" y2="21.5" />
+                                <ellipse cx="17" cy="6.5" rx="3" ry="4" transform="rotate(25 17 6.5)" />
+                                <line x1="15" y1="9.5" x2="7" y2="21.5" />
+                              </svg>
+                            </span>
+                          ) : (
+                            /* Team badge — trophy */
+                            <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-clay flex items-center justify-center shadow-sm ring-2 ring-white">
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+                                <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
+                                <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
+                                <path d="M4 22h16" />
+                                <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+                              </svg>
+                            </span>
+                          )}
                         </div>
                       ) : (
                         <div className="flex -space-x-3">
@@ -851,11 +871,15 @@ export default function FriendsPage() {
                           <h3 className="font-semibold text-gray-900 text-sm truncate">
                             {chat.title}
                           </h3>
-                          {chat.type === "team" && (
+                          {chat.type === "team" && chat.eventId ? (
+                            <span className="text-[9px] font-bold tracking-wider text-court-green bg-ball-yellow/60 px-1.5 py-0.5 rounded uppercase shrink-0">
+                              Event
+                            </span>
+                          ) : chat.type === "team" ? (
                             <span className="text-[9px] font-bold tracking-wider text-clay bg-clay/15 px-1.5 py-0.5 rounded uppercase shrink-0">
                               Team
                             </span>
-                          )}
+                          ) : null}
                           {chat.type === "group" && chat.kind === "session" && (
                             <span className="text-[9px] font-bold tracking-wider text-white bg-court-green px-1.5 py-0.5 rounded uppercase shrink-0">
                               🎾 Game
