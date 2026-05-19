@@ -122,16 +122,16 @@ export const authOptions: NextAuthOptions = {
     },
   },
   callbacks: {
-    async jwt({ token, user, trigger }) {
+    async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
-        const fresh = await prisma.user.findUnique({
-          where: { id: user.id as string },
-          select: { onboardingComplete: true },
-        });
-        token.onboardingComplete = fresh?.onboardingComplete ?? false;
       }
-      if (trigger === "update" && token.id) {
+      // Always sync name/picture/onboardingComplete from the DB so the JWT
+      // doesn't go stale. NextAuth only re-runs the credentials authorize()
+      // on a fresh sign-in, so without this refresh a user who uploaded a
+      // profile photo after their last sign-in would keep seeing initials
+      // in the navbar until the cookie expired.
+      if (token.id) {
         const fresh = await prisma.user.findUnique({
           where: { id: token.id as string },
           select: { name: true, profileImageUrl: true, onboardingComplete: true },
@@ -146,6 +146,12 @@ export const authOptions: NextAuthOptions = {
     },
     async session({ session, token }) {
       if (session.user) {
+        // NextAuth pre-populates session.user.{name,email,image} from the
+        // *decoded* (old) JWT before this callback runs, so we re-assign from
+        // the fresh `token` returned by the jwt callback to avoid serving a
+        // one-request-stale picture/name to the client.
+        session.user.name = (token.name as string | null | undefined) ?? session.user.name;
+        session.user.image = (token.picture as string | null | undefined) ?? null;
         (session.user as { id?: string; onboardingComplete?: boolean }).id = token.id as string;
         (session.user as { id?: string; onboardingComplete?: boolean }).onboardingComplete = Boolean(token.onboardingComplete);
       }

@@ -105,7 +105,7 @@ export default function Navbar() {
               <div className="flex items-center gap-3">
                 {!isNative && <MessageBell />}
                 {!isNative && <NotificationBell />}
-                <Link href="/profile" className="hidden sm:flex items-center group">
+                <Link href="/profile" aria-label="Open profile" className="hidden sm:flex shrink-0 items-center group">
                   <Avatar name={session.user.name || ""} image={session.user.image} size="sm" />
                 </Link>
               </div>

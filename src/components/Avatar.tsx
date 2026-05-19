@@ -46,14 +46,14 @@ export default function Avatar({
       <img
         src={image}
         alt={name}
-        className={`${sizeClasses[size]} rounded-full object-cover ring-2 ring-white/80 shadow-sm`}
+        className={`${sizeClasses[size]} shrink-0 rounded-full object-cover ring-2 ring-white/80 shadow-sm`}
       />
     );
   }
 
   return (
     <div
-      className={`${sizeClasses[size]} ${colorClass} rounded-full flex items-center justify-center font-bold text-white ring-2 ring-white/80 shadow-sm`}
+      className={`${sizeClasses[size]} shrink-0 ${colorClass} rounded-full flex items-center justify-center font-bold text-white ring-2 ring-white/80 shadow-sm`}
     >
       {initials}
     </div>
