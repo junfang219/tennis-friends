@@ -230,6 +230,12 @@ export default function EventDetailPage() {
               >
                 + Invite friends
               </button>
+              <Link
+                href={`/events/${event.id}/edit`}
+                className="px-4 py-2 rounded-full bg-white border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50"
+              >
+                Edit
+              </Link>
             </>
           ) : event.myStatus === "registered" ? (
             <button

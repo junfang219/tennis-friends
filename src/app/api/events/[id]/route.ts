@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { syncEventGroupMembers } from "@/lib/eventGroup";
 
 // GET /api/events/[id] — full detail + roster
 export async function GET(
@@ -52,7 +53,10 @@ export async function PATCH(
   const { id } = await params;
   const userId = session.user.id;
 
-  const event = await prisma.event.findUnique({ where: { id }, select: { ownerId: true } });
+  const event = await prisma.event.findUnique({
+    where: { id },
+    select: { ownerId: true, maxParticipants: true },
+  });
   if (!event) return NextResponse.json({ error: "Event not found" }, { status: 404 });
   if (event.ownerId !== userId) {
     return NextResponse.json({ error: "Only the organizer can edit" }, { status: 403 });
@@ -95,5 +99,36 @@ export async function PATCH(
   }
 
   const updated = await prisma.event.update({ where: { id }, data });
+
+  // If capacity went up (or was removed entirely), promote waitlist (oldest
+  // first) up to the new room. Existing registered users are never demoted
+  // — lowering the cap below current headcount just blocks new signups.
+  const capacityChanged =
+    "maxParticipants" in data && data.maxParticipants !== event.maxParticipants;
+  if (capacityChanged) {
+    const newCap = updated.maxParticipants;
+    const registeredCount = await prisma.eventParticipant.count({
+      where: { eventId: id, status: "registered" },
+    });
+    const roomToPromote =
+      newCap == null ? Number.POSITIVE_INFINITY : Math.max(0, newCap - registeredCount);
+    if (roomToPromote > 0) {
+      const waitlisted = await prisma.eventParticipant.findMany({
+        where: { eventId: id, status: "waitlist" },
+        orderBy: { registeredAt: "asc" },
+        take: roomToPromote === Number.POSITIVE_INFINITY ? undefined : roomToPromote,
+        select: { id: true },
+      });
+      if (waitlisted.length > 0) {
+        await prisma.eventParticipant.updateMany({
+          where: { id: { in: waitlisted.map((p) => p.id) } },
+          data: { status: "registered" },
+        });
+        // Backing Group membership tracks registered participants — keep it in sync.
+        await syncEventGroupMembers(id);
+      }
+    }
+  }
+
   return NextResponse.json(updated);
 }
