@@ -90,10 +90,10 @@ export default function BottomNav() {
       active: isActive("/groups") || isActive("/events"),
       icon: (active: boolean) => (
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
-          <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
-          <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
-          <path d="M4 22h16" />
-          <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+          <ellipse cx="7" cy="6.5" rx="3" ry="4" transform="rotate(-25 7 6.5)" />
+          <line x1="9" y1="9.5" x2="17" y2="21.5" />
+          <ellipse cx="17" cy="6.5" rx="3" ry="4" transform="rotate(25 17 6.5)" />
+          <line x1="15" y1="9.5" x2="7" y2="21.5" />
         </svg>
       ),
     },
