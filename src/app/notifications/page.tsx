@@ -12,6 +12,7 @@ type Notification = {
   postId: string;
   commentId: string;
   messageId: string;
+  eventId: string;
   emoji: string;
   read: boolean;
   createdAt: string;
@@ -41,6 +42,14 @@ function notificationText(n: { type: string; emoji?: string }) {
       const symbol = n.emoji ? (emojiFor(n.emoji) || n.emoji) : "";
       return symbol ? `reacted ${symbol} to your message` : "reacted to your message";
     }
+    case "event_invite": return "invited you to an event";
+    case "event_signup": return "signed up for your event";
+    case "event_ladder_challenge": return "challenged you on the ladder";
+    case "event_match_report": return "reported a match score — confirm or dispute";
+    case "event_match_confirmed": return "confirmed your reported score";
+    case "event_match_disputed": return "disputed your reported score";
+    case "event_challenge_accepted": return "accepted your ladder challenge";
+    case "event_challenge_declined": return "declined your ladder challenge";
     default: return "interacted with your post";
   }
 }
@@ -174,10 +183,28 @@ export default function NotificationsPage() {
   const handleTap = (n: Notification) => {
     if (n.type === "friend_request" || n.type === "friend_accepted") {
       router.push(`/profile/${n.actor.id}`);
-    } else if (n.type === "message_reaction") {
+      return;
+    }
+    if (n.type === "message_reaction") {
       const target = n.messageId ? `/chat/${n.actor.id}?msg=${n.messageId}` : `/chat/${n.actor.id}`;
       router.push(target);
-    } else if (n.postId) {
+      return;
+    }
+    const eventTypes = new Set([
+      "event_invite",
+      "event_signup",
+      "event_ladder_challenge",
+      "event_match_report",
+      "event_match_confirmed",
+      "event_match_disputed",
+      "event_challenge_accepted",
+      "event_challenge_declined",
+    ]);
+    if (eventTypes.has(n.type) && n.eventId) {
+      router.push(`/events/${n.eventId}`);
+      return;
+    }
+    if (n.postId) {
       router.push(`/?post=${n.postId}`);
     }
   };

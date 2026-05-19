@@ -46,6 +46,12 @@ function notificationText(n: { type: string; emoji?: string }) {
     }
     case "event_invite": return "invited you to an event";
     case "event_signup": return "signed up for your event";
+    case "event_ladder_challenge": return "challenged you on the ladder";
+    case "event_match_report": return "reported a match score — confirm or dispute";
+    case "event_match_confirmed": return "confirmed your reported score";
+    case "event_match_disputed": return "disputed your reported score";
+    case "event_challenge_accepted": return "accepted your ladder challenge";
+    case "event_challenge_declined": return "declined your ladder challenge";
     default: return "interacted with your post";
   }
 }
@@ -144,6 +150,22 @@ function notificationIcon(type: string) {
           </svg>
         </div>
       );
+    case "event_ladder_challenge":
+    case "event_challenge_accepted":
+    case "event_challenge_declined":
+      return (
+        <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center">
+          <span className="text-xs">🪜</span>
+        </div>
+      );
+    case "event_match_report":
+    case "event_match_confirmed":
+    case "event_match_disputed":
+      return (
+        <div className="w-6 h-6 rounded-full bg-ball-yellow flex items-center justify-center">
+          <span className="text-xs">🎾</span>
+        </div>
+      );
     default:
       return null;
   }
@@ -208,7 +230,17 @@ export default function NotificationBell() {
       router.push(target);
       return;
     }
-    if ((n.type === "event_invite" || n.type === "event_signup") && n.eventId) {
+    const eventTypes = new Set([
+      "event_invite",
+      "event_signup",
+      "event_ladder_challenge",
+      "event_match_report",
+      "event_match_confirmed",
+      "event_match_disputed",
+      "event_challenge_accepted",
+      "event_challenge_declined",
+    ]);
+    if (eventTypes.has(n.type) && n.eventId) {
       setOpen(false);
       router.push(`/events/${n.eventId}`);
       return;
