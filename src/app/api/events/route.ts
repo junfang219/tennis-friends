@@ -3,7 +3,14 @@ import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { ensureEventGroup } from "@/lib/eventGroup";
 
-const VALID_EVENT_TYPES = new Set(["tournament", "round_robin", "mixer", "clinic", "custom"]);
+const VALID_EVENT_TYPES = new Set([
+  "tournament",
+  "round_robin",
+  "ladder",
+  "mixer",
+  "clinic",
+  "custom",
+]);
 
 // GET /api/events?filter=upcoming|past|joined&type=tournament
 export async function GET(request: Request) {

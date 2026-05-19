@@ -6,6 +6,7 @@ import { useState } from "react";
 const TYPES = [
   { id: "tournament", label: "Tournament", emoji: "🏆", blurb: "Single-elimination bracket. Organizer seeds pairings." },
   { id: "round_robin", label: "Round Robin", emoji: "🔁", blurb: "Everyone plays everyone. Standings auto-update." },
+  { id: "ladder", label: "Ladder", emoji: "🪜", blurb: "Climb the rankings by challenging players above you. Ongoing." },
   { id: "mixer", label: "Social Mixer", emoji: "🤝", blurb: "Partners rotate each round. Casual play." },
   { id: "clinic", label: "Clinic", emoji: "🎾", blurb: "Drop-in lesson or practice. No matches required." },
   { id: "custom", label: "Custom", emoji: "✨", blurb: "Anything else — watch parties, brunch hangs, off-court socials. No format imposed." },
@@ -98,15 +99,12 @@ export default function NewEventPage() {
           <div className="grid grid-cols-2 gap-2">
             {TYPES.map((t) => {
               const selected = type === t.id;
-              const isCustom = t.id === "custom";
               return (
                 <button
                   key={t.id}
                   type="button"
                   onClick={() => setType(t.id)}
                   className={`text-left p-3 rounded-xl border-2 transition-all ${
-                    isCustom ? "col-span-2" : ""
-                  } ${
                     selected
                       ? "border-court-green bg-court-green/5"
                       : "border-gray-200 hover:border-gray-300 bg-white"

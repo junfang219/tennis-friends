@@ -14,6 +14,12 @@ export const EVENT_TYPE_META: Record<
     bg: "bg-court-green/10",
     text: "text-court-green",
   },
+  ladder: {
+    label: "Ladder",
+    emoji: "🪜",
+    bg: "bg-indigo-50",
+    text: "text-indigo-700",
+  },
   mixer: {
     label: "Social Mixer",
     emoji: "🤝",

@@ -80,6 +80,7 @@ function welcomeMessage(title: string, type: string): string {
   const flair: Record<string, string> = {
     tournament: "🏆 Tournament time — bring your A game!",
     round_robin: "🔁 Round-robin — you'll play everyone, good luck!",
+    ladder: "🪜 Ladder open — climb the ranks by challenging up.",
     mixer: "🤝 Social mixer — partners rotate, just have fun.",
     clinic: "🎾 Clinic — show up ready to learn.",
     custom: "✨ See you there!",

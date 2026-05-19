@@ -2043,6 +2043,7 @@ function ManageRequestsModal({
 const EVENT_TYPE_LABEL: Record<string, { label: string; emoji: string }> = {
   tournament: { label: "Tournament", emoji: "🏆" },
   round_robin: { label: "Round Robin", emoji: "🔁" },
+  ladder: { label: "Ladder", emoji: "🪜" },
   mixer: { label: "Social Mixer", emoji: "🤝" },
   clinic: { label: "Clinic", emoji: "🎾" },
   custom: { label: "Custom", emoji: "✨" },
