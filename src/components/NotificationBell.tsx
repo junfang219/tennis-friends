@@ -14,6 +14,7 @@ type Notification = {
   postId: string;
   commentId: string;
   messageId: string;
+  eventId: string;
   emoji: string;
   read: boolean;
   createdAt: string;
@@ -43,6 +44,7 @@ function notificationText(n: { type: string; emoji?: string }) {
       const symbol = n.emoji ? (emojiFor(n.emoji) || n.emoji) : "";
       return symbol ? `reacted ${symbol} to your message` : "reacted to your message";
     }
+    case "event_invite": return "invited you to an event";
     default: return "interacted with your post";
   }
 }
@@ -119,6 +121,17 @@ function notificationIcon(type: string) {
           </svg>
         </div>
       );
+    case "event_invite":
+      return (
+        <div className="w-6 h-6 rounded-full bg-ball-yellow flex items-center justify-center">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-court-green" strokeLinecap="round" strokeLinejoin="round">
+            <ellipse cx="7" cy="6.5" rx="3" ry="4" transform="rotate(-25 7 6.5)" />
+            <line x1="9" y1="9.5" x2="17" y2="21.5" />
+            <ellipse cx="17" cy="6.5" rx="3" ry="4" transform="rotate(25 17 6.5)" />
+            <line x1="15" y1="9.5" x2="7" y2="21.5" />
+          </svg>
+        </div>
+      );
     default:
       return null;
   }
@@ -181,6 +194,11 @@ export default function NotificationBell() {
       setOpen(false);
       const target = n.messageId ? `/chat/${n.actor.id}?msg=${n.messageId}` : `/chat/${n.actor.id}`;
       router.push(target);
+      return;
+    }
+    if (n.type === "event_invite" && n.eventId) {
+      setOpen(false);
+      router.push(`/events/${n.eventId}`);
       return;
     }
     const wantsComments = n.type === "comment" || n.type === "reply";

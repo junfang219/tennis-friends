@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import Avatar from "@/components/Avatar";
-import { EVENT_TYPE_META } from "../page";
+import { EVENT_TYPE_META } from "@/lib/eventTypeMeta";
 
 type Participant = {
   id: string;
@@ -54,6 +54,7 @@ export default function EventDetailPage() {
   const [actionInFlight, setActionInFlight] = useState(false);
   const [error, setError] = useState("");
   const [showRoster, setShowRoster] = useState(false);
+  const [showInvite, setShowInvite] = useState(false);
 
   const load = () => {
     fetch(`/api/events/${params.id}`)
@@ -219,9 +220,17 @@ export default function EventDetailPage() {
         {/* Signup action */}
         <div className="flex items-center gap-3 flex-wrap">
           {isOwner ? (
-            <span className="inline-flex items-center px-3 py-1.5 rounded-full bg-court-green/10 text-court-green text-xs font-semibold">
-              Organizer
-            </span>
+            <>
+              <span className="inline-flex items-center px-3 py-1.5 rounded-full bg-court-green/10 text-court-green text-xs font-semibold">
+                Organizer
+              </span>
+              <button
+                onClick={() => setShowInvite(true)}
+                className="px-4 py-2 rounded-full bg-court-green text-white text-sm font-semibold hover:bg-court-green-light"
+              >
+                + Invite friends
+              </button>
+            </>
           ) : event.myStatus === "registered" ? (
             <button
               onClick={withdraw}
@@ -331,6 +340,219 @@ export default function EventDetailPage() {
             </p>
           </section>
         )}
+      </div>
+
+      {showInvite && (
+        <InviteFriendsModal
+          eventId={event.id}
+          alreadyKnownUserIds={new Set(event.participants.map((p) => p.userId))}
+          onClose={() => setShowInvite(false)}
+          onSent={() => {
+            setShowInvite(false);
+            load();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function InviteFriendsModal({
+  eventId,
+  alreadyKnownUserIds,
+  onClose,
+  onSent,
+}: {
+  eventId: string;
+  alreadyKnownUserIds: Set<string>;
+  onClose: () => void;
+  onSent: (sentCount: number) => void;
+}) {
+  const [friends, setFriends] = useState<
+    { friendshipId: string; user: { id: string; name: string; profileImageUrl: string; skillLevel: string } }[]
+  >([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    fetch("/api/friends")
+      .then((r) => r.json())
+      .then((data) => {
+        setFriends(data.friends || []);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const toggle = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const filtered = friends.filter((f) =>
+    f.user.name.toLowerCase().includes(search.trim().toLowerCase())
+  );
+
+  async function send() {
+    if (selectedIds.size === 0 || sending) return;
+    setSending(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/events/${eventId}/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userIds: Array.from(selectedIds) }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setError(data?.error || "Couldn't send invites.");
+        setSending(false);
+        return;
+      }
+      const data = await res.json();
+      onSent(data.invited ?? selectedIds.size);
+    } catch {
+      setError("Network error. Try again.");
+      setSending(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <h2 className="font-display text-lg font-bold text-gray-900">Invite friends</h2>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500"
+            aria-label="Close"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="px-5 pt-4 pb-3">
+          <div className="relative">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <path d="M21 21l-4.35-4.35" />
+            </svg>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search friends…"
+              className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-court-green"
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-3 pb-3">
+          {loading ? (
+            <p className="text-sm text-gray-500 text-center py-10">Loading friends…</p>
+          ) : friends.length === 0 ? (
+            <p className="text-sm text-gray-500 text-center py-10">
+              You don&apos;t have any friends yet. Add friends first, then invite them.
+            </p>
+          ) : filtered.length === 0 ? (
+            <p className="text-sm text-gray-500 text-center py-10">No matches.</p>
+          ) : (
+            <ul className="space-y-1">
+              {filtered.map((f) => {
+                const known = alreadyKnownUserIds.has(f.user.id);
+                const selected = selectedIds.has(f.user.id);
+                return (
+                  <li key={f.user.id}>
+                    <button
+                      type="button"
+                      onClick={() => !known && toggle(f.user.id)}
+                      disabled={known}
+                      className={`w-full flex items-center gap-3 p-2.5 rounded-xl transition-all text-left ${
+                        known
+                          ? "opacity-50 cursor-not-allowed"
+                          : selected
+                          ? "bg-court-green-soft/10 ring-1 ring-court-green-soft/30"
+                          : "hover:bg-gray-50"
+                      }`}
+                    >
+                      <div
+                        className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all shrink-0 ${
+                          selected
+                            ? "bg-court-green border-court-green"
+                            : "border-gray-300"
+                        }`}
+                      >
+                        {selected && (
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round">
+                            <polyline points="20,6 9,17 4,12" />
+                          </svg>
+                        )}
+                      </div>
+                      <Avatar name={f.user.name} image={f.user.profileImageUrl} size="sm" />
+                      <span className="flex-1 text-sm font-medium text-gray-800 truncate">
+                        {f.user.name}
+                      </span>
+                      {known && (
+                        <span className="text-[10px] text-gray-400 shrink-0">already in</span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        {error && (
+          <div className="mx-5 mb-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">
+            {error}
+          </div>
+        )}
+
+        <div className="p-4 border-t border-gray-100 flex items-center gap-3">
+          <button
+            onClick={send}
+            disabled={selectedIds.size === 0 || sending}
+            className="btn-primary flex-1"
+          >
+            {sending
+              ? "Sending…"
+              : selectedIds.size === 0
+              ? "Pick friends"
+              : `Send ${selectedIds.size} ${selectedIds.size === 1 ? "invite" : "invites"}`}
+          </button>
+          <button
+            onClick={onClose}
+            className="text-sm text-gray-500 hover:text-gray-700 px-2"
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   );

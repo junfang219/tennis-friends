@@ -52,6 +52,19 @@ type Post = {
   isLiked: boolean;
   groups?: { id: string; name: string }[];
   friendGroups?: { id: string; name: string }[];
+  event?: {
+    id: string;
+    title: string;
+    eventType: string;
+    startDate: string;
+    endDate: string;
+    venueName: string;
+    maxParticipants: number | null;
+    ntrpMin: number | null;
+    ntrpMax: number | null;
+    coverImageUrl: string;
+    registeredCount: number;
+  } | null;
 };
 
 type PlayRequest = {
@@ -592,6 +605,9 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
           {currentContent && (
             <p className="text-gray-700 text-[0.9375rem] leading-relaxed whitespace-pre-wrap break-words overflow-wrap-anywhere pb-3" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>{currentContent}</p>
           )}
+
+          {/* Event card (postType=event) */}
+          {post.event && <EventChip event={post.event} />}
 
           {/* Find Players / Propose Team details card */}
           {isRecruiting && (
@@ -2021,5 +2037,71 @@ function ManageRequestsModal({
         </div>
       </div>
     </div>
+  );
+}
+
+const EVENT_TYPE_LABEL: Record<string, { label: string; emoji: string }> = {
+  tournament: { label: "Tournament", emoji: "🏆" },
+  round_robin: { label: "Round Robin", emoji: "🔁" },
+  mixer: { label: "Social Mixer", emoji: "🤝" },
+  clinic: { label: "Clinic", emoji: "🎾" },
+};
+
+function EventChip({
+  event,
+}: {
+  event: NonNullable<Post["event"]>;
+}) {
+  const meta = EVENT_TYPE_LABEL[event.eventType] ?? { label: "Event", emoji: "🎾" };
+  const start = new Date(event.startDate);
+  const end = new Date(event.endDate);
+  const sameDay = start.toDateString() === end.toDateString();
+  const dateStr = sameDay
+    ? `${start.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${start.toLocaleTimeString(
+        undefined,
+        { hour: "numeric", minute: "2-digit" }
+      )}`
+    : `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${end.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      })}`;
+
+  return (
+    <Link
+      href={`/events/${event.id}`}
+      className="block mb-3 rounded-xl border border-court-green-pale/30 bg-gradient-to-br from-court-green/5 to-ball-yellow/10 p-4 hover:from-court-green/10 hover:to-ball-yellow/20 transition-colors"
+    >
+      <div className="flex items-start gap-3">
+        <div className="w-12 h-12 rounded-xl bg-white flex items-center justify-center text-xl shadow-sm shrink-0">
+          {meta.emoji}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] font-bold uppercase tracking-wide text-court-green-soft mb-0.5">
+            {meta.label}
+          </div>
+          <div className="font-display text-base font-bold text-gray-900 truncate">
+            {event.title}
+          </div>
+          <div className="text-xs text-gray-600 mt-1 space-y-0.5">
+            <div>📅 {dateStr}</div>
+            {event.venueName && <div>📍 {event.venueName}</div>}
+            <div className="flex items-center gap-3">
+              <span>
+                👤 {event.registeredCount}
+                {event.maxParticipants ? `/${event.maxParticipants}` : ""} signed up
+              </span>
+              {(event.ntrpMin != null || event.ntrpMax != null) && (
+                <span>
+                  NTRP {event.ntrpMin ?? "?"}–{event.ntrpMax ?? "?"}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="text-[11px] font-semibold text-court-green shrink-0 self-center">
+          View →
+        </div>
+      </div>
+    </Link>
   );
 }

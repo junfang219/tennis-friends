@@ -141,10 +141,12 @@ model Post {
   broadcastRadiusMi Int     @default(0)
   broadcastLat      Float?
   broadcastLng      Float?
+  eventId   String?
   authorId  String
   createdAt DateTime @default(now())
 
   author       User          @relation(fields: [authorId], references: [id])
+  event        Event?        @relation(fields: [eventId], references: [id], onDelete: SetNull)
   likes        Like[]
   postGroups   PostGroup[]
   postFriendGroups PostFriendGroup[]
@@ -155,6 +157,7 @@ model Post {
   availabilityReports CourtAvailabilityReport[]
 
   @@index([isBroadcast, createdAt])
+  @@index([eventId])
 }
 
 model Like {
@@ -287,10 +290,11 @@ model Notification {
   id          String   @id @default(cuid())
   userId      String   // recipient
   actorId     String   // who triggered it
-  type        String   // "comment" | "like" | "join_request" | "request_approved" | "request_rejected" | "message_reaction"
+  type        String   // "comment" | "like" | "join_request" | "request_approved" | "request_rejected" | "message_reaction" | "event_invite"
   postId      String   @default("")
   commentId   String   @default("")
   messageId   String   @default("")
+  eventId     String   @default("")
   emoji       String   @default("")
   read        Boolean  @default(false)
   createdAt   DateTime @default(now())
@@ -739,6 +743,7 @@ model Event {
 
   participants    EventParticipant[]
   matches         EventMatch[]
+  posts           Post[]
 
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt

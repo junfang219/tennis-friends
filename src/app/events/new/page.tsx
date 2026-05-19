@@ -25,6 +25,7 @@ export default function NewEventPage() {
   const [maxParticipants, setMaxParticipants] = useState("");
   const [ntrpMin, setNtrpMin] = useState("");
   const [ntrpMax, setNtrpMax] = useState("");
+  const [postToFeed, setPostToFeed] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -53,6 +54,7 @@ export default function NewEventPage() {
         maxParticipants: maxParticipants ? Number(maxParticipants) : null,
         ntrpMin: ntrpMin ? Number(ntrpMin) : null,
         ntrpMax: ntrpMax ? Number(ntrpMax) : null,
+        postToFeed,
       };
       const res = await fetch("/api/events", {
         method: "POST",
@@ -222,6 +224,26 @@ export default function NewEventPage() {
               />
             </div>
           </Field>
+        </section>
+
+        <section className="bg-white rounded-2xl p-5 shadow-sm">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={postToFeed}
+              onChange={(e) => setPostToFeed(e.target.checked)}
+              className="mt-0.5 w-4 h-4 rounded accent-court-green"
+            />
+            <span className="flex-1">
+              <span className="block text-sm font-semibold text-gray-700">
+                Post to feed for discovery
+              </span>
+              <span className="block text-[12px] text-gray-500 mt-0.5">
+                Other players see your event in their feed and can sign up. Uncheck if you only
+                plan to invite specific friends.
+              </span>
+            </span>
+          </label>
         </section>
 
         {error && (

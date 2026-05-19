@@ -79,6 +79,7 @@ export async function POST(request: Request) {
     venueName,
     venueAddress,
     coverImageUrl,
+    postToFeed,
   } = body;
 
   if (!title?.trim()) {
@@ -132,6 +133,19 @@ export async function POST(request: Request) {
   });
 
   await ensureEventGroup(event.id);
+
+  // Auto cross-post to the feed for discovery, unless the organizer opted out.
+  if (postToFeed !== false) {
+    const teaser = (description || "").trim();
+    await prisma.post.create({
+      data: {
+        authorId: userId,
+        postType: "event",
+        eventId: event.id,
+        content: teaser,
+      },
+    });
+  }
 
   return NextResponse.json(event, { status: 201 });
 }

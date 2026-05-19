@@ -150,6 +150,21 @@ export async function GET() {
         select: { id: true, status: true, note: true, userId: true, user: { select: { name: true, profileImageUrl: true } } },
       },
       photos: { orderBy: { order: "asc" }, select: { url: true } },
+      event: {
+        select: {
+          id: true,
+          title: true,
+          eventType: true,
+          startDate: true,
+          endDate: true,
+          venueName: true,
+          maxParticipants: true,
+          ntrpMin: true,
+          ntrpMax: true,
+          coverImageUrl: true,
+          _count: { select: { participants: { where: { status: "registered" } } } },
+        },
+      },
       _count: { select: { likes: true, comments: true, playRequests: { where: { status: "PENDING" } } } },
     },
   });
@@ -266,6 +281,21 @@ export async function GET() {
     friendGroups: post.authorId === userId
       ? post.postFriendGroups.map((pfg) => ({ id: pfg.friendGroup.id, name: pfg.friendGroup.name }))
       : [],
+    event: post.event
+      ? {
+          id: post.event.id,
+          title: post.event.title,
+          eventType: post.event.eventType,
+          startDate: post.event.startDate,
+          endDate: post.event.endDate,
+          venueName: post.event.venueName,
+          maxParticipants: post.event.maxParticipants,
+          ntrpMin: post.event.ntrpMin,
+          ntrpMax: post.event.ntrpMax,
+          coverImageUrl: post.event.coverImageUrl,
+          registeredCount: post.event._count.participants,
+        }
+      : null,
   }));
 
   return NextResponse.json(formatted);
