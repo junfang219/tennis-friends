@@ -32,6 +32,9 @@ export async function GET(
         },
       },
       _count: { select: { members: true } },
+      // Event-backed groups expose their eventId so consumers (chat header,
+      // inbox) can route back to the event page instead of the team page.
+      event: { select: { id: true } },
     },
   });
 

@@ -30,6 +30,8 @@ type GroupInfo = {
   name: string;
   imageUrl?: string | null;
   _count: { members: number };
+  // Set when this group is backing an Event — back nav should return there.
+  event?: { id: string } | null;
 };
 
 function formatTime(date: string) {
@@ -238,16 +240,26 @@ export default function GroupChatPage() {
     <div className="max-w-2xl mx-auto flex flex-col" style={{ height: "calc(100vh - 4rem)" }}>
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shrink-0">
-        <Link
-          href={`/groups/${groupId}`}
-          className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <polyline points="15,18 9,12 15,6" />
-          </svg>
-        </Link>
+        {(() => {
+          const parentHref = groupInfo?.event?.id
+            ? `/events/${groupInfo.event.id}`
+            : `/groups/${groupId}`;
+          return (
+            <Link
+              href={parentHref}
+              className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <polyline points="15,18 9,12 15,6" />
+              </svg>
+            </Link>
+          );
+        })()}
         {groupInfo ? (
-          <Link href={`/groups/${groupId}`} className="flex items-center gap-3 flex-1 min-w-0">
+          <Link
+            href={groupInfo.event?.id ? `/events/${groupInfo.event.id}` : `/groups/${groupId}`}
+            className="flex items-center gap-3 flex-1 min-w-0"
+          >
             {groupInfo.imageUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
