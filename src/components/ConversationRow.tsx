@@ -42,6 +42,8 @@ export type TeamItem = {
   muted: boolean;
   pinnedAt: string | null;
   href: string;
+  /** If set, this group is the backing chat for an event — render with the Event badge. */
+  eventId?: string | null;
 };
 
 export type InboxItem = DirectItem | GroupItem | TeamItem;
@@ -334,11 +336,15 @@ export default function ConversationRow({
           <div className="flex items-center justify-between gap-2">
             <p className={`text-sm truncate ${item.unreadCount > 0 ? "font-bold text-gray-900" : "font-semibold text-gray-800"}`}>
               {item.title}
-              {item.type === "team" && (
+              {item.type === "team" && item.eventId ? (
+                <span className="ml-1.5 text-[9px] font-bold tracking-wider text-court-green bg-ball-yellow/60 px-1 py-0.5 rounded uppercase">
+                  Event
+                </span>
+              ) : item.type === "team" ? (
                 <span className="ml-1.5 text-[9px] font-bold tracking-wider text-clay bg-clay/15 px-1 py-0.5 rounded uppercase">
                   Team
                 </span>
-              )}
+              ) : null}
               {isSession && (
                 <span className="ml-1.5 text-[9px] font-bold tracking-wider text-white bg-court-green px-1.5 py-0.5 rounded uppercase">
                   🎾 Game

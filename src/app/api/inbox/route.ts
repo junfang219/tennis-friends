@@ -315,6 +315,7 @@ async function buildTeamList(userId: string, previewContent: PreviewFn) {
           take: 1,
           include: { sender: { select: { id: true, name: true } } },
         },
+        event: { select: { id: true } },
       },
     }),
     prisma.groupMessage.findMany({
@@ -369,6 +370,7 @@ async function buildTeamList(userId: string, previewContent: PreviewFn) {
       href: `/groups/${team.id}/chat`,
       updatedAt: team.updatedAt,
       _sortAt: anyLatest?.createdAt || team.updatedAt,
+      eventId: team.event?.id ?? null,
     };
   });
 }
