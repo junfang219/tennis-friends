@@ -24,6 +24,9 @@ export async function GET(request: Request) {
           ...(archived ? { archivedAt: { not: null } } : { archivedAt: null }),
         },
       },
+      // Event-backed groups belong to the Events list, not Teams — keep them
+      // out of /groups so the same group doesn't appear in two places.
+      event: { is: null },
     },
     include: {
       owner: { select: { id: true, name: true, profileImageUrl: true } },
