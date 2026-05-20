@@ -11,6 +11,7 @@ import MessageReactionBar from "@/components/MessageReactionBar";
 import MessageReactions, { type MessageReaction as MsgReaction } from "@/components/MessageReactions";
 import { useLongPress } from "@/hooks/useLongPress";
 import type { ReactionKey } from "@/lib/reactions";
+import { isAtLeast, ROLE } from "@/lib/groupRoles";
 
 type Message = {
   id: string;
@@ -21,14 +22,23 @@ type Message = {
   senderId: string;
   sharedPostId?: string | null;
   sharedPost?: SharedPost | null;
+  // "chat" (default) or "announcement". Announcements render highlighted
+  // with a captain-authored badge.
+  kind?: "chat" | "announcement";
+  notifyEmail?: boolean;
+  pinnedAt?: string | null;
   sender: { id: string; name: string; profileImageUrl: string };
   reactions?: MsgReaction[];
 };
+
+type Member = { userId: string; role: string };
 
 type GroupInfo = {
   id: string;
   name: string;
   imageUrl?: string | null;
+  ownerId: string;
+  members: Member[];
   _count: { members: number };
   // Set when this group is backing an Event — back nav should return there.
   event?: { id: string } | null;
@@ -65,6 +75,10 @@ export default function GroupChatPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [reactionPopover, setReactionPopover] = useState<{ msgId: string; rect: DOMRect } | null>(null);
+  // Announcement composer state — CAPTAIN+ can toggle this on per message.
+  const [announcementMode, setAnnouncementMode] = useState(false);
+  const [announcementEmail, setAnnouncementEmail] = useState(true);
+  const [sendError, setSendError] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -148,6 +162,7 @@ export default function GroupChatPage() {
   const handleSend = async () => {
     if ((!input.trim() && !pendingMedia) || sending || uploading) return;
     setSending(true);
+    setSendError("");
 
     const res = await fetch(`/api/groups/${groupId}/messages`, {
       method: "POST",
@@ -156,6 +171,9 @@ export default function GroupChatPage() {
         content: input,
         mediaUrl: pendingMedia?.url,
         mediaType: pendingMedia?.type,
+        ...(announcementMode
+          ? { kind: "announcement", notifyEmail: announcementEmail }
+          : {}),
       }),
     });
 
@@ -164,7 +182,13 @@ export default function GroupChatPage() {
       setMessages((prev) => [...prev, msg]);
       setInput("");
       setPendingMedia(null);
+      // Reset announcement toggle after a successful send so the next
+      // message defaults back to regular chat.
+      setAnnouncementMode(false);
       inputRef.current?.focus();
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setSendError(d.error || "Failed to send.");
     }
     setSending(false);
   };
@@ -177,6 +201,10 @@ export default function GroupChatPage() {
   };
 
   const myId = session?.user?.id || "";
+  const myRole = myId && groupInfo
+    ? groupInfo.members.find((m) => m.userId === myId)?.role ?? null
+    : null;
+  const canPostAnnouncement = !!myRole && isAtLeast(myRole, ROLE.CAPTAIN);
 
   const applyReaction = async (msgId: string, key: ReactionKey | null) => {
     if (!myId) return;
@@ -311,10 +339,43 @@ export default function GroupChatPage() {
 
             {group.messages.map((msg, i) => {
               const isMe = msg.senderId === session?.user?.id;
+              const isAnnouncement = msg.kind === "announcement";
               const prevMsg = i > 0 ? group.messages[i - 1] : null;
-              const sameSender = prevMsg?.senderId === msg.senderId;
+              // Treat the boundary between an announcement and a regular
+              // message as "different sender" — announcements always get
+              // their own header row.
+              const sameSender = !isAnnouncement
+                && prevMsg?.senderId === msg.senderId
+                && prevMsg.kind !== "announcement";
               const showAvatar = !isMe && !sameSender;
               const showName = !isMe && !sameSender;
+
+              if (isAnnouncement) {
+                return (
+                  <div key={msg.id} className="my-3 first:mt-0">
+                    <div className="bg-gradient-to-br from-court-green-pale/30 to-ball-yellow/15 border border-court-green-pale/60 rounded-2xl p-4 shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold tracking-wider text-court-green bg-white/70 px-2 py-0.5 rounded-full uppercase">
+                          📣 Announcement
+                        </span>
+                        {msg.notifyEmail && (
+                          <span className="text-[10px] font-medium text-gray-500" title="Emailed to the team">
+                            ✉️ emailed
+                          </span>
+                        )}
+                        <span className="text-[10px] text-gray-400 ml-auto">{formatTime(msg.createdAt)}</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <Avatar name={msg.sender.name} image={msg.sender.profileImageUrl} size="sm" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-court-green-soft mb-1">{msg.sender.name}</p>
+                          <p className="text-sm text-gray-900 whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
 
               return (
                 <div
@@ -397,6 +458,34 @@ export default function GroupChatPage() {
 
       {/* Input */}
       <div className="bg-white border-t border-gray-200 px-4 py-3 shrink-0">
+        {canPostAnnouncement && (
+          <div className="mb-2 flex items-center gap-3 text-xs">
+            <button
+              type="button"
+              onClick={() => setAnnouncementMode((v) => !v)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-semibold transition-colors ${
+                announcementMode
+                  ? "bg-court-green text-white"
+                  : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+              }`}
+              title="Post this as a team announcement"
+            >
+              📣 Announcement
+            </button>
+            {announcementMode && (
+              <label className="inline-flex items-center gap-1.5 text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={announcementEmail}
+                  onChange={(e) => setAnnouncementEmail(e.target.checked)}
+                  className="w-3.5 h-3.5 accent-court-green"
+                />
+                Also email the team
+              </label>
+            )}
+          </div>
+        )}
+        {sendError && <p className="text-xs text-red-500 mb-2">{sendError}</p>}
         {pendingMedia && (
           <div className="mb-2 inline-flex items-start gap-2 bg-gray-100 rounded-xl p-2">
             {pendingMedia.type === "image" ? (
