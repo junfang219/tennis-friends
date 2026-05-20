@@ -2,12 +2,20 @@
 
 import { signIn } from "next-auth/react";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import OAuthButtons from "@/components/OAuthButtons";
 import PhoneAuthForm from "@/components/PhoneAuthForm";
 
 type Tab = "email" | "phone";
+
+// Restrict the post-login redirect to same-origin relative paths so a crafted
+// ?next=https://evil.example URL can't be used to phish users.
+function safeNext(raw: string | null): string {
+  if (!raw) return "/";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
+  return raw;
+}
 
 export default function LoginPage() {
   const [tab, setTab] = useState<Tab>("email");
@@ -16,6 +24,8 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = safeNext(searchParams.get("next"));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,7 +42,7 @@ export default function LoginPage() {
       setError("Invalid email or password. Game, set, try again!");
       setLoading(false);
     } else {
-      router.push("/");
+      router.push(next);
       router.refresh();
     }
   };
@@ -59,7 +69,7 @@ export default function LoginPage() {
 
         {/* Card */}
         <div className="bg-white rounded-3xl shadow-xl shadow-court-green/5 border border-court-green-pale/20 p-8">
-          <OAuthButtons callbackUrl="/" />
+          <OAuthButtons callbackUrl={next} />
 
           <div className="flex bg-surface/70 rounded-xl p-1 mb-5 mt-6">
             <button
@@ -130,7 +140,7 @@ export default function LoginPage() {
               </button>
             </form>
           ) : (
-            <PhoneAuthForm callbackUrl="/" />
+            <PhoneAuthForm callbackUrl={next} />
           )}
 
           <div className="mt-6 text-center">

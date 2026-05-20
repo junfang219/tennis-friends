@@ -78,6 +78,7 @@ model User {
   courtAvailabilityReports CourtAvailabilityReport[] @relation("CourtAvailabilityReporter")
   eventsOwned              Event[]                   @relation("EventOwner")
   eventParticipations      EventParticipant[]        @relation("EventParticipantUser")
+  groupInvitesSent         GroupInvite[]             @relation("GroupInvitesSent")
 }
 
 model Highlight {
@@ -195,8 +196,35 @@ model Group {
   matches        TeamMatch[]
   practiceSeries PracticeSeries[]
   seasons        Season[]
+  invites        GroupInvite[]
   event          Event?           @relation("GroupEvent")
   hostedEvents   Event[]          @relation("EventHostGroup")
+}
+
+// Email-based invite to join a Group. Stored one row per attempt (no upsert)
+// so cancels and re-invites leave a clean audit trail. The unique token is
+// included in the accept URL.
+model GroupInvite {
+  id           String    @id @default(cuid())
+  groupId      String
+  group        Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  email        String // lowercased
+  invitedById  String
+  invitedBy    User      @relation("GroupInvitesSent", fields: [invitedById], references: [id])
+  token        String    @unique @default(cuid())
+  // Role/memberType the user will be granted on accept. Defaults align with
+  // GroupMember defaults and can be overridden by the inviter.
+  role         String    @default("MEMBER")
+  memberType   String    @default("")
+  status       String    @default("PENDING") // PENDING | ACCEPTED | CANCELLED | EXPIRED
+  expiresAt    DateTime
+  acceptedById String?
+  acceptedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([groupId, status])
+  @@index([email, status])
 }
 
 model GroupMember {
