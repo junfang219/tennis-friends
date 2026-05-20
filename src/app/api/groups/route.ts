@@ -143,6 +143,7 @@ export async function PUT(request: Request) {
     coverScale,
     addMemberIds,
     removeMemberIds,
+    memberTypes,
   } = await request.json();
 
   const group = await prisma.group.findUnique({ where: { id: groupId } });
@@ -195,6 +196,24 @@ export async function PUT(request: Request) {
     await prisma.group.update({
       where: { id: groupId },
       data: coverData,
+    });
+  }
+
+  // MANAGER+ can customize the per-team list of member-type labels. Stored as
+  // JSON on Group.memberTypes; parseMemberTypes() in groupRoles.ts falls back
+  // to defaults when the column is empty.
+  if (Array.isArray(memberTypes)) {
+    if (!isManager) {
+      return NextResponse.json({ error: "Only a team manager can change member types" }, { status: 403 });
+    }
+    const cleaned = (memberTypes as unknown[])
+      .filter((t): t is string => typeof t === "string")
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0 && t.length <= 32);
+    const deduped = Array.from(new Set(cleaned)).slice(0, 16);
+    await prisma.group.update({
+      where: { id: groupId },
+      data: { memberTypes: JSON.stringify(deduped) },
     });
   }
 
