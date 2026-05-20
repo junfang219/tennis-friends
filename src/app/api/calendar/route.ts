@@ -111,12 +111,13 @@ export async function GET(request: Request) {
     };
   });
 
-  // Practices: only ones the user marked "I'm in", scoped to teams (and active group filter).
+  // Practices: only ones the user is playing, scoped to teams (and active group filter).
+  // Accept both legacy "im_in" and new "playing" during the PR #5 transition.
   const myPracticeAvails = teamGroupFilter.length
     ? await prisma.practiceAvailability.findMany({
         where: {
           userId,
-          status: "im_in",
+          status: { in: ["im_in", "playing"] },
           practice: {
             series: { groupId: { in: teamGroupFilter } },
           },

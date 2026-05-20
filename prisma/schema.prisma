@@ -8,76 +8,76 @@ datasource db {
 }
 
 model User {
-  id             String    @id @default(cuid())
-  email          String?   @unique
-  emailVerified  DateTime?
-  phone          String?   @unique
-  phoneVerified  DateTime?
-  passwordHash   String?
-  name           String
-  bio            String   @default("")
-  skillLevel     String   @default("intermediate")
-  favoriteSurface String  @default("hard")
-  profileImageUrl String  @default("")
-  coverImageUrl  String   @default("")
-  coverOffsetY   Int      @default(50)
-  coverScale     Int      @default(100)
-  customTags     String   @default("")
-  latitude       Float?
-  longitude      Float?
-  gender         String   @default("")
-  ageRange       String   @default("")
-  ratingSystem   String   @default("")
-  ntrpRating     Float?
-  utrRating      Float?
-  handle         String?  @unique
-  venmoHandle    String?
-  paypalHandle   String?
-  cashappHandle  String?
-  zelleHandle    String?
-  onboardingComplete Boolean @default(false)
-  isPrivate      Boolean  @default(false)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                 String    @id @default(cuid())
+  email              String?   @unique
+  emailVerified      DateTime?
+  phone              String?   @unique
+  phoneVerified      DateTime?
+  passwordHash       String?
+  name               String
+  bio                String    @default("")
+  skillLevel         String    @default("intermediate")
+  favoriteSurface    String    @default("hard")
+  profileImageUrl    String    @default("")
+  coverImageUrl      String    @default("")
+  coverOffsetY       Int       @default(50)
+  coverScale         Int       @default(100)
+  customTags         String    @default("")
+  latitude           Float?
+  longitude          Float?
+  gender             String    @default("")
+  ageRange           String    @default("")
+  ratingSystem       String    @default("")
+  ntrpRating         Float?
+  utrRating          Float?
+  handle             String?   @unique
+  venmoHandle        String?
+  paypalHandle       String?
+  cashappHandle      String?
+  zelleHandle        String?
+  onboardingComplete Boolean   @default(false)
+  isPrivate          Boolean   @default(false)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
-  accounts         Account[]
-  sessions         Session[]
-  sentRequests     Friendship[] @relation("Requester")
-  receivedRequests Friendship[] @relation("Addressee")
-  posts            Post[]
-  likes            Like[]
-  ownedGroups      Group[]       @relation("GroupOwner")
-  groupMemberships GroupMember[]
-  sentMessages     Message[]     @relation("MessageSender")
-  receivedMessages Message[]     @relation("MessageReceiver")
-  groupMessages    GroupMessage[]
-  playRequests     PlayRequest[]
-  comments         Comment[]
-  hiddenPosts      HiddenPost[]
-  notifications    Notification[] @relation("NotificationRecipient")
-  notificationsActed Notification[] @relation("NotificationActor")
-  ownedFriendGroups   FriendGroup[]       @relation("FriendGroupOwner")
-  friendGroupMemberships FriendGroupMember[]
-  createdChats       Chat[]            @relation("ChatCreator")
-  chatParticipations ChatParticipant[]
-  sentChatMessages   ChatMessage[]
-  directMessageReads DirectMessageRead[]
-  blocksMade         Block[]           @relation("Blocker")
-  blocksReceived     Block[]           @relation("Blocked")
-  matchAvailabilities MatchAvailability[]
-  practiceAvailabilities PracticeAvailability[]
-  courtsAdded         Court[]                @relation("CourtAdder")
-  organizedBookings   Booking[]              @relation("BookingOrganizer")
-  bookingPlayers      BookingPlayer[]        @relation("BookingPlayerUser")
-  paidExpenses        Expense[]              @relation("ExpensePayer")
-  expenseShares       ExpenseShare[]
-  highlights          Highlight[]
-  messageReactions    MessageReaction[]
-  deviceTokens        DeviceToken[]
-  courtReviews        CourtReview[]          @relation("CourtReviewAuthor")
+  accounts                 Account[]
+  sessions                 Session[]
+  sentRequests             Friendship[]              @relation("Requester")
+  receivedRequests         Friendship[]              @relation("Addressee")
+  posts                    Post[]
+  likes                    Like[]
+  ownedGroups              Group[]                   @relation("GroupOwner")
+  groupMemberships         GroupMember[]
+  sentMessages             Message[]                 @relation("MessageSender")
+  receivedMessages         Message[]                 @relation("MessageReceiver")
+  groupMessages            GroupMessage[]
+  playRequests             PlayRequest[]
+  comments                 Comment[]
+  hiddenPosts              HiddenPost[]
+  notifications            Notification[]            @relation("NotificationRecipient")
+  notificationsActed       Notification[]            @relation("NotificationActor")
+  ownedFriendGroups        FriendGroup[]             @relation("FriendGroupOwner")
+  friendGroupMemberships   FriendGroupMember[]
+  createdChats             Chat[]                    @relation("ChatCreator")
+  chatParticipations       ChatParticipant[]
+  sentChatMessages         ChatMessage[]
+  directMessageReads       DirectMessageRead[]
+  blocksMade               Block[]                   @relation("Blocker")
+  blocksReceived           Block[]                   @relation("Blocked")
+  matchAvailabilities      MatchAvailability[]
+  practiceAvailabilities   PracticeAvailability[]
+  courtsAdded              Court[]                   @relation("CourtAdder")
+  organizedBookings        Booking[]                 @relation("BookingOrganizer")
+  bookingPlayers           BookingPlayer[]           @relation("BookingPlayerUser")
+  paidExpenses             Expense[]                 @relation("ExpensePayer")
+  expenseShares            ExpenseShare[]
+  highlights               Highlight[]
+  messageReactions         MessageReaction[]
+  deviceTokens             DeviceToken[]
+  courtReviews             CourtReview[]             @relation("CourtReviewAuthor")
   courtAvailabilityReports CourtAvailabilityReport[] @relation("CourtAvailabilityReporter")
-  eventsOwned         Event[]                @relation("EventOwner")
-  eventParticipations EventParticipant[]     @relation("EventParticipantUser")
+  eventsOwned              Event[]                   @relation("EventOwner")
+  eventParticipations      EventParticipant[]        @relation("EventParticipantUser")
 }
 
 model Highlight {
@@ -118,42 +118,44 @@ model Photo {
 }
 
 model Post {
-  id        String   @id @default(cuid())
-  content   String   @default("")
-  mediaUrl  String   @default("")
-  mediaType String   @default("")
-  postType  String   @default("regular")
-  playDate  String   @default("")
-  playTime  String   @default("")
-  playDuration Int    @default(90)
-  courtLocation String @default("")
-  gameType  String   @default("")
-  playersNeeded    Int     @default(0)
-  playersConfirmed Int     @default(0)
-  skillMin         Float?
-  skillMax         Float?
-  courtBooked      Boolean @default(false)
-  isComplete       Boolean @default(false)
-  commentsDisabled Boolean @default(false)
-  manualPlayers    String  @default("")
-  teamGroupId      String  @default("")
-  isBroadcast       Boolean @default(false)
-  broadcastRadiusMi Int     @default(0)
+  id                String    @id @default(cuid())
+  content           String    @default("")
+  mediaUrl          String    @default("")
+  mediaType         String    @default("")
+  postType          String    @default("regular")
+  playDate          String    @default("")
+  playTime          String    @default("")
+  playDuration      Int       @default(90)
+  courtLocation     String    @default("")
+  gameType          String    @default("")
+  playersNeeded     Int       @default(0)
+  playersConfirmed  Int       @default(0)
+  skillMin          Float?
+  skillMax          Float?
+  courtBooked       Boolean   @default(false)
+  isComplete        Boolean   @default(false)
+  commentsDisabled  Boolean   @default(false)
+  manualPlayers     String    @default("")
+  teamGroupId       String    @default("")
+  isBroadcast       Boolean   @default(false)
+  broadcastRadiusMi Int       @default(0)
   broadcastLat      Float?
   broadcastLng      Float?
-  eventId   String?
-  authorId  String
-  createdAt DateTime @default(now())
+  eventId           String?
+  authorId          String
+  // When set, the post is pinned to the top of its group feed (Team Cowboy "Message Board" parity).
+  pinnedAt          DateTime?
+  createdAt         DateTime  @default(now())
 
-  author       User          @relation(fields: [authorId], references: [id])
-  event        Event?        @relation(fields: [eventId], references: [id], onDelete: SetNull)
-  likes        Like[]
-  postGroups   PostGroup[]
-  postFriendGroups PostFriendGroup[]
-  playRequests PlayRequest[]
-  comments     Comment[]
-  hiddenBy     HiddenPost[]
-  photos       Photo[]
+  author              User                      @relation(fields: [authorId], references: [id])
+  event               Event?                    @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  likes               Like[]
+  postGroups          PostGroup[]
+  postFriendGroups    PostFriendGroup[]
+  playRequests        PlayRequest[]
+  comments            Comment[]
+  hiddenBy            HiddenPost[]
+  photos              Photo[]
   availabilityReports CourtAvailabilityReport[]
 
   @@index([isBroadcast, createdAt])
@@ -180,25 +182,35 @@ model Group {
   coverOffsetY  Int      @default(50)
   coverScale    Int      @default(100)
   ownerId       String
+  // JSON-encoded string[] of member type labels customizable per team
+  // (e.g. ["Full-time","Sub","Coach","Parent","Guest"]). Defaults applied at API layer.
+  memberTypes   String   @default("[]")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  owner         User           @relation("GroupOwner", fields: [ownerId], references: [id])
-  members       GroupMember[]
-  postGroups    PostGroup[]
-  groupMessages GroupMessage[]
-  matches         TeamMatch[]
-  practiceSeries  PracticeSeries[]
-  event           Event?         @relation("GroupEvent")
+  owner          User             @relation("GroupOwner", fields: [ownerId], references: [id])
+  members        GroupMember[]
+  postGroups     PostGroup[]
+  groupMessages  GroupMessage[]
+  matches        TeamMatch[]
+  practiceSeries PracticeSeries[]
+  seasons        Season[]
+  event          Event?           @relation("GroupEvent")
+  hostedEvents   Event[]          @relation("EventHostGroup")
 }
 
 model GroupMember {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   groupId    String
   userId     String
-  createdAt  DateTime @default(now())
-  lastReadAt DateTime @default(now())
-  muted      Boolean  @default(false)
+  // "OWNER" | "MANAGER" | "CAPTAIN" | "MEMBER" — see src/lib/groupRoles.ts.
+  // Backfill sets OWNER for the row matching Group.ownerId; everyone else MEMBER.
+  role       String    @default("MEMBER")
+  // Free-text label drawn from Group.memberTypes (e.g. "Full-time", "Sub").
+  memberType String    @default("")
+  createdAt  DateTime  @default(now())
+  lastReadAt DateTime  @default(now())
+  muted      Boolean   @default(false)
   pinnedAt   DateTime?
   hiddenAt   DateTime?
   clearedAt  DateTime?
@@ -208,6 +220,7 @@ model GroupMember {
   user  User  @relation(fields: [userId], references: [id])
 
   @@unique([groupId, userId])
+  @@index([groupId, role])
 }
 
 model PostGroup {
@@ -236,17 +249,25 @@ model Message {
 }
 
 model GroupMessage {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   content      String
-  mediaUrl     String   @default("")
-  mediaType    String   @default("")
-  sharedPostId String   @default("")
+  mediaUrl     String    @default("")
+  mediaType    String    @default("")
+  sharedPostId String    @default("")
   groupId      String
   senderId     String
-  createdAt    DateTime @default(now())
+  // "chat" (default) or "announcement". Announcements are highlighted in the UI
+  // and fan out via email when notifyEmail is true (see PR #6).
+  kind         String    @default("chat")
+  notifyEmail  Boolean   @default(false)
+  // Pinned announcements stick to the top of the chat thread.
+  pinnedAt     DateTime?
+  createdAt    DateTime  @default(now())
 
   group  Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
   sender User  @relation(fields: [senderId], references: [id])
+
+  @@index([groupId, kind, pinnedAt])
 }
 
 model PlayRequest {
@@ -287,18 +308,18 @@ model HiddenPost {
 }
 
 model Notification {
-  id          String   @id @default(cuid())
-  userId      String   // recipient
-  actorId     String   // who triggered it
-  type        String   // "comment" | "like" | "join_request" | "request_approved" | "request_rejected" | "message_reaction" | "event_invite"
-  postId      String   @default("")
-  commentId   String   @default("")
-  messageId   String   @default("")
-  eventId     String   @default("")
-  matchId     String   @default("") // EventMatch id; used for deep-linking to a specific match
-  emoji       String   @default("")
-  read        Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  id        String   @id @default(cuid())
+  userId    String // recipient
+  actorId   String // who triggered it
+  type      String // "comment" | "like" | "join_request" | "request_approved" | "request_rejected" | "message_reaction" | "event_invite"
+  postId    String   @default("")
+  commentId String   @default("")
+  messageId String   @default("")
+  eventId   String   @default("")
+  matchId   String   @default("") // EventMatch id; used for deep-linking to a specific match
+  emoji     String   @default("")
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
 
   user  User @relation("NotificationRecipient", fields: [userId], references: [id])
   actor User @relation("NotificationActor", fields: [actorId], references: [id])
@@ -341,15 +362,15 @@ model PostFriendGroup {
 }
 
 model Chat {
-  id                 String    @id @default(cuid())
-  name               String    @default("")
-  creatorId          String
-  postId             String?
-  friendGroupId      String?   @unique
-  sessionEndAt       DateTime?
-  manualPlayerNames  String    @default("")
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  id                String    @id @default(cuid())
+  name              String    @default("")
+  creatorId         String
+  postId            String?
+  friendGroupId     String?   @unique
+  sessionEndAt      DateTime?
+  manualPlayerNames String    @default("")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   creator      User              @relation("ChatCreator", fields: [creatorId], references: [id])
   friendGroup  FriendGroup?      @relation(fields: [friendGroupId], references: [id], onDelete: SetNull)
@@ -370,8 +391,8 @@ model Expense {
   description String   @default("")
   createdAt   DateTime @default(now())
 
-  shares       ExpenseShare[]
-  guestShares  GuestExpenseShare[]
+  shares      ExpenseShare[]
+  guestShares GuestExpenseShare[]
 
   @@index([chatId])
 }
@@ -402,12 +423,12 @@ model ExpenseShare {
 }
 
 model ChatParticipant {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   chatId     String
   userId     String
-  joinedAt   DateTime @default(now())
-  lastReadAt DateTime @default(now())
-  muted      Boolean  @default(false)
+  joinedAt   DateTime  @default(now())
+  lastReadAt DateTime  @default(now())
+  muted      Boolean   @default(false)
   pinnedAt   DateTime?
   hiddenAt   DateTime?
   clearedAt  DateTime?
@@ -439,7 +460,7 @@ model DeviceToken {
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   token     String   @unique
-  platform  String   // "ios" | "android"
+  platform  String // "ios" | "android"
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -476,11 +497,11 @@ model Block {
 }
 
 model DirectMessageRead {
-  id         String   @id @default(cuid())
-  userId     String   // the reader (recipient who opened the chat)
-  otherId    String   // the other party in the 1:1 conversation
-  lastReadAt DateTime @default(now())
-  muted      Boolean  @default(false)
+  id         String    @id @default(cuid())
+  userId     String // the reader (recipient who opened the chat)
+  otherId    String // the other party in the 1:1 conversation
+  lastReadAt DateTime  @default(now())
+  muted      Boolean   @default(false)
   pinnedAt   DateTime?
   hiddenAt   DateTime?
   clearedAt  DateTime?
@@ -491,16 +512,26 @@ model DirectMessageRead {
 }
 
 model TeamMatch {
-  id        String   @id @default(cuid())
-  groupId   String
-  matchDate String
-  matchTime String   @default("")
-  location  String
-  notes     String   @default("")
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  groupId    String
+  matchDate  String
+  matchTime  String   @default("")
+  location   String
+  notes      String   @default("")
+  // "home" | "away" | "" (unset). Affects which court the team is hosting at.
+  homeAway   String   @default("")
+  // Free text or hex; used for "wear-this" visibility on the match card.
+  shirtColor String   @default("")
+  // Optional opponent label (Team Cowboy stores opponent on each event).
+  opponent   String   @default("")
+  seasonId   String?
+  createdAt  DateTime @default(now())
 
   group          Group               @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  season         Season?             @relation(fields: [seasonId], references: [id], onDelete: SetNull)
   availabilities MatchAvailability[]
+
+  @@index([groupId, seasonId])
 }
 
 model MatchAvailability {
@@ -520,28 +551,55 @@ model MatchAvailability {
 }
 
 model PracticeSeries {
-  id            String   @id @default(cuid())
-  groupId       String
-  name          String
-  location      String
-  practiceTime  String   @default("")
-  notes         String   @default("")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String   @id @default(cuid())
+  groupId      String
+  name         String
+  location     String
+  practiceTime String   @default("")
+  notes        String   @default("")
+  seasonId     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   group     Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  season    Season?        @relation(fields: [seasonId], references: [id], onDelete: SetNull)
   practices TeamPractice[]
+
+  @@index([groupId, seasonId])
 }
 
 model TeamPractice {
-  id            String   @id @default(cuid())
-  seriesId      String
-  practiceDate  String
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String   @id @default(cuid())
+  seriesId     String
+  practiceDate String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  series          PracticeSeries         @relation(fields: [seriesId], references: [id], onDelete: Cascade)
-  availabilities  PracticeAvailability[]
+  series         PracticeSeries         @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+  availabilities PracticeAvailability[]
+}
+
+// A named span of time on a Group's calendar (e.g. "Summer 2026"). Matches,
+// practice series, and hostGroup-attached events can be tagged with a seasonId
+// so the calendar UI can filter. Inspired by Team Cowboy's "Seasons" concept.
+model Season {
+  id        String    @id @default(cuid())
+  groupId   String
+  name      String
+  startDate DateTime?
+  endDate   DateTime?
+  // Only one season per group should be active at a time, but not enforced
+  // at the DB layer — the API enforces the invariant on toggle.
+  isActive  Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  group   Group            @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  matches TeamMatch[]
+  series  PracticeSeries[]
+  events  Event[]
+
+  @@index([groupId, isActive])
 }
 
 model PracticeAvailability {
@@ -588,16 +646,16 @@ model Venue {
 }
 
 model VenueCourt {
-  id           String    @id @default(cuid())
-  venueId      String
-  venue        Venue     @relation(fields: [venueId], references: [id])
-  courtNumber  Int
-  surface      String    @default("hard")
-  isLighted    Boolean   @default(false)
-  activeNetId  String    @default("")
-  bookings     Booking[]
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id          String    @id @default(cuid())
+  venueId     String
+  venue       Venue     @relation(fields: [venueId], references: [id])
+  courtNumber Int
+  surface     String    @default("hard")
+  isLighted   Boolean   @default(false)
+  activeNetId String    @default("")
+  bookings    Booking[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@unique([venueId, courtNumber])
 }
@@ -695,8 +753,8 @@ model Account {
 model Session {
   id           String   @id @default(cuid())
   sessionToken String   @unique
-  userId      String
-  expires     DateTime
+  userId       String
+  expires      DateTime
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -712,96 +770,114 @@ model VerificationToken {
 }
 
 model Event {
-  id              String    @id @default(cuid())
-  ownerId         String
-  owner           User      @relation("EventOwner", fields: [ownerId], references: [id])
+  id      String @id @default(cuid())
+  ownerId String
+  owner   User   @relation("EventOwner", fields: [ownerId], references: [id])
 
   // Backing chat/feed group, auto-created via ensureEventGroup()
-  groupId         String?   @unique
-  group           Group?    @relation("GroupEvent", fields: [groupId], references: [id])
+  groupId String? @unique
+  group   Group?  @relation("GroupEvent", fields: [groupId], references: [id])
 
-  title           String
-  description     String    @default("")
-  eventType       String    // "tournament" | "round_robin" | "mixer" | "clinic"
+  title       String
+  description String @default("")
+  eventType   String // "tournament" | "round_robin" | "mixer" | "clinic"
 
-  startDate       DateTime
-  endDate         DateTime
-  signupDeadline  DateTime?
+  startDate      DateTime
+  endDate        DateTime
+  signupDeadline DateTime?
 
-  isPublicSignup  Boolean   @default(true)
+  isPublicSignup  Boolean @default(true)
   maxParticipants Int?
   ntrpMin         Float?
   ntrpMax         Float?
 
-  status          String    @default("open") // "open" | "closed" | "active" | "completed" | "cancelled"
-  venueName       String    @default("")
-  venueAddress    String    @default("")
+  status       String @default("open") // "open" | "closed" | "active" | "completed" | "cancelled"
+  venueName    String @default("")
+  venueAddress String @default("")
+
+  // Visibility scoping.
+  // "public": anchored to (eventLat, eventLng); visible to viewers within radiusMi.
+  // "group":  visible only to members of hostGroup. Mutually exclusive with postToFeed.
+  visibility  String  @default("public")
+  eventLat    Float?
+  eventLng    Float?
+  radiusMi    Int?
+  hostGroupId String?
+  hostGroup   Group?  @relation("EventHostGroup", fields: [hostGroupId], references: [id])
 
   // Loose JSON for type-specific config (bracket shape, mixer rounds, etc.).
-  config          String    @default("")
+  config String @default("")
 
-  coverImageUrl   String    @default("")
+  coverImageUrl String @default("")
 
-  participants    EventParticipant[]
-  matches         EventMatch[]
-  posts           Post[]
+  // Optional season grouping. Only meaningful when hostGroupId is set; the
+  // referenced Season must belong to that hostGroup (enforced at the API layer).
+  seasonId String?
+  season   Season? @relation(fields: [seasonId], references: [id], onDelete: SetNull)
 
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  participants EventParticipant[]
+  matches      EventMatch[]
+  posts        Post[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status, startDate])
   @@index([ownerId])
+  @@index([visibility, eventLat, eventLng])
+  @@index([hostGroupId])
+  @@index([seasonId])
 }
 
 model EventParticipant {
-  id           String    @id @default(cuid())
-  eventId      String
-  event        Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  userId       String
-  user         User      @relation("EventParticipantUser", fields: [userId], references: [id])
+  id      String @id @default(cuid())
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User   @relation("EventParticipantUser", fields: [userId], references: [id])
 
   status       String    @default("registered") // "registered" | "waitlist" | "withdrawn"
   registeredAt DateTime  @default(now())
   checkedInAt  DateTime?
 
   // Per-event standings (filled by match results).
-  wins         Int       @default(0)
-  losses       Int       @default(0)
-  setsWon      Int       @default(0)
-  setsLost     Int       @default(0)
-  points       Int       @default(0)
+  wins     Int @default(0)
+  losses   Int @default(0)
+  setsWon  Int @default(0)
+  setsLost Int @default(0)
+  points   Int @default(0)
 
   @@unique([eventId, userId])
   @@index([eventId, status])
 }
 
 model EventMatch {
-  id          String    @id @default(cuid())
-  eventId     String
-  event       Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  id      String @id @default(cuid())
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   // Up to 4 players (singles = 2, doubles = 4). Side 1 = players 1+3, side 2 = players 2+4.
   // No Prisma relations on these to avoid 4 back-relations on User; fetch users by id in API.
-  player1Id   String
-  player2Id   String
-  player3Id   String?
-  player4Id   String?
+  player1Id String
+  player2Id String
+  player3Id String?
+  player4Id String?
 
-  round       Int?     // round number for round-robin and tournament
-  bracketSlot String   @default("") // e.g. "QF-1", "SF-2" for tournament
+  round       Int? // round number for round-robin and tournament
+  bracketSlot String @default("") // e.g. "QF-1", "SF-2" for tournament
 
   scheduledAt DateTime?
-  courtAssign String   @default("")
+  courtAssign String    @default("")
 
-  score       String   @default("") // e.g. "6-4,3-6,7-5"
-  winnerSide  Int?     // 1 or 2
-  reportedBy  String   @default("") // userId who entered score
-  confirmedBy String   @default("") // userId who confirmed
-  proposedBy  String   @default("") // userId of the ladder challenger; empty for auto-generated
+  score       String    @default("") // e.g. "6-4,3-6,7-5"
+  winnerSide  Int? // 1 or 2
+  reportedBy  String    @default("") // userId who entered score
+  confirmedBy String    @default("") // userId who confirmed
+  proposedBy  String    @default("") // userId of the ladder challenger; empty for auto-generated
   disputedAt  DateTime?
 
-  status      String   @default("scheduled") // "proposed" | "declined" | "scheduled" | "in_progress" | "completed" | "cancelled"
-  createdAt   DateTime @default(now())
+  status    String   @default("scheduled") // "proposed" | "declined" | "scheduled" | "in_progress" | "completed" | "cancelled"
+  createdAt DateTime @default(now())
 
   @@index([eventId, status])
   @@index([eventId, round])

@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { normalizePracticeStatus, RSVP } from "@/lib/rsvpStatus";
 
-const ALLOWED_STATUS = ["im_in", "not_available"];
+// Accept both legacy and new vocabularies during the PR #5 transition; values
+// are normalized to the new vocab before storage.
+const ALLOWED_STATUS = ["im_in", "not_available", RSVP.PLAYING, RSVP.NOT_PLAYING, RSVP.MAYBE];
 
 // PUT upsert the current user's availability for a practice
 export async function PUT(
@@ -37,10 +40,12 @@ export async function PUT(
     return NextResponse.json({ error: "Invalid status" }, { status: 400 });
   }
 
+  const normalized = normalizePracticeStatus(status);
+
   const upserted = await prisma.practiceAvailability.upsert({
     where: { practiceId_userId: { practiceId, userId } },
-    update: { status },
-    create: { practiceId, userId, status },
+    update: { status: normalized },
+    create: { practiceId, userId, status: normalized },
     include: {
       user: { select: { id: true, name: true, profileImageUrl: true } },
     },

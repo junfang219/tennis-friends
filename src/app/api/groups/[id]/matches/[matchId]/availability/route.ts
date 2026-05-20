@@ -1,8 +1,19 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { normalizeMatchStatus, RSVP } from "@/lib/rsvpStatus";
 
-const ALLOWED_STATUS = ["available", "if_needed", "not_available", "not_sure"];
+// Accept both legacy and new vocabularies during the PR #5 transition; values
+// are normalized to the new vocab before storage.
+const ALLOWED_STATUS = [
+  "available",
+  "if_needed",
+  "not_available",
+  "not_sure",
+  RSVP.PLAYING,
+  RSVP.MAYBE,
+  RSVP.NOT_PLAYING,
+];
 const ALLOWED_TYPES = ["singles", "doubles", "both", ""];
 
 // PUT upsert the current user's availability for a match
@@ -41,10 +52,12 @@ export async function PUT(
     return NextResponse.json({ error: "Invalid matchTypes" }, { status: 400 });
   }
 
+  const normalized = normalizeMatchStatus(status);
+
   const upserted = await prisma.matchAvailability.upsert({
     where: { matchId_userId: { matchId, userId } },
-    update: { status, matchTypes: types },
-    create: { matchId, userId, status, matchTypes: types },
+    update: { status: normalized, matchTypes: types },
+    create: { matchId, userId, status: normalized, matchTypes: types },
     include: {
       user: { select: { id: true, name: true, profileImageUrl: true } },
     },

@@ -6,6 +6,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
+import { normalizePracticeStatus } from "@/lib/rsvpStatus";
 
 type Member = {
   id: string;
@@ -48,7 +49,10 @@ const STATUS_OPTIONS: { value: string; label: string; bg: string; text: string }
 ];
 
 function statusMeta(status: string) {
-  return STATUS_OPTIONS.find((s) => s.value === status);
+  // Accept both legacy ("im_in", "not_available") and new ("playing", "not_playing")
+  // vocab — normalize both sides during the PR #5 transition.
+  const target = normalizePracticeStatus(status);
+  return STATUS_OPTIONS.find((s) => normalizePracticeStatus(s.value) === target);
 }
 
 function formatDateHeader(iso: string) {
@@ -292,7 +296,7 @@ export default function TeamPracticePage() {
 
   const sendPractice = async (series: Series, practice: Practice) => {
     const inPlayers = practice.availabilities
-      .filter((a) => a.status === "im_in")
+      .filter((a) => a.status === "im_in" || a.status === "playing")
       .map((a) => a.user.name)
       .sort((x, y) => x.localeCompare(y));
 
@@ -649,7 +653,7 @@ export default function TeamPracticePage() {
                           </th>
                           {series.practices.map((practice) => {
                             const isHighlighted = highlightPracticeId === practice.id;
-                            const inCount = practice.availabilities.filter((a) => a.status === "im_in").length;
+                            const inCount = practice.availabilities.filter((a) => a.status === "im_in" || a.status === "playing").length;
                             const sending = sendingPracticeId === practice.id;
                             return (
                               <th
@@ -824,7 +828,7 @@ export default function TeamPracticePage() {
                       setStatusPopover(null);
                     }}
                     className={`text-[10px] font-semibold px-2 py-1.5 rounded ${
-                      a?.status === opt.value
+                      normalizePracticeStatus(a?.status || "") === normalizePracticeStatus(opt.value)
                         ? `${opt.bg} ${opt.text} ring-2 ring-court-green/40`
                         : `${opt.bg} ${opt.text} opacity-70 hover:opacity-100`
                     }`}

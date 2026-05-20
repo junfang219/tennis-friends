@@ -138,7 +138,7 @@ export default function TeamCalendarPage() {
       for (const p of series.practices) {
         if (!p.practiceDate) continue;
         const imIn = !!myId && p.availabilities.some(
-          (a) => a.userId === myId && a.status === "im_in"
+          (a) => a.userId === myId && (a.status === "im_in" || a.status === "playing")
         );
         const arr = map.get(p.practiceDate) || [];
         arr.push({

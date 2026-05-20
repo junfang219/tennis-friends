@@ -6,6 +6,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
+import { normalizeMatchStatus } from "@/lib/rsvpStatus";
 
 type Member = {
   id: string;
@@ -69,7 +70,10 @@ function compareSlots(a: string, b: string) {
 }
 
 function statusMeta(status: string) {
-  return STATUS_OPTIONS.find((s) => s.value === status);
+  // Accept both legacy ("available", "if_needed", ...) and new ("playing", "maybe", ...)
+  // vocab — normalize both sides during the PR #5 transition.
+  const target = normalizeMatchStatus(status);
+  return STATUS_OPTIONS.find((s) => normalizeMatchStatus(s.value) === target);
 }
 
 function typeChip(matchTypes: string) {
@@ -674,7 +678,7 @@ export default function AvailabilityPage() {
                       setStatusPopover(null);
                     }}
                     className={`text-[10px] font-semibold px-2 py-1.5 rounded ${
-                      a?.status === opt.value
+                      normalizeMatchStatus(a?.status || "") === normalizeMatchStatus(opt.value)
                         ? `${opt.bg} ${opt.text} ring-2 ring-court-green/40`
                         : `${opt.bg} ${opt.text} opacity-70 hover:opacity-100`
                     }`}
