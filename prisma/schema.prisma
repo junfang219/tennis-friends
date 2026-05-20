@@ -79,6 +79,9 @@ model User {
   eventsOwned              Event[]                   @relation("EventOwner")
   eventParticipations      EventParticipant[]        @relation("EventParticipantUser")
   groupInvitesSent         GroupInvite[]             @relation("GroupInvitesSent")
+  albumsCreated            Album[]                   @relation("AlbumsCreated")
+  albumItemsAdded          AlbumItem[]               @relation("AlbumItemsAdded")
+  groupFilesUploaded       GroupFile[]               @relation("GroupFilesUploaded")
 }
 
 model Highlight {
@@ -201,8 +204,63 @@ model Group {
   practiceSeries PracticeSeries[]
   seasons        Season[]
   invites        GroupInvite[]
+  albums         Album[]
+  files          GroupFile[]
   event          Event?           @relation("GroupEvent")
   hostedEvents   Event[]          @relation("EventHostGroup")
+}
+
+// Team-scoped photo/video album. Inspired by Team Cowboy's Photos, Videos &
+// Files section. Items reuse URLs returned from /api/upload — storage backend
+// can be swapped without touching this model.
+model Album {
+  id          String      @id @default(cuid())
+  groupId     String
+  group       Group       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name        String
+  description String      @default("")
+  // Optional cover item — when null the UI falls back to the first AlbumItem.
+  coverItemId String?
+  createdById String
+  createdBy   User        @relation("AlbumsCreated", fields: [createdById], references: [id])
+  items       AlbumItem[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([groupId, createdAt])
+}
+
+model AlbumItem {
+  id        String   @id @default(cuid())
+  albumId   String
+  album     Album    @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  url       String
+  mediaType String // "image" | "video"
+  caption   String   @default("")
+  addedById String
+  addedBy   User     @relation("AlbumItemsAdded", fields: [addedById], references: [id])
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([albumId, order])
+}
+
+// Team-scoped file storage (waivers, schedules, court maps, etc.). Files are
+// uploaded through the same /api/upload pipeline as album items.
+model GroupFile {
+  id           String   @id @default(cuid())
+  groupId      String
+  group        Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  url          String
+  filename     String
+  mimeType     String   @default("")
+  sizeBytes    Int      @default(0)
+  description  String   @default("")
+  uploadedById String
+  uploadedBy   User     @relation("GroupFilesUploaded", fields: [uploadedById], references: [id])
+  createdAt    DateTime @default(now())
+
+  @@index([groupId, createdAt])
 }
 
 // Email-based invite to join a Group. Stored one row per attempt (no upsert)
