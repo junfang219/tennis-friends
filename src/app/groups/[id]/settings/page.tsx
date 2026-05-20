@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import { DEFAULT_MEMBER_TYPES, isAtLeast, ROLE } from "@/lib/groupRoles";
+import { parseReminderPrefs, REMINDER_HOUR_CHOICES, type ReminderPrefs } from "@/lib/reminderPrefs";
 
 type Member = {
   id: string;
@@ -20,6 +21,7 @@ type Group = {
   name: string;
   ownerId: string;
   memberTypes: string; // JSON-encoded string[]
+  reminderPrefs: string; // JSON-encoded { matchHours, practiceHours }
   members: Member[];
 };
 
@@ -182,7 +184,13 @@ export default function GroupSettingsPage() {
               onSaved={loadSeasons}
             />
           )}
-          {tab === "notifications" && <NotificationsTab />}
+          {tab === "notifications" && (
+            <NotificationsTab
+              group={group}
+              canManage={canManage}
+              onSaved={loadGroup}
+            />
+          )}
         </div>
       </div>
 
@@ -816,21 +824,127 @@ function SeasonsTab({
   );
 }
 
-/* ────── Notifications tab (PR #7 will fill this in) ────── */
+/* ────── Notifications tab ────── */
 
-function NotificationsTab() {
+function hoursLabel(h: number): string {
+  if (h >= 24) return `${Math.round(h / 24)}d`;
+  return `${h}h`;
+}
+
+function NotificationsTab({
+  group,
+  canManage,
+  onSaved,
+}: {
+  group: Group;
+  canManage: boolean;
+  onSaved: () => void;
+}) {
+  const [prefs, setPrefs] = useState<ReminderPrefs>(parseReminderPrefs(group.reminderPrefs));
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  const toggle = (kind: "match" | "practice", hours: number) => {
+    if (!canManage) return;
+    setPrefs((cur) => {
+      const key = kind === "match" ? "matchHours" : "practiceHours";
+      const has = cur[key].includes(hours);
+      const next = has ? cur[key].filter((h) => h !== hours) : [...cur[key], hours];
+      return { ...cur, [key]: next.sort((a, b) => b - a) };
+    });
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setMsg("");
+    setErr("");
+    const res = await fetch("/api/groups", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupId: group.id, reminderPrefs: prefs }),
+    });
+    if (res.ok) {
+      setMsg("Reminder preferences saved.");
+      onSaved();
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setErr(d.error || "Failed to save.");
+    }
+    setSaving(false);
+  };
+
   return (
-    <div className="text-center py-8">
-      <div className="w-14 h-14 mx-auto mb-3 rounded-full bg-court-green-pale/30 flex items-center justify-center text-court-green">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
-          <path d="M13.73 21a2 2 0 01-3.46 0" />
-        </svg>
-      </div>
-      <p className="text-sm font-semibold text-gray-700">Per-team reminders</p>
-      <p className="text-xs text-gray-400 mt-1 max-w-xs mx-auto">
-        Coming soon — set how far in advance members get reminded about upcoming matches and practices.
+    <div className="space-y-5">
+      <p className="text-xs text-gray-500">
+        Members who haven&apos;t RSVPed get a push + email at each lead time you select.
+        Cron runs hourly — exact dispatch time can drift by up to 30 minutes.
       </p>
+
+      <section>
+        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+          Match reminders
+        </h3>
+        <div className="flex flex-wrap gap-2">
+          {REMINDER_HOUR_CHOICES.map((h) => {
+            const on = prefs.matchHours.includes(h);
+            return (
+              <button
+                key={h}
+                onClick={() => toggle("match", h)}
+                disabled={!canManage}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors disabled:cursor-not-allowed ${
+                  on
+                    ? "bg-court-green text-white"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                }`}
+              >
+                {hoursLabel(h)} before
+              </button>
+            );
+          })}
+        </div>
+        {prefs.matchHours.length === 0 && (
+          <p className="text-[11px] text-gray-400 mt-2">Match reminders disabled.</p>
+        )}
+      </section>
+
+      <section>
+        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+          Practice reminders
+        </h3>
+        <div className="flex flex-wrap gap-2">
+          {REMINDER_HOUR_CHOICES.map((h) => {
+            const on = prefs.practiceHours.includes(h);
+            return (
+              <button
+                key={h}
+                onClick={() => toggle("practice", h)}
+                disabled={!canManage}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors disabled:cursor-not-allowed ${
+                  on
+                    ? "bg-court-green text-white"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                }`}
+              >
+                {hoursLabel(h)} before
+              </button>
+            );
+          })}
+        </div>
+        {prefs.practiceHours.length === 0 && (
+          <p className="text-[11px] text-gray-400 mt-2">Practice reminders disabled.</p>
+        )}
+      </section>
+
+      {canManage && (
+        <button onClick={save} disabled={saving} className="btn-primary w-full">
+          {saving ? "Saving..." : "Save reminder preferences"}
+        </button>
+      )}
+
+      {msg && <p className="text-xs text-court-green">{msg}</p>}
+      {err && <p className="text-xs text-red-600">{err}</p>}
     </div>
   );
 }

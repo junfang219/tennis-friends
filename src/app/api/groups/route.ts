@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { getMemberRole, hasRole, isAtLeast, ROLE } from "@/lib/groupRoles";
+import { parseReminderPrefs, serializeReminderPrefs } from "@/lib/reminderPrefs";
 
 // GET all teams the user is a member of, optionally filtered by archive state
 export async function GET(request: Request) {
@@ -144,6 +145,7 @@ export async function PUT(request: Request) {
     addMemberIds,
     removeMemberIds,
     memberTypes,
+    reminderPrefs,
   } = await request.json();
 
   const group = await prisma.group.findUnique({ where: { id: groupId } });
@@ -214,6 +216,20 @@ export async function PUT(request: Request) {
     await prisma.group.update({
       where: { id: groupId },
       data: { memberTypes: JSON.stringify(deduped) },
+    });
+  }
+
+  // MANAGER+ can change per-team reminder preferences (drives the cron at
+  // /api/cron/event-reminders). Stored as JSON; parseReminderPrefs sanitizes
+  // unknown hours and falls back to defaults on read.
+  if (reminderPrefs !== undefined) {
+    if (!isManager) {
+      return NextResponse.json({ error: "Only a team manager can change reminders" }, { status: 403 });
+    }
+    const normalized = parseReminderPrefs(JSON.stringify(reminderPrefs));
+    await prisma.group.update({
+      where: { id: groupId },
+      data: { reminderPrefs: serializeReminderPrefs(normalized) },
     });
   }
 

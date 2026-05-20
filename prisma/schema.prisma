@@ -186,6 +186,10 @@ model Group {
   // JSON-encoded string[] of member type labels customizable per team
   // (e.g. ["Full-time","Sub","Coach","Parent","Guest"]). Defaults applied at API layer.
   memberTypes   String   @default("[]")
+  // JSON-encoded reminder prefs for the cron at /api/cron/event-reminders.
+  // Shape: { matchHours: number[]; practiceHours: number[] } — e.g. {"matchHours":[24,1],"practiceHours":[24]}.
+  // Empty string falls back to DEFAULT_REMINDER_PREFS in src/lib/reminderPrefs.ts.
+  reminderPrefs String   @default("")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -605,6 +609,22 @@ model TeamPractice {
 
   series         PracticeSeries         @relation(fields: [seriesId], references: [id], onDelete: Cascade)
   availabilities PracticeAvailability[]
+}
+
+// Idempotency log for /api/cron/event-reminders. One row per
+// (kind, refId, userId, hoursBefore) — the unique constraint guarantees a
+// member never gets the same reminder twice if the cron fires multiple
+// times in the same delivery window.
+model ReminderSent {
+  id          String   @id @default(cuid())
+  kind        String // "match" | "practice"
+  refId       String // TeamMatch.id or TeamPractice.id
+  userId      String
+  hoursBefore Int // 24 | 1 | 0 (day-of) — matches the values in Group.reminderPrefs
+  sentAt      DateTime @default(now())
+
+  @@unique([kind, refId, userId, hoursBefore])
+  @@index([sentAt])
 }
 
 // A named span of time on a Group's calendar (e.g. "Summer 2026"). Matches,
