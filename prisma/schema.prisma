@@ -82,6 +82,8 @@ model User {
   albumsCreated            Album[]                   @relation("AlbumsCreated")
   albumItemsAdded          AlbumItem[]               @relation("AlbumItemsAdded")
   groupFilesUploaded       GroupFile[]               @relation("GroupFilesUploaded")
+  pollsCreated             Poll[]                    @relation("PollsCreated")
+  pollVotesCast            PollVote[]                @relation("PollVotesCast")
 }
 
 model Highlight {
@@ -352,12 +354,63 @@ model GroupMessage {
   notifyEmail  Boolean   @default(false)
   // Pinned announcements stick to the top of the chat thread.
   pinnedAt     DateTime?
+  // Optional FK to an embedded poll. Unique = one poll per chat message
+  // (1:1). When set, the message renders as a poll card in the chat UI.
+  pollId       String?   @unique
+  poll         Poll?     @relation(fields: [pollId], references: [id], onDelete: SetNull)
   createdAt    DateTime  @default(now())
 
   group  Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
   sender User  @relation(fields: [senderId], references: [id])
 
   @@index([groupId, kind, pinnedAt])
+}
+
+// Lightweight inline poll embedded in a GroupMessage. Created via
+// POST /api/groups/[id]/polls which atomically creates Poll + GroupMessage.
+model Poll {
+  id          String        @id @default(cuid())
+  question    String
+  // When true the poll accepts a single vote per option per user, allowing
+  // the user to pick multiple options.
+  isMulti     Boolean       @default(false)
+  isClosed    Boolean       @default(false)
+  createdById String
+  createdBy   User          @relation("PollsCreated", fields: [createdById], references: [id])
+  options     PollOption[]
+  votes       PollVote[]
+  message     GroupMessage?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+model PollOption {
+  id        String     @id @default(cuid())
+  pollId    String
+  poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  text      String
+  order     Int        @default(0)
+  votes     PollVote[]
+  createdAt DateTime   @default(now())
+
+  @@index([pollId, order])
+}
+
+model PollVote {
+  id        String     @id @default(cuid())
+  pollId    String
+  poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  optionId  String
+  option    PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User       @relation("PollVotesCast", fields: [userId], references: [id])
+  createdAt DateTime   @default(now())
+
+  // Unique on (pollId, userId, optionId) allows multi-vote polls (one row
+  // per chosen option); single-vote polls are enforced at the API layer.
+  @@unique([pollId, userId, optionId])
+  @@index([pollId, userId])
+  @@index([optionId])
 }
 
 model PlayRequest {

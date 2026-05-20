@@ -12,6 +12,7 @@ import MessageReactions, { type MessageReaction as MsgReaction } from "@/compone
 import { useLongPress } from "@/hooks/useLongPress";
 import type { ReactionKey } from "@/lib/reactions";
 import { isAtLeast, ROLE } from "@/lib/groupRoles";
+import PollCard, { type PollData } from "@/components/PollCard";
 
 type Message = {
   id: string;
@@ -27,6 +28,8 @@ type Message = {
   kind?: "chat" | "announcement";
   notifyEmail?: boolean;
   pinnedAt?: string | null;
+  pollId?: string | null;
+  poll?: PollData | null;
   sender: { id: string; name: string; profileImageUrl: string };
   reactions?: MsgReaction[];
 };
@@ -79,6 +82,13 @@ export default function GroupChatPage() {
   const [announcementMode, setAnnouncementMode] = useState(false);
   const [announcementEmail, setAnnouncementEmail] = useState(true);
   const [sendError, setSendError] = useState("");
+  // Poll composer state. Any member can create a poll; the composer is a
+  // small inline form so it doesn't displace the regular chat input.
+  const [pollMode, setPollMode] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState("");
+  const [pollOptions, setPollOptions] = useState<string[]>(["", ""]);
+  const [pollIsMulti, setPollIsMulti] = useState(false);
+  const [pollSending, setPollSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -205,6 +215,73 @@ export default function GroupChatPage() {
     ? groupInfo.members.find((m) => m.userId === myId)?.role ?? null
     : null;
   const canPostAnnouncement = !!myRole && isAtLeast(myRole, ROLE.CAPTAIN);
+  const canManagePoll = !!myRole && isAtLeast(myRole, ROLE.CAPTAIN);
+
+  const sendPoll = async () => {
+    const cleanOptions = pollOptions.map((o) => o.trim()).filter((o) => o.length > 0);
+    if (!pollQuestion.trim() || cleanOptions.length < 2 || pollSending) return;
+    setPollSending(true);
+    setSendError("");
+    const res = await fetch(`/api/groups/${groupId}/polls`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question: pollQuestion.trim(),
+        options: cleanOptions,
+        isMulti: pollIsMulti,
+      }),
+    });
+    if (res.ok) {
+      const msg = await res.json();
+      setMessages((prev) => [...prev, msg]);
+      setPollMode(false);
+      setPollQuestion("");
+      setPollOptions(["", ""]);
+      setPollIsMulti(false);
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setSendError(d.error || "Failed to create poll.");
+    }
+    setPollSending(false);
+  };
+
+  const sendPollVote = async (pollId: string, optionIds: string[]) => {
+    // Optimistically reconcile vote counts client-side so the bar moves
+    // immediately. The next poll cycle reloads canonical totals.
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.poll?.id !== pollId) return m;
+        const prevMine = new Set(m.poll.myOptionIds);
+        const nextMine = new Set(optionIds);
+        const nextOptions = m.poll.options.map((o) => {
+          const wasMine = prevMine.has(o.id);
+          const isMine = nextMine.has(o.id);
+          let delta = 0;
+          if (!wasMine && isMine) delta = 1;
+          else if (wasMine && !isMine) delta = -1;
+          return { ...o, voteCount: Math.max(0, o.voteCount + delta) };
+        });
+        const totalVotes = nextOptions.reduce((sum, o) => sum + o.voteCount, 0);
+        return { ...m, poll: { ...m.poll, options: nextOptions, myOptionIds: optionIds, totalVotes } };
+      })
+    );
+    await fetch(`/api/polls/${pollId}/vote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ optionIds }),
+    });
+  };
+
+  const togglePollClose = async (pollId: string, isClosed: boolean) => {
+    setMessages((prev) =>
+      prev.map((m) => m.poll?.id === pollId ? { ...m, poll: { ...m.poll, isClosed } } : m)
+    );
+    await fetch(`/api/polls/${pollId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isClosed }),
+    });
+  };
 
   const applyReaction = async (msgId: string, key: ReactionKey | null) => {
     if (!myId) return;
@@ -340,15 +417,47 @@ export default function GroupChatPage() {
             {group.messages.map((msg, i) => {
               const isMe = msg.senderId === session?.user?.id;
               const isAnnouncement = msg.kind === "announcement";
+              const isPoll = !!msg.poll;
               const prevMsg = i > 0 ? group.messages[i - 1] : null;
               // Treat the boundary between an announcement and a regular
               // message as "different sender" — announcements always get
               // their own header row.
               const sameSender = !isAnnouncement
+                && !isPoll
                 && prevMsg?.senderId === msg.senderId
-                && prevMsg.kind !== "announcement";
+                && prevMsg.kind !== "announcement"
+                && !prevMsg?.poll;
               const showAvatar = !isMe && !sameSender;
               const showName = !isMe && !sameSender;
+
+              if (isPoll && msg.poll) {
+                return (
+                  <div key={msg.id} className={`flex items-end gap-2 ${isMe ? "justify-end" : "justify-start"} mt-3`}>
+                    {!isMe && (
+                      <div className="w-7 shrink-0">
+                        <Avatar name={msg.sender.name} image={msg.sender.profileImageUrl} size="sm" />
+                      </div>
+                    )}
+                    <div className="max-w-[85%]">
+                      {!isMe && (
+                        <p className="text-[11px] font-medium text-court-green-soft ml-1 mb-1">
+                          {msg.sender.name}
+                        </p>
+                      )}
+                      <PollCard
+                        poll={msg.poll}
+                        myUserId={myId}
+                        canClose={canManagePoll || msg.senderId === myId}
+                        onVoteChange={sendPollVote}
+                        onToggleClose={togglePollClose}
+                      />
+                      <p className={`text-[10px] mt-1 ${isMe ? "text-right" : ""} text-gray-400`}>
+                        {formatTime(msg.createdAt)}
+                      </p>
+                    </div>
+                  </div>
+                );
+              }
 
               if (isAnnouncement) {
                 return (
@@ -458,20 +567,36 @@ export default function GroupChatPage() {
 
       {/* Input */}
       <div className="bg-white border-t border-gray-200 px-4 py-3 shrink-0">
-        {canPostAnnouncement && (
-          <div className="mb-2 flex items-center gap-3 text-xs">
-            <button
-              type="button"
-              onClick={() => setAnnouncementMode((v) => !v)}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-semibold transition-colors ${
-                announcementMode
-                  ? "bg-court-green text-white"
-                  : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-              }`}
-              title="Post this as a team announcement"
-            >
-              📣 Announcement
-            </button>
+        {(canPostAnnouncement || groupInfo) && (
+          <div className="mb-2 flex items-center gap-2 text-xs flex-wrap">
+            {canPostAnnouncement && (
+              <button
+                type="button"
+                onClick={() => { setAnnouncementMode((v) => !v); if (pollMode) setPollMode(false); }}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-semibold transition-colors ${
+                  announcementMode
+                    ? "bg-court-green text-white"
+                    : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                }`}
+                title="Post this as a team announcement"
+              >
+                📣 Announcement
+              </button>
+            )}
+            {groupInfo && (
+              <button
+                type="button"
+                onClick={() => { setPollMode((v) => !v); if (announcementMode) setAnnouncementMode(false); }}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-semibold transition-colors ${
+                  pollMode
+                    ? "bg-court-green text-white"
+                    : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                }`}
+                title="Start a poll"
+              >
+                📊 Poll
+              </button>
+            )}
             {announcementMode && (
               <label className="inline-flex items-center gap-1.5 text-gray-600">
                 <input
@@ -483,6 +608,80 @@ export default function GroupChatPage() {
                 Also email the team
               </label>
             )}
+          </div>
+        )}
+        {pollMode && (
+          <div className="mb-3 p-3 rounded-xl border border-court-green-pale bg-court-green-pale/15 space-y-2">
+            <input
+              type="text"
+              value={pollQuestion}
+              onChange={(e) => setPollQuestion(e.target.value)}
+              placeholder="Poll question (e.g. What time works best?)"
+              maxLength={200}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-court-green"
+            />
+            {pollOptions.map((opt, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={opt}
+                  onChange={(e) => setPollOptions((cur) => cur.map((o, j) => (j === i ? e.target.value : o)))}
+                  placeholder={`Option ${i + 1}`}
+                  maxLength={80}
+                  className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-court-green"
+                />
+                {pollOptions.length > 2 && (
+                  <button
+                    type="button"
+                    onClick={() => setPollOptions((cur) => cur.filter((_, j) => j !== i))}
+                    className="w-7 h-7 rounded-full text-gray-400 hover:bg-gray-100 flex items-center justify-center"
+                    aria-label="Remove option"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            ))}
+            <div className="flex items-center justify-between text-xs">
+              <button
+                type="button"
+                onClick={() => pollOptions.length < 8 && setPollOptions((cur) => [...cur, ""])}
+                disabled={pollOptions.length >= 8}
+                className="text-court-green-soft hover:text-court-green font-semibold disabled:opacity-40"
+              >
+                + Add option
+              </button>
+              <label className="inline-flex items-center gap-1.5 text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={pollIsMulti}
+                  onChange={(e) => setPollIsMulti(e.target.checked)}
+                  className="w-3.5 h-3.5 accent-court-green"
+                />
+                Allow multiple answers
+              </label>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => { setPollMode(false); setPollQuestion(""); setPollOptions(["", ""]); setPollIsMulti(false); }}
+                className="btn-secondary flex-1 py-2 text-sm"
+                disabled={pollSending}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={sendPoll}
+                disabled={pollSending || !pollQuestion.trim() || pollOptions.map((o) => o.trim()).filter(Boolean).length < 2}
+                className="btn-primary flex-1 py-2 text-sm"
+              >
+                {pollSending ? "Posting..." : "Post poll"}
+              </button>
+            </div>
           </div>
         )}
         {sendError && <p className="text-xs text-red-500 mb-2">{sendError}</p>}

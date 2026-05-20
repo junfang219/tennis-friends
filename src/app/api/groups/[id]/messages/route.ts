@@ -86,6 +86,48 @@ export async function GET(
     reactionsByMessage.set(r.messageId, list);
   }
 
+  // Hydrate embedded polls (one DB hit total — pull every poll referenced
+  // by this batch of messages along with vote counts + the caller's vote).
+  const pollIds = messages
+    .filter((m): m is typeof m & { pollId: string } => typeof m.pollId === "string" && m.pollId.length > 0)
+    .map((m) => m.pollId);
+  const polls = pollIds.length > 0
+    ? await prisma.poll.findMany({
+        where: { id: { in: pollIds } },
+        include: {
+          options: {
+            orderBy: { order: "asc" },
+            include: { _count: { select: { votes: true } } },
+          },
+          votes: {
+            where: { userId },
+            select: { optionId: true },
+          },
+          _count: { select: { votes: true } },
+        },
+      })
+    : [];
+  const pollMap = new Map(
+    polls.map((p) => [
+      p.id,
+      {
+        id: p.id,
+        question: p.question,
+        isMulti: p.isMulti,
+        isClosed: p.isClosed,
+        createdById: p.createdById,
+        options: p.options.map((o) => ({
+          id: o.id,
+          text: o.text,
+          order: o.order,
+          voteCount: o._count.votes,
+        })),
+        myOptionIds: p.votes.map((v) => v.optionId),
+        totalVotes: p._count.votes,
+      },
+    ])
+  );
+
   const result = messages.map((m) => ({
     id: m.id,
     content: m.content,
@@ -97,6 +139,8 @@ export async function GET(
     kind: m.kind,
     notifyEmail: m.notifyEmail,
     pinnedAt: m.pinnedAt,
+    pollId: m.pollId || null,
+    poll: m.pollId ? pollMap.get(m.pollId) || null : null,
     createdAt: m.createdAt,
     sender: m.sender,
     reactions: reactionsByMessage.get(m.id) || [],
