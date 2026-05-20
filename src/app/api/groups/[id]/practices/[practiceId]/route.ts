@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { hasRole, ROLE } from "@/lib/groupRoles";
 
-// DELETE a single practice column (captain only)
+// DELETE a single practice column (captain or higher)
 export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string; practiceId: string }> }
@@ -18,7 +19,7 @@ export async function DELETE(
   if (!group) {
     return NextResponse.json({ error: "Team not found" }, { status: 404 });
   }
-  if (group.ownerId !== session.user.id) {
+  if (!(await hasRole(id, session.user.id, ROLE.CAPTAIN))) {
     return NextResponse.json({ error: "Only the team captain can delete practices" }, { status: 403 });
   }
 

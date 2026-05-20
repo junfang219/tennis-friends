@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { getMemberRole, hasRole, isAtLeast, ROLE } from "@/lib/groupRoles";
 
 // GET all teams the user is a member of, optionally filtered by archive state
 export async function GET(request: Request) {
@@ -92,9 +93,10 @@ export async function POST(request: Request) {
       ownerId: session.user.id,
       members: {
         create: [
-          // Owner is also a member
-          { userId: session.user.id },
-          // Add selected friends
+          // Owner is also a member — set role explicitly so the OWNER privilege
+          // doesn't rely on a downstream backfill.
+          { userId: session.user.id, role: ROLE.OWNER },
+          // Add selected friends with the default MEMBER role.
           ...(memberIds || [])
             .filter((id: string) => id !== session.user!.id)
             .map((userId: string) => ({ userId })),
@@ -148,22 +150,17 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Team not found" }, { status: 404 });
   }
 
-  const isOwner = group.ownerId === userId;
-
-  // Non-owners must be members to do anything
-  if (!isOwner) {
-    const membership = await prisma.groupMember.findUnique({
-      where: { groupId_userId: { groupId, userId } },
-    });
-    if (!membership) {
-      return NextResponse.json({ error: "Not a member of this team" }, { status: 403 });
-    }
+  // Reject non-members up front. Mutations below also gate on MANAGER+.
+  const callerRole = await getMemberRole(groupId, userId);
+  if (callerRole === null) {
+    return NextResponse.json({ error: "Not a member of this team" }, { status: 403 });
   }
+  const isManager = isAtLeast(callerRole, ROLE.MANAGER);
 
-  // Only the owner can rename the team
+  // MANAGER+ can rename the team
   if (name?.trim()) {
-    if (!isOwner) {
-      return NextResponse.json({ error: "Only the team creator can rename the team" }, { status: 403 });
+    if (!isManager) {
+      return NextResponse.json({ error: "Only a team manager can rename the team" }, { status: 403 });
     }
     await prisma.group.update({
       where: { id: groupId },
@@ -171,10 +168,10 @@ export async function PUT(request: Request) {
     });
   }
 
-  // Only the owner can change the team picture (empty string clears it)
+  // MANAGER+ can change the team picture (empty string clears it)
   if (typeof imageUrl === "string") {
-    if (!isOwner) {
-      return NextResponse.json({ error: "Only the team creator can change the team picture" }, { status: 403 });
+    if (!isManager) {
+      return NextResponse.json({ error: "Only a team manager can change the team picture" }, { status: 403 });
     }
     await prisma.group.update({
       where: { id: groupId },
@@ -182,7 +179,7 @@ export async function PUT(request: Request) {
     });
   }
 
-  // Only the owner can change the team cover image / framing
+  // MANAGER+ can change the team cover image / framing
   const coverData: { coverImageUrl?: string; coverOffsetY?: number; coverScale?: number } = {};
   if (typeof coverImageUrl === "string") coverData.coverImageUrl = coverImageUrl;
   if (typeof coverOffsetY === "number" && Number.isFinite(coverOffsetY)) {
@@ -192,8 +189,8 @@ export async function PUT(request: Request) {
     coverData.coverScale = Math.max(100, Math.min(300, Math.round(coverScale)));
   }
   if (Object.keys(coverData).length > 0) {
-    if (!isOwner) {
-      return NextResponse.json({ error: "Only the team creator can change the team cover" }, { status: 403 });
+    if (!isManager) {
+      return NextResponse.json({ error: "Only a team manager can change the team cover" }, { status: 403 });
     }
     await prisma.group.update({
       where: { id: groupId },
@@ -201,10 +198,10 @@ export async function PUT(request: Request) {
     });
   }
 
-  // Only the owner can remove members
+  // MANAGER+ can remove members; the OWNER row is never removable.
   if (removeMemberIds?.length) {
-    if (!isOwner) {
-      return NextResponse.json({ error: "Only the team creator can remove members" }, { status: 403 });
+    if (!isManager) {
+      return NextResponse.json({ error: "Only a team manager can remove members" }, { status: 403 });
     }
     await prisma.groupMember.deleteMany({
       where: {
@@ -214,11 +211,11 @@ export async function PUT(request: Request) {
     });
   }
 
-  // Add members — owner can add anyone, non-owners can only add their own friends
+  // Add members — MANAGER+ can add anyone; lower roles can add only their friends.
   if (addMemberIds?.length) {
     let toAdd = addMemberIds.filter((id: string) => id && id !== userId);
 
-    if (!isOwner) {
+    if (!isManager) {
       // Validate that every added user is an accepted friend of the caller
       const friendships = await prisma.friendship.findMany({
         where: {
@@ -277,8 +274,13 @@ export async function DELETE(request: Request) {
   const { groupId } = await request.json();
 
   const group = await prisma.group.findUnique({ where: { id: groupId } });
-  if (!group || group.ownerId !== session.user.id) {
-    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+  if (!group) {
+    return NextResponse.json({ error: "Team not found" }, { status: 404 });
+  }
+  // Deleting a team is destructive and irreversible — keep OWNER-only even
+  // though MANAGER can do most other mutations.
+  if (!(await hasRole(groupId, session.user.id, ROLE.OWNER))) {
+    return NextResponse.json({ error: "Only the team owner can delete the team" }, { status: 403 });
   }
 
   await prisma.group.delete({ where: { id: groupId } });

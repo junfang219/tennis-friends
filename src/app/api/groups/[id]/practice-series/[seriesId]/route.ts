@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { hasRole, ROLE } from "@/lib/groupRoles";
 
 async function captainGuard(userId: string, groupId: string, seriesId: string) {
   const group = await prisma.group.findUnique({ where: { id: groupId } });
   if (!group) return { error: "Team not found", status: 404 } as const;
-  if (group.ownerId !== userId)
+  if (!(await hasRole(groupId, userId, ROLE.CAPTAIN)))
     return { error: "Only the team captain can modify practices", status: 403 } as const;
 
   const series = await prisma.practiceSeries.findUnique({ where: { id: seriesId } });

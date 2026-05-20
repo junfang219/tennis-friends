@@ -1,3 +1,5 @@
+import { prisma } from "@/lib/prisma";
+
 // Role values stored as strings on GroupMember.role (SQLite has no enum support).
 // Hierarchy (highest privilege first): OWNER > MANAGER > CAPTAIN > MEMBER.
 export const ROLE = {
@@ -19,6 +21,30 @@ const RANK: Record<GroupRole, number> = {
 export function isAtLeast(role: string, min: GroupRole): boolean {
   const r = (RANK as Record<string, number>)[role] ?? 0;
   return r >= RANK[min];
+}
+
+// Single source of truth for "what role does this user have on this team?"
+// Returns null when the user is not a member.
+export async function getMemberRole(
+  groupId: string,
+  userId: string
+): Promise<string | null> {
+  const m = await prisma.groupMember.findUnique({
+    where: { groupId_userId: { groupId, userId } },
+    select: { role: true },
+  });
+  return m?.role ?? null;
+}
+
+// "Does this user have at least `minRole` on this team?" Returns false for
+// non-members. Use this in API route guards instead of comparing Group.ownerId.
+export async function hasRole(
+  groupId: string,
+  userId: string,
+  minRole: GroupRole
+): Promise<boolean> {
+  const role = await getMemberRole(groupId, userId);
+  return role !== null && isAtLeast(role, minRole);
 }
 
 // Default member-type list applied when a team hasn't customized its Group.memberTypes.

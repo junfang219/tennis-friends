@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { hasRole, ROLE } from "@/lib/groupRoles";
 
 async function verifyMembership(userId: string, groupId: string) {
   const membership = await prisma.groupMember.findUnique({
@@ -56,7 +57,7 @@ export async function POST(
   if (!group) {
     return NextResponse.json({ error: "Team not found" }, { status: 404 });
   }
-  if (group.ownerId !== session.user.id) {
+  if (!(await hasRole(id, session.user.id, ROLE.CAPTAIN))) {
     return NextResponse.json({ error: "Only the team captain can add matches" }, { status: 403 });
   }
 
