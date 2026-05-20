@@ -3,17 +3,10 @@ import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { normalizeMatchStatus, RSVP } from "@/lib/rsvpStatus";
 
-// Accept both legacy and new vocabularies during the PR #5 transition; values
-// are normalized to the new vocab before storage.
-const ALLOWED_STATUS = [
-  "available",
-  "if_needed",
-  "not_available",
-  "not_sure",
-  RSVP.PLAYING,
-  RSVP.MAYBE,
-  RSVP.NOT_PLAYING,
-];
+// Unified vocab only. Legacy values (available/if_needed/not_sure) are still
+// normalized by normalizeMatchStatus() for any stragglers, but the API
+// accepts only the canonical names.
+const ALLOWED_STATUS: readonly string[] = [RSVP.PLAYING, RSVP.MAYBE, RSVP.NOT_PLAYING];
 const ALLOWED_TYPES = ["singles", "doubles", "both", ""];
 
 // PUT upsert the current user's availability for a match

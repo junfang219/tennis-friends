@@ -3,9 +3,10 @@ import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { normalizePracticeStatus, RSVP } from "@/lib/rsvpStatus";
 
-// Accept both legacy and new vocabularies during the PR #5 transition; values
-// are normalized to the new vocab before storage.
-const ALLOWED_STATUS = ["im_in", "not_available", RSVP.PLAYING, RSVP.NOT_PLAYING, RSVP.MAYBE];
+// Unified vocab only — practice gains "maybe" as a new option versus the old
+// im_in/not_available pair. Legacy values are still tolerated by the
+// normalizer so any stale clients can finish their RSVP.
+const ALLOWED_STATUS: readonly string[] = [RSVP.PLAYING, RSVP.MAYBE, RSVP.NOT_PLAYING];
 
 // PUT upsert the current user's availability for a practice
 export async function PUT(

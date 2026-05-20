@@ -6,6 +6,8 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
+import RsvpPicker, { pickerOptionMeta } from "@/components/attendance/RsvpPicker";
+import AttendanceTally from "@/components/attendance/AttendanceTally";
 import { normalizePracticeStatus } from "@/lib/rsvpStatus";
 
 type Member = {
@@ -43,16 +45,10 @@ type Series = {
   practices: Practice[];
 };
 
-const STATUS_OPTIONS: { value: string; label: string; bg: string; text: string }[] = [
-  { value: "im_in", label: "I'm in", bg: "bg-court-green", text: "text-white" },
-  { value: "not_available", label: "Not avail", bg: "bg-red-100", text: "text-red-600" },
-];
-
 function statusMeta(status: string) {
-  // Accept both legacy ("im_in", "not_available") and new ("playing", "not_playing")
-  // vocab — normalize both sides during the PR #5 transition.
-  const target = normalizePracticeStatus(status);
-  return STATUS_OPTIONS.find((s) => normalizePracticeStatus(s.value) === target);
+  // Normalize legacy values (im_in/not_available) into the unified vocab so
+  // historical rows still render correctly.
+  return pickerOptionMeta(normalizePracticeStatus(status));
 }
 
 function formatDateHeader(iso: string) {
@@ -296,7 +292,7 @@ export default function TeamPracticePage() {
 
   const sendPractice = async (series: Series, practice: Practice) => {
     const inPlayers = practice.availabilities
-      .filter((a) => a.status === "im_in" || a.status === "playing")
+      .filter((a) => a.status === "playing")
       .map((a) => a.user.name)
       .sort((x, y) => x.localeCompare(y));
 
@@ -653,7 +649,7 @@ export default function TeamPracticePage() {
                           </th>
                           {series.practices.map((practice) => {
                             const isHighlighted = highlightPracticeId === practice.id;
-                            const inCount = practice.availabilities.filter((a) => a.status === "im_in" || a.status === "playing").length;
+                            const inCount = practice.availabilities.filter((a) => a.status === "playing").length;
                             const sending = sendingPracticeId === practice.id;
                             return (
                               <th
@@ -668,6 +664,7 @@ export default function TeamPracticePage() {
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="min-w-0">
                                     <p className="text-xs font-bold text-court-green">{formatDateHeader(practice.practiceDate)}</p>
+                                    <AttendanceTally availabilities={practice.availabilities} />
                                   </div>
                                   <div className="flex items-center gap-1 shrink-0">
                                     {isCaptain && (
@@ -794,11 +791,15 @@ export default function TeamPracticePage() {
       {/* Legend */}
       {seriesList.length > 0 && (
         <div className="mt-4 flex items-center justify-center gap-3 flex-wrap text-[11px]">
-          {STATUS_OPTIONS.map((opt) => (
-            <span key={opt.value} className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg ${opt.bg} ${opt.text} font-semibold`}>
-              {opt.label}
-            </span>
-          ))}
+          {["playing", "not_playing"].map((s) => {
+            const meta = pickerOptionMeta(s);
+            if (!meta) return null;
+            return (
+              <span key={s} className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg ${meta.bg} ${meta.text} font-semibold`}>
+                {meta.label}
+              </span>
+            );
+          })}
         </div>
       )}
 
@@ -819,24 +820,14 @@ export default function TeamPracticePage() {
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-1">
                 Status
               </p>
-              <div className="grid grid-cols-2 gap-1">
-                {STATUS_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => {
-                      setMyAvailability(series.id, practice.id, opt.value);
-                      setStatusPopover(null);
-                    }}
-                    className={`text-[10px] font-semibold px-2 py-1.5 rounded ${
-                      normalizePracticeStatus(a?.status || "") === normalizePracticeStatus(opt.value)
-                        ? `${opt.bg} ${opt.text} ring-2 ring-court-green/40`
-                        : `${opt.bg} ${opt.text} opacity-70 hover:opacity-100`
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
+              <RsvpPicker
+                value={normalizePracticeStatus(a?.status || "")}
+                onSelect={(status) => {
+                  setMyAvailability(series.id, practice.id, status);
+                  setStatusPopover(null);
+                }}
+                cols={2}
+              />
             </div>
           </>,
           document.body

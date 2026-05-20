@@ -6,7 +6,9 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
-import { normalizeMatchStatus } from "@/lib/rsvpStatus";
+import RsvpPicker, { pickerOptionMeta } from "@/components/attendance/RsvpPicker";
+import AttendanceTally from "@/components/attendance/AttendanceTally";
+import { normalizeMatchStatus, RSVP } from "@/lib/rsvpStatus";
 
 type Member = {
   id: string;
@@ -39,13 +41,6 @@ type Match = {
   availabilities: Availability[];
 };
 
-const STATUS_OPTIONS: { value: string; label: string; bg: string; text: string }[] = [
-  { value: "available", label: "Available", bg: "bg-court-green", text: "text-white" },
-  { value: "if_needed", label: "If needed", bg: "bg-ball-yellow", text: "text-court-green" },
-  { value: "not_available", label: "Not avail", bg: "bg-red-100", text: "text-red-600" },
-  { value: "not_sure", label: "Not sure", bg: "bg-gray-200", text: "text-gray-600" },
-];
-
 const TYPE_OPTIONS: { value: string; label: string; chip: string }[] = [
   { value: "singles", label: "Singles", chip: "S" },
   { value: "doubles", label: "Doubles", chip: "D" },
@@ -70,10 +65,10 @@ function compareSlots(a: string, b: string) {
 }
 
 function statusMeta(status: string) {
-  // Accept both legacy ("available", "if_needed", ...) and new ("playing", "maybe", ...)
-  // vocab — normalize both sides during the PR #5 transition.
-  const target = normalizeMatchStatus(status);
-  return STATUS_OPTIONS.find((s) => normalizeMatchStatus(s.value) === target);
+  // Normalize legacy values (available/if_needed/not_sure/not_available) into
+  // the unified vocab so historical rows still render correctly until the
+  // legacy normalizer can be removed.
+  return pickerOptionMeta(normalizeMatchStatus(status));
 }
 
 function typeChip(matchTypes: string) {
@@ -448,6 +443,7 @@ export default function AvailabilityPage() {
                             {match.notes && (
                               <p className="text-[10px] text-gray-400 truncate" title={match.notes}>{match.notes}</p>
                             )}
+                            <AttendanceTally availabilities={match.availabilities} />
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
                             {isCaptain && (
@@ -636,11 +632,15 @@ export default function AvailabilityPage() {
       {/* Legend */}
       {matches.length > 0 && (
         <div className="mt-4 flex items-center justify-center gap-3 flex-wrap text-[11px]">
-          {STATUS_OPTIONS.map((opt) => (
-            <span key={opt.value} className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg ${opt.bg} ${opt.text} font-semibold`}>
-              {opt.label}
-            </span>
-          ))}
+          {[RSVP.PLAYING, RSVP.MAYBE, RSVP.NOT_PLAYING].map((s) => {
+            const meta = pickerOptionMeta(s);
+            if (!meta) return null;
+            return (
+              <span key={s} className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg ${meta.bg} ${meta.text} font-semibold`}>
+                {meta.label}
+              </span>
+            );
+          })}
           <span className="text-gray-400 mx-1">·</span>
           {TYPE_OPTIONS.map((opt) => (
             <span key={opt.value} className="inline-flex items-center gap-1 text-gray-500">
@@ -669,23 +669,14 @@ export default function AvailabilityPage() {
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-1">
                 Status
               </p>
-              <div className="grid grid-cols-2 gap-1 mb-2">
-                {STATUS_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => {
-                      setMyAvailability(statusPopover.matchId, opt.value, a?.matchTypes || "");
-                      setStatusPopover(null);
-                    }}
-                    className={`text-[10px] font-semibold px-2 py-1.5 rounded ${
-                      normalizeMatchStatus(a?.status || "") === normalizeMatchStatus(opt.value)
-                        ? `${opt.bg} ${opt.text} ring-2 ring-court-green/40`
-                        : `${opt.bg} ${opt.text} opacity-70 hover:opacity-100`
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
+              <div className="mb-2">
+                <RsvpPicker
+                  value={normalizeMatchStatus(a?.status || "")}
+                  onSelect={(status) => {
+                    setMyAvailability(statusPopover.matchId, status, a?.matchTypes || "");
+                    setStatusPopover(null);
+                  }}
+                />
               </div>
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-1">
                 Match type
@@ -696,7 +687,7 @@ export default function AvailabilityPage() {
                     key={opt.value}
                     onClick={() => {
                       if (!a?.status) {
-                        setMyAvailability(statusPopover.matchId, "available", opt.value);
+                        setMyAvailability(statusPopover.matchId, RSVP.PLAYING, opt.value);
                       } else {
                         setMyAvailability(statusPopover.matchId, a.status, opt.value);
                       }
