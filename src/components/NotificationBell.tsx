@@ -8,6 +8,16 @@ import PostCard from "./PostCard";
 import { emojiFor } from "@/lib/reactions";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import {
+  getPost,
+  listPendingRequests,
+  acceptFriendRequest as sbAcceptFriendRequest,
+  rejectFriendRequest as sbRejectFriendRequest,
+  listNotifications,
+  markAllNotificationsRead,
+  unreadNotificationCount,
+} from "@/lib/supabase/queries";
+import { toPostCamel, toNotificationCamel } from "@/lib/supabase/adapters";
 
 type Notification = {
   id: string;
@@ -209,13 +219,9 @@ export default function NotificationBell() {
     setOpenPost({}); // Show modal immediately
     setLoadingPost(true);
     try {
-      const res = await fetch(`/api/posts/${postId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setOpenPost(data);
-      } else {
-        setOpenPost(null);
-      }
+      const supabase = createSupabaseBrowserClient();
+      const p = await getPost(supabase, postId);
+      setOpenPost(p ? (toPostCamel(p) as unknown as Record<string, unknown>) : null);
     } catch {
       setOpenPost(null);
     }
@@ -257,12 +263,22 @@ export default function NotificationBell() {
   const loadFriendRequests = async () => {
     setFriendReqLoading(true);
     try {
-      const res = await fetch("/api/friends");
-      if (res.ok) {
-        const data = await res.json();
-        setFriendRequests(data.incomingRequests || []);
-        setPendingFriendRequests((data.incomingRequests || []).length);
-      }
+      const supabase = createSupabaseBrowserClient();
+      const rows = await listPendingRequests(supabase);
+      const incoming: FriendRequest[] = rows
+        .filter((r) => r.direction === "incoming")
+        .map((r) => ({
+          friendshipId: r.id,
+          createdAt: r.created_at,
+          user: {
+            id: r.other.id,
+            name: r.other.name,
+            profileImageUrl: r.other.profile_image_url,
+            skillLevel: r.other.skill_level,
+          },
+        }));
+      setFriendRequests(incoming);
+      setPendingFriendRequests(incoming.length);
     } catch {}
     setFriendReqLoading(false);
   };
@@ -270,15 +286,10 @@ export default function NotificationBell() {
   const acceptFriendRequest = async (friendshipId: string) => {
     setFriendReqAction(friendshipId);
     try {
-      const res = await fetch("/api/friends/accept", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ friendshipId }),
-      });
-      if (res.ok) {
-        setFriendRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId));
-        setPendingFriendRequests((prev) => Math.max(0, prev - 1));
-      }
+      const supabase = createSupabaseBrowserClient();
+      await sbAcceptFriendRequest(supabase, friendshipId);
+      setFriendRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId));
+      setPendingFriendRequests((prev) => Math.max(0, prev - 1));
     } catch {}
     setFriendReqAction("");
   };
@@ -286,15 +297,10 @@ export default function NotificationBell() {
   const rejectFriendRequest = async (friendshipId: string) => {
     setFriendReqAction(friendshipId);
     try {
-      const res = await fetch("/api/friends/reject", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ friendshipId }),
-      });
-      if (res.ok) {
-        setFriendRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId));
-        setPendingFriendRequests((prev) => Math.max(0, prev - 1));
-      }
+      const supabase = createSupabaseBrowserClient();
+      await sbRejectFriendRequest(supabase, friendshipId);
+      setFriendRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId));
+      setPendingFriendRequests((prev) => Math.max(0, prev - 1));
     } catch {}
     setFriendReqAction("");
   };
@@ -304,17 +310,20 @@ export default function NotificationBell() {
     loadFriendRequests();
   };
 
-  const loadNotifications = () => {
-    fetch("/api/notifications")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.notifications) {
-          setNotifications(data.notifications);
-          setUnreadCount(data.unreadCount || 0);
-          setPendingFriendRequests(data.pendingFriendRequestCount || 0);
-        }
-      })
-      .catch(() => {});
+  const loadNotifications = async () => {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const [rows, unread, pending] = await Promise.all([
+        listNotifications(supabase),
+        unreadNotificationCount(supabase),
+        listPendingRequests(supabase),
+      ]);
+      setNotifications(rows.map(toNotificationCamel) as unknown as Notification[]);
+      setUnreadCount(unread);
+      setPendingFriendRequests(pending.filter((r) => r.direction === "incoming").length);
+    } catch {
+      // ignore
+    }
   };
 
   useEffect(() => {
@@ -402,9 +411,8 @@ export default function NotificationBell() {
     setOpen(!open);
     if (!open && unreadCount > 0) {
       // Mark all as read when opening
-      fetch("/api/notifications", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }).then(() => {
-        setUnreadCount(0);
-      });
+      const supabase = createSupabaseBrowserClient();
+      void markAllNotificationsRead(supabase).then(() => setUnreadCount(0));
     }
   };
 

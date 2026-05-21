@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import ConversationRow, { type InboxItem, type InboxAction } from "./ConversationRow";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listDmThreads, listMyChats, markDmRead, markChatRead } from "@/lib/supabase/queries";
 
 // Per-user localStorage key so dismissals are scoped to the signed-in user.
 const DISMISS_KEY = (userId: string) => `tf_msg_tray_dismissed_${userId}`;
@@ -46,13 +47,48 @@ export default function MessageBell() {
   const [anchorPos, setAnchorPos] = useState<{ top: number; right: number } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadInbox = useCallback(() => {
-    fetch("/api/inbox")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.items) setItems(data.items);
-      })
-      .catch(() => {});
+  const loadInbox = useCallback(async () => {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const [dms, chats] = await Promise.all([
+        listDmThreads(supabase),
+        listMyChats(supabase),
+      ]);
+      const dmItems: InboxItem[] = dms.map((t) => ({
+        type: "direct",
+        id: t.other.id,
+        title: t.other.name,
+        href: `/chat/${t.other.id}`,
+        unreadCount: t.unread_count,
+        muted: false,
+        pinnedAt: null,
+        avatarUser: {
+          id: t.other.id,
+          name: t.other.name,
+          profileImageUrl: t.other.profile_image_url,
+        },
+        lastMessage: {
+          content: t.last_message.content,
+          createdAt: t.last_message.created_at,
+          fromSelf: t.last_message.sender_id !== t.other.id,
+        },
+      }));
+      const chatItems: InboxItem[] = chats.map((c) => ({
+        type: "group" as const,
+        id: c.id,
+        title: c.name || "Session chat",
+        href: `/chat/group/${c.id}`,
+        unreadCount: 0,
+        muted: false,
+        pinnedAt: null,
+        kind: "session" as const,
+        lastMessage: null,
+        participants: [],
+      }));
+      setItems([...dmItems, ...chatItems]);
+    } catch {
+      // ignore
+    }
   }, []);
 
   useEffect(() => {
@@ -227,13 +263,20 @@ export default function MessageBell() {
       return next;
     });
 
-    // Persist the non-hide actions
+    // Persist read state for the markUnread/read actions; pin / mute /
+    // hide on a conversation row are UI-only state for now (per-user
+    // chat_participants flags would need a server-side rebuild before
+    // they're useful).
     try {
-      await fetch("/api/inbox/actions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: item.type, id: item.id, action }),
-      });
+      const supabase = createSupabaseBrowserClient();
+      if (action === "markUnread") {
+        // intentional no-op — re-mark unread isn't representable in the
+        // current direct_message_reads schema.
+      } else if (item.type === "direct") {
+        await markDmRead(supabase, item.id);
+      } else if (item.type === "group") {
+        await markChatRead(supabase, item.id);
+      }
     } catch {
       // Best-effort; next poll will reconcile
     }

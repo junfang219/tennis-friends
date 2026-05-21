@@ -455,6 +455,18 @@ Detailed in §"Post-port consolidation review" above. Lands after the read/write
 - `0012_consolidate_post_targets.sql` + paired test (also rewrites `can_see_post()`)
 - `0013_access_pattern_indexes.sql` for the two missing partial / single-column indexes
 - `0014_table_comments.sql` for the `COMMENT ON TABLE` pass
+- `0015_rls_initplan_optimization.sql` — wraps every RLS policy's `auth.uid()` in `(SELECT auth.uid())`, addressing the `auth_rls_initplan` advisor (106 → 0 WARN)
+- `0016_collapse_permissive_policy_overlaps.sql` — splits every `FOR ALL` write policy into separate INSERT/UPDATE/DELETE; merges pairs that overlap on the same command (18 `multiple_permissive_policies` WARN → 0)
+- `0017_index_foreign_keys.sql` — covering indexes for every FK the `unindexed_foreign_keys` advisor flagged
+
+### Phase 8 — Schema consolidation into a single canonical file *(1 day, final)*
+
+**Decision (2026-05-21):** TennisFriend is pre-launch. The forward-only migration chain is paying maintenance cost without buying anything yet. After Phase 7, collapse `supabase/migrations/000N_*.sql` into a single `supabase/schema.sql` representing the desired-state of the database. Anyone setting up a new environment runs that file once.
+
+- Dump the live DB schema (`pg_dump --schema-only --no-owner --no-acl --schema=public`) plus the PostGIS bookkeeping into one file.
+- Hand-edit for readability: stable ordering (enums → helper functions → tables → indexes → RLS policies → triggers → comments).
+- Replace `supabase/migrations/` with the single file. Document the workflow change in `docs/runbook.md`.
+- This decision reverses the moment real users hit prod — see memory `project_schema_single_source_of_truth.md`.
 
 **Total estimated effort:** 4–6 weeks of focused work.
 

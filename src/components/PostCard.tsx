@@ -1238,26 +1238,43 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
               <button
                 onClick={async () => {
                   setSavingEdit(true);
-                  const body: Record<string, unknown> = {
-                    content: editContent,
-                    groupIds: Array.from(editSelectedTeamIds),
-                    friendGroupIds: Array.from(editSelectedFriendGroupIds),
-                  };
+                  const supabase = createSupabaseBrowserClient();
+                  const updates: {
+                    content: string;
+                    play_date?: string;
+                    play_time?: string;
+                    play_duration?: number;
+                    court_location?: string;
+                    game_type?: string;
+                    players_needed?: number;
+                    court_booked?: boolean;
+                  } = { content: editContent };
                   if (isFindPlayers) {
-                    body.playDate = editPlayDate;
-                    body.playTime = editPlayTime;
-                    body.playDuration = editPlayDuration;
-                    body.courtLocation = editCourtLocation;
-                    body.gameType = editGameType;
-                    body.playersNeeded = editPlayersNeeded;
-                    body.courtBooked = editCourtBooked;
+                    updates.play_date = editPlayDate;
+                    updates.play_time = editPlayTime;
+                    updates.play_duration = editPlayDuration;
+                    updates.court_location = editCourtLocation;
+                    updates.game_type = editGameType;
+                    updates.players_needed = editPlayersNeeded;
+                    updates.court_booked = editCourtBooked;
                   }
-                  const res = await fetch(`/api/posts/${post.id}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(body),
-                  });
-                  if (res.ok) {
+                  const { error: upErr } = await supabase
+                    .from("posts")
+                    .update(updates)
+                    .eq("id", post.id);
+                  if (!upErr) {
+                    // Refresh post_targets: nuke + reinsert.
+                    await supabase.from("post_targets").delete().eq("post_id", post.id);
+                    const targetRows: { post_id: string; target_kind: "group" | "friend_group"; group_id?: string; friend_group_id?: string }[] = [];
+                    for (const gid of editSelectedTeamIds) {
+                      targetRows.push({ post_id: post.id, target_kind: "group", group_id: gid });
+                    }
+                    for (const fgid of editSelectedFriendGroupIds) {
+                      targetRows.push({ post_id: post.id, target_kind: "friend_group", friend_group_id: fgid });
+                    }
+                    if (targetRows.length > 0) {
+                      await supabase.from("post_targets").insert(targetRows);
+                    }
                     setCurrentContent(editContent);
                     if (isFindPlayers) {
                       setLivePlayDate(editPlayDate);
@@ -1687,10 +1704,43 @@ function ManageRequestsModal({
   const [showMarkFullForm, setShowMarkFullForm] = useState(false);
   const [manualNames, setManualNames] = useState<string[]>([""]);
 
-  const loadRequests = () => {
-    fetch(`/api/posts/join?postId=${postId}`)
-      .then((r) => r.json())
-      .then((data) => { setRequests(data); setLoading(false); });
+  const loadRequests = async () => {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data, error } = await supabase
+        .from("play_requests")
+        .select(
+          `id, post_id, user_id, status, note, created_at, updated_at,
+           user:profiles!play_requests_user_id_fkey ( id, name, profile_image_url )`
+        )
+        .eq("post_id", postId);
+      if (error) throw error;
+      // Page expects camelCase + uppercase status enum (legacy shape).
+      setRequests(
+        ((data ?? []) as unknown as Array<{
+          id: string;
+          user_id: string;
+          status: "pending" | "approved" | "rejected";
+          note: string;
+          created_at: string;
+          user: { id: string; name: string; profile_image_url: string };
+        }>).map((r) => ({
+          id: r.id,
+          userId: r.user_id,
+          status: r.status.toUpperCase(),
+          note: r.note,
+          createdAt: r.created_at,
+          user: {
+            id: r.user.id,
+            name: r.user.name,
+            profileImageUrl: r.user.profile_image_url,
+          },
+        })) as unknown as typeof requests
+      );
+    } catch {
+      // ignore
+    }
+    setLoading(false);
   };
 
   useEffect(() => { loadRequests(); // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1769,21 +1819,24 @@ function ManageRequestsModal({
           <div className="flex items-center gap-2">
             {dropdownValue !== currentConfirmedCount && (
               <button
-                onClick={() => {
+                onClick={async () => {
                   setSavingManual(true);
                   const isNowComplete = dropdownValue >= playersNeeded;
-                  fetch(`/api/posts/${postId}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ playersConfirmed: dropdownValue, isComplete: isNowComplete }),
-                  }).then((res) => {
-                    if (res.ok) {
+                  try {
+                    const supabase = createSupabaseBrowserClient();
+                    const { error: upErr } = await supabase
+                      .from("posts")
+                      .update({ players_confirmed: dropdownValue, is_complete: isNowComplete })
+                      .eq("id", postId);
+                    if (!upErr) {
                       onUpdate(dropdownValue, isNowComplete);
                       setCurrentConfirmedCount(dropdownValue);
                       setIsMarkedFull(isNowComplete);
                     }
-                    setSavingManual(false);
-                  }).catch(() => setSavingManual(false));
+                  } catch {
+                    // ignore
+                  }
+                  setSavingManual(false);
                 }}
                 disabled={savingManual}
                 className="btn-primary btn-sm"
@@ -1797,20 +1850,27 @@ function ManageRequestsModal({
                   if (approvedCount >= playersNeeded) {
                     // All slots filled by approved players, mark full directly
                     setSavingManual(true);
-                    fetch(`/api/posts/${postId}`, {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ playersConfirmed: playersNeeded, isComplete: true }),
-                    }).then(async (res) => {
-                      if (res.ok) {
-                        const data = await res.json().catch(() => ({}));
-                        onUpdate(playersNeeded, true, data.sessionChatId ?? null, data.teamGroupId ?? null);
-                        setCurrentConfirmedCount(playersNeeded);
-                        setDropdownValue(playersNeeded);
-                        setIsMarkedFull(true);
+                    (async () => {
+                      try {
+                        const supabase = createSupabaseBrowserClient();
+                        const { error: upErr } = await supabase
+                          .from("posts")
+                          .update({ players_confirmed: playersNeeded, is_complete: true })
+                          .eq("id", postId);
+                        if (!upErr) {
+                          // sessionChatId / teamGroupId were created by the
+                          // old route handler. A Postgres trigger should
+                          // recreate that logic before launch.
+                          onUpdate(playersNeeded, true, null, null);
+                          setCurrentConfirmedCount(playersNeeded);
+                          setDropdownValue(playersNeeded);
+                          setIsMarkedFull(true);
+                        }
+                      } catch {
+                        // ignore
                       }
                       setSavingManual(false);
-                    }).catch(() => setSavingManual(false));
+                    })();
                   } else {
                     // Has unfilled slots — pre-create one input per missing
                     // player so the user can fill them in (or leave blank →
@@ -1827,22 +1887,25 @@ function ManageRequestsModal({
               </button>
             ) : isMarkedFull ? (
               <button
-                onClick={() => {
+                onClick={async () => {
                   setSavingManual(true);
-                  fetch(`/api/posts/${postId}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ playersConfirmed: 0, isComplete: false, manualPlayers: "" }),
-                  }).then((res) => {
-                    if (res.ok) {
+                  try {
+                    const supabase = createSupabaseBrowserClient();
+                    const { error: upErr } = await supabase
+                      .from("posts")
+                      .update({ players_confirmed: 0, is_complete: false, manual_players: "" })
+                      .eq("id", postId);
+                    if (!upErr) {
                       onUpdate(0, false);
                       setCurrentConfirmedCount(0);
                       setDropdownValue(0);
                       setIsMarkedFull(false);
                       onManualPlayersUpdate("");
                     }
-                    setSavingManual(false);
-                  }).catch(() => setSavingManual(false));
+                  } catch {
+                    // ignore
+                  }
+                  setSavingManual(false);
                 }}
                 disabled={savingManual}
                 className="text-xs font-semibold text-amber-700 bg-amber-100 hover:bg-amber-200 px-3 py-1.5 rounded-lg transition-colors"
@@ -1901,41 +1964,36 @@ function ManageRequestsModal({
             </button>
             <div className="flex items-center gap-2 mt-3">
               <button
-                onClick={() => {
+                onClick={async () => {
                   setSavingManual(true);
-                  // Every unfilled slot becomes a guest. Blank inputs are
-                  // auto-named "Guest 1", "Guest 2", ... so they still count
-                  // toward the split. If the user added more inputs than
-                  // unfilled slots, honor the extras too.
-                  const guestSlots = Math.max(
-                    playersNeeded - approvedCount,
-                    manualNames.length
-                  );
+                  const guestSlots = Math.max(playersNeeded - approvedCount, manualNames.length);
                   const filled = Array.from({ length: guestSlots }, (_, i) => {
                     const typed = (manualNames[i] || "").trim();
                     return typed.length > 0 ? typed : `Guest ${i + 1}`;
                   });
                   const names = filled.join(", ");
-                  fetch(`/api/posts/${postId}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      playersConfirmed: playersNeeded,
-                      isComplete: true,
-                      manualPlayers: names,
-                    }),
-                  }).then(async (res) => {
-                    if (res.ok) {
-                      const data = await res.json().catch(() => ({}));
-                      onUpdate(playersNeeded, true, data.sessionChatId ?? null, data.teamGroupId ?? null);
+                  try {
+                    const supabase = createSupabaseBrowserClient();
+                    const { error: upErr } = await supabase
+                      .from("posts")
+                      .update({
+                        players_confirmed: playersNeeded,
+                        is_complete: true,
+                        manual_players: names,
+                      })
+                      .eq("id", postId);
+                    if (!upErr) {
+                      onUpdate(playersNeeded, true, null, null);
                       setCurrentConfirmedCount(playersNeeded);
                       setDropdownValue(playersNeeded);
                       setIsMarkedFull(true);
                       setShowMarkFullForm(false);
                       onManualPlayersUpdate(names);
                     }
-                    setSavingManual(false);
-                  }).catch(() => setSavingManual(false));
+                  } catch {
+                    // ignore
+                  }
+                  setSavingManual(false);
                 }}
                 disabled={savingManual}
                 className="btn-primary btn-sm"
