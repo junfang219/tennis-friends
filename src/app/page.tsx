@@ -7,7 +7,7 @@ import Link from "next/link";
 import PostComposer from "@/components/PostComposer";
 import PostCard from "@/components/PostCard";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { listFeed, type Post as FeedPost } from "@/lib/supabase/queries";
+import { listFeed, getMyProfile, updateMyProfile, type Post as FeedPost } from "@/lib/supabase/queries";
 
 // Map a Supabase feed row (snake_case) into the legacy camelCase Post
 // shape this page (and PostCard) currently expects. Will go away once
@@ -218,11 +218,9 @@ export default function HomePage() {
   // "Add your location" empty-state banner.
   useEffect(() => {
     if (activeFilter !== "nearby" || hasLocation !== null) return;
-    fetch("/api/profile")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        setHasLocation(!!(data?.latitude != null && data?.longitude != null));
-      })
+    const supabase = createSupabaseBrowserClient();
+    getMyProfile(supabase)
+      .then((p) => setHasLocation(!!(p && p.latitude != null && p.longitude != null)))
       .catch(() => setHasLocation(false));
   }, [activeFilter, hasLocation]);
 
@@ -230,17 +228,13 @@ export default function HomePage() {
     setLocationError("");
     setLocationSaving(true);
     try {
-      const res = await fetch("/api/profile/location", { method: "DELETE" });
-      if (res.ok) {
-        setHasLocation(false);
-        setConfirmingTurnOff(false);
-        // Refetch feed: the viewer's broadcasts (and broadcasts from others
-        // requiring viewer lat/lng) should drop out of the response.
-        const feedRes = await fetch("/api/posts");
-        if (feedRes.ok) setPosts(await feedRes.json());
-      } else {
-        setLocationError("Could not turn off location.");
-      }
+      const supabase = createSupabaseBrowserClient();
+      await updateMyProfile(supabase, { latitude: null, longitude: null });
+      setHasLocation(false);
+      setConfirmingTurnOff(false);
+      // Re-fetch the feed so broadcasts requiring viewer coords drop out.
+      const rows = await listFeed(supabase, { limit: 50 });
+      setPosts(rows.map(adaptFeedPost));
     } catch {
       setLocationError("Could not turn off location.");
     }
@@ -257,20 +251,14 @@ export default function HomePage() {
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         try {
-          const res = await fetch("/api/profile", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+          const supabase = createSupabaseBrowserClient();
+          await updateMyProfile(supabase, {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
           });
-          if (res.ok) {
-            setHasLocation(true);
-            // Re-fetch the home feed so broadcasts (which require viewer lat/lng
-            // server-side) start appearing without a page reload.
-            const feedRes = await fetch("/api/posts");
-            if (feedRes.ok) setPosts(await feedRes.json());
-          } else {
-            setLocationError("Could not save location.");
-          }
+          setHasLocation(true);
+          const rows = await listFeed(supabase, { limit: 50 });
+          setPosts(rows.map(adaptFeedPost));
         } catch {
           setLocationError("Could not save location.");
         }

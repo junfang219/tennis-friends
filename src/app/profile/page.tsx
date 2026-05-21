@@ -2,7 +2,8 @@
 
 import { useSession, signOut } from "@/lib/supabase/nextauth-compat";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { getMyProfile, updateMyProfile } from "@/lib/supabase/queries";
+import { getMyProfile, updateMyProfile, addHighlight, deleteHighlight } from "@/lib/supabase/queries";
+import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
@@ -134,16 +135,12 @@ export default function ProfilePage() {
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         try {
-          const res = await fetch("/api/profile", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+          const supabase = createSupabaseBrowserClient();
+          await updateMyProfile(supabase, {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
           });
-          if (res.ok) {
-            setProfile((p) => p ? { ...p, latitude: pos.coords.latitude, longitude: pos.coords.longitude } : p);
-          } else {
-            setLocationError("Could not save location.");
-          }
+          setProfile((p) => p ? { ...p, latitude: pos.coords.latitude, longitude: pos.coords.longitude } : p);
         } catch {
           setLocationError("Could not save location.");
         }
@@ -162,13 +159,10 @@ export default function ProfilePage() {
     setLocationError("");
     setLocationSaving(true);
     try {
-      const res = await fetch("/api/profile/location", { method: "DELETE" });
-      if (res.ok) {
-        setProfile((p) => p ? { ...p, latitude: null, longitude: null } : p);
-        setConfirmingTurnOffLocation(false);
-      } else {
-        setLocationError("Could not turn off location.");
-      }
+      const supabase = createSupabaseBrowserClient();
+      await updateMyProfile(supabase, { latitude: null, longitude: null });
+      setProfile((p) => p ? { ...p, latitude: null, longitude: null } : p);
+      setConfirmingTurnOffLocation(false);
     } catch {
       setLocationError("Could not turn off location.");
     }
@@ -364,24 +358,27 @@ export default function ProfilePage() {
       // feed/profile tabs are unaffected.
       const allFiles = videos.length > 0 ? videos.slice(0, 1) : images.slice(0, 9);
       const newHighlights: Highlight[] = [];
+      const supabase = createSupabaseBrowserClient();
       for (const file of allFiles) {
-        const fd = new FormData();
-        fd.append("file", file);
-        const upRes = await fetch("/api/upload", { method: "POST", body: fd });
-        if (!upRes.ok) {
-          const data = await upRes.json().catch(() => ({}));
-          setBioUploadError(data.error || "Upload failed.");
+        const upResult = await uploadToBucket(file, "posts");
+        if (isUploadError(upResult)) {
+          setBioUploadError(upResult.message);
           continue;
         }
-        const upData = await upRes.json();
-        const hRes = await fetch("/api/highlights", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mediaUrl: upData.url, mediaType: upData.mediaType }),
-        });
-        if (hRes.ok) {
-          newHighlights.push(await hRes.json());
-        } else {
+        try {
+          const h = await addHighlight(supabase, {
+            mediaUrl: upResult.url,
+            mediaType: upResult.mediaType,
+          });
+          newHighlights.push({
+            id: h.id,
+            userId: h.user_id,
+            mediaUrl: h.media_url,
+            mediaType: h.media_type,
+            caption: h.caption,
+            createdAt: h.created_at,
+          } as Highlight);
+        } catch {
           setBioUploadError("Could not save highlight.");
         }
       }
@@ -415,30 +412,29 @@ export default function ProfilePage() {
     }
     setCoverUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const upRes = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!upRes.ok) {
-        const data = await upRes.json().catch(() => ({}));
-        setCoverError(data.error || "Upload failed.");
-        setCoverUploading(false);
-        e.target.value = "";
-        return;
-      }
-      const upData = await upRes.json();
-      const putRes = await fetch("/api/profile", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ coverImageUrl: upData.url, coverOffsetY: 50, coverScale: 100 }),
-      });
-      if (putRes.ok) {
-        const updated = await putRes.json();
-        setProfile((prev) => (prev ? { ...prev, coverImageUrl: updated.coverImageUrl || upData.url, coverOffsetY: 50, coverScale: 100 } : prev));
+      const upResult = await uploadToBucket(file, "avatars");
+      if (isUploadError(upResult)) {
+        setCoverError(upResult.message);
+      } else {
+        const supabase = createSupabaseBrowserClient();
+        const updated = await updateMyProfile(supabase, {
+          cover_image_url: upResult.url,
+          cover_offset_y: 50,
+          cover_scale: 100,
+        });
+        setProfile((prev) =>
+          prev
+            ? {
+                ...prev,
+                coverImageUrl: updated.cover_image_url || upResult.url,
+                coverOffsetY: 50,
+                coverScale: 100,
+              }
+            : prev
+        );
         setDraftOffsetY(50);
         setDraftScale(100);
         setRepositioning(true);
-      } else {
-        setCoverError("Could not save cover.");
       }
     } catch {
       setCoverError("Network error.");
@@ -450,15 +446,18 @@ export default function ProfilePage() {
   const persistTags = async (tags: string[]) => {
     setProfile((prev) => (prev ? { ...prev, customTags: tags } : prev));
     try {
-      const res = await fetch("/api/profile", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customTags: tags }),
-      });
-      if (res.ok) {
-        const updated = await res.json();
-        setProfile((prev) => (prev ? { ...prev, customTags: updated.customTags || [] } : prev));
-      }
+      const supabase = createSupabaseBrowserClient();
+      const updated = await updateMyProfile(supabase, { custom_tags: tags.join(",") });
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              customTags: updated.custom_tags
+                ? updated.custom_tags.split(",").filter(Boolean)
+                : [],
+            }
+          : prev
+      );
     } catch {}
   };
 
@@ -576,15 +575,12 @@ export default function ProfilePage() {
   const saveCoverOffset = async () => {
     const offsetY = Math.round(draftOffsetY);
     const scale = Math.round(draftScale);
-    const res = await fetch("/api/profile", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ coverOffsetY: offsetY, coverScale: scale }),
-    });
-    if (res.ok) {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await updateMyProfile(supabase, { cover_offset_y: offsetY, cover_scale: scale });
       setProfile((prev) => (prev ? { ...prev, coverOffsetY: offsetY, coverScale: scale } : prev));
       setRepositioning(false);
-    } else {
+    } catch {
       setCoverError("Could not save framing.");
     }
   };
@@ -598,14 +594,17 @@ export default function ProfilePage() {
     pinchStartRef.current = null;
   };
 
-  const deleteHighlight = async (id: string) => {
+  const removeHighlight = async (id: string) => {
     if (!confirm("Remove this highlight?")) return;
-    const res = await fetch(`/api/highlights/${id}`, { method: "DELETE" });
-    if (res.ok) {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await deleteHighlight(supabase, id);
       setProfile((prev) =>
         prev ? { ...prev, highlights: (prev.highlights || []).filter((h) => h.id !== id) } : prev
       );
       setViewingHighlightIdx(null);
+    } catch {
+      // ignore
     }
   };
 
@@ -1068,7 +1067,7 @@ export default function ProfilePage() {
             onClose={() => setViewingHighlightIdx(null)}
             onPrev={() => setViewingHighlightIdx((i) => (i === null ? 0 : (i - 1 + profile.highlights.length) % profile.highlights.length))}
             onNext={() => setViewingHighlightIdx((i) => (i === null ? 0 : (i + 1) % profile.highlights.length))}
-            onDelete={() => deleteHighlight(profile.highlights[viewingHighlightIdx].id)}
+            onDelete={() => removeHighlight(profile.highlights[viewingHighlightIdx].id)}
           />,
           document.body
         )}
@@ -1434,26 +1433,11 @@ function EditForm({
     setUploadError("");
     setUploading(true);
 
-    const formData = new FormData();
-    formData.append("file", file);
-
-    try {
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        setUploadError(data.error || "Upload failed");
-        setUploading(false);
-        return;
-      }
-
-      const { url } = await res.json();
-      setForm({ ...form, profileImageUrl: url });
-    } catch {
-      setUploadError("Upload failed. Please try again.");
+    const upResult = await uploadToBucket(file, "avatars");
+    if (isUploadError(upResult)) {
+      setUploadError(upResult.message);
+    } else {
+      setForm({ ...form, profileImageUrl: upResult.url });
     }
     setUploading(false);
   };
