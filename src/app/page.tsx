@@ -8,6 +8,7 @@ import PostComposer from "@/components/PostComposer";
 import PostCard from "@/components/PostCard";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listFeed, getMyProfile, updateMyProfile, type Post as FeedPost } from "@/lib/supabase/queries";
+import { pgToIso } from "@/lib/pgDate";
 
 // Map a Supabase feed row (snake_case) into the legacy camelCase Post
 // shape this page (and PostCard) currently expects. Will go away once
@@ -18,6 +19,10 @@ function adaptFeedPost(p: FeedPost): Post {
     content: p.content,
     mediaUrl: p.media_url,
     mediaType: p.media_type,
+    // Flatten the joined photos rows into PostCard's photoUrls list.
+    // Sorted by the explicit display order so the multi-photo viewer
+    // stays consistent with how PostComposer inserted them.
+    photoUrls: [...p.photos].sort((a, b) => a.order - b.order).map((ph) => ph.url),
     postType: p.post_type,
     playDate: p.play_date,
     playTime: p.play_time,
@@ -32,7 +37,10 @@ function adaptFeedPost(p: FeedPost): Post {
     distanceMiles: null,
     pendingRequestCount: 0,
     myPlayRequest: null,
-    createdAt: p.created_at,
+    // PostgREST emits "2026-05-21 18:23:35.123+00"; iOS Safari's strict
+    // Date parser rejects the space + bare-offset form. Normalize once
+    // here so every consumer (timeAgo, toLocaleDateString) sees ISO.
+    createdAt: pgToIso(p.created_at),
     author: {
       id: p.author.id,
       name: p.author.name,
@@ -61,6 +69,7 @@ type Post = {
   playersConfirmed?: number;
   courtBooked?: boolean;
   isComplete?: boolean;
+  photoUrls?: string[];
   isBroadcast?: boolean;
   broadcastRadiusMi?: number;
   distanceMiles?: number | null;

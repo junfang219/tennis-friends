@@ -22,6 +22,11 @@ import type { Notification } from "./queries/notifications";
 import type { DirectMessage } from "./queries/messages";
 import type { ChatMessage } from "./queries/chats";
 import type { TeamListing } from "./queries/misc";
+import { pgToIso } from "../pgDate";
+
+// Every adapter normalizes timestamptz fields through pgToIso so iOS
+// Safari's strict Date parser doesn't return NaN ("Invalid Date") on
+// values served with the Postgres "YYYY-MM-DD HH:mm:ss+00" format.
 
 // ---------------------------------------------------------------------
 // Profiles
@@ -86,8 +91,8 @@ export function toProfileCamel(p: Profile): ProfileCamel {
     zelleHandle: p.zelle_handle ?? "",
     onboardingComplete: p.onboarding_complete,
     isPrivate: p.is_private,
-    createdAt: p.created_at,
-    updatedAt: p.updated_at,
+    createdAt: pgToIso(p.created_at),
+    updatedAt: pgToIso(p.updated_at),
   };
 }
 
@@ -123,6 +128,9 @@ export interface PostCamel {
   createdAt: string;
   author: { id: string; name: string; profileImageUrl: string };
   photos: { id: string; url: string; order: number }[];
+  // Flat URL list — what PostCard consumes for its photo grid. Kept
+  // alongside the typed `photos` array so consumers can pick either shape.
+  photoUrls: string[];
   likeCount: number;
   commentCount: number;
   isLiked: boolean;
@@ -153,14 +161,15 @@ export function toPostCamel(p: Post): PostCamel {
     broadcastLat: p.broadcast_lat,
     broadcastLng: p.broadcast_lng,
     eventId: p.event_id,
-    pinnedAt: p.pinned_at,
-    createdAt: p.created_at,
+    pinnedAt: p.pinned_at ? pgToIso(p.pinned_at) : null,
+    createdAt: pgToIso(p.created_at),
     author: {
       id: p.author.id,
       name: p.author.name,
       profileImageUrl: p.author.profile_image_url,
     },
     photos: p.photos,
+    photoUrls: [...p.photos].sort((a, b) => a.order - b.order).map((ph) => ph.url),
     likeCount: p.like_count,
     commentCount: p.comment_count,
     isLiked: p.is_liked,
@@ -182,7 +191,7 @@ export function toCommentCamel(c: Comment): CommentCamel {
     postId: c.post_id,
     authorId: c.author_id,
     content: c.content,
-    createdAt: c.created_at,
+    createdAt: pgToIso(c.created_at),
     author: {
       id: c.author.id,
       name: c.author.name,
@@ -229,9 +238,9 @@ export function toEventCamel(e: EventRow): EventCamel {
     title: e.title,
     description: e.description,
     eventType: e.event_type,
-    startDate: e.start_date,
-    endDate: e.end_date,
-    signupDeadline: e.signup_deadline,
+    startDate: pgToIso(e.start_date),
+    endDate: pgToIso(e.end_date),
+    signupDeadline: e.signup_deadline ? pgToIso(e.signup_deadline) : null,
     isPublicSignup: e.is_public_signup,
     maxParticipants: e.max_participants,
     ntrpMin: e.ntrp_min,
@@ -270,8 +279,8 @@ export function toEventParticipantCamel(p: EventParticipantRow): EventParticipan
     eventId: p.event_id,
     userId: p.user_id,
     status: p.status,
-    registeredAt: p.registered_at,
-    checkedInAt: p.checked_in_at,
+    registeredAt: pgToIso(p.registered_at),
+    checkedInAt: p.checked_in_at ? pgToIso(p.checked_in_at) : null,
     wins: p.wins,
     losses: p.losses,
     setsWon: p.sets_won,
@@ -312,7 +321,7 @@ export function toEventMatchCamel(m: EventMatchRow): EventMatchCamel {
     player4Id: m.player4_id,
     round: m.round,
     bracketSlot: m.bracket_slot,
-    scheduledAt: m.scheduled_at,
+    scheduledAt: m.scheduled_at ? pgToIso(m.scheduled_at) : null,
     courtAssign: m.court_assign,
     score: m.score,
     winnerSide: m.winner_side,
@@ -394,9 +403,9 @@ export function toGroupMessageCamel(m: GroupMessage): GroupMessageCamel {
     sharedPostId: m.shared_post_id,
     kind: m.kind,
     notifyEmail: m.notify_email,
-    pinnedAt: m.pinned_at,
+    pinnedAt: m.pinned_at ? pgToIso(m.pinned_at) : null,
     pollId: m.poll_id,
-    createdAt: m.created_at,
+    createdAt: pgToIso(m.created_at),
     sender: {
       id: m.sender.id,
       name: m.sender.name,
@@ -438,7 +447,7 @@ export function toNotificationCamel(n: Notification): NotificationCamel {
     matchId: n.match_id ?? "",
     emoji: n.emoji,
     read: n.read,
-    createdAt: n.created_at,
+    createdAt: pgToIso(n.created_at),
     actor: {
       id: n.actor.id,
       name: n.actor.name,
@@ -467,7 +476,7 @@ export function toDirectMessageCamel(m: DirectMessage): DirectMessageCamel {
     mediaUrl: m.media_url,
     mediaType: m.media_type,
     sharedPostId: m.shared_post_id,
-    createdAt: m.created_at,
+    createdAt: pgToIso(m.created_at),
   };
 }
 
@@ -490,7 +499,7 @@ export function toChatMessageCamel(m: ChatMessage): ChatMessageCamel {
     content: m.content,
     mediaUrl: m.media_url,
     mediaType: m.media_type,
-    createdAt: m.created_at,
+    createdAt: pgToIso(m.created_at),
     sender: {
       id: m.sender.id,
       name: m.sender.name,
@@ -531,8 +540,8 @@ export function toTeamListingCamel(l: TeamListing): TeamListingCamel {
     ntrpMax: l.ntrp_max,
     city: l.city,
     status: l.status,
-    expiresAt: l.expires_at,
-    createdAt: l.created_at,
+    expiresAt: l.expires_at ? pgToIso(l.expires_at) : null,
+    createdAt: pgToIso(l.created_at),
     group: {
       id: l.group?.id ?? l.group_id,
       name: l.group?.name ?? "",
