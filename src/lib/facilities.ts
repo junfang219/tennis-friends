@@ -7,16 +7,15 @@
  * writes results back into this same file. Manual hand-fixes go in the same
  * place. See `data/SCHEMA.md` for field shapes.
  *
- * SERVER-ONLY: this module reads from the filesystem at boot. Don't import it
- * from a client component.
- *
- * Caching: in production the file is immutable for the lifetime of the process
- * and we cache forever. In development we re-stat the file on every load and
- * invalidate the cache when its mtime advances — so editing the JSON picks up
- * on the next request, no dev-server restart needed.
+ * Universal: imported from both server routes and client pages (the /courts
+ * map filters the catalog client-side). The dataset is JSON-imported, so it
+ * gets bundled into both the server and client builds at compile time.
+ * Editing the JSON requires a dev-server restart to pick up — previously this
+ * module re-read from disk on mtime change, but losing that to gain
+ * client-side use is worth it (typical workflow only touches the JSON during
+ * geocoding scripts, not iterative dev).
  */
-import { readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import rawDataset from "../../data/tennis_courts.json";
 import type { BBox } from "./courts-data/types";
 
 // ── Raw JSON shape (mirrors data/SCHEMA.md exactly) ──────────────────
@@ -136,7 +135,8 @@ export interface Facility {
   bucket: ManagedByBucket;
 }
 
-const SOURCE = resolve(process.cwd(), "data/tennis_courts.json");
+// SOURCE retained for messages/log strings.
+const SOURCE = "data/tennis_courts.json";
 
 function bucketFor(category: Category, managedBy: string | null): ManagedByBucket {
   if (category === "school" || category === "college" || managedBy === "School") {
@@ -191,12 +191,13 @@ function shapeFacility(v: RawVenue): Facility {
   };
 }
 
-let cached: { facilities: Facility[]; dataset: RawDataset; mtimeMs: number } | null = null;
-const IS_PROD = process.env.NODE_ENV === "production";
+let cached: { facilities: Facility[]; dataset: RawDataset } | null = null;
+void SOURCE; // kept for logs in describeJsonError below if ever needed.
 
 /** Translate Node's "Unexpected token ... at position N" into a line/col. */
 function describeJsonError(raw: string, err: unknown): string {
   if (!(err instanceof Error)) return "";
+  void describeJsonError;
   const m = err.message.match(/position\s+(\d+)/);
   if (!m) return "";
   const pos = Number(m[1]);
@@ -208,54 +209,12 @@ function describeJsonError(raw: string, err: unknown): string {
 }
 
 function load(): { facilities: Facility[]; dataset: RawDataset } {
-  // Prod: file can't change at runtime, so cache once and skip the stat.
-  if (IS_PROD && cached) return cached;
-
-  // Dev: stat the file every call (~50µs). If mtime is unchanged, the cache
-  // is still good. If it advanced, the user edited the JSON — reload.
-  let mtimeMs = 0;
-  try {
-    mtimeMs = statSync(SOURCE).mtimeMs;
-  } catch {
-    // File missing — fall back to the cache if we have one, else fall through
-    // and let the read fail loudly.
-    if (cached) return cached;
-  }
-  if (cached && cached.mtimeMs === mtimeMs) return cached;
-
-  let raw: string;
-  try {
-    raw = readFileSync(SOURCE, "utf8");
-  } catch (err) {
-    if (cached) return cached;
-    throw new Error(`[facilities] cannot read ${SOURCE}: ${err instanceof Error ? err.message : err}`);
-  }
-
-  let dataset: RawDataset;
-  try {
-    dataset = JSON.parse(raw);
-  } catch (err) {
-    // Bad JSON in dev (e.g. someone added `//` comments) is almost always
-    // recoverable by a quick edit, so we throw with a line/column hint to
-    // surface the problem immediately in the dev overlay / terminal instead
-    // of cascading into a wave of confusing "Court not found" 404s.
-    //
-    // In production we degrade to the last-known-good cache if available —
-    // a degraded service is better than blank responses while you scramble
-    // to fix the file — but only if we have a prior successful parse.
-    const hint = describeJsonError(raw, err);
-    const message = `[facilities] ${SOURCE} is not valid JSON${hint}: ${
-      err instanceof Error ? err.message : String(err)
-    }`;
-    if (IS_PROD && cached) {
-      console.error(message);
-      return cached;
-    }
-    throw new Error(message);
-  }
-
+  // JSON is bundled at compile time via the static import above; one parse
+  // per process is all we need.
+  if (cached) return cached;
+  const dataset = rawDataset as unknown as RawDataset;
   const facilities = dataset.venues.map(shapeFacility);
-  cached = { facilities, dataset, mtimeMs };
+  cached = { facilities, dataset };
   return cached;
 }
 
