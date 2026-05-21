@@ -9,6 +9,8 @@ import {
   type PaymentMethod,
 } from "@/lib/payment";
 import { openPayment } from "@/lib/openPayment";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getMyProfile, updateMyProfile } from "@/lib/supabase/queries";
 
 type Participant = { id: string; name: string; profileImageUrl: string };
 
@@ -100,17 +102,171 @@ export default function SplitCostSheet({
   const load = useCallback(async () => {
     setLoadingData(true);
     try {
-      const res = await fetch(`/api/chats/${chatId}/expenses`);
-      if (res.ok) {
-        const data = await res.json();
-        setExpenses(data.expenses || []);
-        setBalances(data.balances || []);
-        setGuestBalances(data.guestBalances || []);
-        if (data.myHandles) setMyHandles(data.myHandles);
+      const supabase = createSupabaseBrowserClient();
+      const [{ data: rawExpenses }, me] = await Promise.all([
+        supabase
+          .from("expenses")
+          .select(
+            `id, amount_cents, description, created_at,
+             payer:profiles!expenses_payer_id_fkey ( id, name, profile_image_url ),
+             shares:expense_shares (
+               id, user_id, guest_name, amount_cents, settled_at,
+               user:profiles ( id, name, profile_image_url, venmo_handle, paypal_handle, cashapp_handle, zelle_handle )
+             )`
+          )
+          .eq("chat_id", chatId)
+          .order("created_at", { ascending: false }),
+        getMyProfile(supabase),
+      ]);
+
+      type RawShare = {
+        id: string;
+        user_id: string | null;
+        guest_name: string | null;
+        amount_cents: number;
+        settled_at: string | null;
+        user: {
+          id: string;
+          name: string;
+          profile_image_url: string;
+          venmo_handle: string | null;
+          paypal_handle: string | null;
+          cashapp_handle: string | null;
+          zelle_handle: string | null;
+        } | null;
+      };
+      type RawExpense = {
+        id: string;
+        amount_cents: number;
+        description: string;
+        created_at: string;
+        payer: { id: string; name: string; profile_image_url: string };
+        shares: RawShare[];
+      };
+
+      const exps = ((rawExpenses ?? []) as unknown as RawExpense[]).map((e) => ({
+        id: e.id,
+        amountCents: e.amount_cents,
+        description: e.description,
+        createdAt: e.created_at,
+        payer: {
+          id: e.payer.id,
+          name: e.payer.name,
+          profileImageUrl: e.payer.profile_image_url,
+        },
+        shares: e.shares
+          .filter((s) => s.user_id !== null && s.user !== null)
+          .map((s) => ({
+            id: s.id,
+            userId: s.user_id!,
+            amountCents: s.amount_cents,
+            settledAt: s.settled_at,
+            user: {
+              id: s.user!.id,
+              name: s.user!.name,
+              profileImageUrl: s.user!.profile_image_url,
+              venmoHandle: s.user!.venmo_handle,
+              paypalHandle: s.user!.paypal_handle,
+              cashappHandle: s.user!.cashapp_handle,
+              zelleHandle: s.user!.zelle_handle,
+            },
+          })),
+        guestShares: e.shares
+          .filter((s) => s.guest_name !== null)
+          .map((s) => ({
+            id: s.id,
+            guestName: s.guest_name!,
+            amountCents: s.amount_cents,
+            settledAt: s.settled_at,
+          })),
+      }));
+      setExpenses(exps);
+
+      // Net balances: for each user, sum (paid to others) – (owed to me)
+      // across all unsettled shares. Same algorithm the deleted route used.
+      const userTotals = new Map<string, { name: string; image: string; net: number; handles: Balance["paymentHandles"] }>();
+      for (const e of exps) {
+        const payerIsMe = e.payer.id === myId;
+        for (const s of e.shares) {
+          if (s.settledAt) continue;
+          // Skip the payer's own share (they don't owe themselves).
+          if (s.userId === e.payer.id) continue;
+          if (payerIsMe) {
+            // They owe me.
+            const cur = userTotals.get(s.userId) ?? {
+              name: s.user.name,
+              image: s.user.profileImageUrl,
+              net: 0,
+              handles: {
+                venmoHandle: s.user.venmoHandle,
+                paypalHandle: s.user.paypalHandle,
+                cashappHandle: s.user.cashappHandle,
+                zelleHandle: s.user.zelleHandle,
+              },
+            };
+            cur.net -= s.amountCents;
+            userTotals.set(s.userId, cur);
+          } else if (s.userId === myId) {
+            // I owe payer.
+            const cur = userTotals.get(e.payer.id) ?? {
+              name: e.payer.name,
+              image: e.payer.profileImageUrl,
+              net: 0,
+              handles: {
+                venmoHandle: null,
+                paypalHandle: null,
+                cashappHandle: null,
+                zelleHandle: null,
+              },
+            };
+            cur.net += s.amountCents;
+            userTotals.set(e.payer.id, cur);
+          }
+        }
+      }
+      setBalances(
+        Array.from(userTotals.entries())
+          .filter(([, v]) => v.net !== 0)
+          .map(([otherId, v]) => ({
+            otherId,
+            otherName: v.name,
+            otherImage: v.image,
+            netCents: v.net,
+            paymentHandles: v.handles,
+          }))
+      );
+
+      // Guest balances: sum unsettled guest shares I'm responsible to collect.
+      const guestTotals = new Map<string, { net: number; ids: string[] }>();
+      for (const e of exps) {
+        if (e.payer.id !== myId) continue;
+        for (const gs of e.guestShares) {
+          if (gs.settledAt) continue;
+          const cur = guestTotals.get(gs.guestName) ?? { net: 0, ids: [] };
+          cur.net += gs.amountCents;
+          cur.ids.push(gs.id);
+          guestTotals.set(gs.guestName, cur);
+        }
+      }
+      setGuestBalances(
+        Array.from(guestTotals.entries()).map(([guestName, v]) => ({
+          guestName,
+          amountCents: v.net,
+          openShareIds: v.ids,
+        }))
+      );
+
+      if (me) {
+        setMyHandles({
+          venmoHandle: me.venmo_handle,
+          paypalHandle: me.paypal_handle,
+          cashappHandle: me.cashapp_handle,
+          zelleHandle: me.zelle_handle,
+        });
       }
     } catch {}
     setLoadingData(false);
-  }, [chatId]);
+  }, [chatId, myId]);
 
   useEffect(() => {
     load();
@@ -135,24 +291,42 @@ export default function SplitCostSheet({
     }
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/chats/${chatId}/expenses`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amountCents: cents, description: description.trim() }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error || "Could not save expense.");
+      const supabase = createSupabaseBrowserClient();
+      const { data: exp, error: insErr } = await supabase
+        .from("expenses")
+        .insert({
+          chat_id: chatId,
+          payer_id: myId,
+          amount_cents: cents,
+          description: description.trim(),
+        })
+        .select("id")
+        .single();
+      if (insErr || !exp) {
+        setError(insErr?.message || "Could not save expense.");
         setSubmitting(false);
         return;
+      }
+      // Split the bill: equal share per participant + per guest.
+      const totalSlots = participants.length + guestNames.length;
+      const perCents = Math.floor(cents / totalSlots);
+      const shareRows: Array<{ expense_id: string; user_id?: string; guest_name?: string; amount_cents: number }> = [];
+      for (const p of participants) {
+        shareRows.push({ expense_id: exp.id, user_id: p.id, amount_cents: perCents });
+      }
+      for (const gname of guestNames) {
+        shareRows.push({ expense_id: exp.id, guest_name: gname, amount_cents: perCents });
+      }
+      if (shareRows.length > 0) {
+        await supabase.from("expense_shares").insert(shareRows);
       }
       setAmount("");
       setDescription("");
       await load();
       onExpenseCreated();
       setTab("balances");
-    } catch {
-      setError("Network error. Try again.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error. Try again.");
     }
     setSubmitting(false);
   };
@@ -160,15 +334,12 @@ export default function SplitCostSheet({
   const toggleSettled = async (share: ExpenseShare, settled: boolean) => {
     setSettling(share.id);
     try {
-      const res = await fetch(
-        `/api/chats/${chatId}/expenses/shares/${share.id}/settle`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ settled }),
-        }
-      );
-      if (res.ok) await load();
+      const supabase = createSupabaseBrowserClient();
+      await supabase
+        .from("expense_shares")
+        .update({ settled_at: settled ? new Date().toISOString() : null })
+        .eq("id", share.id);
+      await load();
     } catch {}
     setSettling(null);
   };
@@ -402,15 +573,11 @@ function BalancesView({
   const settleGuest = async (g: GuestBalance) => {
     setGuestSettling(g.guestName);
     try {
-      await Promise.all(
-        g.openShareIds.map((sid) =>
-          fetch(`/api/chats/${chatId}/expenses/guest-shares/${sid}/settle`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ settled: true }),
-          }).catch(() => {})
-        )
-      );
+      const supabase = createSupabaseBrowserClient();
+      await supabase
+        .from("expense_shares")
+        .update({ settled_at: new Date().toISOString() })
+        .in("id", g.openShareIds);
       reload();
     } catch {}
     setGuestSettling(null);
@@ -419,11 +586,11 @@ function BalancesView({
   const unsettleGuestShare = async (shareId: string) => {
     setGuestSettling(shareId);
     try {
-      await fetch(`/api/chats/${chatId}/expenses/guest-shares/${shareId}/settle`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settled: false }),
-      });
+      const supabase = createSupabaseBrowserClient();
+      await supabase
+        .from("expense_shares")
+        .update({ settled_at: null })
+        .eq("id", shareId);
       reload();
     } catch {}
     setGuestSettling(null);
@@ -433,15 +600,11 @@ function BalancesView({
     if (!pendingPay) return;
     setConfirming(true);
     try {
-      await Promise.all(
-        pendingPay.shareIds.map((sid) =>
-          fetch(`/api/chats/${chatId}/expenses/shares/${sid}/settle`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ settled: true }),
-          }).catch(() => {})
-        )
-      );
+      const supabase = createSupabaseBrowserClient();
+      await supabase
+        .from("expense_shares")
+        .update({ settled_at: new Date().toISOString() })
+        .in("id", pendingPay.shareIds);
       setShowReturnPrompt(false);
       setPendingPay(null);
       reload();
@@ -765,25 +928,17 @@ function PaymentSetupCard({
     setSaving(true);
     setError("");
     try {
-      const res = await fetch("/api/profile", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          venmoHandle: draft.venmoHandle.trim(),
-          paypalHandle: draft.paypalHandle.trim(),
-          cashappHandle: draft.cashappHandle.trim(),
-          zelleHandle: draft.zelleHandle.trim(),
-        }),
+      const supabase = createSupabaseBrowserClient();
+      await updateMyProfile(supabase, {
+        venmo_handle: draft.venmoHandle.trim() || null,
+        paypal_handle: draft.paypalHandle.trim() || null,
+        cashapp_handle: draft.cashappHandle.trim() || null,
+        zelle_handle: draft.zelleHandle.trim() || null,
       });
-      if (!res.ok) {
-        setError("Could not save. Try again.");
-        setSaving(false);
-        return;
-      }
       setEditing(false);
       onSaved();
-    } catch {
-      setError("Network error.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error.");
     }
     setSaving(false);
   };

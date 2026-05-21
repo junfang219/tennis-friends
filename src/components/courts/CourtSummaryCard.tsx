@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { StarRating } from "./StarRating";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 export type CourtSummary = {
   avg: number;
@@ -95,15 +96,41 @@ export function CourtSummaryCard({
       return;
     }
     let cancelled = false;
-    fetch(`/api/courts/${encodeURIComponent(courtId)}/availability-reports/recent`, {
-      cache: "no-store",
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (cancelled || !data) return;
-        setRecentReports(data as RecentReportsSummary);
-      })
-      .catch(() => {});
+    (async () => {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const sinceIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+        const { data } = await supabase
+          .from("court_availability_reports")
+          .select("has_empty, reported_at")
+          .eq("court_id", courtId)
+          .gte("reported_at", sinceIso);
+        if (cancelled) return;
+        const rows = (data ?? []) as Array<{ has_empty: boolean; reported_at: string }>;
+        if (rows.length === 0) {
+          setRecentReports(null);
+          return;
+        }
+        // Roll up: how many said "courts available" vs "busy" recently.
+        let available = 0;
+        let busy = 0;
+        for (const r of rows) {
+          if (r.has_empty) available += 1;
+          else busy += 1;
+        }
+        const latest = rows.reduce((acc, r) =>
+          r.reported_at > acc.reported_at ? r : acc
+        );
+        setRecentReports({
+          counts: { available, busy, unknown: 0 },
+          latestStatus: latest.has_empty ? "available" : "busy",
+          latestAt: latest.reported_at,
+          totalReports: rows.length,
+        } as unknown as RecentReportsSummary);
+      } catch {
+        // ignore
+      }
+    })();
     return () => {
       cancelled = true;
     };

@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { StarRatingInput } from "./StarRating";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { addCourtReview } from "@/lib/supabase/queries";
+import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 
 type Initial = {
   stars?: number;
@@ -50,14 +53,9 @@ export function ReviewComposer({ courtId, courtName, initial, onClose, onSaved }
     try {
       const results: string[] = [];
       for (const file of list) {
-        const fd = new FormData();
-        fd.append("file", file);
-        const res = await fetch("/api/upload", { method: "POST", body: fd });
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data?.error || "Upload failed");
-        }
-        if (data?.url) results.push(data.url);
+        const upResult = await uploadToBucket(file, "court-reviews");
+        if (isUploadError(upResult)) throw new Error(upResult.message);
+        results.push(upResult.url);
       }
       setPhotoUrls((prev) => [...prev, ...results].slice(0, MAX_PHOTOS));
     } catch (e) {
@@ -80,15 +78,8 @@ export function ReviewComposer({ courtId, courtName, initial, onClose, onSaved }
     setError("");
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/courts/${encodeURIComponent(courtId)}/reviews`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ stars, content, photoUrls }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        throw new Error(data?.error || "Failed to save review");
-      }
+      const supabase = createSupabaseBrowserClient();
+      await addCourtReview(supabase, courtId, { stars, content, photoUrls });
       onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save review");

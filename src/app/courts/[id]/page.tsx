@@ -9,6 +9,9 @@ import { CourtPhotoGrid } from "@/components/courts/CourtPhotoGrid";
 import { ReviewList, type Review } from "@/components/courts/ReviewList";
 import { ReviewComposer } from "@/components/courts/ReviewComposer";
 import { ReportIssueModal } from "@/components/courts/ReportIssueModal";
+import { getFacilityByCourtId, getSeattleParksDashboardUrl } from "@/lib/facilities";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listCourtReviews } from "@/lib/supabase/queries";
 
 // Mirrors `Facility` in src/lib/facilities.ts plus the dashboard URL the
 // detail API attaches conditionally.
@@ -123,13 +126,18 @@ export default function CourtDetailPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`/api/courts/${encodeURIComponent(id)}`);
-      if (!res.ok) {
-        if (res.status === 404) throw new Error("Court not found");
-        throw new Error("Failed to load court details");
+      const facility = getFacilityByCourtId(id);
+      if (!facility) {
+        throw new Error("Court not found");
       }
-      const data: CourtDetail = await res.json();
-      setCourt(data);
+      // Static-catalog facility plus the legacy "dashboard URL" computed
+      // client-side. Replaces the deleted /api/courts/[id] route which
+      // wrapped this lookup.
+      const detail: CourtDetail = {
+        ...facility,
+        seattleParksDashboardUrl: facility.city === "Seattle" ? getSeattleParksDashboardUrl() : null,
+      } as unknown as CourtDetail;
+      setCourt(detail);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
     } finally {
@@ -140,10 +148,42 @@ export default function CourtDetailPage() {
   const fetchReviews = useCallback(async () => {
     setReviewsLoading(true);
     try {
-      const res = await fetch(`/api/courts/${encodeURIComponent(id)}/reviews`);
-      if (!res.ok) throw new Error();
-      const data: ReviewsPayload = await res.json();
-      setReviews(data);
+      const supabase = createSupabaseBrowserClient();
+      const rows = await listCourtReviews(supabase, id);
+      const { data: auth } = await supabase.auth.getUser();
+      const myId = auth.user?.id ?? null;
+      // Distribution + averages — used to be computed server-side.
+      const distribution: { 1: number; 2: number; 3: number; 4: number; 5: number } = {
+        1: 0, 2: 0, 3: 0, 4: 0, 5: 0,
+      };
+      let sum = 0;
+      for (const r of rows) {
+        sum += r.stars;
+        if (r.stars >= 1 && r.stars <= 5) {
+          distribution[r.stars as 1 | 2 | 3 | 4 | 5] += 1;
+        }
+      }
+      const reviewsList = rows.map((r) => ({
+        id: r.id,
+        stars: r.stars,
+        content: r.content,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        photoUrls: r.photos.map((p) => p.url),
+        user: {
+          id: r.user.id,
+          name: r.user.name,
+          profileImageUrl: r.user.profile_image_url,
+        },
+      }));
+      const mine = myId ? reviewsList.find((r) => r.user.id === myId) ?? null : null;
+      setReviews({
+        avg: rows.length === 0 ? 0 : sum / rows.length,
+        count: rows.length,
+        distribution,
+        mine: mine as unknown as ReviewsPayload["mine"],
+        reviews: reviewsList as unknown as Review[],
+      });
     } catch {
       setReviews({ avg: 0, count: 0, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }, mine: null, reviews: [] });
     } finally {
@@ -163,22 +203,56 @@ export default function CourtDetailPage() {
       return;
     }
     let cancelled = false;
-    fetch(`/api/courts/${encodeURIComponent(id)}/availability-reports/recent`, {
-      cache: "no-store",
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (cancelled || !data) return;
-        setRecentReports(data);
-      })
-      .catch(() => {});
+    (async () => {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const sinceIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+        const { data } = await supabase
+          .from("court_availability_reports")
+          .select("has_empty, reported_at")
+          .eq("court_id", id)
+          .gte("reported_at", sinceIso);
+        if (cancelled) return;
+        const rows = (data ?? []) as Array<{ has_empty: boolean; reported_at: string }>;
+        if (rows.length === 0) {
+          setRecentReports(null);
+          return;
+        }
+        let available = 0;
+        let busy = 0;
+        for (const r of rows) {
+          if (r.has_empty) available += 1;
+          else busy += 1;
+        }
+        const latest = rows.reduce((acc, r) => (r.reported_at > acc.reported_at ? r : acc));
+        setRecentReports({
+          counts: { available, busy, unknown: 0 },
+          latestStatus: latest.has_empty ? "available" : "busy",
+          latestAt: latest.reported_at,
+          totalReports: rows.length,
+        } as unknown as typeof recentReports);
+      } catch {
+        // ignore
+      }
+    })();
     return () => {
       cancelled = true;
     };
   }, [court, id]);
 
   const deleteReview = useCallback(async () => {
-    await fetch(`/api/courts/${encodeURIComponent(id)}/reviews`, { method: "DELETE" });
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth.user) return;
+      await supabase
+        .from("court_reviews")
+        .delete()
+        .eq("court_id", id)
+        .eq("user_id", auth.user.id);
+    } catch {
+      // ignore
+    }
     fetchReviews();
   }, [id, fetchReviews]);
 

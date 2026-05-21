@@ -8,6 +8,8 @@ import {
   type CourtSummary,
 } from "@/components/courts/CourtSummaryCard";
 import { AddMissingCourtModal } from "@/components/courts/AddMissingCourtModal";
+import { filterFacilitiesByBbox, getFacilityByCourtId } from "@/lib/facilities";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 type ManagedByBucket = "city" | "club" | "school";
 
@@ -289,9 +291,40 @@ export default function CourtsPage() {
     setFetching(true);
     setLoadError("");
     try {
-      const res = await fetch(`/api/courts?${params}`);
-      if (!res.ok) throw new Error("Failed");
-      const data: CourtData[] = await res.json();
+      // The legacy /api/courts route did a server-side bbox filter against
+      // the static catalog. With the catalog living client-side
+      // (src/lib/courts-data via facilities.ts) we can do the same filter
+      // here without a roundtrip. Params is now unused but the var is kept
+      // for compatibility with the older logging that referenced it.
+      void params;
+      const data: CourtData[] = filterFacilitiesByBbox({
+        south, west, north, east,
+      }).map((f) => {
+        const indoor = f.indoorOutdoor === "indoor" || f.indoorOutdoor === "both";
+        const bucket: ManagedByBucket | undefined =
+          f.category === "private_club" || f.category === "hoa_community"
+            ? "club"
+            : f.category === "school" || f.category === "college"
+              ? "school"
+              : "city";
+        return {
+          id: f.courtId,
+          type: "tennis",
+          osmId: 0,
+          lat: f.latitude ?? 0,
+          lng: f.longitude ?? 0,
+          name: f.name,
+          surface: indoor ? "indoor" : "hard",
+          access: f.bookable ? "public" : undefined,
+          lit: f.lighted ?? undefined,
+          courts: f.courtCount ?? undefined,
+          address: f.address,
+          source: "facility" as const,
+          bucket,
+          bookingUrl: f.bookingUrl,
+          category: f.category ?? undefined,
+        };
+      });
       if (token !== fetchTokenRef.current) return;
       // Prune cached entries that lie inside the fetched bbox but weren't
       // returned by the server — that means they were removed from the
@@ -594,42 +627,41 @@ export default function CourtsPage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/courts/${encodeURIComponent(selectedParam)}`);
-        if (!res.ok || cancelled) return;
-        const data = await res.json();
-        if (cancelled) return;
-        if (typeof data.latitude !== "number" || typeof data.longitude !== "number") return;
+        // Resolve from the static catalog now that the legacy /api/courts/[id]
+        // route is gone. Same lookup the detail page uses.
+        const f = getFacilityByCourtId(selectedParam);
+        if (!f || cancelled) return;
+        if (typeof f.latitude !== "number" || typeof f.longitude !== "number") return;
         const map = mapInstanceRef.current;
         if (!map) return;
-        // Pre-populate so the card has data before the bbox fetch lands.
-        // descriptionPreview is computed by the list endpoint, not the
-        // detail endpoint — leaving it null is fine; it'll fill in on the
-        // next bbox fetch.
+        const bucket: ManagedByBucket =
+          f.category === "private_club" || f.category === "hoa_community"
+            ? "club"
+            : f.category === "school" || f.category === "college"
+              ? "school"
+              : "city";
         courtsMapRef.current.set(selectedParam, {
           id: selectedParam,
           type: "facility",
           osmId: 0,
-          lat: data.latitude,
-          lng: data.longitude,
-          name: data.name,
-          courts: data.courtCount ?? undefined,
-          address: data.address,
+          lat: f.latitude,
+          lng: f.longitude,
+          name: f.name,
+          courts: f.courtCount ?? undefined,
+          address: f.address,
           source: "facility",
-          bucket: data.bucket,
-          bookingUrl: data.bookingUrl,
-          category: data.category,
-          status: data.status,
+          bucket,
+          bookingUrl: f.bookingUrl,
+          category: f.category ?? undefined,
+          status: undefined,
           descriptionPreview: null,
-        });
+        } as CourtData);
         setCourts(Array.from(courtsMapRef.current.values()));
         setSelectedCourtId(selectedParam);
-        // Restore the exact view the user had when they clicked Details
-        // (city-level → city-level, street-level → street-level). Fall back
-        // to centering on the court at zoom 16 if no view was encoded.
         if (hasRestoreView) {
           map.setView([restoreLat, restoreLng], restoreZoom);
         } else {
-          map.setView([data.latitude, data.longitude], 16);
+          map.setView([f.latitude, f.longitude], 16);
         }
       } catch {
         // Silent: bad/expired ?selected= just falls through to normal map.
@@ -751,14 +783,13 @@ export default function CourtsPage() {
     setEditSaving(true);
     setEditError(null);
     try {
-      const res = await fetch(`/api/courts/${encodeURIComponent(editingCourtId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ latitude: editDraft.lat, longitude: editDraft.lng }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error || `Save failed (HTTP ${res.status})`);
+      const supabase = createSupabaseBrowserClient();
+      const { error: upErr } = await supabase
+        .from("courts")
+        .update({ latitude: editDraft.lat, longitude: editDraft.lng })
+        .eq("id", editingCourtId);
+      if (upErr) {
+        throw new Error(upErr.message || "Save failed");
       }
       // Optimistically update the in-memory courts map so the marker stays
       // put after the rebuild, without waiting for the refetch round-trip.
@@ -792,12 +823,37 @@ export default function CourtsPage() {
         .slice(0, 200);
       if (ids.length === 0) return;
       try {
-        const res = await fetch(
-          `/api/courts/reviews/summary?ids=${encodeURIComponent(ids.join(","))}`
-        );
-        if (!res.ok) return;
-        const data: Record<string, CourtSummary> = await res.json();
-        setSummaries((prev) => ({ ...prev, ...data }));
+        const supabase = createSupabaseBrowserClient();
+        const { data } = await supabase
+          .from("court_reviews")
+          .select(
+            `court_id, stars,
+             photos:court_review_photos ( url )`
+          )
+          .in("court_id", ids);
+        type Row = {
+          court_id: string;
+          stars: number;
+          photos: { url: string }[];
+        };
+        const grouped = new Map<string, { sum: number; n: number; thumbs: string[] }>();
+        for (const row of (data ?? []) as Row[]) {
+          const cur = grouped.get(row.court_id) ?? { sum: 0, n: 0, thumbs: [] };
+          cur.sum += row.stars;
+          cur.n += 1;
+          for (const ph of row.photos) {
+            if (cur.thumbs.length < 3) cur.thumbs.push(ph.url);
+          }
+          grouped.set(row.court_id, cur);
+        }
+        const next: Record<string, CourtSummary> = {};
+        for (const id of ids) {
+          const g = grouped.get(id);
+          next[id] = g
+            ? { avg: g.n === 0 ? 0 : g.sum / g.n, count: g.n, thumbs: g.thumbs }
+            : { avg: 0, count: 0, thumbs: [] };
+        }
+        setSummaries((prev) => ({ ...prev, ...next }));
       } catch {
         // best-effort — pin still works without summary
       }
