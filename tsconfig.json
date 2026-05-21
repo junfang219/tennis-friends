@@ -38,6 +38,8 @@
   ],
   "exclude": [
     "node_modules",
-    "prisma/seed.ts"
+    "prisma/seed.ts",
+    "supabase/functions/**/*",
+    "tests/loadtest/**/*"
   ]
 }
