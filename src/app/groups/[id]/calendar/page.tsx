@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getGroup } from "@/lib/supabase/queries";
 
 type TeamMatch = {
   id: string;
@@ -84,26 +86,80 @@ export default function TeamCalendarPage() {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [teamRes, matchesRes, practicesRes] = await Promise.all([
-        fetch(`/api/groups/${groupId}`),
-        fetch(`/api/groups/${groupId}/matches`),
-        fetch(`/api/groups/${groupId}/practices`),
-      ]);
-      if (!teamRes.ok) {
-        setError(teamRes.status === 403 ? "You are not a member of this team." : "Failed to load team.");
+      const supabase = createSupabaseBrowserClient();
+      const team = await getGroup(supabase, groupId);
+      if (!team) {
+        setError("You are not a member of this team.");
         setLoading(false);
         return;
       }
-      const teamData = await teamRes.json();
-      setTeamName(teamData.name || "");
-      if (matchesRes.ok) {
-        const m = await matchesRes.json();
-        setMatches(Array.isArray(m) ? m : []);
-      }
-      if (practicesRes.ok) {
-        const p = await practicesRes.json();
-        setSeriesList(Array.isArray(p) ? p : []);
-      }
+      setTeamName(team.name);
+
+      const [{ data: matchRows }, { data: seriesRows }] = await Promise.all([
+        supabase
+          .from("team_matches")
+          .select(
+            `id, match_date, match_time, location, notes,
+             availabilities ( user_id, lineup_slot )`
+          )
+          .eq("group_id", groupId)
+          .order("match_date", { ascending: true }),
+        supabase
+          .from("practice_series")
+          .select(
+            `id, name, practice_time, location, notes,
+             team_practices ( id, practice_date,
+               availabilities ( user_id ) )`
+          )
+          .eq("group_id", groupId)
+          .order("created_at", { ascending: false }),
+      ]);
+
+      type RawMatch = {
+        id: string;
+        match_date: string;
+        match_time: string;
+        location: string;
+        notes: string;
+        availabilities: { user_id: string; lineup_slot: string }[];
+      };
+      type RawSeries = {
+        id: string;
+        name: string;
+        practice_time: string;
+        location: string;
+        notes: string;
+        team_practices: { id: string; practice_date: string; availabilities: { user_id: string }[] }[];
+      };
+
+      setMatches(
+        ((matchRows ?? []) as unknown as RawMatch[]).map((m) => ({
+          id: m.id,
+          matchDate: m.match_date,
+          matchTime: m.match_time,
+          location: m.location,
+          notes: m.notes,
+          availabilities: m.availabilities.map((a) => ({
+            userId: a.user_id,
+            lineupSlot: a.lineup_slot,
+          })),
+        }))
+      );
+
+      setSeriesList(
+        ((seriesRows ?? []) as unknown as RawSeries[]).map((s) => ({
+          id: s.id,
+          name: s.name,
+          practiceTime: s.practice_time,
+          location: s.location,
+          notes: s.notes,
+          practices: s.team_practices.map((p) => ({
+            id: p.id,
+            practiceDate: p.practice_date,
+            availabilities: p.availabilities.map((a) => ({ userId: a.user_id })),
+          })),
+        })) as unknown as typeof seriesList
+      );
     } catch {
       setError("Something went wrong.");
     }

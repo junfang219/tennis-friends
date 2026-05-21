@@ -6,6 +6,9 @@ import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import { isAtLeast, ROLE } from "@/lib/groupRoles";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
+import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 
 type Item = {
   id: string;
@@ -55,24 +58,84 @@ export default function AlbumDetailPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadAlbum = useCallback(async () => {
-    const res = await fetch(`/api/groups/${groupId}/albums/${albumId}`);
-    if (res.status === 404) {
+    const supabase = createSupabaseBrowserClient();
+    const { data, error } = await supabase
+      .from("albums")
+      .select(
+        `id, name, description, created_at, created_by_id, cover_item_id,
+         createdBy:profiles!albums_created_by_id_fkey ( id, name, profile_image_url ),
+         items:album_items ( id, url, media_type, caption, created_at,
+           addedBy:profiles!album_items_added_by_id_fkey ( id, name, profile_image_url )
+         )`
+      )
+      .eq("id", albumId)
+      .maybeSingle();
+    if (error || !data) {
       setErr("Album not found.");
       setLoading(false);
       return;
     }
-    if (!res.ok) {
-      setErr("Failed to load album.");
-      setLoading(false);
-      return;
-    }
-    setAlbum(await res.json());
+    type Row = {
+      id: string;
+      name: string;
+      description: string;
+      created_at: string;
+      created_by_id: string;
+      cover_item_id: string | null;
+      createdBy: { id: string; name: string; profile_image_url: string };
+      items: {
+        id: string;
+        url: string;
+        media_type: string;
+        caption: string;
+        created_at: string;
+        addedBy: { id: string; name: string; profile_image_url: string };
+      }[];
+    };
+    const a = data as unknown as Row;
+    setAlbum({
+      id: a.id,
+      name: a.name,
+      description: a.description,
+      createdAt: a.created_at,
+      createdById: a.created_by_id,
+      coverItemId: a.cover_item_id,
+      createdBy: {
+        id: a.createdBy.id,
+        name: a.createdBy.name,
+        profileImageUrl: a.createdBy.profile_image_url,
+      },
+      items: a.items
+        .sort((x, y) => y.created_at.localeCompare(x.created_at))
+        .map((it) => ({
+          id: it.id,
+          url: it.url,
+          mediaType: it.media_type,
+          caption: it.caption,
+          createdAt: it.created_at,
+          addedBy: {
+            id: it.addedBy.id,
+            name: it.addedBy.name,
+            profileImageUrl: it.addedBy.profile_image_url,
+          },
+        })),
+    } as unknown as typeof album);
     setLoading(false);
-  }, [groupId, albumId]);
+  }, [albumId]);
 
   const loadGroup = useCallback(async () => {
-    const res = await fetch(`/api/groups/${groupId}`);
-    if (res.ok) setGroup(await res.json());
+    const supabase = createSupabaseBrowserClient();
+    const [g, members] = await Promise.all([
+      getGroup(supabase, groupId),
+      listGroupMembers(supabase, groupId),
+    ]);
+    if (g) {
+      setGroup({
+        id: g.id,
+        name: g.name,
+        members: members.map((m) => ({ userId: m.user_id, role: m.role })),
+      } as unknown as typeof group);
+    }
   }, [groupId]);
 
   useEffect(() => {
@@ -95,31 +158,35 @@ export default function AlbumDetailPage() {
     setUploadError("");
     setUploading(true);
 
+    const supabase = createSupabaseBrowserClient();
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) {
+      setUploadError("Not signed in.");
+      setUploading(false);
+      return;
+    }
     const newItems: { url: string; mediaType: string }[] = [];
     for (const file of files) {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        setUploadError(d.error || `Upload of ${file.name} failed.`);
+      const upResult = await uploadToBucket(file, "albums");
+      if (isUploadError(upResult)) {
+        setUploadError(upResult.message || `Upload of ${file.name} failed.`);
         continue;
       }
-      const data = await res.json();
-      newItems.push({ url: data.url, mediaType: data.mediaType });
+      newItems.push({ url: upResult.url, mediaType: upResult.mediaType });
     }
 
     if (newItems.length > 0) {
-      const res = await fetch(`/api/groups/${groupId}/albums/${albumId}/items`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: newItems }),
-      });
-      if (res.ok) {
+      const rows = newItems.map((it) => ({
+        album_id: albumId,
+        url: it.url,
+        media_type: it.mediaType,
+        added_by_id: auth.user!.id,
+      }));
+      const { error: insErr } = await supabase.from("album_items").insert(rows);
+      if (!insErr) {
         await loadAlbum();
       } else {
-        const d = await res.json().catch(() => ({}));
-        setUploadError(d.error || "Failed to add items.");
+        setUploadError(insErr.message || "Failed to add items.");
       }
     }
 
@@ -129,24 +196,21 @@ export default function AlbumDetailPage() {
 
   const deleteItem = async (itemId: string) => {
     if (!confirm("Remove this item from the album?")) return;
-    const res = await fetch(`/api/groups/${groupId}/albums/${albumId}/items/${itemId}`, {
-      method: "DELETE",
-    });
-    if (res.ok) await loadAlbum();
-    else {
-      const d = await res.json().catch(() => ({}));
-      alert(d.error || "Failed to remove item.");
-    }
+    const supabase = createSupabaseBrowserClient();
+    const { error: delErr } = await supabase
+      .from("album_items")
+      .delete()
+      .eq("id", itemId);
+    if (!delErr) await loadAlbum();
+    else alert(delErr.message || "Failed to remove item.");
   };
 
   const deleteAlbum = async () => {
     if (!confirm("Delete this album and all its items? This can't be undone.")) return;
-    const res = await fetch(`/api/groups/${groupId}/albums/${albumId}`, { method: "DELETE" });
-    if (res.ok) router.push(`/groups/${groupId}/albums`);
-    else {
-      const d = await res.json().catch(() => ({}));
-      alert(d.error || "Failed to delete album.");
-    }
+    const supabase = createSupabaseBrowserClient();
+    const { error: delErr } = await supabase.from("albums").delete().eq("id", albumId);
+    if (!delErr) router.push(`/groups/${groupId}/albums`);
+    else alert(delErr.message || "Failed to delete album.");
   };
 
   if (loading) {

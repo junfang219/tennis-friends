@@ -5,6 +5,8 @@ import { useParams } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
 import { isAtLeast, ROLE } from "@/lib/groupRoles";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
 
 type Album = {
   id: string;
@@ -40,13 +42,59 @@ export default function AlbumsListPage() {
   const [err, setErr] = useState("");
 
   const loadAlbums = useCallback(async () => {
-    const res = await fetch(`/api/groups/${groupId}/albums`);
-    if (res.ok) setAlbums(await res.json());
+    const supabase = createSupabaseBrowserClient();
+    const { data } = await supabase
+      .from("albums")
+      .select(
+        `id, name, description, created_at, cover_item_id,
+         createdBy:profiles!albums_created_by_id_fkey ( id, name, profile_image_url ),
+         items:album_items ( id, url, media_type )`
+      )
+      .eq("group_id", groupId)
+      .order("created_at", { ascending: false });
+    type Row = {
+      id: string;
+      name: string;
+      description: string;
+      created_at: string;
+      cover_item_id: string | null;
+      createdBy: { id: string; name: string; profile_image_url: string };
+      items: { id: string; url: string; media_type: string }[];
+    };
+    setAlbums(
+      ((data ?? []) as unknown as Row[]).map((a) => ({
+        id: a.id,
+        name: a.name,
+        description: a.description,
+        createdAt: a.created_at,
+        createdBy: {
+          id: a.createdBy.id,
+          name: a.createdBy.name,
+          profileImageUrl: a.createdBy.profile_image_url,
+        },
+        itemCount: a.items.length,
+        cover:
+          (a.cover_item_id
+            ? a.items.find((i) => i.id === a.cover_item_id)
+            : a.items[0]) ?? null,
+      })) as Album[]
+    );
   }, [groupId]);
 
   const loadGroup = useCallback(async () => {
-    const res = await fetch(`/api/groups/${groupId}`);
-    if (res.ok) setGroup(await res.json());
+    const supabase = createSupabaseBrowserClient();
+    const [g, members] = await Promise.all([
+      getGroup(supabase, groupId),
+      listGroupMembers(supabase, groupId),
+    ]);
+    if (g) {
+      setGroup({
+        id: g.id,
+        name: g.name,
+        ownerId: g.owner_id,
+        members: members.map((m) => ({ userId: m.user_id, role: m.role })),
+      });
+    }
     setLoading(false);
   }, [groupId]);
 
@@ -65,18 +113,26 @@ export default function AlbumsListPage() {
     if (!newName.trim()) return;
     setCreating(true);
     setErr("");
-    const res = await fetch(`/api/groups/${groupId}/albums`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newName.trim(), description: newDescription.trim() }),
+    const supabase = createSupabaseBrowserClient();
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) {
+      setErr("Not signed in.");
+      setCreating(false);
+      return;
+    }
+    const { error: insErr } = await supabase.from("albums").insert({
+      group_id: groupId,
+      name: newName.trim(),
+      description: newDescription.trim(),
+      created_by_id: auth.user.id,
     });
-    if (res.ok) {
+    if (!insErr) {
       setNewName("");
       setNewDescription("");
       setShowCreate(false);
       await loadAlbums();
     } else {
-      const d = await res.json().catch(() => ({}));
+      const d = { error: insErr.message };
       setErr(d.error || "Failed to create album.");
     }
     setCreating(false);

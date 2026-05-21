@@ -20,6 +20,7 @@ import {
   addReaction,
   removeReaction,
 } from "@/lib/supabase/queries";
+import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 
 type Message = {
   id: string;
@@ -89,16 +90,12 @@ export default function ChatPage() {
     if (!file) return;
     setUploadError("");
     setUploading(true);
-    const fd = new FormData();
-    fd.append("file", file);
     try {
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setUploadError(data.error || "Upload failed");
+      const upResult = await uploadToBucket(file, "posts");
+      if (isUploadError(upResult)) {
+        setUploadError(upResult.message);
       } else {
-        const data = await res.json();
-        setPendingMedia({ url: data.url, type: data.mediaType });
+        setPendingMedia({ url: upResult.url, type: upResult.mediaType });
       }
     } catch {
       setUploadError("Upload failed. Try again.");
