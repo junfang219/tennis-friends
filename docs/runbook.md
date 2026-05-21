@@ -11,15 +11,36 @@
 - Database advisors: https://supabase.com/dashboard/project/fqopzafmnaviipumsmfm/advisors
 - Compute size: https://supabase.com/dashboard/project/fqopzafmnaviipumsmfm/settings/compute-and-disk
 
-### Migration discipline
-Every schema change is a file under `supabase/migrations/NNNN_descriptive.sql`.
-Apply via MCP (`apply_migration` tool) or `supabase db push`. Never alter
-via the dashboard — always file-tracked.
+### Schema source of truth (pre-launch)
+
+**Until we have real users**, the schema is one file: `supabase/schema.sql`. To make a change:
+
+1. Edit the relevant section of `supabase/schema.sql` directly (no numbered migration file).
+2. Apply against the live project via MCP (`apply_migration` with the patched SQL fragment) **or** via the dashboard SQL editor.
+3. Regenerate `src/lib/database.types.ts` via the MCP `generate_typescript_types` tool.
+4. Update integration tests to cover the change.
+5. Verify: `npx tsc --noEmit` + `npm run test:integration`.
+
+This trades the safety of a forward-only chain (which we don't need yet) for one searchable canonical file. **Switch back to a numbered migration chain the day we get real users** — once data exists, you can't DROP/CREATE freely. See the memory `project_schema_single_source_of_truth.md`.
+
+### Rebuilding the schema from scratch
+
+```bash
+# In a fresh Supabase project (or the SQL editor of the existing one):
+psql "$SUPABASE_DB_URL" < supabase/schema.sql
+# Then re-link the project, regenerate types, and run the tests.
+```
 
 ### Backups
-Daily on Pro plan. Manual snapshot before risky migrations:
+Daily on Pro plan. Manual snapshot before risky changes:
 ```bash
 supabase db dump --linked > backups/$(date +%Y%m%d-%H%M).sql
+```
+
+After making a change to the live DB, refresh the canonical file:
+```bash
+supabase db dump --linked --schema public > supabase/schema.sql
+# Trim PostGIS bookkeeping + role-grants the dump emits but our schema doesn't manage.
 ```
 
 ## Tests

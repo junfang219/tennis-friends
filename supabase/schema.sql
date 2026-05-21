@@ -1,0 +1,3947 @@
+-- TennisFriend Supabase schema — canonical source of truth.
+--
+-- Pre-launch policy (memory: project_schema_single_source_of_truth):
+-- This project has no real users yet, so we do NOT maintain a
+-- forward-only migration chain. Instead, this single file represents
+-- the desired-state of the database. To rebuild from scratch in a
+-- fresh Supabase project:
+--   1. Create a new project.
+--   2. Execute this file end-to-end (via psql / dashboard / supabase db reset).
+--   3. Run the integration tests (`npm run test:integration`).
+--
+-- The file is assembled by concatenating the 17 historical migration
+-- steps in order. Once real users exist this becomes a snapshot point
+-- and we switch BACK to a migration chain (see runbook).
+
+-- =====================================================================
+-- 0001_init
+-- =====================================================================
+
+-- TennisFriend initial schema (Postgres / Supabase)
+--
+-- Structure-only. RLS policies, helper functions for visibility, and
+-- triggers that depend on app semantics (notification fan-out, push
+-- payload assembly) land in later migrations once policies are in place.
+--
+-- Naming: snake_case tables (plural) + columns. uuid primary keys.
+-- timestamptz timestamps. jsonb for structured JSON. PostGIS geography
+-- for spatial columns with generated geometry + GIST indexes for hot paths.
+--
+-- User identity bridge:
+--   profiles.id is the same uuid as auth.users.id. A trigger on
+--   auth.users creates the matching profiles row on signup, so the
+--   foreign key is always satisfied.
+
+-- =========================================================================
+-- Extensions
+-- =========================================================================
+
+create extension if not exists "pgcrypto"; -- gen_random_uuid()
+create extension if not exists "postgis";  -- geography(Point, 4326)
+create extension if not exists "citext";   -- case-insensitive email/handle
+
+-- =========================================================================
+-- Shared utility functions
+-- =========================================================================
+
+-- Touch updated_at on row updates.
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+-- =========================================================================
+-- Enum types
+--
+-- Postgres enums give the generated TS types autocomplete values and
+-- enforce the value set at the column level. Enums are used only where
+-- the value space is stable; fuzzy fields (rsvp status defaults to '',
+-- media_type empty-when-absent) stay as text with CHECK constraints.
+-- =========================================================================
+
+create type public.friendship_status         as enum ('pending', 'accepted', 'rejected');
+create type public.group_role                as enum ('owner', 'manager', 'captain', 'member');
+create type public.group_invite_status       as enum ('pending', 'accepted', 'cancelled', 'expired');
+create type public.team_listing_status       as enum ('open', 'filled', 'closed');
+create type public.team_listing_format       as enum ('singles', 'doubles', 'mixed_doubles', 'any');
+create type public.post_type                 as enum ('regular', 'find_players', 'propose_team', 'event');
+create type public.play_request_status       as enum ('pending', 'approved', 'rejected');
+create type public.event_status              as enum ('open', 'closed', 'active', 'completed', 'cancelled');
+create type public.event_visibility          as enum ('public', 'group');
+create type public.event_match_status        as enum ('proposed', 'declined', 'scheduled', 'in_progress', 'completed', 'cancelled');
+create type public.event_participant_status  as enum ('registered', 'waitlist', 'withdrawn');
+create type public.message_kind              as enum ('chat', 'announcement');
+create type public.reaction_target           as enum ('dm', 'group', 'chat');
+create type public.device_platform           as enum ('ios', 'android');
+create type public.booking_status            as enum ('pending', 'confirmed', 'cancelled');
+create type public.booking_player_status     as enum ('invited', 'accepted', 'declined');
+create type public.notification_type         as enum (
+  'comment',
+  'like',
+  'join_request',
+  'request_approved',
+  'request_rejected',
+  'message_reaction',
+  'event_invite',
+  'friend_request',
+  'group_invite_accepted'
+);
+
+-- =========================================================================
+-- Identity: profiles (mirrors auth.users)
+-- =========================================================================
+
+create table public.profiles (
+  id                   uuid primary key references auth.users (id) on delete cascade,
+  email                citext unique,
+  phone                text unique,
+  name                 text not null default '',
+  bio                  text not null default '',
+  skill_level          text not null default 'intermediate',
+  favorite_surface     text not null default 'hard',
+  profile_image_url    text not null default '',
+  cover_image_url      text not null default '',
+  cover_offset_y       integer not null default 50,
+  cover_scale          integer not null default 100,
+  custom_tags          text not null default '',
+  latitude             double precision,
+  longitude            double precision,
+  location             geography(Point, 4326) generated always as (
+    case
+      when latitude is not null and longitude is not null
+      then st_setsrid(st_makepoint(longitude, latitude), 4326)::geography
+    end
+  ) stored,
+  gender               text not null default '',
+  age_range            text not null default '',
+  rating_system        text not null default '',
+  ntrp_rating          double precision,
+  utr_rating           double precision,
+  handle               citext unique,
+  venmo_handle         text,
+  paypal_handle        text,
+  cashapp_handle       text,
+  zelle_handle         text,
+  onboarding_complete  boolean not null default false,
+  is_private           boolean not null default false,
+  created_at           timestamptz not null default now(),
+  updated_at           timestamptz not null default now()
+);
+
+create index profiles_location_idx     on public.profiles using gist (location) where location is not null;
+create index profiles_handle_idx       on public.profiles (handle) where handle is not null;
+create index profiles_ntrp_idx         on public.profiles (ntrp_rating) where ntrp_rating is not null;
+create index profiles_created_at_idx   on public.profiles (created_at desc);
+
+-- Auto-create a profile row when a new auth user signs up. Runs as
+-- security definer so it can write to public.profiles regardless of RLS.
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.profiles (id, email, phone, name)
+  values (
+    new.id,
+    new.email,
+    new.phone,
+    coalesce(new.raw_user_meta_data ->> 'name', split_part(coalesce(new.email, ''), '@', 1), '')
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- =========================================================================
+-- Social graph
+-- =========================================================================
+
+create table public.friendships (
+  id            uuid primary key default gen_random_uuid(),
+  requester_id  uuid not null references public.profiles (id) on delete cascade,
+  addressee_id  uuid not null references public.profiles (id) on delete cascade,
+  status        friendship_status not null default 'pending',
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+  constraint friendships_distinct_users check (requester_id <> addressee_id),
+  constraint friendships_pair_unique unique (requester_id, addressee_id)
+);
+create index friendships_addressee_idx on public.friendships (addressee_id);
+create index friendships_status_idx    on public.friendships (status);
+
+create table public.blocks (
+  id          uuid primary key default gen_random_uuid(),
+  blocker_id  uuid not null references public.profiles (id) on delete cascade,
+  blocked_id  uuid not null references public.profiles (id) on delete cascade,
+  created_at  timestamptz not null default now(),
+  constraint blocks_distinct_users check (blocker_id <> blocked_id),
+  constraint blocks_pair_unique unique (blocker_id, blocked_id)
+);
+create index blocks_blocked_idx on public.blocks (blocked_id);
+
+create table public.friend_groups (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  owner_id    uuid not null references public.profiles (id) on delete cascade,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+create index friend_groups_owner_idx on public.friend_groups (owner_id);
+
+create table public.friend_group_members (
+  id               uuid primary key default gen_random_uuid(),
+  friend_group_id  uuid not null references public.friend_groups (id) on delete cascade,
+  user_id          uuid not null references public.profiles (id) on delete cascade,
+  created_at       timestamptz not null default now(),
+  constraint friend_group_members_unique unique (friend_group_id, user_id)
+);
+create index friend_group_members_user_idx on public.friend_group_members (user_id);
+
+-- =========================================================================
+-- Groups (teams / clubs)
+-- =========================================================================
+
+create table public.groups (
+  id              uuid primary key default gen_random_uuid(),
+  name            text not null,
+  image_url       text not null default '',
+  cover_image_url text not null default '',
+  cover_offset_y  integer not null default 50,
+  cover_scale     integer not null default 100,
+  owner_id        uuid not null references public.profiles (id) on delete restrict,
+  member_types    jsonb not null default '[]'::jsonb,
+  reminder_prefs  jsonb not null default '{}'::jsonb,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+create index groups_owner_idx on public.groups (owner_id);
+
+create table public.group_members (
+  id           uuid primary key default gen_random_uuid(),
+  group_id     uuid not null references public.groups (id) on delete cascade,
+  user_id      uuid not null references public.profiles (id) on delete cascade,
+  role         group_role not null default 'member',
+  member_type  text not null default '',
+  created_at   timestamptz not null default now(),
+  last_read_at timestamptz not null default now(),
+  muted        boolean not null default false,
+  pinned_at    timestamptz,
+  hidden_at    timestamptz,
+  cleared_at   timestamptz,
+  archived_at  timestamptz,
+  constraint group_members_unique unique (group_id, user_id)
+);
+create index group_members_group_role_idx on public.group_members (group_id, role);
+create index group_members_user_idx       on public.group_members (user_id);
+
+create table public.group_invites (
+  id             uuid primary key default gen_random_uuid(),
+  group_id       uuid not null references public.groups (id) on delete cascade,
+  email          citext not null,
+  invited_by_id  uuid not null references public.profiles (id) on delete restrict,
+  token          text not null unique,
+  role           group_role not null default 'member',
+  member_type    text not null default '',
+  status         group_invite_status not null default 'pending',
+  expires_at     timestamptz not null,
+  accepted_by_id uuid references public.profiles (id) on delete set null,
+  accepted_at    timestamptz,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now()
+);
+create index group_invites_group_status_idx on public.group_invites (group_id, status);
+create index group_invites_email_status_idx on public.group_invites (email, status);
+
+create table public.seasons (
+  id          uuid primary key default gen_random_uuid(),
+  group_id    uuid not null references public.groups (id) on delete cascade,
+  name        text not null,
+  start_date  timestamptz,
+  end_date    timestamptz,
+  is_active   boolean not null default false,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+create index seasons_group_active_idx on public.seasons (group_id, is_active);
+
+create table public.team_listings (
+  id            uuid primary key default gen_random_uuid(),
+  group_id      uuid not null references public.groups (id) on delete cascade,
+  created_by_id uuid not null references public.profiles (id) on delete restrict,
+  title         text not null,
+  description   text not null default '',
+  format        team_listing_format not null default 'any',
+  ntrp_min      double precision,
+  ntrp_max      double precision,
+  city          text not null default '',
+  status        team_listing_status not null default 'open',
+  expires_at    timestamptz,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+create index team_listings_status_created_idx on public.team_listings (status, created_at desc);
+create index team_listings_group_idx          on public.team_listings (group_id);
+
+-- =========================================================================
+-- Albums and files
+-- =========================================================================
+
+create table public.albums (
+  id            uuid primary key default gen_random_uuid(),
+  group_id      uuid not null references public.groups (id) on delete cascade,
+  name          text not null,
+  description   text not null default '',
+  cover_item_id uuid,
+  created_by_id uuid not null references public.profiles (id) on delete restrict,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+create index albums_group_created_idx on public.albums (group_id, created_at desc);
+
+create table public.album_items (
+  id            uuid primary key default gen_random_uuid(),
+  album_id      uuid not null references public.albums (id) on delete cascade,
+  url           text not null,
+  media_type    text not null check (media_type in ('image', 'video')),
+  caption       text not null default '',
+  added_by_id   uuid not null references public.profiles (id) on delete restrict,
+  "order"       integer not null default 0,
+  created_at    timestamptz not null default now()
+);
+create index album_items_album_order_idx on public.album_items (album_id, "order");
+
+-- Now that album_items exists, wire up the cover_item_id FK on albums.
+alter table public.albums
+  add constraint albums_cover_item_fk
+  foreign key (cover_item_id) references public.album_items (id) on delete set null;
+
+create table public.group_files (
+  id             uuid primary key default gen_random_uuid(),
+  group_id       uuid not null references public.groups (id) on delete cascade,
+  url            text not null,
+  filename       text not null,
+  mime_type      text not null default '',
+  size_bytes     bigint not null default 0,
+  description    text not null default '',
+  uploaded_by_id uuid not null references public.profiles (id) on delete restrict,
+  created_at     timestamptz not null default now()
+);
+create index group_files_group_created_idx on public.group_files (group_id, created_at desc);
+
+-- =========================================================================
+-- Events (tournaments, mixers, clinics, round-robins, ladders)
+-- =========================================================================
+
+create table public.events (
+  id                uuid primary key default gen_random_uuid(),
+  owner_id          uuid not null references public.profiles (id) on delete restrict,
+  -- One-to-one backing group auto-created when the event is created.
+  group_id          uuid unique references public.groups (id) on delete set null,
+  title             text not null,
+  description       text not null default '',
+  event_type        text not null,
+  start_date        timestamptz not null,
+  end_date          timestamptz not null,
+  signup_deadline   timestamptz,
+  is_public_signup  boolean not null default true,
+  max_participants  integer,
+  ntrp_min          double precision,
+  ntrp_max          double precision,
+  status            event_status not null default 'open',
+  venue_name        text not null default '',
+  venue_address     text not null default '',
+  visibility        event_visibility not null default 'public',
+  event_lat         double precision,
+  event_lng         double precision,
+  event_location    geography(Point, 4326) generated always as (
+    case
+      when event_lat is not null and event_lng is not null
+      then st_setsrid(st_makepoint(event_lng, event_lat), 4326)::geography
+    end
+  ) stored,
+  radius_mi         integer,
+  host_group_id     uuid references public.groups (id) on delete set null,
+  config            jsonb not null default '{}'::jsonb,
+  cover_image_url   text not null default '',
+  season_id         uuid references public.seasons (id) on delete set null,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
+);
+create index events_status_start_idx     on public.events (status, start_date);
+create index events_owner_idx            on public.events (owner_id);
+create index events_host_group_idx       on public.events (host_group_id);
+create index events_season_idx           on public.events (season_id);
+create index events_public_location_idx
+  on public.events using gist (event_location)
+  where visibility = 'public' and event_location is not null;
+
+create table public.event_participants (
+  id             uuid primary key default gen_random_uuid(),
+  event_id       uuid not null references public.events (id) on delete cascade,
+  user_id        uuid not null references public.profiles (id) on delete cascade,
+  status         event_participant_status not null default 'registered',
+  registered_at  timestamptz not null default now(),
+  checked_in_at  timestamptz,
+  wins           integer not null default 0,
+  losses         integer not null default 0,
+  sets_won       integer not null default 0,
+  sets_lost      integer not null default 0,
+  points         integer not null default 0,
+  constraint event_participants_unique unique (event_id, user_id)
+);
+create index event_participants_event_status_idx on public.event_participants (event_id, status);
+create index event_participants_user_idx         on public.event_participants (user_id);
+
+create table public.event_matches (
+  id            uuid primary key default gen_random_uuid(),
+  event_id      uuid not null references public.events (id) on delete cascade,
+  player1_id    uuid not null references public.profiles (id) on delete restrict,
+  player2_id    uuid not null references public.profiles (id) on delete restrict,
+  player3_id    uuid references public.profiles (id) on delete set null,
+  player4_id    uuid references public.profiles (id) on delete set null,
+  round         integer,
+  bracket_slot  text not null default '',
+  scheduled_at  timestamptz,
+  court_assign  text not null default '',
+  score         text not null default '',
+  winner_side   integer check (winner_side in (1, 2)),
+  reported_by   uuid references public.profiles (id) on delete set null,
+  confirmed_by  uuid references public.profiles (id) on delete set null,
+  proposed_by   uuid references public.profiles (id) on delete set null,
+  disputed_at   timestamptz,
+  status        event_match_status not null default 'scheduled',
+  created_at    timestamptz not null default now()
+);
+create index event_matches_event_status_idx on public.event_matches (event_id, status);
+create index event_matches_event_round_idx  on public.event_matches (event_id, round);
+
+-- =========================================================================
+-- Posts (feed) and engagement
+-- =========================================================================
+
+create table public.posts (
+  id                  uuid primary key default gen_random_uuid(),
+  author_id           uuid not null references public.profiles (id) on delete cascade,
+  content             text not null default '',
+  -- Legacy single-media fields (kept until clients migrate to photos[])
+  media_url           text not null default '',
+  media_type          text not null default '',
+  post_type           post_type not null default 'regular',
+  play_date           text not null default '',
+  play_time           text not null default '',
+  play_duration       integer not null default 90,
+  court_location      text not null default '',
+  game_type           text not null default '',
+  players_needed      integer not null default 0,
+  players_confirmed   integer not null default 0,
+  skill_min           double precision,
+  skill_max           double precision,
+  court_booked        boolean not null default false,
+  is_complete         boolean not null default false,
+  comments_disabled   boolean not null default false,
+  manual_players      text not null default '',
+  team_group_id       text not null default '',
+  is_broadcast        boolean not null default false,
+  broadcast_radius_mi integer not null default 0,
+  broadcast_lat       double precision,
+  broadcast_lng       double precision,
+  broadcast_location  geography(Point, 4326) generated always as (
+    case
+      when broadcast_lat is not null and broadcast_lng is not null
+      then st_setsrid(st_makepoint(broadcast_lng, broadcast_lat), 4326)::geography
+    end
+  ) stored,
+  event_id            uuid references public.events (id) on delete set null,
+  pinned_at           timestamptz,
+  created_at          timestamptz not null default now()
+);
+create index posts_author_created_idx     on public.posts (author_id, created_at desc);
+create index posts_event_idx              on public.posts (event_id) where event_id is not null;
+create index posts_broadcast_created_idx  on public.posts (created_at desc) where is_broadcast = true;
+create index posts_broadcast_location_idx on public.posts using gist (broadcast_location) where is_broadcast = true and broadcast_location is not null;
+
+create table public.photos (
+  id          uuid primary key default gen_random_uuid(),
+  post_id     uuid not null references public.posts (id) on delete cascade,
+  url         text not null,
+  "order"     integer not null default 0,
+  created_at  timestamptz not null default now()
+);
+create index photos_post_order_idx on public.photos (post_id, "order");
+
+create table public.post_groups (
+  id         uuid primary key default gen_random_uuid(),
+  post_id    uuid not null references public.posts (id) on delete cascade,
+  group_id   uuid not null references public.groups (id) on delete cascade,
+  constraint post_groups_unique unique (post_id, group_id)
+);
+create index post_groups_group_idx on public.post_groups (group_id);
+
+create table public.post_friend_groups (
+  id               uuid primary key default gen_random_uuid(),
+  post_id          uuid not null references public.posts (id) on delete cascade,
+  friend_group_id  uuid not null references public.friend_groups (id) on delete cascade,
+  constraint post_friend_groups_unique unique (post_id, friend_group_id)
+);
+create index post_friend_groups_fg_idx on public.post_friend_groups (friend_group_id);
+
+create table public.likes (
+  id         uuid primary key default gen_random_uuid(),
+  post_id    uuid not null references public.posts (id) on delete cascade,
+  user_id    uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  constraint likes_unique unique (post_id, user_id)
+);
+create index likes_user_idx on public.likes (user_id);
+
+create table public.comments (
+  id         uuid primary key default gen_random_uuid(),
+  post_id    uuid not null references public.posts (id) on delete cascade,
+  author_id  uuid not null references public.profiles (id) on delete cascade,
+  content    text not null,
+  created_at timestamptz not null default now()
+);
+create index comments_post_created_idx on public.comments (post_id, created_at);
+create index comments_author_idx       on public.comments (author_id);
+
+create table public.hidden_posts (
+  id       uuid primary key default gen_random_uuid(),
+  user_id  uuid not null references public.profiles (id) on delete cascade,
+  post_id  uuid not null references public.posts (id) on delete cascade,
+  constraint hidden_posts_unique unique (user_id, post_id)
+);
+create index hidden_posts_post_idx on public.hidden_posts (post_id);
+
+create table public.play_requests (
+  id         uuid primary key default gen_random_uuid(),
+  post_id    uuid not null references public.posts (id) on delete cascade,
+  user_id    uuid not null references public.profiles (id) on delete cascade,
+  status     play_request_status not null default 'pending',
+  note       text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint play_requests_unique unique (post_id, user_id)
+);
+create index play_requests_user_idx on public.play_requests (user_id);
+
+-- =========================================================================
+-- Polls (embedded in group_messages)
+-- =========================================================================
+
+create table public.polls (
+  id            uuid primary key default gen_random_uuid(),
+  question      text not null,
+  is_multi      boolean not null default false,
+  is_closed     boolean not null default false,
+  created_by_id uuid not null references public.profiles (id) on delete restrict,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+create index polls_created_by_idx on public.polls (created_by_id);
+
+create table public.poll_options (
+  id          uuid primary key default gen_random_uuid(),
+  poll_id     uuid not null references public.polls (id) on delete cascade,
+  text        text not null,
+  "order"     integer not null default 0,
+  created_at  timestamptz not null default now()
+);
+create index poll_options_poll_order_idx on public.poll_options (poll_id, "order");
+
+create table public.poll_votes (
+  id          uuid primary key default gen_random_uuid(),
+  poll_id     uuid not null references public.polls (id) on delete cascade,
+  option_id   uuid not null references public.poll_options (id) on delete cascade,
+  user_id     uuid not null references public.profiles (id) on delete cascade,
+  created_at  timestamptz not null default now(),
+  constraint poll_votes_unique unique (poll_id, user_id, option_id)
+);
+create index poll_votes_poll_user_idx on public.poll_votes (poll_id, user_id);
+create index poll_votes_option_idx    on public.poll_votes (option_id);
+
+-- =========================================================================
+-- Messaging
+-- =========================================================================
+
+create table public.messages (
+  id              uuid primary key default gen_random_uuid(),
+  sender_id       uuid not null references public.profiles (id) on delete cascade,
+  receiver_id     uuid not null references public.profiles (id) on delete cascade,
+  content         text not null,
+  media_url       text not null default '',
+  media_type      text not null default '',
+  shared_post_id  uuid references public.posts (id) on delete set null,
+  created_at      timestamptz not null default now(),
+  constraint messages_distinct_users check (sender_id <> receiver_id)
+);
+create index messages_thread_idx
+  on public.messages (
+    least(sender_id, receiver_id),
+    greatest(sender_id, receiver_id),
+    created_at desc
+  );
+create index messages_receiver_created_idx on public.messages (receiver_id, created_at desc);
+create index messages_sender_created_idx   on public.messages (sender_id, created_at desc);
+
+create table public.direct_message_reads (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null references public.profiles (id) on delete cascade,
+  other_id     uuid not null references public.profiles (id) on delete cascade,
+  last_read_at timestamptz not null default now(),
+  muted        boolean not null default false,
+  pinned_at    timestamptz,
+  hidden_at    timestamptz,
+  cleared_at   timestamptz,
+  constraint direct_message_reads_unique unique (user_id, other_id),
+  constraint direct_message_reads_distinct check (user_id <> other_id)
+);
+
+create table public.chats (
+  id                  uuid primary key default gen_random_uuid(),
+  name                text not null default '',
+  creator_id          uuid not null references public.profiles (id) on delete restrict,
+  post_id             uuid references public.posts (id) on delete set null,
+  friend_group_id     uuid unique references public.friend_groups (id) on delete set null,
+  session_end_at      timestamptz,
+  manual_player_names text not null default '',
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now()
+);
+create index chats_post_idx          on public.chats (post_id) where post_id is not null;
+create index chats_session_end_idx   on public.chats (session_end_at) where session_end_at is not null;
+create index chats_creator_idx       on public.chats (creator_id);
+
+create table public.chat_participants (
+  id           uuid primary key default gen_random_uuid(),
+  chat_id      uuid not null references public.chats (id) on delete cascade,
+  user_id      uuid not null references public.profiles (id) on delete cascade,
+  joined_at    timestamptz not null default now(),
+  last_read_at timestamptz not null default now(),
+  muted        boolean not null default false,
+  pinned_at    timestamptz,
+  hidden_at    timestamptz,
+  cleared_at   timestamptz,
+  constraint chat_participants_unique unique (chat_id, user_id)
+);
+create index chat_participants_user_idx on public.chat_participants (user_id);
+
+create table public.chat_messages (
+  id          uuid primary key default gen_random_uuid(),
+  chat_id     uuid not null references public.chats (id) on delete cascade,
+  sender_id   uuid not null references public.profiles (id) on delete cascade,
+  content     text not null,
+  media_url   text not null default '',
+  media_type  text not null default '',
+  created_at  timestamptz not null default now()
+);
+create index chat_messages_chat_created_idx on public.chat_messages (chat_id, created_at desc);
+create index chat_messages_sender_idx       on public.chat_messages (sender_id);
+
+create table public.group_messages (
+  id              uuid primary key default gen_random_uuid(),
+  group_id        uuid not null references public.groups (id) on delete cascade,
+  sender_id       uuid not null references public.profiles (id) on delete cascade,
+  content         text not null,
+  media_url       text not null default '',
+  media_type      text not null default '',
+  shared_post_id  uuid references public.posts (id) on delete set null,
+  kind            message_kind not null default 'chat',
+  notify_email    boolean not null default false,
+  pinned_at       timestamptz,
+  poll_id         uuid unique references public.polls (id) on delete set null,
+  created_at      timestamptz not null default now()
+);
+create index group_messages_group_kind_pinned_idx
+  on public.group_messages (group_id, kind, pinned_at desc nulls last);
+create index group_messages_group_created_idx
+  on public.group_messages (group_id, created_at desc);
+
+create table public.message_reactions (
+  id            uuid primary key default gen_random_uuid(),
+  target_type   reaction_target not null,
+  target_id     uuid not null,
+  user_id       uuid not null references public.profiles (id) on delete cascade,
+  emoji         text not null,
+  created_at    timestamptz not null default now(),
+  constraint message_reactions_unique unique (target_type, target_id, user_id, emoji)
+);
+create index message_reactions_target_idx on public.message_reactions (target_type, target_id);
+create index message_reactions_user_idx   on public.message_reactions (user_id);
+
+-- =========================================================================
+-- Notifications + reminders
+-- =========================================================================
+
+create table public.notifications (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references public.profiles (id) on delete cascade,
+  actor_id    uuid not null references public.profiles (id) on delete cascade,
+  type        notification_type not null,
+  post_id     uuid references public.posts (id) on delete cascade,
+  comment_id  uuid references public.comments (id) on delete cascade,
+  message_id  uuid references public.messages (id) on delete cascade,
+  event_id    uuid references public.events (id) on delete cascade,
+  match_id    uuid references public.event_matches (id) on delete cascade,
+  emoji       text not null default '',
+  read        boolean not null default false,
+  created_at  timestamptz not null default now()
+);
+create index notifications_user_read_idx    on public.notifications (user_id, read, created_at desc);
+create index notifications_user_created_idx on public.notifications (user_id, created_at desc);
+create index notifications_actor_idx        on public.notifications (actor_id);
+
+create table public.reminder_sent (
+  id           uuid primary key default gen_random_uuid(),
+  kind         text not null,
+  ref_id       text not null,
+  user_id      uuid not null references public.profiles (id) on delete cascade,
+  hours_before integer not null,
+  sent_at      timestamptz not null default now(),
+  constraint reminder_sent_unique unique (kind, ref_id, user_id, hours_before)
+);
+create index reminder_sent_sent_at_idx on public.reminder_sent (sent_at);
+create index reminder_sent_user_idx    on public.reminder_sent (user_id);
+
+-- =========================================================================
+-- Team matches, practices, availabilities
+-- =========================================================================
+
+create table public.team_matches (
+  id          uuid primary key default gen_random_uuid(),
+  group_id    uuid not null references public.groups (id) on delete cascade,
+  match_date  text not null,
+  match_time  text not null default '',
+  location    text not null,
+  notes       text not null default '',
+  home_away   text not null default '',
+  shirt_color text not null default '',
+  opponent    text not null default '',
+  season_id   uuid references public.seasons (id) on delete set null,
+  created_at  timestamptz not null default now()
+);
+create index team_matches_group_season_idx on public.team_matches (group_id, season_id);
+
+create table public.match_availabilities (
+  id           uuid primary key default gen_random_uuid(),
+  match_id     uuid not null references public.team_matches (id) on delete cascade,
+  user_id      uuid not null references public.profiles (id) on delete cascade,
+  status       text not null default '',
+  match_types  text not null default '',
+  lineup_slot  text not null default '',
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  constraint match_availabilities_unique unique (match_id, user_id)
+);
+create index match_availabilities_user_idx on public.match_availabilities (user_id);
+
+create table public.practice_series (
+  id             uuid primary key default gen_random_uuid(),
+  group_id       uuid not null references public.groups (id) on delete cascade,
+  name           text not null,
+  location       text not null,
+  practice_time  text not null default '',
+  notes          text not null default '',
+  season_id      uuid references public.seasons (id) on delete set null,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now()
+);
+create index practice_series_group_season_idx on public.practice_series (group_id, season_id);
+
+create table public.team_practices (
+  id            uuid primary key default gen_random_uuid(),
+  series_id     uuid not null references public.practice_series (id) on delete cascade,
+  practice_date text not null,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+create index team_practices_series_idx on public.team_practices (series_id);
+
+create table public.practice_availabilities (
+  id          uuid primary key default gen_random_uuid(),
+  practice_id uuid not null references public.team_practices (id) on delete cascade,
+  user_id     uuid not null references public.profiles (id) on delete cascade,
+  status      text not null default '',
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  constraint practice_availabilities_unique unique (practice_id, user_id)
+);
+create index practice_availabilities_user_idx on public.practice_availabilities (user_id);
+
+-- =========================================================================
+-- Expenses (per-chat cost split)
+-- =========================================================================
+
+create table public.expenses (
+  id           uuid primary key default gen_random_uuid(),
+  chat_id      uuid not null references public.chats (id) on delete cascade,
+  payer_id     uuid not null references public.profiles (id) on delete restrict,
+  amount_cents integer not null check (amount_cents >= 0),
+  description  text not null default '',
+  created_at   timestamptz not null default now()
+);
+create index expenses_chat_idx  on public.expenses (chat_id);
+create index expenses_payer_idx on public.expenses (payer_id);
+
+create table public.expense_shares (
+  id           uuid primary key default gen_random_uuid(),
+  expense_id   uuid not null references public.expenses (id) on delete cascade,
+  user_id      uuid not null references public.profiles (id) on delete cascade,
+  amount_cents integer not null check (amount_cents >= 0),
+  settled_at   timestamptz,
+  constraint expense_shares_unique unique (expense_id, user_id)
+);
+create index expense_shares_user_idx on public.expense_shares (user_id);
+
+create table public.guest_expense_shares (
+  id           uuid primary key default gen_random_uuid(),
+  expense_id   uuid not null references public.expenses (id) on delete cascade,
+  guest_name   text not null,
+  amount_cents integer not null check (amount_cents >= 0),
+  settled_at   timestamptz,
+  constraint guest_expense_shares_unique unique (expense_id, guest_name)
+);
+create index guest_expense_shares_expense_idx on public.guest_expense_shares (expense_id);
+
+-- =========================================================================
+-- Courts, venues, bookings, reviews
+-- =========================================================================
+
+create table public.courts (
+  id            uuid primary key default gen_random_uuid(),
+  name          text not null,
+  latitude      double precision not null,
+  longitude     double precision not null,
+  location      geography(Point, 4326) generated always as (
+    st_setsrid(st_makepoint(longitude, latitude), 4326)::geography
+  ) stored,
+  notes         text not null default '',
+  added_by_id   uuid not null references public.profiles (id) on delete restrict,
+  created_at    timestamptz not null default now()
+);
+create index courts_added_by_idx on public.courts (added_by_id);
+create index courts_location_idx on public.courts using gist (location);
+
+create table public.venues (
+  id            uuid primary key default gen_random_uuid(),
+  name          text not null,
+  address       text not null,
+  latitude      double precision not null,
+  longitude     double precision not null,
+  location      geography(Point, 4326) generated always as (
+    st_setsrid(st_makepoint(longitude, latitude), 4326)::geography
+  ) stored,
+  neighborhood  text not null default '',
+  amenities     jsonb not null default '[]'::jsonb,
+  image_url     text not null default '',
+  active_net_id text not null default '',
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+create index venues_location_idx on public.venues using gist (location);
+
+create table public.venue_courts (
+  id            uuid primary key default gen_random_uuid(),
+  venue_id      uuid not null references public.venues (id) on delete cascade,
+  court_number  integer not null,
+  surface       text not null default 'hard',
+  is_lighted    boolean not null default false,
+  active_net_id text not null default '',
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+  constraint venue_courts_unique unique (venue_id, court_number)
+);
+
+create table public.bookings (
+  id              uuid primary key default gen_random_uuid(),
+  court_id        uuid not null references public.venue_courts (id) on delete restrict,
+  organizer_id    uuid not null references public.profiles (id) on delete restrict,
+  start_time      timestamptz not null,
+  end_time        timestamptz not null,
+  status          booking_status not null default 'pending',
+  active_net_url  text not null default '',
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  constraint bookings_time_order check (end_time > start_time)
+);
+create index bookings_court_time_idx on public.bookings (court_id, start_time, end_time);
+create index bookings_organizer_idx  on public.bookings (organizer_id);
+
+create table public.booking_players (
+  id         uuid primary key default gen_random_uuid(),
+  booking_id uuid not null references public.bookings (id) on delete cascade,
+  user_id    uuid not null references public.profiles (id) on delete cascade,
+  status     booking_player_status not null default 'invited',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint booking_players_unique unique (booking_id, user_id)
+);
+create index booking_players_user_idx on public.booking_players (user_id);
+
+create table public.court_reviews (
+  id          uuid primary key default gen_random_uuid(),
+  court_id    uuid not null references public.courts (id) on delete cascade,
+  user_id     uuid not null references public.profiles (id) on delete cascade,
+  stars       integer not null check (stars between 1 and 5),
+  content     text not null default '',
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  constraint court_reviews_unique unique (court_id, user_id)
+);
+create index court_reviews_court_idx on public.court_reviews (court_id);
+
+create table public.court_review_photos (
+  id          uuid primary key default gen_random_uuid(),
+  review_id   uuid not null references public.court_reviews (id) on delete cascade,
+  url         text not null,
+  "order"     integer not null default 0,
+  created_at  timestamptz not null default now()
+);
+create index court_review_photos_review_idx on public.court_review_photos (review_id, "order");
+
+create table public.court_availability_reports (
+  id           uuid primary key default gen_random_uuid(),
+  court_id     uuid not null references public.courts (id) on delete cascade,
+  user_id      uuid not null references public.profiles (id) on delete cascade,
+  has_empty    boolean not null,
+  post_id      uuid references public.posts (id) on delete set null,
+  reported_at  timestamptz not null default now()
+);
+create index court_availability_reports_court_idx on public.court_availability_reports (court_id, reported_at desc);
+create index court_availability_reports_user_idx  on public.court_availability_reports (user_id, reported_at desc);
+
+-- =========================================================================
+-- Highlights (story-style media on profile)
+-- =========================================================================
+
+create table public.highlights (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references public.profiles (id) on delete cascade,
+  media_url  text not null,
+  media_type text not null default 'image' check (media_type in ('image', 'video')),
+  caption    text not null default '',
+  created_at timestamptz not null default now()
+);
+create index highlights_user_created_idx on public.highlights (user_id, created_at desc);
+
+-- =========================================================================
+-- Device tokens (push notifications)
+-- =========================================================================
+
+create table public.device_tokens (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references public.profiles (id) on delete cascade,
+  token      text not null unique,
+  platform   device_platform not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index device_tokens_user_idx on public.device_tokens (user_id);
+
+-- =========================================================================
+-- updated_at triggers
+-- =========================================================================
+
+create trigger profiles_updated_at                before update on public.profiles                for each row execute function public.set_updated_at();
+create trigger groups_updated_at                  before update on public.groups                  for each row execute function public.set_updated_at();
+create trigger group_invites_updated_at           before update on public.group_invites           for each row execute function public.set_updated_at();
+create trigger seasons_updated_at                 before update on public.seasons                 for each row execute function public.set_updated_at();
+create trigger team_listings_updated_at           before update on public.team_listings           for each row execute function public.set_updated_at();
+create trigger albums_updated_at                  before update on public.albums                  for each row execute function public.set_updated_at();
+create trigger events_updated_at                  before update on public.events                  for each row execute function public.set_updated_at();
+create trigger friendships_updated_at             before update on public.friendships             for each row execute function public.set_updated_at();
+create trigger friend_groups_updated_at           before update on public.friend_groups           for each row execute function public.set_updated_at();
+create trigger play_requests_updated_at           before update on public.play_requests           for each row execute function public.set_updated_at();
+create trigger polls_updated_at                   before update on public.polls                   for each row execute function public.set_updated_at();
+create trigger chats_updated_at                   before update on public.chats                   for each row execute function public.set_updated_at();
+create trigger match_availabilities_updated_at    before update on public.match_availabilities    for each row execute function public.set_updated_at();
+create trigger practice_series_updated_at         before update on public.practice_series         for each row execute function public.set_updated_at();
+create trigger team_practices_updated_at          before update on public.team_practices          for each row execute function public.set_updated_at();
+create trigger practice_availabilities_updated_at before update on public.practice_availabilities for each row execute function public.set_updated_at();
+create trigger venues_updated_at                  before update on public.venues                  for each row execute function public.set_updated_at();
+create trigger venue_courts_updated_at            before update on public.venue_courts            for each row execute function public.set_updated_at();
+create trigger bookings_updated_at                before update on public.bookings                for each row execute function public.set_updated_at();
+create trigger booking_players_updated_at         before update on public.booking_players         for each row execute function public.set_updated_at();
+create trigger court_reviews_updated_at           before update on public.court_reviews           for each row execute function public.set_updated_at();
+create trigger device_tokens_updated_at           before update on public.device_tokens           for each row execute function public.set_updated_at();
+
+-- =====================================================================
+-- 0002_harden_helper_functions
+-- =====================================================================
+
+-- Tighten the two SECURITY DEFINER / search_path advisor warnings flagged
+-- against the initial schema. RLS-related advisor noise stays as-is; that
+-- gets resolved by the Phase 2 policies migration.
+
+-- 1. Pin search_path for set_updated_at so untrusted schemas can't override
+--    function resolution mid-trigger.
+alter function public.set_updated_at()
+  set search_path = public, pg_temp;
+
+-- 2. handle_new_user is invoked only via the auth.users INSERT trigger.
+--    Nothing should call it through the REST RPC endpoint, so revoke
+--    EXECUTE from the public-facing roles. The supabase_auth_admin role
+--    that the trigger fires under retains access via its default grants.
+revoke execute on function public.handle_new_user() from anon, authenticated, public;
+
+-- =====================================================================
+-- 0003_rls_helpers
+-- =====================================================================
+
+-- RLS helper functions.
+--
+-- These wrap visibility logic that's referenced from policies on multiple
+-- tables. Keeping the logic in helpers (vs. inlining into every policy):
+--   - readable policies
+--   - one place to fix visibility bugs
+--   - Postgres can cache STABLE function results within a query
+--
+-- All helpers are SECURITY INVOKER + STABLE + pinned search_path.
+-- The block check is SECURITY DEFINER because it has to read rows the caller
+-- doesn't own (a post author's blocks against me).
+
+-- =========================================================================
+-- Friendship / group membership / role
+-- =========================================================================
+
+create or replace function public.is_friend(other_user uuid)
+returns boolean
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select exists(
+    select 1 from public.friendships
+    where status = 'accepted'
+      and (
+        (requester_id = auth.uid() and addressee_id = other_user)
+        or (requester_id = other_user and addressee_id = auth.uid())
+      )
+  );
+$$;
+
+create or replace function public.is_group_member(g uuid)
+returns boolean
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select exists(
+    select 1 from public.group_members
+    where group_id = g and user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.has_group_role(g uuid, min_role group_role)
+returns boolean
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select exists(
+    select 1 from public.group_members
+    where group_id = g
+      and user_id = auth.uid()
+      and case min_role
+        when 'member'  then role in ('owner','manager','captain','member')
+        when 'captain' then role in ('owner','manager','captain')
+        when 'manager' then role in ('owner','manager')
+        when 'owner'   then role  = 'owner'
+      end
+  );
+$$;
+
+create or replace function public.is_chat_participant(c uuid)
+returns boolean
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select exists(
+    select 1 from public.chat_participants
+    where chat_id = c and user_id = auth.uid()
+  );
+$$;
+
+-- =========================================================================
+-- Block check (bidirectional)
+--
+-- SECURITY DEFINER because we need to read blocks rows the caller doesn't
+-- own (e.g., "is the post author blocking me?" — author's row, not mine).
+-- Returns boolean only so no PII is exposed.
+-- =========================================================================
+
+create or replace function public.is_blocked(a uuid, b uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists(
+    select 1 from public.blocks
+    where (blocker_id = a and blocked_id = b)
+       or (blocker_id = b and blocked_id = a)
+  );
+$$;
+
+-- Lock down RPC exposure. Authenticated users can still call it from inside
+-- a policy (RLS plans don't go through EXECUTE checking the same way), but
+-- they can't hit it via /rest/v1/rpc/is_blocked directly.
+revoke execute on function public.is_blocked(uuid, uuid) from anon, authenticated, public;
+grant  execute on function public.is_blocked(uuid, uuid) to service_role;
+
+-- =========================================================================
+-- Event visibility
+--
+-- Five branches: owner / participant / group-scoped / public radius / invited
+-- via notification. Matches src/lib/events/visibility.ts in the legacy
+-- Prisma code.
+-- =========================================================================
+
+create or replace function public.can_see_event(e public.events)
+returns boolean
+language plpgsql
+stable
+security invoker
+set search_path = public
+as $$
+declare
+  viewer uuid := auth.uid();
+  viewer_loc geography;
+begin
+  if viewer is null then
+    return false;
+  end if;
+
+  if e.owner_id = viewer then
+    return true;
+  end if;
+
+  if exists(
+    select 1 from public.event_participants
+    where event_id = e.id and user_id = viewer
+  ) then
+    return true;
+  end if;
+
+  if e.visibility = 'group' then
+    return e.host_group_id is not null
+       and public.is_group_member(e.host_group_id);
+  end if;
+
+  if e.visibility = 'public'
+     and e.event_location is not null
+     and e.radius_mi is not null then
+    select location into viewer_loc from public.profiles where id = viewer;
+    if viewer_loc is not null then
+      return st_dwithin(viewer_loc, e.event_location, e.radius_mi * 1609.34);
+    end if;
+  end if;
+
+  return exists(
+    select 1 from public.notifications
+    where event_id = e.id
+      and user_id  = viewer
+      and type     = 'event_invite'
+  );
+end;
+$$;
+
+-- =========================================================================
+-- Post visibility
+--
+-- Branches: author / friend / explicit group target / explicit friend-group
+-- target / broadcast in radius / event cross-post / blocked-pair exclusion.
+-- =========================================================================
+
+create or replace function public.can_see_post(p public.posts)
+returns boolean
+language plpgsql
+stable
+security invoker
+set search_path = public
+as $$
+declare
+  viewer uuid := auth.uid();
+  viewer_loc geography;
+  has_group_targets boolean;
+  has_fg_targets boolean;
+  viewer_in_target_group boolean;
+  viewer_in_target_fg boolean;
+begin
+  if viewer is null then
+    return false;
+  end if;
+
+  if p.author_id = viewer then
+    return true;
+  end if;
+
+  -- Block check: bidirectional.
+  if public.is_blocked(viewer, p.author_id) then
+    return false;
+  end if;
+
+  -- Does this post have explicit visibility targets?
+  has_group_targets := exists(select 1 from public.post_groups where post_id = p.id);
+  has_fg_targets    := exists(select 1 from public.post_friend_groups where post_id = p.id);
+
+  -- Targeted to specific groups: only members of those groups can see.
+  if has_group_targets then
+    viewer_in_target_group := exists(
+      select 1 from public.post_groups pg
+      join public.group_members gm on gm.group_id = pg.group_id
+      where pg.post_id = p.id and gm.user_id = viewer
+    );
+    if viewer_in_target_group then
+      return true;
+    end if;
+  end if;
+
+  -- Targeted to friend groups: only members of those friend groups can see.
+  if has_fg_targets then
+    viewer_in_target_fg := exists(
+      select 1 from public.post_friend_groups pfg
+      join public.friend_group_members fgm on fgm.friend_group_id = pfg.friend_group_id
+      where pfg.post_id = p.id and fgm.user_id = viewer
+    );
+    if viewer_in_target_fg then
+      return true;
+    end if;
+  end if;
+
+  -- If the post had explicit targeting and viewer wasn't a target, hide it
+  -- (don't fall through to friend / broadcast visibility).
+  if has_group_targets or has_fg_targets then
+    return false;
+  end if;
+
+  -- Friend-of-author default visibility.
+  if public.is_friend(p.author_id) then
+    return true;
+  end if;
+
+  -- Broadcast post within radius of viewer's home location.
+  if p.is_broadcast and p.broadcast_location is not null and p.broadcast_radius_mi > 0 then
+    select location into viewer_loc from public.profiles where id = viewer;
+    if viewer_loc is not null then
+      if st_dwithin(viewer_loc, p.broadcast_location, p.broadcast_radius_mi * 1609.34) then
+        return true;
+      end if;
+    end if;
+  end if;
+
+  -- Event cross-post: visible if the underlying event is visible.
+  if p.event_id is not null then
+    return exists(
+      select 1 from public.events e
+      where e.id = p.event_id and public.can_see_event(e)
+    );
+  end if;
+
+  return false;
+end;
+$$;
+
+-- =====================================================================
+-- 0004_rls_policies
+-- =====================================================================
+
+-- Row-Level Security policies for every public table.
+--
+-- Pattern: enable RLS, then declare explicit policies. Default-deny is the
+-- safety net — if a policy is missing, the table is silently inaccessible to
+-- anon/authenticated roles (service_role bypasses RLS).
+--
+-- Where the policy logic is non-trivial we call helpers from 0003_rls_helpers.
+-- Stay consistent: same expression in USING and WITH CHECK unless they need
+-- to differ semantically.
+
+-- =========================================================================
+-- Identity
+-- =========================================================================
+
+alter table public.profiles enable row level security;
+
+create policy profiles_select_public on public.profiles
+  for select to authenticated
+  using (
+    not is_private
+    or id = auth.uid()
+    or public.is_friend(id)
+  );
+
+create policy profiles_update_self on public.profiles
+  for update to authenticated
+  using (id = auth.uid())
+  with check (id = auth.uid());
+
+-- Inserts/deletes are driven by the auth.users trigger, not REST.
+
+-- =========================================================================
+-- Social graph
+-- =========================================================================
+
+alter table public.friendships enable row level security;
+
+create policy friendships_select_either on public.friendships
+  for select to authenticated
+  using (requester_id = auth.uid() or addressee_id = auth.uid());
+
+create policy friendships_insert_self on public.friendships
+  for insert to authenticated
+  with check (requester_id = auth.uid());
+
+create policy friendships_update_either on public.friendships
+  for update to authenticated
+  using (requester_id = auth.uid() or addressee_id = auth.uid())
+  with check (requester_id = auth.uid() or addressee_id = auth.uid());
+
+create policy friendships_delete_either on public.friendships
+  for delete to authenticated
+  using (requester_id = auth.uid() or addressee_id = auth.uid());
+
+alter table public.blocks enable row level security;
+
+create policy blocks_select_self on public.blocks
+  for select to authenticated using (blocker_id = auth.uid());
+
+create policy blocks_insert_self on public.blocks
+  for insert to authenticated with check (blocker_id = auth.uid());
+
+create policy blocks_delete_self on public.blocks
+  for delete to authenticated using (blocker_id = auth.uid());
+
+alter table public.friend_groups enable row level security;
+
+create policy friend_groups_select_owner on public.friend_groups
+  for select to authenticated using (owner_id = auth.uid());
+
+create policy friend_groups_insert_owner on public.friend_groups
+  for insert to authenticated with check (owner_id = auth.uid());
+
+create policy friend_groups_update_owner on public.friend_groups
+  for update to authenticated
+  using (owner_id = auth.uid())
+  with check (owner_id = auth.uid());
+
+create policy friend_groups_delete_owner on public.friend_groups
+  for delete to authenticated using (owner_id = auth.uid());
+
+alter table public.friend_group_members enable row level security;
+
+create policy friend_group_members_select on public.friend_group_members
+  for select to authenticated
+  using (
+    user_id = auth.uid()
+    or exists(
+      select 1 from public.friend_groups fg
+      where fg.id = friend_group_id and fg.owner_id = auth.uid()
+    )
+  );
+
+create policy friend_group_members_write_by_owner on public.friend_group_members
+  for all to authenticated
+  using (
+    exists(
+      select 1 from public.friend_groups fg
+      where fg.id = friend_group_id and fg.owner_id = auth.uid()
+    )
+  )
+  with check (
+    exists(
+      select 1 from public.friend_groups fg
+      where fg.id = friend_group_id and fg.owner_id = auth.uid()
+    )
+  );
+
+create policy friend_group_members_leave_self on public.friend_group_members
+  for delete to authenticated using (user_id = auth.uid());
+
+-- =========================================================================
+-- Groups
+-- =========================================================================
+
+alter table public.groups enable row level security;
+
+-- Groups are discoverable by name/cover for the join flow even by non-members.
+-- Stricter scoping (private groups) can be added later via a column.
+create policy groups_select_all on public.groups
+  for select to authenticated using (true);
+
+create policy groups_insert_self on public.groups
+  for insert to authenticated with check (owner_id = auth.uid());
+
+create policy groups_update_managers on public.groups
+  for update to authenticated
+  using (public.has_group_role(id, 'manager'))
+  with check (public.has_group_role(id, 'manager'));
+
+create policy groups_delete_owner on public.groups
+  for delete to authenticated using (owner_id = auth.uid());
+
+alter table public.group_members enable row level security;
+
+create policy group_members_select_member on public.group_members
+  for select to authenticated
+  using (user_id = auth.uid() or public.is_group_member(group_id));
+
+create policy group_members_insert_manager on public.group_members
+  for insert to authenticated
+  with check (public.has_group_role(group_id, 'manager'));
+
+create policy group_members_update_self_or_manager on public.group_members
+  for update to authenticated
+  using (user_id = auth.uid() or public.has_group_role(group_id, 'manager'))
+  with check (user_id = auth.uid() or public.has_group_role(group_id, 'manager'));
+
+create policy group_members_delete_self_or_manager on public.group_members
+  for delete to authenticated
+  using (user_id = auth.uid() or public.has_group_role(group_id, 'manager'));
+
+alter table public.group_invites enable row level security;
+
+create policy group_invites_select_manager on public.group_invites
+  for select to authenticated
+  using (public.has_group_role(group_id, 'manager'));
+
+create policy group_invites_write_manager on public.group_invites
+  for all to authenticated
+  using (public.has_group_role(group_id, 'manager'))
+  with check (public.has_group_role(group_id, 'manager'));
+
+alter table public.seasons enable row level security;
+
+create policy seasons_select_member on public.seasons
+  for select to authenticated using (public.is_group_member(group_id));
+
+create policy seasons_write_captain on public.seasons
+  for all to authenticated
+  using (public.has_group_role(group_id, 'captain'))
+  with check (public.has_group_role(group_id, 'captain'));
+
+alter table public.team_listings enable row level security;
+
+-- Public-facing bulletin: anyone authenticated can browse.
+create policy team_listings_select_all on public.team_listings
+  for select to authenticated using (true);
+
+create policy team_listings_write_captain on public.team_listings
+  for all to authenticated
+  using (public.has_group_role(group_id, 'captain'))
+  with check (public.has_group_role(group_id, 'captain'));
+
+-- =========================================================================
+-- Albums + files
+-- =========================================================================
+
+alter table public.albums enable row level security;
+
+create policy albums_select_member on public.albums
+  for select to authenticated using (public.is_group_member(group_id));
+
+create policy albums_insert_member on public.albums
+  for insert to authenticated
+  with check (public.is_group_member(group_id) and created_by_id = auth.uid());
+
+create policy albums_update_captain on public.albums
+  for update to authenticated
+  using (public.has_group_role(group_id, 'captain'))
+  with check (public.has_group_role(group_id, 'captain'));
+
+create policy albums_delete_captain on public.albums
+  for delete to authenticated using (public.has_group_role(group_id, 'captain'));
+
+alter table public.album_items enable row level security;
+
+create policy album_items_select_member on public.album_items
+  for select to authenticated
+  using (
+    exists(
+      select 1 from public.albums a
+      where a.id = album_id and public.is_group_member(a.group_id)
+    )
+  );
+
+create policy album_items_insert_member on public.album_items
+  for insert to authenticated
+  with check (
+    added_by_id = auth.uid()
+    and exists(
+      select 1 from public.albums a
+      where a.id = album_id and public.is_group_member(a.group_id)
+    )
+  );
+
+create policy album_items_delete_owner_or_captain on public.album_items
+  for delete to authenticated
+  using (
+    added_by_id = auth.uid()
+    or exists(
+      select 1 from public.albums a
+      where a.id = album_id and public.has_group_role(a.group_id, 'captain')
+    )
+  );
+
+alter table public.group_files enable row level security;
+
+create policy group_files_select_member on public.group_files
+  for select to authenticated using (public.is_group_member(group_id));
+
+create policy group_files_insert_member on public.group_files
+  for insert to authenticated
+  with check (public.is_group_member(group_id) and uploaded_by_id = auth.uid());
+
+create policy group_files_delete_owner_or_captain on public.group_files
+  for delete to authenticated
+  using (uploaded_by_id = auth.uid() or public.has_group_role(group_id, 'captain'));
+
+-- =========================================================================
+-- Events
+-- =========================================================================
+
+alter table public.events enable row level security;
+
+create policy events_select_visible on public.events
+  for select to authenticated using (public.can_see_event(events));
+
+create policy events_insert_self on public.events
+  for insert to authenticated with check (owner_id = auth.uid());
+
+create policy events_update_owner on public.events
+  for update to authenticated
+  using (
+    owner_id = auth.uid()
+    or (host_group_id is not null and public.has_group_role(host_group_id, 'manager'))
+  )
+  with check (
+    owner_id = auth.uid()
+    or (host_group_id is not null and public.has_group_role(host_group_id, 'manager'))
+  );
+
+create policy events_delete_owner on public.events
+  for delete to authenticated using (owner_id = auth.uid());
+
+alter table public.event_participants enable row level security;
+
+create policy event_participants_select_visible on public.event_participants
+  for select to authenticated
+  using (
+    user_id = auth.uid()
+    or exists(
+      select 1 from public.events e
+      where e.id = event_id and public.can_see_event(e)
+    )
+  );
+
+create policy event_participants_insert_self on public.event_participants
+  for insert to authenticated
+  with check (
+    user_id = auth.uid()
+    and exists(
+      select 1 from public.events e
+      where e.id = event_id and public.can_see_event(e) and e.is_public_signup
+    )
+  );
+
+create policy event_participants_update_self_or_owner on public.event_participants
+  for update to authenticated
+  using (
+    user_id = auth.uid()
+    or exists(select 1 from public.events e where e.id = event_id and e.owner_id = auth.uid())
+  )
+  with check (
+    user_id = auth.uid()
+    or exists(select 1 from public.events e where e.id = event_id and e.owner_id = auth.uid())
+  );
+
+create policy event_participants_delete_self_or_owner on public.event_participants
+  for delete to authenticated
+  using (
+    user_id = auth.uid()
+    or exists(select 1 from public.events e where e.id = event_id and e.owner_id = auth.uid())
+  );
+
+alter table public.event_matches enable row level security;
+
+create policy event_matches_select_visible on public.event_matches
+  for select to authenticated
+  using (
+    exists(select 1 from public.events e where e.id = event_id and public.can_see_event(e))
+  );
+
+-- Owners create / update / delete matches; players involved can update for
+-- reporting via /confirm/dispute endpoints (server route uses service_role).
+create policy event_matches_write_owner on public.event_matches
+  for all to authenticated
+  using (
+    exists(select 1 from public.events e where e.id = event_id and e.owner_id = auth.uid())
+  )
+  with check (
+    exists(select 1 from public.events e where e.id = event_id and e.owner_id = auth.uid())
+  );
+
+-- =========================================================================
+-- Posts + engagement
+-- =========================================================================
+
+alter table public.posts enable row level security;
+
+create policy posts_select_visible on public.posts
+  for select to authenticated using (public.can_see_post(posts));
+
+create policy posts_insert_self on public.posts
+  for insert to authenticated with check (author_id = auth.uid());
+
+create policy posts_update_author on public.posts
+  for update to authenticated
+  using (author_id = auth.uid())
+  with check (author_id = auth.uid());
+
+create policy posts_delete_author on public.posts
+  for delete to authenticated using (author_id = auth.uid());
+
+alter table public.photos enable row level security;
+
+create policy photos_select_visible on public.photos
+  for select to authenticated
+  using (
+    exists(select 1 from public.posts p where p.id = post_id and public.can_see_post(p))
+  );
+
+create policy photos_write_author on public.photos
+  for all to authenticated
+  using (
+    exists(select 1 from public.posts p where p.id = post_id and p.author_id = auth.uid())
+  )
+  with check (
+    exists(select 1 from public.posts p where p.id = post_id and p.author_id = auth.uid())
+  );
+
+alter table public.post_groups enable row level security;
+
+create policy post_groups_select_visible on public.post_groups
+  for select to authenticated
+  using (
+    exists(select 1 from public.posts p where p.id = post_id and public.can_see_post(p))
+  );
+
+create policy post_groups_write_author on public.post_groups
+  for all to authenticated
+  using (
+    exists(select 1 from public.posts p where p.id = post_id and p.author_id = auth.uid())
+  )
+  with check (
+    exists(select 1 from public.posts p where p.id = post_id and p.author_id = auth.uid())
+  );
+
+alter table public.post_friend_groups enable row level security;
+
+create policy post_friend_groups_select_visible on public.post_friend_groups
+  for select to authenticated
+  using (
+    exists(select 1 from public.posts p where p.id = post_id and public.can_see_post(p))
+  );
+
+create policy post_friend_groups_write_author on public.post_friend_groups
+  for all to authenticated
+  using (
+    exists(select 1 from public.posts p where p.id = post_id and p.author_id = auth.uid())
+  )
+  with check (
+    exists(select 1 from public.posts p where p.id = post_id and p.author_id = auth.uid())
+  );
+
+alter table public.likes enable row level security;
+
+create policy likes_select_visible on public.likes
+  for select to authenticated
+  using (
+    exists(select 1 from public.posts p where p.id = post_id and public.can_see_post(p))
+  );
+
+create policy likes_insert_self_on_visible on public.likes
+  for insert to authenticated
+  with check (
+    user_id = auth.uid()
+    and exists(select 1 from public.posts p where p.id = post_id and public.can_see_post(p))
+  );
+
+create policy likes_delete_self on public.likes
+  for delete to authenticated using (user_id = auth.uid());
+
+alter table public.comments enable row level security;
+
+create policy comments_select_visible on public.comments
+  for select to authenticated
+  using (
+    exists(select 1 from public.posts p where p.id = post_id and public.can_see_post(p))
+  );
+
+create policy comments_insert_self on public.comments
+  for insert to authenticated
+  with check (
+    author_id = auth.uid()
+    and exists(
+      select 1 from public.posts p
+      where p.id = post_id
+        and public.can_see_post(p)
+        and not p.comments_disabled
+    )
+  );
+
+create policy comments_delete_self on public.comments
+  for delete to authenticated using (author_id = auth.uid());
+
+alter table public.hidden_posts enable row level security;
+
+create policy hidden_posts_self on public.hidden_posts
+  for all to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+alter table public.play_requests enable row level security;
+
+create policy play_requests_select_self_or_author on public.play_requests
+  for select to authenticated
+  using (
+    user_id = auth.uid()
+    or exists(select 1 from public.posts p where p.id = post_id and p.author_id = auth.uid())
+  );
+
+create policy play_requests_insert_self on public.play_requests
+  for insert to authenticated
+  with check (
+    user_id = auth.uid()
+    and exists(select 1 from public.posts p where p.id = post_id and public.can_see_post(p))
+  );
+
+create policy play_requests_update_self_or_author on public.play_requests
+  for update to authenticated
+  using (
+    user_id = auth.uid()
+    or exists(select 1 from public.posts p where p.id = post_id and p.author_id = auth.uid())
+  )
+  with check (
+    user_id = auth.uid()
+    or exists(select 1 from public.posts p where p.id = post_id and p.author_id = auth.uid())
+  );
+
+create policy play_requests_delete_self on public.play_requests
+  for delete to authenticated using (user_id = auth.uid());
+
+-- =========================================================================
+-- Polls (embedded in group_messages)
+-- =========================================================================
+
+alter table public.polls enable row level security;
+
+create policy polls_select_member on public.polls
+  for select to authenticated
+  using (
+    -- A poll is reachable through its group_message; member of that group can see it.
+    exists(
+      select 1 from public.group_messages gm
+      where gm.poll_id = polls.id and public.is_group_member(gm.group_id)
+    )
+    or created_by_id = auth.uid()
+  );
+
+create policy polls_insert_self on public.polls
+  for insert to authenticated with check (created_by_id = auth.uid());
+
+create policy polls_update_creator on public.polls
+  for update to authenticated
+  using (created_by_id = auth.uid())
+  with check (created_by_id = auth.uid());
+
+create policy polls_delete_creator on public.polls
+  for delete to authenticated using (created_by_id = auth.uid());
+
+alter table public.poll_options enable row level security;
+
+create policy poll_options_select on public.poll_options
+  for select to authenticated
+  using (
+    exists(
+      select 1 from public.polls p where p.id = poll_id
+        and (p.created_by_id = auth.uid()
+          or exists(select 1 from public.group_messages gm where gm.poll_id = p.id and public.is_group_member(gm.group_id)))
+    )
+  );
+
+create policy poll_options_write_creator on public.poll_options
+  for all to authenticated
+  using (exists(select 1 from public.polls p where p.id = poll_id and p.created_by_id = auth.uid()))
+  with check (exists(select 1 from public.polls p where p.id = poll_id and p.created_by_id = auth.uid()));
+
+alter table public.poll_votes enable row level security;
+
+create policy poll_votes_select_member on public.poll_votes
+  for select to authenticated
+  using (
+    exists(
+      select 1 from public.polls p where p.id = poll_id
+        and (p.created_by_id = auth.uid()
+          or exists(select 1 from public.group_messages gm where gm.poll_id = p.id and public.is_group_member(gm.group_id)))
+    )
+  );
+
+create policy poll_votes_insert_self on public.poll_votes
+  for insert to authenticated
+  with check (
+    user_id = auth.uid()
+    and exists(
+      select 1 from public.polls p where p.id = poll_id
+        and exists(select 1 from public.group_messages gm where gm.poll_id = p.id and public.is_group_member(gm.group_id))
+        and not p.is_closed
+    )
+  );
+
+create policy poll_votes_delete_self on public.poll_votes
+  for delete to authenticated using (user_id = auth.uid());
+
+-- =========================================================================
+-- Messaging
+-- =========================================================================
+
+alter table public.messages enable row level security;
+
+create policy messages_select_pair on public.messages
+  for select to authenticated
+  using (sender_id = auth.uid() or receiver_id = auth.uid());
+
+create policy messages_insert_self_unblocked on public.messages
+  for insert to authenticated
+  with check (
+    sender_id = auth.uid()
+    and not public.is_blocked(auth.uid(), receiver_id)
+  );
+
+create policy messages_delete_sender on public.messages
+  for delete to authenticated using (sender_id = auth.uid());
+
+alter table public.direct_message_reads enable row level security;
+
+create policy dm_reads_self on public.direct_message_reads
+  for all to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+alter table public.chats enable row level security;
+
+create policy chats_select_participant on public.chats
+  for select to authenticated
+  using (public.is_chat_participant(id) or creator_id = auth.uid());
+
+create policy chats_insert_self on public.chats
+  for insert to authenticated with check (creator_id = auth.uid());
+
+create policy chats_update_creator on public.chats
+  for update to authenticated
+  using (creator_id = auth.uid())
+  with check (creator_id = auth.uid());
+
+create policy chats_delete_creator on public.chats
+  for delete to authenticated using (creator_id = auth.uid());
+
+alter table public.chat_participants enable row level security;
+
+create policy chat_participants_select_member on public.chat_participants
+  for select to authenticated
+  using (user_id = auth.uid() or public.is_chat_participant(chat_id));
+
+create policy chat_participants_insert_member_or_creator on public.chat_participants
+  for insert to authenticated
+  with check (
+    public.is_chat_participant(chat_id)
+    or exists(select 1 from public.chats c where c.id = chat_id and c.creator_id = auth.uid())
+  );
+
+create policy chat_participants_update_self on public.chat_participants
+  for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+create policy chat_participants_delete_self_or_creator on public.chat_participants
+  for delete to authenticated
+  using (
+    user_id = auth.uid()
+    or exists(select 1 from public.chats c where c.id = chat_id and c.creator_id = auth.uid())
+  );
+
+alter table public.chat_messages enable row level security;
+
+create policy chat_messages_select_member on public.chat_messages
+  for select to authenticated using (public.is_chat_participant(chat_id));
+
+create policy chat_messages_insert_member on public.chat_messages
+  for insert to authenticated
+  with check (sender_id = auth.uid() and public.is_chat_participant(chat_id));
+
+create policy chat_messages_delete_sender on public.chat_messages
+  for delete to authenticated using (sender_id = auth.uid());
+
+alter table public.group_messages enable row level security;
+
+create policy group_messages_select_member on public.group_messages
+  for select to authenticated using (public.is_group_member(group_id));
+
+create policy group_messages_insert_member on public.group_messages
+  for insert to authenticated
+  with check (sender_id = auth.uid() and public.is_group_member(group_id));
+
+create policy group_messages_delete_sender_or_manager on public.group_messages
+  for delete to authenticated
+  using (sender_id = auth.uid() or public.has_group_role(group_id, 'manager'));
+
+alter table public.message_reactions enable row level security;
+
+-- Reactions are polymorphic. Visibility delegates to the target table.
+create policy message_reactions_select_visible on public.message_reactions
+  for select to authenticated
+  using (
+    case target_type
+      when 'dm'    then exists(select 1 from public.messages m
+                               where m.id = target_id
+                                 and (m.sender_id = auth.uid() or m.receiver_id = auth.uid()))
+      when 'group' then exists(select 1 from public.group_messages gm
+                               where gm.id = target_id and public.is_group_member(gm.group_id))
+      when 'chat'  then exists(select 1 from public.chat_messages cm
+                               where cm.id = target_id and public.is_chat_participant(cm.chat_id))
+    end
+  );
+
+create policy message_reactions_insert_self on public.message_reactions
+  for insert to authenticated
+  with check (
+    user_id = auth.uid()
+    and case target_type
+      when 'dm'    then exists(select 1 from public.messages m
+                               where m.id = target_id
+                                 and (m.sender_id = auth.uid() or m.receiver_id = auth.uid()))
+      when 'group' then exists(select 1 from public.group_messages gm
+                               where gm.id = target_id and public.is_group_member(gm.group_id))
+      when 'chat'  then exists(select 1 from public.chat_messages cm
+                               where cm.id = target_id and public.is_chat_participant(cm.chat_id))
+    end
+  );
+
+create policy message_reactions_delete_self on public.message_reactions
+  for delete to authenticated using (user_id = auth.uid());
+
+-- =========================================================================
+-- Notifications
+-- =========================================================================
+
+alter table public.notifications enable row level security;
+
+create policy notifications_select_self on public.notifications
+  for select to authenticated using (user_id = auth.uid());
+
+create policy notifications_update_self on public.notifications
+  for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+create policy notifications_delete_self on public.notifications
+  for delete to authenticated using (user_id = auth.uid());
+-- Inserts come from server-side fan-out (service_role), no policy needed.
+
+alter table public.reminder_sent enable row level security;
+-- No policies: service_role only.
+
+-- =========================================================================
+-- Team matches + practices + availabilities
+-- =========================================================================
+
+alter table public.team_matches enable row level security;
+
+create policy team_matches_select_member on public.team_matches
+  for select to authenticated using (public.is_group_member(group_id));
+
+create policy team_matches_write_captain on public.team_matches
+  for all to authenticated
+  using (public.has_group_role(group_id, 'captain'))
+  with check (public.has_group_role(group_id, 'captain'));
+
+alter table public.match_availabilities enable row level security;
+
+create policy match_availabilities_select_member on public.match_availabilities
+  for select to authenticated
+  using (
+    exists(select 1 from public.team_matches tm
+           where tm.id = match_id and public.is_group_member(tm.group_id))
+  );
+
+create policy match_availabilities_upsert_self on public.match_availabilities
+  for insert to authenticated
+  with check (
+    user_id = auth.uid()
+    and exists(select 1 from public.team_matches tm
+               where tm.id = match_id and public.is_group_member(tm.group_id))
+  );
+
+create policy match_availabilities_update_self_or_captain on public.match_availabilities
+  for update to authenticated
+  using (
+    user_id = auth.uid()
+    or exists(select 1 from public.team_matches tm
+              where tm.id = match_id and public.has_group_role(tm.group_id, 'captain'))
+  )
+  with check (
+    user_id = auth.uid()
+    or exists(select 1 from public.team_matches tm
+              where tm.id = match_id and public.has_group_role(tm.group_id, 'captain'))
+  );
+
+create policy match_availabilities_delete_self on public.match_availabilities
+  for delete to authenticated using (user_id = auth.uid());
+
+alter table public.practice_series enable row level security;
+
+create policy practice_series_select_member on public.practice_series
+  for select to authenticated using (public.is_group_member(group_id));
+
+create policy practice_series_write_captain on public.practice_series
+  for all to authenticated
+  using (public.has_group_role(group_id, 'captain'))
+  with check (public.has_group_role(group_id, 'captain'));
+
+alter table public.team_practices enable row level security;
+
+create policy team_practices_select_member on public.team_practices
+  for select to authenticated
+  using (
+    exists(select 1 from public.practice_series ps
+           where ps.id = series_id and public.is_group_member(ps.group_id))
+  );
+
+create policy team_practices_write_captain on public.team_practices
+  for all to authenticated
+  using (
+    exists(select 1 from public.practice_series ps
+           where ps.id = series_id and public.has_group_role(ps.group_id, 'captain'))
+  )
+  with check (
+    exists(select 1 from public.practice_series ps
+           where ps.id = series_id and public.has_group_role(ps.group_id, 'captain'))
+  );
+
+alter table public.practice_availabilities enable row level security;
+
+create policy practice_availabilities_select_member on public.practice_availabilities
+  for select to authenticated
+  using (
+    exists(
+      select 1 from public.team_practices tp
+      join public.practice_series ps on ps.id = tp.series_id
+      where tp.id = practice_id and public.is_group_member(ps.group_id)
+    )
+  );
+
+create policy practice_availabilities_upsert_self on public.practice_availabilities
+  for insert to authenticated
+  with check (
+    user_id = auth.uid()
+    and exists(
+      select 1 from public.team_practices tp
+      join public.practice_series ps on ps.id = tp.series_id
+      where tp.id = practice_id and public.is_group_member(ps.group_id)
+    )
+  );
+
+create policy practice_availabilities_update_self on public.practice_availabilities
+  for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+create policy practice_availabilities_delete_self on public.practice_availabilities
+  for delete to authenticated using (user_id = auth.uid());
+
+-- =========================================================================
+-- Expenses
+-- =========================================================================
+
+alter table public.expenses enable row level security;
+
+create policy expenses_select_participant on public.expenses
+  for select to authenticated using (public.is_chat_participant(chat_id));
+
+create policy expenses_insert_participant on public.expenses
+  for insert to authenticated
+  with check (payer_id = auth.uid() and public.is_chat_participant(chat_id));
+
+create policy expenses_update_payer on public.expenses
+  for update to authenticated
+  using (payer_id = auth.uid())
+  with check (payer_id = auth.uid());
+
+create policy expenses_delete_payer on public.expenses
+  for delete to authenticated using (payer_id = auth.uid());
+
+alter table public.expense_shares enable row level security;
+
+create policy expense_shares_select_participant on public.expense_shares
+  for select to authenticated
+  using (
+    user_id = auth.uid()
+    or exists(select 1 from public.expenses e
+              where e.id = expense_id and public.is_chat_participant(e.chat_id))
+  );
+
+create policy expense_shares_write_payer on public.expense_shares
+  for all to authenticated
+  using (
+    exists(select 1 from public.expenses e
+           where e.id = expense_id and e.payer_id = auth.uid())
+  )
+  with check (
+    exists(select 1 from public.expenses e
+           where e.id = expense_id and e.payer_id = auth.uid())
+  );
+
+create policy expense_shares_update_self_settle on public.expense_shares
+  for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+alter table public.guest_expense_shares enable row level security;
+
+create policy guest_expense_shares_select_participant on public.guest_expense_shares
+  for select to authenticated
+  using (
+    exists(select 1 from public.expenses e
+           where e.id = expense_id and public.is_chat_participant(e.chat_id))
+  );
+
+create policy guest_expense_shares_write_payer on public.guest_expense_shares
+  for all to authenticated
+  using (
+    exists(select 1 from public.expenses e
+           where e.id = expense_id and e.payer_id = auth.uid())
+  )
+  with check (
+    exists(select 1 from public.expenses e
+           where e.id = expense_id and e.payer_id = auth.uid())
+  );
+
+-- =========================================================================
+-- Courts + venues + bookings + reviews
+-- =========================================================================
+
+alter table public.courts enable row level security;
+
+create policy courts_select_all on public.courts
+  for select to authenticated using (true);
+
+create policy courts_insert_self on public.courts
+  for insert to authenticated with check (added_by_id = auth.uid());
+
+create policy courts_update_self on public.courts
+  for update to authenticated
+  using (added_by_id = auth.uid())
+  with check (added_by_id = auth.uid());
+
+create policy courts_delete_self on public.courts
+  for delete to authenticated using (added_by_id = auth.uid());
+
+alter table public.venues enable row level security;
+
+create policy venues_select_all on public.venues
+  for select to authenticated using (true);
+-- venues + venue_courts are catalog data; writes via service_role only.
+
+alter table public.venue_courts enable row level security;
+
+create policy venue_courts_select_all on public.venue_courts
+  for select to authenticated using (true);
+
+alter table public.bookings enable row level security;
+
+create policy bookings_select_member on public.bookings
+  for select to authenticated
+  using (
+    organizer_id = auth.uid()
+    or exists(select 1 from public.booking_players bp
+              where bp.booking_id = bookings.id and bp.user_id = auth.uid())
+  );
+
+create policy bookings_insert_organizer on public.bookings
+  for insert to authenticated with check (organizer_id = auth.uid());
+
+create policy bookings_update_organizer on public.bookings
+  for update to authenticated
+  using (organizer_id = auth.uid())
+  with check (organizer_id = auth.uid());
+
+create policy bookings_delete_organizer on public.bookings
+  for delete to authenticated using (organizer_id = auth.uid());
+
+alter table public.booking_players enable row level security;
+
+create policy booking_players_select_member on public.booking_players
+  for select to authenticated
+  using (
+    user_id = auth.uid()
+    or exists(select 1 from public.bookings b
+              where b.id = booking_id and b.organizer_id = auth.uid())
+  );
+
+create policy booking_players_write_organizer on public.booking_players
+  for all to authenticated
+  using (
+    exists(select 1 from public.bookings b
+           where b.id = booking_id and b.organizer_id = auth.uid())
+  )
+  with check (
+    exists(select 1 from public.bookings b
+           where b.id = booking_id and b.organizer_id = auth.uid())
+  );
+
+create policy booking_players_update_self on public.booking_players
+  for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+alter table public.court_reviews enable row level security;
+
+create policy court_reviews_select_all on public.court_reviews
+  for select to authenticated using (true);
+
+create policy court_reviews_insert_self on public.court_reviews
+  for insert to authenticated with check (user_id = auth.uid());
+
+create policy court_reviews_update_self on public.court_reviews
+  for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+create policy court_reviews_delete_self on public.court_reviews
+  for delete to authenticated using (user_id = auth.uid());
+
+alter table public.court_review_photos enable row level security;
+
+create policy court_review_photos_select_all on public.court_review_photos
+  for select to authenticated using (true);
+
+create policy court_review_photos_write_author on public.court_review_photos
+  for all to authenticated
+  using (
+    exists(select 1 from public.court_reviews cr
+           where cr.id = review_id and cr.user_id = auth.uid())
+  )
+  with check (
+    exists(select 1 from public.court_reviews cr
+           where cr.id = review_id and cr.user_id = auth.uid())
+  );
+
+alter table public.court_availability_reports enable row level security;
+
+create policy court_availability_reports_select_all on public.court_availability_reports
+  for select to authenticated using (true);
+
+create policy court_availability_reports_insert_self on public.court_availability_reports
+  for insert to authenticated with check (user_id = auth.uid());
+
+create policy court_availability_reports_delete_self on public.court_availability_reports
+  for delete to authenticated using (user_id = auth.uid());
+
+-- =========================================================================
+-- Highlights + device tokens
+-- =========================================================================
+
+alter table public.highlights enable row level security;
+
+create policy highlights_select_all on public.highlights
+  for select to authenticated using (true);
+
+create policy highlights_write_self on public.highlights
+  for all to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+alter table public.device_tokens enable row level security;
+
+create policy device_tokens_self on public.device_tokens
+  for all to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+-- spatial_ref_sys is a PostGIS-owned catalog table. Supabase doesn't grant us
+-- ownership of it, so we cannot ALTER it to enable RLS. The advisor warning
+-- about it is accepted as a known false positive — PostGIS reference data
+-- has no privacy concern (it ships with every Postgres+PostGIS install).
+
+-- =====================================================================
+-- 0005_grant_is_blocked_to_authenticated
+-- =====================================================================
+
+-- Policies on `messages` (and any future cross-user write check) reference
+-- public.is_blocked directly. Authenticated users need EXECUTE so RLS can
+-- evaluate. Anon stays REVOKEd. The function returns only a boolean; no PII
+-- exposure beyond what the caller already has access to.
+
+grant execute on function public.is_blocked(uuid, uuid) to authenticated;
+
+-- =====================================================================
+-- 0006_helpers_security_definer
+-- =====================================================================
+
+-- is_group_member, has_group_role, and is_chat_participant query the same
+-- tables that have RLS policies referencing them. With SECURITY INVOKER the
+-- planner can choke on the recursion; with SECURITY DEFINER the helper
+-- bypasses RLS internally. Safe because each helper checks membership for
+-- auth.uid() only — no privilege escalation is possible.
+
+create or replace function public.is_group_member(g uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists(
+    select 1 from public.group_members
+    where group_id = g and user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.has_group_role(g uuid, min_role group_role)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists(
+    select 1 from public.group_members
+    where group_id = g
+      and user_id = auth.uid()
+      and case min_role
+        when 'member'  then role in ('owner','manager','captain','member')
+        when 'captain' then role in ('owner','manager','captain')
+        when 'manager' then role in ('owner','manager')
+        when 'owner'   then role  = 'owner'
+      end
+  );
+$$;
+
+create or replace function public.is_chat_participant(c uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists(
+    select 1 from public.chat_participants
+    where chat_id = c and user_id = auth.uid()
+  );
+$$;
+
+-- is_friend stays SECURITY INVOKER: friendships RLS already permits users to
+-- see rows involving them, so the function works inside the caller's
+-- permissions without recursion concerns.
+
+revoke execute on function public.is_group_member(uuid) from anon, public;
+revoke execute on function public.has_group_role(uuid, group_role) from anon, public;
+revoke execute on function public.is_chat_participant(uuid) from anon, public;
+grant  execute on function public.is_group_member(uuid) to authenticated;
+grant  execute on function public.has_group_role(uuid, group_role) to authenticated;
+grant  execute on function public.is_chat_participant(uuid) to authenticated;
+
+-- =====================================================================
+-- 0007_can_see_helpers_security_definer
+-- =====================================================================
+
+-- can_see_post queries post_groups / post_friend_groups whose RLS policies
+-- themselves reference can_see_post — direct recursion. Same for can_see_event
+-- via event_participants and notifications. SECURITY DEFINER breaks the cycle
+-- without affecting visibility semantics: the function still uses auth.uid()
+-- internally and returns only a boolean, so the caller can't see anything
+-- they couldn't already deduce.
+--
+-- can_see_post is inlined (rather than calling is_friend) because the function
+-- now bypasses RLS — calling is_friend (SECURITY INVOKER) from a DEFINER
+-- function would unexpectedly run as the original caller's privileges anyway,
+-- but keeping the membership check inline is simpler to reason about.
+
+create or replace function public.can_see_event(e public.events)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  viewer uuid := auth.uid();
+  viewer_loc geography;
+begin
+  if viewer is null then
+    return false;
+  end if;
+
+  if e.owner_id = viewer then
+    return true;
+  end if;
+
+  if exists(
+    select 1 from public.event_participants
+    where event_id = e.id and user_id = viewer
+  ) then
+    return true;
+  end if;
+
+  if e.visibility = 'group' then
+    return e.host_group_id is not null
+       and exists(
+         select 1 from public.group_members
+         where group_id = e.host_group_id and user_id = viewer
+       );
+  end if;
+
+  if e.visibility = 'public'
+     and e.event_location is not null
+     and e.radius_mi is not null then
+    select location into viewer_loc from public.profiles where id = viewer;
+    if viewer_loc is not null then
+      return st_dwithin(viewer_loc, e.event_location, e.radius_mi * 1609.34);
+    end if;
+  end if;
+
+  return exists(
+    select 1 from public.notifications
+    where event_id = e.id
+      and user_id  = viewer
+      and type     = 'event_invite'
+  );
+end;
+$$;
+
+create or replace function public.can_see_post(p public.posts)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  viewer uuid := auth.uid();
+  viewer_loc geography;
+  has_group_targets boolean;
+  has_fg_targets boolean;
+  viewer_in_target_group boolean;
+  viewer_in_target_fg boolean;
+begin
+  if viewer is null then
+    return false;
+  end if;
+
+  if p.author_id = viewer then
+    return true;
+  end if;
+
+  if public.is_blocked(viewer, p.author_id) then
+    return false;
+  end if;
+
+  has_group_targets := exists(select 1 from public.post_groups where post_id = p.id);
+  has_fg_targets    := exists(select 1 from public.post_friend_groups where post_id = p.id);
+
+  if has_group_targets then
+    viewer_in_target_group := exists(
+      select 1 from public.post_groups pg
+      join public.group_members gm on gm.group_id = pg.group_id
+      where pg.post_id = p.id and gm.user_id = viewer
+    );
+    if viewer_in_target_group then
+      return true;
+    end if;
+  end if;
+
+  if has_fg_targets then
+    viewer_in_target_fg := exists(
+      select 1 from public.post_friend_groups pfg
+      join public.friend_group_members fgm on fgm.friend_group_id = pfg.friend_group_id
+      where pfg.post_id = p.id and fgm.user_id = viewer
+    );
+    if viewer_in_target_fg then
+      return true;
+    end if;
+  end if;
+
+  if has_group_targets or has_fg_targets then
+    return false;
+  end if;
+
+  if exists(
+    select 1 from public.friendships
+    where status = 'accepted'
+      and ((requester_id = viewer and addressee_id = p.author_id)
+        or (requester_id = p.author_id and addressee_id = viewer))
+  ) then
+    return true;
+  end if;
+
+  if p.is_broadcast and p.broadcast_location is not null and p.broadcast_radius_mi > 0 then
+    select location into viewer_loc from public.profiles where id = viewer;
+    if viewer_loc is not null then
+      if st_dwithin(viewer_loc, p.broadcast_location, p.broadcast_radius_mi * 1609.34) then
+        return true;
+      end if;
+    end if;
+  end if;
+
+  if p.event_id is not null then
+    return exists(
+      select 1 from public.events e
+      where e.id = p.event_id and public.can_see_event(e)
+    );
+  end if;
+
+  return false;
+end;
+$$;
+
+revoke execute on function public.can_see_event(public.events) from anon, public;
+revoke execute on function public.can_see_post(public.posts) from anon, public;
+grant  execute on function public.can_see_event(public.events) to authenticated;
+grant  execute on function public.can_see_post(public.posts) to authenticated;
+
+-- =====================================================================
+-- 0008_storage_buckets
+-- =====================================================================
+
+-- Supabase Storage buckets for TennisFriend.
+--
+-- Bucket conventions:
+--   - avatars       — profile/cover images. Public reads, owner writes.
+--   - posts         — feed media (photos, videos). Public reads, author writes.
+--   - albums        — group album items. Public reads (linked from public group
+--                     albums); writes gated by group membership at the row level.
+--   - files         — group document store (waivers, schedules). Private reads
+--                     via signed URLs; group-member writes.
+--   - court-reviews — review photos. Public reads, author writes.
+--
+-- Object naming convention: <userId>/<timestamp>-<rand>.<ext>
+-- The first path segment is the owner uuid. Policies use that to enforce
+-- "only the uploader can mutate" without needing extra metadata columns.
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types) values
+  ('avatars',       'avatars',       true,  10 * 1024 * 1024,   array['image/jpeg','image/png','image/webp','image/gif']),
+  ('posts',         'posts',         true,  100 * 1024 * 1024,  array['image/jpeg','image/png','image/webp','image/gif','image/heic','video/mp4','video/webm','video/quicktime']),
+  ('albums',        'albums',        true,  100 * 1024 * 1024,  array['image/jpeg','image/png','image/webp','image/gif','image/heic','video/mp4','video/webm','video/quicktime']),
+  ('files',         'files',         false, 100 * 1024 * 1024,  null),
+  ('court-reviews', 'court-reviews', true,  10 * 1024 * 1024,   array['image/jpeg','image/png','image/webp'])
+on conflict (id) do nothing;
+
+create policy storage_avatars_read on storage.objects
+  for select using (bucket_id = 'avatars');
+
+create policy storage_posts_read on storage.objects
+  for select using (bucket_id = 'posts');
+
+create policy storage_albums_read on storage.objects
+  for select using (bucket_id = 'albums');
+
+create policy storage_court_reviews_read on storage.objects
+  for select using (bucket_id = 'court-reviews');
+
+create policy storage_files_read on storage.objects
+  for select to authenticated
+  using (
+    bucket_id = 'files'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+create policy storage_authenticated_write on storage.objects
+  for insert to authenticated
+  with check (
+    bucket_id in ('avatars','posts','albums','files','court-reviews')
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+create policy storage_authenticated_update on storage.objects
+  for update to authenticated
+  using (
+    bucket_id in ('avatars','posts','albums','files','court-reviews')
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+create policy storage_authenticated_delete on storage.objects
+  for delete to authenticated
+  using (
+    bucket_id in ('avatars','posts','albums','files','court-reviews')
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+-- =====================================================================
+-- 0009_realtime_publication
+-- =====================================================================
+
+-- Enable Postgres logical replication (CDC) on the tables the app subscribes
+-- to via Supabase Realtime. RLS still applies to the broadcast stream, so
+-- only rows the subscriber would see via REST are delivered.
+--
+-- Add tables here as new realtime use cases appear. Don't enable everything
+-- by default — every replicated INSERT/UPDATE/DELETE goes over the wire.
+
+alter publication supabase_realtime add table public.messages;
+alter publication supabase_realtime add table public.group_messages;
+alter publication supabase_realtime add table public.chat_messages;
+alter publication supabase_realtime add table public.notifications;
+alter publication supabase_realtime add table public.event_matches;
+alter publication supabase_realtime add table public.event_participants;
+alter publication supabase_realtime add table public.likes;
+alter publication supabase_realtime add table public.comments;
+alter publication supabase_realtime add table public.play_requests;
+alter publication supabase_realtime add table public.message_reactions;
+alter publication supabase_realtime add table public.poll_votes;
+
+-- =====================================================================
+-- 0010_consolidate_availabilities
+-- =====================================================================
+
+-- Migration 0010: Unify match_availabilities + practice_availabilities into a
+-- single `availabilities` table with an event_kind discriminator.
+--
+-- Per schema-review.md: both legacy tables have the same shape (user RSVPs to
+-- a scheduled event). Splitting them forced duplicated RLS policies and
+-- duplicated query helpers. The match-specific extras (`match_types`,
+-- `lineup_slot`) become nullable columns on the unified table; they're
+-- meaningless when event_kind = 'practice'.
+
+CREATE TYPE availability_event_kind AS ENUM ('match', 'practice');
+
+CREATE TABLE availabilities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_kind availability_event_kind NOT NULL,
+  match_id uuid REFERENCES team_matches(id) ON DELETE CASCADE,
+  practice_id uuid REFERENCES team_practices(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT '',
+  match_types text NOT NULL DEFAULT '',
+  lineup_slot text NOT NULL DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (
+    (event_kind = 'match' AND match_id IS NOT NULL AND practice_id IS NULL) OR
+    (event_kind = 'practice' AND practice_id IS NOT NULL AND match_id IS NULL)
+  ),
+  UNIQUE (match_id, user_id),
+  UNIQUE (practice_id, user_id)
+);
+
+-- Copy data from the legacy tables. We're pre-launch with no real users yet
+-- (memory: project_no_real_users), so any stale rows are disposable.
+INSERT INTO availabilities (event_kind, match_id, user_id, status, match_types, lineup_slot, created_at, updated_at)
+SELECT 'match'::availability_event_kind, match_id, user_id, status, match_types, lineup_slot, created_at, updated_at
+FROM match_availabilities;
+
+INSERT INTO availabilities (event_kind, practice_id, user_id, status, created_at, updated_at)
+SELECT 'practice'::availability_event_kind, practice_id, user_id, status, created_at, updated_at
+FROM practice_availabilities;
+
+-- Indexes for the dominant access patterns: load all availabilities for one
+-- match or one practice (member roster + RSVP rollup).
+CREATE INDEX availabilities_match_idx ON availabilities (match_id) WHERE match_id IS NOT NULL;
+CREATE INDEX availabilities_practice_idx ON availabilities (practice_id) WHERE practice_id IS NOT NULL;
+CREATE INDEX availabilities_user_idx ON availabilities (user_id);
+
+-- updated_at trigger (matches the existing pattern for the table this replaces).
+CREATE TRIGGER availabilities_set_updated_at
+  BEFORE UPDATE ON availabilities
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- RLS policies replicate the union of the two legacy tables' policies.
+ALTER TABLE availabilities ENABLE ROW LEVEL SECURITY;
+
+-- SELECT: group members of the parent match or practice's group.
+CREATE POLICY availabilities_select_member ON availabilities
+  FOR SELECT TO authenticated USING (
+    (
+      match_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM team_matches tm
+        WHERE tm.id = availabilities.match_id
+          AND is_group_member(tm.group_id)
+      )
+    )
+    OR (
+      practice_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM team_practices tp
+        JOIN practice_series ps ON ps.id = tp.series_id
+        WHERE tp.id = availabilities.practice_id
+          AND is_group_member(ps.group_id)
+      )
+    )
+  );
+
+-- INSERT: only self, and only if member of the parent group.
+CREATE POLICY availabilities_upsert_self ON availabilities
+  FOR INSERT TO authenticated WITH CHECK (
+    user_id = auth.uid()
+    AND (
+      (
+        match_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM team_matches tm
+          WHERE tm.id = availabilities.match_id
+            AND is_group_member(tm.group_id)
+        )
+      )
+      OR (
+        practice_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM team_practices tp
+          JOIN practice_series ps ON ps.id = tp.series_id
+          WHERE tp.id = availabilities.practice_id
+            AND is_group_member(ps.group_id)
+        )
+      )
+    )
+  );
+
+-- UPDATE: self always; captains+ on matches can update anyone's row.
+CREATE POLICY availabilities_update_self_or_captain ON availabilities
+  FOR UPDATE TO authenticated
+  USING (
+    user_id = auth.uid()
+    OR (
+      match_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM team_matches tm
+        WHERE tm.id = availabilities.match_id
+          AND has_group_role(tm.group_id, 'captain'::group_role)
+      )
+    )
+  )
+  WITH CHECK (
+    user_id = auth.uid()
+    OR (
+      match_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM team_matches tm
+        WHERE tm.id = availabilities.match_id
+          AND has_group_role(tm.group_id, 'captain'::group_role)
+      )
+    )
+  );
+
+-- DELETE: self only.
+CREATE POLICY availabilities_delete_self ON availabilities
+  FOR DELETE TO authenticated USING (user_id = auth.uid());
+
+-- Drop the legacy tables and their RLS policies (cascade removes policies + indexes).
+DROP TABLE match_availabilities;
+DROP TABLE practice_availabilities;
+
+COMMENT ON TABLE availabilities IS
+  'User RSVPs for both team matches and team practices. The event_kind discriminator + CHECK constraint enforces that exactly one of match_id/practice_id is set. Replaces match_availabilities + practice_availabilities (migration 0010).';
+
+-- =====================================================================
+-- 0011_consolidate_expense_shares
+-- =====================================================================
+
+-- Migration 0011: Collapse guest_expense_shares into expense_shares with a
+-- nullable user_id + nullable guest_name column. CHECK ensures exactly one
+-- is set. One settle path + one shares-by-expense query replaces the
+-- previous UNION pattern.
+
+-- Make user_id nullable + add guest_name + the partial unique indexes that
+-- replace the implicit "no duplicates" guarantee of the two-table layout.
+ALTER TABLE expense_shares
+  ALTER COLUMN user_id DROP NOT NULL,
+  ADD COLUMN guest_name text;
+
+-- Migrate guest rows into the unified table.
+INSERT INTO expense_shares (expense_id, user_id, guest_name, amount_cents, settled_at)
+SELECT expense_id, NULL, guest_name, amount_cents, settled_at
+FROM guest_expense_shares;
+
+-- Enforce the discriminator: exactly one identifier must be set.
+ALTER TABLE expense_shares
+  ADD CONSTRAINT expense_shares_identifier_check CHECK (
+    (user_id IS NOT NULL AND guest_name IS NULL)
+    OR (user_id IS NULL AND guest_name IS NOT NULL)
+  );
+
+-- Index the guest_name path used by the settle UI; user_id already has its FK.
+CREATE INDEX expense_shares_guest_idx ON expense_shares (expense_id, guest_name) WHERE guest_name IS NOT NULL;
+
+-- RLS: the existing user-id policy keeps working for user rows; widen the
+-- "participant" select policy so it also surfaces guest rows the chat
+-- participant can see (chat-participant gate via expenses.chat_id is already
+-- in the select policy). The existing payer-write policy already covers
+-- guest rows because it's gated by expenses.payer_id.
+
+-- Add a NEW self-settle-friendly policy variant that lets payers settle
+-- guest rows (no user_id on a guest, so the legacy "user_id = auth.uid()"
+-- update policy can never apply to them). The payer already has ALL access
+-- via expense_shares_write_payer, so no new policy is strictly needed.
+
+-- Drop the legacy table + its policies (CASCADE not needed since no FK
+-- points at it).
+DROP TABLE guest_expense_shares;
+
+COMMENT ON TABLE expense_shares IS
+  'Per-participant share of an expense. user_id (registered user) and guest_name (non-user) are mutually exclusive — exactly one is set, enforced by expense_shares_identifier_check. Replaces guest_expense_shares (migration 0011).';
+
+-- =====================================================================
+-- 0012_consolidate_post_targets
+-- =====================================================================
+
+-- Migration 0012: Collapse post_groups + post_friend_groups into post_targets
+-- with a target_kind discriminator. can_see_post() now queries one table
+-- instead of two.
+
+CREATE TYPE post_target_kind AS ENUM ('group', 'friend_group');
+
+CREATE TABLE post_targets (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  post_id uuid NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  target_kind post_target_kind NOT NULL,
+  group_id uuid REFERENCES groups(id) ON DELETE CASCADE,
+  friend_group_id uuid REFERENCES friend_groups(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (
+    (target_kind = 'group' AND group_id IS NOT NULL AND friend_group_id IS NULL)
+    OR (target_kind = 'friend_group' AND friend_group_id IS NOT NULL AND group_id IS NULL)
+  ),
+  UNIQUE (post_id, group_id),
+  UNIQUE (post_id, friend_group_id)
+);
+
+-- Indexes for the dominant access patterns (can_see_post + listFeed enrichment).
+CREATE INDEX post_targets_post_idx ON post_targets (post_id);
+CREATE INDEX post_targets_group_idx ON post_targets (group_id) WHERE group_id IS NOT NULL;
+CREATE INDEX post_targets_friend_group_idx ON post_targets (friend_group_id) WHERE friend_group_id IS NOT NULL;
+
+-- Copy legacy data.
+INSERT INTO post_targets (post_id, target_kind, group_id)
+SELECT post_id, 'group'::post_target_kind, group_id FROM post_groups;
+
+INSERT INTO post_targets (post_id, target_kind, friend_group_id)
+SELECT post_id, 'friend_group'::post_target_kind, friend_group_id FROM post_friend_groups;
+
+-- Rewrite can_see_post to query the unified table.
+CREATE OR REPLACE FUNCTION public.can_see_post(p posts)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+declare
+  viewer uuid := auth.uid();
+  viewer_loc geography;
+  has_targets boolean;
+  viewer_in_target boolean;
+begin
+  if viewer is null then
+    return false;
+  end if;
+
+  if p.author_id = viewer then
+    return true;
+  end if;
+
+  if public.is_blocked(viewer, p.author_id) then
+    return false;
+  end if;
+
+  has_targets := exists(select 1 from public.post_targets where post_id = p.id);
+
+  if has_targets then
+    -- Either targeted at a group the viewer's a member of...
+    viewer_in_target := exists(
+      select 1 from public.post_targets pt
+      join public.group_members gm on gm.group_id = pt.group_id
+      where pt.post_id = p.id
+        and pt.target_kind = 'group'
+        and gm.user_id = viewer
+    );
+    if viewer_in_target then
+      return true;
+    end if;
+
+    -- ...or targeted at a friend group the viewer belongs to.
+    viewer_in_target := exists(
+      select 1 from public.post_targets pt
+      join public.friend_group_members fgm on fgm.friend_group_id = pt.friend_group_id
+      where pt.post_id = p.id
+        and pt.target_kind = 'friend_group'
+        and fgm.user_id = viewer
+    );
+    if viewer_in_target then
+      return true;
+    end if;
+
+    -- Targeted posts that don't match: no fallthrough.
+    return false;
+  end if;
+
+  -- Untargeted: friends-of-author can see it.
+  if exists(
+    select 1 from public.friendships
+    where status = 'accepted'
+      and ((requester_id = viewer and addressee_id = p.author_id)
+        or (requester_id = p.author_id and addressee_id = viewer))
+  ) then
+    return true;
+  end if;
+
+  -- Untargeted broadcast: location-gated.
+  if p.is_broadcast and p.broadcast_location is not null and p.broadcast_radius_mi > 0 then
+    select location into viewer_loc from public.profiles where id = viewer;
+    if viewer_loc is not null then
+      if st_dwithin(viewer_loc, p.broadcast_location, p.broadcast_radius_mi * 1609.34) then
+        return true;
+      end if;
+    end if;
+  end if;
+
+  -- Posts cross-posted from an event the viewer can see.
+  if p.event_id is not null then
+    return exists(
+      select 1 from public.events e
+      where e.id = p.event_id and public.can_see_event(e)
+    );
+  end if;
+
+  return false;
+end;
+$function$;
+
+-- RLS on the new table: same shape as the two legacy tables had — readable
+-- if you can see the parent post; writable by the post's author.
+ALTER TABLE post_targets ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY post_targets_select_visible ON post_targets
+  FOR SELECT TO authenticated USING (
+    EXISTS (
+      SELECT 1 FROM posts p
+      WHERE p.id = post_targets.post_id
+        AND can_see_post(p.*)
+    )
+  );
+
+CREATE POLICY post_targets_write_author ON post_targets
+  FOR ALL TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM posts p
+      WHERE p.id = post_targets.post_id
+        AND p.author_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM posts p
+      WHERE p.id = post_targets.post_id
+        AND p.author_id = auth.uid()
+    )
+  );
+
+-- Drop the legacy tables. CASCADE removes their RLS policies + indexes.
+DROP TABLE post_groups;
+DROP TABLE post_friend_groups;
+
+COMMENT ON TABLE post_targets IS
+  'Audience targets for a post. target_kind + the corresponding (group_id | friend_group_id) FK identifies which audience can see the post. Replaces post_groups + post_friend_groups (migration 0012).';
+
+-- =====================================================================
+-- 0013_access_pattern_indexes
+-- =====================================================================
+
+-- Migration 0013: Two missing indexes for access patterns the original
+-- 0001_init.sql didn't cover.
+
+-- listEvents({ upcoming: true }) filters events by status and start_date.
+-- The original schema indexes events(start_date) but the planner has to scan
+-- cancelled rows. Partial index on the active subset is leaner.
+CREATE INDEX events_upcoming_idx
+  ON events (start_date, end_date)
+  WHERE status <> 'cancelled';
+
+-- getDashboardUpcoming filters team_matches by match_date in a 14-day window.
+CREATE INDEX team_matches_match_date_idx
+  ON team_matches (match_date);
+
+-- =====================================================================
+-- 0014_table_comments
+-- =====================================================================
+
+-- Migration 0014: Document every application table with COMMENT ON TABLE.
+-- A schema-archeologist tax: cheap to write once, expensive to recover later.
+
+-- ============== Identity / social ==============
+
+COMMENT ON TABLE profiles IS
+  'Public profile mirror of auth.users. Created automatically by the handle_new_user() trigger on auth.users insert. id is a uuid FK to auth.users(id).';
+
+COMMENT ON TABLE friendships IS
+  'Symmetric friend graph stored as a single directed row (requester -> addressee). status = pending|accepted enforced via friendship_status enum. RLS allows either party to read.';
+
+COMMENT ON TABLE blocks IS
+  'Per-user block list. Asymmetric: a row (blocker, blocked) hides the blocked user''s content from the blocker AND prevents the blocked user from initiating contact. Checked by is_blocked() helper used in can_see_post / can_see_event.';
+
+COMMENT ON TABLE friend_groups IS
+  'User-owned named subgroups of friends (e.g. "Doubles squad", "Sunday morning crew"). Used to target a post at a slice of the friend graph rather than all friends.';
+
+COMMENT ON TABLE friend_group_members IS
+  'Membership of a friend_group. Owner-only writable.';
+
+-- ============== Feed / posts ==============
+
+COMMENT ON TABLE posts IS
+  'Core feed item. post_type discriminates regular / find_players / propose_team / event. Targeting via post_targets (group or friend_group). Untargeted posts default to friend-graph visibility, with broadcast posts adding a location-gated radius. Visibility is computed by can_see_post(p posts).';
+
+COMMENT ON TABLE post_targets IS
+  'Audience targets for a post. target_kind + the corresponding (group_id | friend_group_id) FK identifies which audience can see the post. Replaces post_groups + post_friend_groups (migration 0012).';
+
+COMMENT ON TABLE photos IS
+  'Photos attached to a post. order column drives the carousel display sequence.';
+
+COMMENT ON TABLE likes IS
+  'Per-(post,user) like row. Composite unique constraint enforces single like per user. listFeed enrichment counts these.';
+
+COMMENT ON TABLE comments IS
+  'Top-level comments on a post. No threading by design.';
+
+COMMENT ON TABLE hidden_posts IS
+  'Soft-hide for non-author posts. The hiding user no longer sees the post in their feed; the post itself is untouched. Separate from blocks (which apply to all of an author''s posts).';
+
+COMMENT ON TABLE play_requests IS
+  'Join-a-game requests against a find_players post. status = pending|approved|rejected. Approval increments posts.players_confirmed; reaching players_needed flips posts.is_complete.';
+
+COMMENT ON TABLE highlights IS
+  'Story-style media on a profile. Ordered by created_at desc.';
+
+-- ============== Messages (kept split — RLS divergence justifies it) ==============
+
+COMMENT ON TABLE messages IS
+  'Direct messages between two users (sender_id -> receiver_id). RLS: only sender or receiver can read. Kept separate from chat_messages / group_messages because the visibility shape differs (no chat_participants / group_members join needed).';
+
+COMMENT ON TABLE chat_messages IS
+  'Messages in a chat (session/group). Visibility via chat_participants. Kept separate from group_messages because chats can be lightweight session-backed (auto-created when a find_players post fills) without owning the heavier group_members state machine.';
+
+COMMENT ON TABLE group_messages IS
+  'Messages in a team (group). Visibility via group_members. Adds an announcement kind (which triggers email fan-out via the reminder cron) and a poll_id link that chat_messages lacks.';
+
+COMMENT ON TABLE message_reactions IS
+  'Polymorphic reactions across all three message tables. target_type (dm|chat|group) + target_id identifies the parent. One row per (target, user, emoji). Already in the consolidated form a separate-tables design would have to fall back to.';
+
+COMMENT ON TABLE direct_message_reads IS
+  'Per-pair read state for DMs. Keyed (user_id, other_id). Exists for query performance — computing unread by scanning messages would be expensive at scale. Also stores cleared_at for per-user soft-clear.';
+
+COMMENT ON TABLE chats IS
+  'A chat — many-to-many of profiles via chat_participants. Backing concept for both session chats (auto-created from a filled find_players post) and friend-group chats. friend_group_id is non-null when the chat backs a friend_group.';
+
+COMMENT ON TABLE chat_participants IS
+  'Membership of a chat with rich per-row state: muted, pinned_at, hidden_at (soft-leave), cleared_at (soft-clear history), last_read_at. State machine divergence from group_members justifies keeping these separate.';
+
+-- ============== Groups / teams ==============
+
+COMMENT ON TABLE groups IS
+  'A team / club. Owner-managed. member_types is a jsonb array of strings used by the UI to tag group_members. reminder_prefs is a jsonb config for the practice/match reminder cron.';
+
+COMMENT ON TABLE group_members IS
+  'Membership of a group with role (owner|manager|captain|member), member_type (free-form, from groups.member_types), and archived_at (soft-leave). Different from chat_participants because the captain/manager role hierarchy drives privileged operations.';
+
+COMMENT ON TABLE group_invites IS
+  'Token-based join invites. The Edge Function that emails these is gone — token must currently be shared out-of-band until the email dispatch function is reinstated.';
+
+COMMENT ON TABLE group_files IS
+  'Shared file uploads for a group (PDFs, docs, signed waivers). Storage backed by the files bucket.';
+
+COMMENT ON TABLE team_listings IS
+  'MatchUp bulletin posts — a group manager publishes a need ("looking for a 4th, NTRP 3.5–4.0 in Seattle"). Discoverable by anyone via /matchup; converts to a play_request when someone responds.';
+
+-- ============== Events / matches / practices ==============
+
+COMMENT ON TABLE events IS
+  'Tournaments / round-robins / mixers / clinics. visibility = public | group. Public events use the PostGIS event_location + radius_mi for radius-based discovery; group events restrict visibility to host_group_id''s members. status drives the lifecycle.';
+
+COMMENT ON TABLE event_participants IS
+  'Signups for an event. status = registered | waitlist | withdrawn. wins/losses/sets/points are aggregated from event_matches for standings.';
+
+COMMENT ON TABLE event_matches IS
+  'Individual matches inside an event (tournament bracket, round-robin pairings, ladder rungs). Lots of nullable state because matches go through proposed → scheduled → in_progress → completed and the relevant fields differ per stage.';
+
+COMMENT ON TABLE seasons IS
+  'A named time window for a group. Acts as a parent for team_matches and team_practices, supporting per-season standings.';
+
+COMMENT ON TABLE team_matches IS
+  'Group-level competitive fixtures (vs. event_matches which are part of a structured event). Tied to a season for standings aggregation.';
+
+COMMENT ON TABLE practice_series IS
+  'Recurrence rule for a team practice (e.g. "every Tuesday 6pm at Magnuson"). The team_practices table materializes individual instances.';
+
+COMMENT ON TABLE team_practices IS
+  'Individual practice instances materialized from a practice_series. RSVPs go to the availabilities table.';
+
+COMMENT ON TABLE availabilities IS
+  'User RSVPs for both team matches and team practices. event_kind discriminator + CHECK constraint enforces that exactly one of match_id/practice_id is set. Replaces match_availabilities + practice_availabilities (migration 0010).';
+
+-- ============== Notifications / device tokens ==============
+
+COMMENT ON TABLE notifications IS
+  'User-facing notifications: comment, like, join_request, friend_request, event_invite, group_invite_accepted, message_reaction, request_approved/rejected. Nullable FKs (post_id, comment_id, message_id, event_id, match_id) point to whatever the notification is about. If these grow past ~6 cols, move to a single metadata jsonb instead.';
+
+COMMENT ON TABLE device_tokens IS
+  'Push notification tokens. (user_id, token) unique. platform = ios | android.';
+
+COMMENT ON TABLE reminder_sent IS
+  'Idempotency log for the reminder cron — guarantees we don''t double-send the same lead-time reminder to the same target.';
+
+-- ============== Courts / venues ==============
+
+COMMENT ON TABLE venues IS
+  'Curated facilities (e.g. Seattle Parks ActiveNet locations). venue_courts holds the individual courts within. Separate from the user-added courts table — the curated set has ActiveNet metadata that user-added courts don''t.';
+
+COMMENT ON TABLE venue_courts IS
+  'Individual numbered courts inside a curated venue.';
+
+COMMENT ON TABLE courts IS
+  'User-added courts (not from the curated ActiveNet set). Considered for consolidation with venues but kept separate because the schemas (ActiveNet metadata vs. user-supplied notes) diverge.';
+
+COMMENT ON TABLE court_reviews IS
+  'User reviews of a court. 1–5 star rating plus text + photos.';
+
+COMMENT ON TABLE court_review_photos IS
+  'Photos attached to a court review. Ordered by order column.';
+
+COMMENT ON TABLE court_availability_reports IS
+  'Crowd-sourced "is the court available right now?" reports. Has a rate-limit guard (one report per user per court per N minutes) enforced in the query helper.';
+
+COMMENT ON TABLE bookings IS
+  'Court reservations. Sister to event_participants but with payment / time-slot semantics; not unified because the use cases barely overlap.';
+
+COMMENT ON TABLE booking_players IS
+  'Players included in a court booking. Many-to-many between bookings and profiles.';
+
+-- ============== Albums / files / expenses / polls ==============
+
+COMMENT ON TABLE albums IS
+  'Group-level photo albums.';
+
+COMMENT ON TABLE album_items IS
+  'Individual photos within an album.';
+
+COMMENT ON TABLE expenses IS
+  'Expense incurred by a chat participant (court fees, balls, dinner). payer_id covers the entire amount initially; expense_shares partitions it among participants.';
+
+COMMENT ON TABLE expense_shares IS
+  'Per-participant share of an expense. user_id (registered user) and guest_name (non-user) are mutually exclusive — exactly one is set, enforced by expense_shares_identifier_check. Replaces guest_expense_shares (migration 0011).';
+
+COMMENT ON TABLE polls IS
+  'Standalone polls. Linked to a group_messages row via group_messages.poll_id rather than a polls.group_id column — that way the same poll table can in principle be reused outside the team-chat context.';
+
+COMMENT ON TABLE poll_options IS
+  'Choices for a poll. order drives display sequence.';
+
+COMMENT ON TABLE poll_votes IS
+  'Per-(poll, user, option) vote row. is_multi on the parent poll determines whether a user can have multiple option rows.';
+
+-- =====================================================================
+-- 0015_rls_initplan_optimization
+-- =====================================================================
+
+-- Migration 0015: Rewrite every RLS policy that calls auth.uid() directly
+-- to wrap the call in (SELECT auth.uid()). This is Supabase's recommended
+-- pattern — the planner evaluates the subselect once per query instead of
+-- once per row (the auth_rls_initplan advisor warning).
+--
+-- All policies are dropped + recreated with semantically identical logic;
+-- the only change is the auth.uid() → (SELECT auth.uid()) wrap.
+
+-- ============== profiles ==============
+
+DROP POLICY profiles_select_public ON profiles;
+CREATE POLICY profiles_select_public ON profiles
+  FOR SELECT TO authenticated
+  USING ((NOT is_private) OR (id = (SELECT auth.uid())) OR is_friend(id));
+
+DROP POLICY profiles_update_self ON profiles;
+CREATE POLICY profiles_update_self ON profiles
+  FOR UPDATE TO authenticated
+  USING (id = (SELECT auth.uid()))
+  WITH CHECK (id = (SELECT auth.uid()));
+
+-- ============== friendships ==============
+
+DROP POLICY friendships_select_either ON friendships;
+CREATE POLICY friendships_select_either ON friendships
+  FOR SELECT TO authenticated
+  USING (requester_id = (SELECT auth.uid()) OR addressee_id = (SELECT auth.uid()));
+
+DROP POLICY friendships_insert_self ON friendships;
+CREATE POLICY friendships_insert_self ON friendships
+  FOR INSERT TO authenticated
+  WITH CHECK (requester_id = (SELECT auth.uid()));
+
+DROP POLICY friendships_update_either ON friendships;
+CREATE POLICY friendships_update_either ON friendships
+  FOR UPDATE TO authenticated
+  USING (requester_id = (SELECT auth.uid()) OR addressee_id = (SELECT auth.uid()))
+  WITH CHECK (requester_id = (SELECT auth.uid()) OR addressee_id = (SELECT auth.uid()));
+
+DROP POLICY friendships_delete_either ON friendships;
+CREATE POLICY friendships_delete_either ON friendships
+  FOR DELETE TO authenticated
+  USING (requester_id = (SELECT auth.uid()) OR addressee_id = (SELECT auth.uid()));
+
+-- ============== blocks ==============
+
+DROP POLICY blocks_select_self ON blocks;
+CREATE POLICY blocks_select_self ON blocks FOR SELECT TO authenticated USING (blocker_id = (SELECT auth.uid()));
+
+DROP POLICY blocks_insert_self ON blocks;
+CREATE POLICY blocks_insert_self ON blocks FOR INSERT TO authenticated WITH CHECK (blocker_id = (SELECT auth.uid()));
+
+DROP POLICY blocks_delete_self ON blocks;
+CREATE POLICY blocks_delete_self ON blocks FOR DELETE TO authenticated USING (blocker_id = (SELECT auth.uid()));
+
+-- ============== friend_groups + friend_group_members ==============
+
+DROP POLICY friend_groups_select_owner ON friend_groups;
+CREATE POLICY friend_groups_select_owner ON friend_groups FOR SELECT TO authenticated USING (owner_id = (SELECT auth.uid()));
+
+DROP POLICY friend_groups_insert_owner ON friend_groups;
+CREATE POLICY friend_groups_insert_owner ON friend_groups FOR INSERT TO authenticated WITH CHECK (owner_id = (SELECT auth.uid()));
+
+DROP POLICY friend_groups_update_owner ON friend_groups;
+CREATE POLICY friend_groups_update_owner ON friend_groups FOR UPDATE TO authenticated
+  USING (owner_id = (SELECT auth.uid())) WITH CHECK (owner_id = (SELECT auth.uid()));
+
+DROP POLICY friend_groups_delete_owner ON friend_groups;
+CREATE POLICY friend_groups_delete_owner ON friend_groups FOR DELETE TO authenticated USING (owner_id = (SELECT auth.uid()));
+
+DROP POLICY friend_group_members_select ON friend_group_members;
+CREATE POLICY friend_group_members_select ON friend_group_members FOR SELECT TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM friend_groups fg WHERE fg.id = friend_group_members.friend_group_id AND fg.owner_id = (SELECT auth.uid())
+  ));
+
+DROP POLICY friend_group_members_write_by_owner ON friend_group_members;
+CREATE POLICY friend_group_members_write_by_owner ON friend_group_members FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM friend_groups fg WHERE fg.id = friend_group_members.friend_group_id AND fg.owner_id = (SELECT auth.uid())))
+  WITH CHECK (EXISTS (SELECT 1 FROM friend_groups fg WHERE fg.id = friend_group_members.friend_group_id AND fg.owner_id = (SELECT auth.uid())));
+
+DROP POLICY friend_group_members_leave_self ON friend_group_members;
+CREATE POLICY friend_group_members_leave_self ON friend_group_members FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()));
+
+-- ============== groups + group_members + group_messages ==============
+
+DROP POLICY groups_insert_self ON groups;
+CREATE POLICY groups_insert_self ON groups FOR INSERT TO authenticated WITH CHECK (owner_id = (SELECT auth.uid()));
+
+DROP POLICY groups_delete_owner ON groups;
+CREATE POLICY groups_delete_owner ON groups FOR DELETE TO authenticated USING (owner_id = (SELECT auth.uid()));
+
+DROP POLICY group_members_select_member ON group_members;
+CREATE POLICY group_members_select_member ON group_members FOR SELECT TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR is_group_member(group_id));
+
+DROP POLICY group_members_update_self_or_manager ON group_members;
+CREATE POLICY group_members_update_self_or_manager ON group_members FOR UPDATE TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR has_group_role(group_id, 'manager'::group_role))
+  WITH CHECK (user_id = (SELECT auth.uid()) OR has_group_role(group_id, 'manager'::group_role));
+
+DROP POLICY group_members_delete_self_or_manager ON group_members;
+CREATE POLICY group_members_delete_self_or_manager ON group_members FOR DELETE TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR has_group_role(group_id, 'manager'::group_role));
+
+DROP POLICY group_messages_insert_member ON group_messages;
+CREATE POLICY group_messages_insert_member ON group_messages FOR INSERT TO authenticated
+  WITH CHECK (sender_id = (SELECT auth.uid()) AND is_group_member(group_id));
+
+DROP POLICY group_messages_delete_sender_or_manager ON group_messages;
+CREATE POLICY group_messages_delete_sender_or_manager ON group_messages FOR DELETE TO authenticated
+  USING (sender_id = (SELECT auth.uid()) OR has_group_role(group_id, 'manager'::group_role));
+
+-- ============== albums + album_items + group_files ==============
+
+DROP POLICY albums_insert_member ON albums;
+CREATE POLICY albums_insert_member ON albums FOR INSERT TO authenticated
+  WITH CHECK (is_group_member(group_id) AND created_by_id = (SELECT auth.uid()));
+
+DROP POLICY album_items_insert_member ON album_items;
+CREATE POLICY album_items_insert_member ON album_items FOR INSERT TO authenticated
+  WITH CHECK (added_by_id = (SELECT auth.uid()) AND EXISTS (
+    SELECT 1 FROM albums a WHERE a.id = album_items.album_id AND is_group_member(a.group_id)
+  ));
+
+DROP POLICY album_items_delete_owner_or_captain ON album_items;
+CREATE POLICY album_items_delete_owner_or_captain ON album_items FOR DELETE TO authenticated
+  USING (added_by_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM albums a WHERE a.id = album_items.album_id AND has_group_role(a.group_id, 'captain'::group_role)
+  ));
+
+DROP POLICY group_files_insert_member ON group_files;
+CREATE POLICY group_files_insert_member ON group_files FOR INSERT TO authenticated
+  WITH CHECK (is_group_member(group_id) AND uploaded_by_id = (SELECT auth.uid()));
+
+DROP POLICY group_files_delete_owner_or_captain ON group_files;
+CREATE POLICY group_files_delete_owner_or_captain ON group_files FOR DELETE TO authenticated
+  USING (uploaded_by_id = (SELECT auth.uid()) OR has_group_role(group_id, 'captain'::group_role));
+
+-- ============== events + event_participants + event_matches ==============
+
+DROP POLICY events_insert_self ON events;
+CREATE POLICY events_insert_self ON events FOR INSERT TO authenticated WITH CHECK (owner_id = (SELECT auth.uid()));
+
+DROP POLICY events_update_owner ON events;
+CREATE POLICY events_update_owner ON events FOR UPDATE TO authenticated
+  USING (owner_id = (SELECT auth.uid()) OR (host_group_id IS NOT NULL AND has_group_role(host_group_id, 'manager'::group_role)))
+  WITH CHECK (owner_id = (SELECT auth.uid()) OR (host_group_id IS NOT NULL AND has_group_role(host_group_id, 'manager'::group_role)));
+
+DROP POLICY events_delete_owner ON events;
+CREATE POLICY events_delete_owner ON events FOR DELETE TO authenticated USING (owner_id = (SELECT auth.uid()));
+
+DROP POLICY event_participants_select_visible ON event_participants;
+CREATE POLICY event_participants_select_visible ON event_participants FOR SELECT TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM events e WHERE e.id = event_participants.event_id AND can_see_event(e.*)
+  ));
+
+DROP POLICY event_participants_insert_self ON event_participants;
+CREATE POLICY event_participants_insert_self ON event_participants FOR INSERT TO authenticated
+  WITH CHECK (user_id = (SELECT auth.uid()) AND EXISTS (
+    SELECT 1 FROM events e WHERE e.id = event_participants.event_id AND can_see_event(e.*) AND e.is_public_signup
+  ));
+
+DROP POLICY event_participants_update_self_or_owner ON event_participants;
+CREATE POLICY event_participants_update_self_or_owner ON event_participants FOR UPDATE TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM events e WHERE e.id = event_participants.event_id AND e.owner_id = (SELECT auth.uid())
+  ))
+  WITH CHECK (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM events e WHERE e.id = event_participants.event_id AND e.owner_id = (SELECT auth.uid())
+  ));
+
+DROP POLICY event_participants_delete_self_or_owner ON event_participants;
+CREATE POLICY event_participants_delete_self_or_owner ON event_participants FOR DELETE TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM events e WHERE e.id = event_participants.event_id AND e.owner_id = (SELECT auth.uid())
+  ));
+
+DROP POLICY event_matches_write_owner ON event_matches;
+CREATE POLICY event_matches_write_owner ON event_matches FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM events e WHERE e.id = event_matches.event_id AND e.owner_id = (SELECT auth.uid())))
+  WITH CHECK (EXISTS (SELECT 1 FROM events e WHERE e.id = event_matches.event_id AND e.owner_id = (SELECT auth.uid())));
+
+-- ============== posts + post_targets + photos + likes + comments + hidden_posts ==============
+
+DROP POLICY posts_insert_self ON posts;
+CREATE POLICY posts_insert_self ON posts FOR INSERT TO authenticated WITH CHECK (author_id = (SELECT auth.uid()));
+
+DROP POLICY posts_update_author ON posts;
+CREATE POLICY posts_update_author ON posts FOR UPDATE TO authenticated
+  USING (author_id = (SELECT auth.uid())) WITH CHECK (author_id = (SELECT auth.uid()));
+
+DROP POLICY posts_delete_author ON posts;
+CREATE POLICY posts_delete_author ON posts FOR DELETE TO authenticated USING (author_id = (SELECT auth.uid()));
+
+DROP POLICY post_targets_write_author ON post_targets;
+CREATE POLICY post_targets_write_author ON post_targets FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM posts p WHERE p.id = post_targets.post_id AND p.author_id = (SELECT auth.uid())))
+  WITH CHECK (EXISTS (SELECT 1 FROM posts p WHERE p.id = post_targets.post_id AND p.author_id = (SELECT auth.uid())));
+
+DROP POLICY photos_write_author ON photos;
+CREATE POLICY photos_write_author ON photos FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM posts p WHERE p.id = photos.post_id AND p.author_id = (SELECT auth.uid())))
+  WITH CHECK (EXISTS (SELECT 1 FROM posts p WHERE p.id = photos.post_id AND p.author_id = (SELECT auth.uid())));
+
+DROP POLICY likes_insert_self_on_visible ON likes;
+CREATE POLICY likes_insert_self_on_visible ON likes FOR INSERT TO authenticated
+  WITH CHECK (user_id = (SELECT auth.uid()) AND EXISTS (
+    SELECT 1 FROM posts p WHERE p.id = likes.post_id AND can_see_post(p.*)
+  ));
+
+DROP POLICY likes_delete_self ON likes;
+CREATE POLICY likes_delete_self ON likes FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()));
+
+DROP POLICY comments_insert_self ON comments;
+CREATE POLICY comments_insert_self ON comments FOR INSERT TO authenticated
+  WITH CHECK (author_id = (SELECT auth.uid()) AND EXISTS (
+    SELECT 1 FROM posts p WHERE p.id = comments.post_id AND can_see_post(p.*) AND NOT p.comments_disabled
+  ));
+
+DROP POLICY comments_delete_self ON comments;
+CREATE POLICY comments_delete_self ON comments FOR DELETE TO authenticated USING (author_id = (SELECT auth.uid()));
+
+DROP POLICY hidden_posts_self ON hidden_posts;
+CREATE POLICY hidden_posts_self ON hidden_posts FOR ALL TO authenticated
+  USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
+
+DROP POLICY play_requests_select_self_or_author ON play_requests;
+CREATE POLICY play_requests_select_self_or_author ON play_requests FOR SELECT TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM posts p WHERE p.id = play_requests.post_id AND p.author_id = (SELECT auth.uid())
+  ));
+
+DROP POLICY play_requests_insert_self ON play_requests;
+CREATE POLICY play_requests_insert_self ON play_requests FOR INSERT TO authenticated
+  WITH CHECK (user_id = (SELECT auth.uid()) AND EXISTS (
+    SELECT 1 FROM posts p WHERE p.id = play_requests.post_id AND can_see_post(p.*)
+  ));
+
+DROP POLICY play_requests_update_self_or_author ON play_requests;
+CREATE POLICY play_requests_update_self_or_author ON play_requests FOR UPDATE TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM posts p WHERE p.id = play_requests.post_id AND p.author_id = (SELECT auth.uid())
+  ))
+  WITH CHECK (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM posts p WHERE p.id = play_requests.post_id AND p.author_id = (SELECT auth.uid())
+  ));
+
+DROP POLICY play_requests_delete_self ON play_requests;
+CREATE POLICY play_requests_delete_self ON play_requests FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()));
+
+DROP POLICY highlights_write_self ON highlights;
+CREATE POLICY highlights_write_self ON highlights FOR ALL TO authenticated
+  USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
+
+-- ============== polls + poll_options + poll_votes ==============
+
+DROP POLICY polls_select_member ON polls;
+CREATE POLICY polls_select_member ON polls FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM group_messages gm WHERE gm.poll_id = polls.id AND is_group_member(gm.group_id)
+  ) OR created_by_id = (SELECT auth.uid()));
+
+DROP POLICY polls_insert_self ON polls;
+CREATE POLICY polls_insert_self ON polls FOR INSERT TO authenticated WITH CHECK (created_by_id = (SELECT auth.uid()));
+
+DROP POLICY polls_update_creator ON polls;
+CREATE POLICY polls_update_creator ON polls FOR UPDATE TO authenticated
+  USING (created_by_id = (SELECT auth.uid())) WITH CHECK (created_by_id = (SELECT auth.uid()));
+
+DROP POLICY polls_delete_creator ON polls;
+CREATE POLICY polls_delete_creator ON polls FOR DELETE TO authenticated USING (created_by_id = (SELECT auth.uid()));
+
+DROP POLICY poll_options_select ON poll_options;
+CREATE POLICY poll_options_select ON poll_options FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM polls p WHERE p.id = poll_options.poll_id AND (
+    p.created_by_id = (SELECT auth.uid())
+    OR EXISTS (SELECT 1 FROM group_messages gm WHERE gm.poll_id = p.id AND is_group_member(gm.group_id))
+  )));
+
+DROP POLICY poll_options_write_creator ON poll_options;
+CREATE POLICY poll_options_write_creator ON poll_options FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM polls p WHERE p.id = poll_options.poll_id AND p.created_by_id = (SELECT auth.uid())))
+  WITH CHECK (EXISTS (SELECT 1 FROM polls p WHERE p.id = poll_options.poll_id AND p.created_by_id = (SELECT auth.uid())));
+
+DROP POLICY poll_votes_select_member ON poll_votes;
+CREATE POLICY poll_votes_select_member ON poll_votes FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM polls p WHERE p.id = poll_votes.poll_id AND (
+    p.created_by_id = (SELECT auth.uid())
+    OR EXISTS (SELECT 1 FROM group_messages gm WHERE gm.poll_id = p.id AND is_group_member(gm.group_id))
+  )));
+
+DROP POLICY poll_votes_insert_self ON poll_votes;
+CREATE POLICY poll_votes_insert_self ON poll_votes FOR INSERT TO authenticated
+  WITH CHECK (user_id = (SELECT auth.uid()) AND EXISTS (
+    SELECT 1 FROM polls p WHERE p.id = poll_votes.poll_id AND EXISTS (
+      SELECT 1 FROM group_messages gm WHERE gm.poll_id = p.id AND is_group_member(gm.group_id)
+    ) AND NOT p.is_closed
+  ));
+
+DROP POLICY poll_votes_delete_self ON poll_votes;
+CREATE POLICY poll_votes_delete_self ON poll_votes FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()));
+
+-- ============== messages + chats + chat_messages + chat_participants + dm_reads + message_reactions ==============
+
+DROP POLICY messages_select_pair ON messages;
+CREATE POLICY messages_select_pair ON messages FOR SELECT TO authenticated
+  USING (sender_id = (SELECT auth.uid()) OR receiver_id = (SELECT auth.uid()));
+
+DROP POLICY messages_insert_self_unblocked ON messages;
+CREATE POLICY messages_insert_self_unblocked ON messages FOR INSERT TO authenticated
+  WITH CHECK (sender_id = (SELECT auth.uid()) AND NOT is_blocked((SELECT auth.uid()), receiver_id));
+
+DROP POLICY messages_delete_sender ON messages;
+CREATE POLICY messages_delete_sender ON messages FOR DELETE TO authenticated USING (sender_id = (SELECT auth.uid()));
+
+DROP POLICY dm_reads_self ON direct_message_reads;
+CREATE POLICY dm_reads_self ON direct_message_reads FOR ALL TO authenticated
+  USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
+
+DROP POLICY chats_select_participant ON chats;
+CREATE POLICY chats_select_participant ON chats FOR SELECT TO authenticated
+  USING (is_chat_participant(id) OR creator_id = (SELECT auth.uid()));
+
+DROP POLICY chats_insert_self ON chats;
+CREATE POLICY chats_insert_self ON chats FOR INSERT TO authenticated WITH CHECK (creator_id = (SELECT auth.uid()));
+
+DROP POLICY chats_update_creator ON chats;
+CREATE POLICY chats_update_creator ON chats FOR UPDATE TO authenticated
+  USING (creator_id = (SELECT auth.uid())) WITH CHECK (creator_id = (SELECT auth.uid()));
+
+DROP POLICY chats_delete_creator ON chats;
+CREATE POLICY chats_delete_creator ON chats FOR DELETE TO authenticated USING (creator_id = (SELECT auth.uid()));
+
+DROP POLICY chat_participants_select_member ON chat_participants;
+CREATE POLICY chat_participants_select_member ON chat_participants FOR SELECT TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR is_chat_participant(chat_id));
+
+DROP POLICY chat_participants_insert_member_or_creator ON chat_participants;
+CREATE POLICY chat_participants_insert_member_or_creator ON chat_participants FOR INSERT TO authenticated
+  WITH CHECK (is_chat_participant(chat_id) OR EXISTS (
+    SELECT 1 FROM chats c WHERE c.id = chat_participants.chat_id AND c.creator_id = (SELECT auth.uid())
+  ));
+
+DROP POLICY chat_participants_update_self ON chat_participants;
+CREATE POLICY chat_participants_update_self ON chat_participants FOR UPDATE TO authenticated
+  USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
+
+DROP POLICY chat_participants_delete_self_or_creator ON chat_participants;
+CREATE POLICY chat_participants_delete_self_or_creator ON chat_participants FOR DELETE TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM chats c WHERE c.id = chat_participants.chat_id AND c.creator_id = (SELECT auth.uid())
+  ));
+
+DROP POLICY chat_messages_insert_member ON chat_messages;
+CREATE POLICY chat_messages_insert_member ON chat_messages FOR INSERT TO authenticated
+  WITH CHECK (sender_id = (SELECT auth.uid()) AND is_chat_participant(chat_id));
+
+DROP POLICY chat_messages_delete_sender ON chat_messages;
+CREATE POLICY chat_messages_delete_sender ON chat_messages FOR DELETE TO authenticated USING (sender_id = (SELECT auth.uid()));
+
+DROP POLICY message_reactions_select_visible ON message_reactions;
+CREATE POLICY message_reactions_select_visible ON message_reactions FOR SELECT TO authenticated
+  USING (CASE target_type
+    WHEN 'dm'::reaction_target THEN EXISTS (
+      SELECT 1 FROM messages m WHERE m.id = message_reactions.target_id AND (m.sender_id = (SELECT auth.uid()) OR m.receiver_id = (SELECT auth.uid()))
+    )
+    WHEN 'group'::reaction_target THEN EXISTS (
+      SELECT 1 FROM group_messages gm WHERE gm.id = message_reactions.target_id AND is_group_member(gm.group_id)
+    )
+    WHEN 'chat'::reaction_target THEN EXISTS (
+      SELECT 1 FROM chat_messages cm WHERE cm.id = message_reactions.target_id AND is_chat_participant(cm.chat_id)
+    )
+    ELSE NULL::boolean
+  END);
+
+DROP POLICY message_reactions_insert_self ON message_reactions;
+CREATE POLICY message_reactions_insert_self ON message_reactions FOR INSERT TO authenticated
+  WITH CHECK (user_id = (SELECT auth.uid()) AND CASE target_type
+    WHEN 'dm'::reaction_target THEN EXISTS (
+      SELECT 1 FROM messages m WHERE m.id = message_reactions.target_id AND (m.sender_id = (SELECT auth.uid()) OR m.receiver_id = (SELECT auth.uid()))
+    )
+    WHEN 'group'::reaction_target THEN EXISTS (
+      SELECT 1 FROM group_messages gm WHERE gm.id = message_reactions.target_id AND is_group_member(gm.group_id)
+    )
+    WHEN 'chat'::reaction_target THEN EXISTS (
+      SELECT 1 FROM chat_messages cm WHERE cm.id = message_reactions.target_id AND is_chat_participant(cm.chat_id)
+    )
+    ELSE NULL::boolean
+  END);
+
+DROP POLICY message_reactions_delete_self ON message_reactions;
+CREATE POLICY message_reactions_delete_self ON message_reactions FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()));
+
+-- ============== notifications ==============
+
+DROP POLICY notifications_select_self ON notifications;
+CREATE POLICY notifications_select_self ON notifications FOR SELECT TO authenticated USING (user_id = (SELECT auth.uid()));
+
+DROP POLICY notifications_update_self ON notifications;
+CREATE POLICY notifications_update_self ON notifications FOR UPDATE TO authenticated
+  USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
+
+DROP POLICY notifications_delete_self ON notifications;
+CREATE POLICY notifications_delete_self ON notifications FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()));
+
+-- ============== expenses + expense_shares ==============
+
+DROP POLICY expenses_insert_participant ON expenses;
+CREATE POLICY expenses_insert_participant ON expenses FOR INSERT TO authenticated
+  WITH CHECK (payer_id = (SELECT auth.uid()) AND is_chat_participant(chat_id));
+
+DROP POLICY expenses_update_payer ON expenses;
+CREATE POLICY expenses_update_payer ON expenses FOR UPDATE TO authenticated
+  USING (payer_id = (SELECT auth.uid())) WITH CHECK (payer_id = (SELECT auth.uid()));
+
+DROP POLICY expenses_delete_payer ON expenses;
+CREATE POLICY expenses_delete_payer ON expenses FOR DELETE TO authenticated USING (payer_id = (SELECT auth.uid()));
+
+DROP POLICY expense_shares_select_participant ON expense_shares;
+CREATE POLICY expense_shares_select_participant ON expense_shares FOR SELECT TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM expenses e WHERE e.id = expense_shares.expense_id AND is_chat_participant(e.chat_id)
+  ));
+
+DROP POLICY expense_shares_write_payer ON expense_shares;
+CREATE POLICY expense_shares_write_payer ON expense_shares FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM expenses e WHERE e.id = expense_shares.expense_id AND e.payer_id = (SELECT auth.uid())))
+  WITH CHECK (EXISTS (SELECT 1 FROM expenses e WHERE e.id = expense_shares.expense_id AND e.payer_id = (SELECT auth.uid())));
+
+DROP POLICY expense_shares_update_self_settle ON expense_shares;
+CREATE POLICY expense_shares_update_self_settle ON expense_shares FOR UPDATE TO authenticated
+  USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
+
+-- ============== courts + court_reviews + court_review_photos + court_availability_reports + bookings + booking_players ==============
+
+DROP POLICY courts_insert_self ON courts;
+CREATE POLICY courts_insert_self ON courts FOR INSERT TO authenticated WITH CHECK (added_by_id = (SELECT auth.uid()));
+
+DROP POLICY courts_update_self ON courts;
+CREATE POLICY courts_update_self ON courts FOR UPDATE TO authenticated
+  USING (added_by_id = (SELECT auth.uid())) WITH CHECK (added_by_id = (SELECT auth.uid()));
+
+DROP POLICY courts_delete_self ON courts;
+CREATE POLICY courts_delete_self ON courts FOR DELETE TO authenticated USING (added_by_id = (SELECT auth.uid()));
+
+DROP POLICY court_reviews_insert_self ON court_reviews;
+CREATE POLICY court_reviews_insert_self ON court_reviews FOR INSERT TO authenticated WITH CHECK (user_id = (SELECT auth.uid()));
+
+DROP POLICY court_reviews_update_self ON court_reviews;
+CREATE POLICY court_reviews_update_self ON court_reviews FOR UPDATE TO authenticated
+  USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
+
+DROP POLICY court_reviews_delete_self ON court_reviews;
+CREATE POLICY court_reviews_delete_self ON court_reviews FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()));
+
+DROP POLICY court_review_photos_write_author ON court_review_photos;
+CREATE POLICY court_review_photos_write_author ON court_review_photos FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM court_reviews cr WHERE cr.id = court_review_photos.review_id AND cr.user_id = (SELECT auth.uid())))
+  WITH CHECK (EXISTS (SELECT 1 FROM court_reviews cr WHERE cr.id = court_review_photos.review_id AND cr.user_id = (SELECT auth.uid())));
+
+DROP POLICY court_availability_reports_insert_self ON court_availability_reports;
+CREATE POLICY court_availability_reports_insert_self ON court_availability_reports FOR INSERT TO authenticated WITH CHECK (user_id = (SELECT auth.uid()));
+
+DROP POLICY court_availability_reports_delete_self ON court_availability_reports;
+CREATE POLICY court_availability_reports_delete_self ON court_availability_reports FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()));
+
+DROP POLICY bookings_select_member ON bookings;
+CREATE POLICY bookings_select_member ON bookings FOR SELECT TO authenticated
+  USING (organizer_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM booking_players bp WHERE bp.booking_id = bookings.id AND bp.user_id = (SELECT auth.uid())
+  ));
+
+DROP POLICY bookings_insert_organizer ON bookings;
+CREATE POLICY bookings_insert_organizer ON bookings FOR INSERT TO authenticated WITH CHECK (organizer_id = (SELECT auth.uid()));
+
+DROP POLICY bookings_update_organizer ON bookings;
+CREATE POLICY bookings_update_organizer ON bookings FOR UPDATE TO authenticated
+  USING (organizer_id = (SELECT auth.uid())) WITH CHECK (organizer_id = (SELECT auth.uid()));
+
+DROP POLICY bookings_delete_organizer ON bookings;
+CREATE POLICY bookings_delete_organizer ON bookings FOR DELETE TO authenticated USING (organizer_id = (SELECT auth.uid()));
+
+DROP POLICY booking_players_select_member ON booking_players;
+CREATE POLICY booking_players_select_member ON booking_players FOR SELECT TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())
+  ));
+
+DROP POLICY booking_players_update_self ON booking_players;
+CREATE POLICY booking_players_update_self ON booking_players FOR UPDATE TO authenticated
+  USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
+
+DROP POLICY booking_players_write_organizer ON booking_players;
+CREATE POLICY booking_players_write_organizer ON booking_players FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())))
+  WITH CHECK (EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())));
+
+-- ============== availabilities + device_tokens ==============
+
+DROP POLICY availabilities_upsert_self ON availabilities;
+CREATE POLICY availabilities_upsert_self ON availabilities FOR INSERT TO authenticated
+  WITH CHECK (user_id = (SELECT auth.uid()) AND (
+    (match_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM team_matches tm WHERE tm.id = availabilities.match_id AND is_group_member(tm.group_id)
+    ))
+    OR (practice_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM team_practices tp JOIN practice_series ps ON ps.id = tp.series_id
+      WHERE tp.id = availabilities.practice_id AND is_group_member(ps.group_id)
+    ))
+  ));
+
+DROP POLICY availabilities_update_self_or_captain ON availabilities;
+CREATE POLICY availabilities_update_self_or_captain ON availabilities FOR UPDATE TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR (match_id IS NOT NULL AND EXISTS (
+    SELECT 1 FROM team_matches tm WHERE tm.id = availabilities.match_id AND has_group_role(tm.group_id, 'captain'::group_role)
+  )))
+  WITH CHECK (user_id = (SELECT auth.uid()) OR (match_id IS NOT NULL AND EXISTS (
+    SELECT 1 FROM team_matches tm WHERE tm.id = availabilities.match_id AND has_group_role(tm.group_id, 'captain'::group_role)
+  )));
+
+DROP POLICY availabilities_delete_self ON availabilities;
+CREATE POLICY availabilities_delete_self ON availabilities FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()));
+
+DROP POLICY device_tokens_self ON device_tokens;
+CREATE POLICY device_tokens_self ON device_tokens FOR ALL TO authenticated
+  USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
+
+-- =====================================================================
+-- 0016_collapse_permissive_policy_overlaps
+-- =====================================================================
+
+-- Migration 0016: Address the multiple_permissive_policies advisor.
+--
+-- Pattern: every `_write_X` policy was FOR ALL, so it overlapped with the
+-- corresponding `_select_X` policy on the SELECT command (and sometimes
+-- with a `_update_self` policy on UPDATE). The planner has to evaluate
+-- every applicable permissive policy and OR them, which is wasted work.
+--
+-- Fix: split each FOR ALL into separate FOR INSERT / FOR UPDATE / FOR
+-- DELETE policies, and merge any pair that targets the same command.
+
+-- ============== booking_players ==============
+
+DROP POLICY booking_players_write_organizer ON booking_players;
+DROP POLICY booking_players_update_self ON booking_players;
+
+CREATE POLICY booking_players_insert_organizer ON booking_players FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())));
+
+CREATE POLICY booking_players_update_self_or_organizer ON booking_players FOR UPDATE TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())
+  ))
+  WITH CHECK (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())
+  ));
+
+CREATE POLICY booking_players_delete_organizer ON booking_players FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())));
+
+-- ============== court_review_photos ==============
+
+DROP POLICY court_review_photos_write_author ON court_review_photos;
+
+CREATE POLICY court_review_photos_insert_author ON court_review_photos FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM court_reviews cr WHERE cr.id = court_review_photos.review_id AND cr.user_id = (SELECT auth.uid())));
+
+CREATE POLICY court_review_photos_update_author ON court_review_photos FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM court_reviews cr WHERE cr.id = court_review_photos.review_id AND cr.user_id = (SELECT auth.uid())))
+  WITH CHECK (EXISTS (SELECT 1 FROM court_reviews cr WHERE cr.id = court_review_photos.review_id AND cr.user_id = (SELECT auth.uid())));
+
+CREATE POLICY court_review_photos_delete_author ON court_review_photos FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM court_reviews cr WHERE cr.id = court_review_photos.review_id AND cr.user_id = (SELECT auth.uid())));
+
+-- ============== event_matches ==============
+
+DROP POLICY event_matches_write_owner ON event_matches;
+
+CREATE POLICY event_matches_insert_owner ON event_matches FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM events e WHERE e.id = event_matches.event_id AND e.owner_id = (SELECT auth.uid())));
+
+CREATE POLICY event_matches_update_owner ON event_matches FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM events e WHERE e.id = event_matches.event_id AND e.owner_id = (SELECT auth.uid())))
+  WITH CHECK (EXISTS (SELECT 1 FROM events e WHERE e.id = event_matches.event_id AND e.owner_id = (SELECT auth.uid())));
+
+CREATE POLICY event_matches_delete_owner ON event_matches FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM events e WHERE e.id = event_matches.event_id AND e.owner_id = (SELECT auth.uid())));
+
+-- ============== expense_shares ==============
+
+DROP POLICY expense_shares_write_payer ON expense_shares;
+DROP POLICY expense_shares_update_self_settle ON expense_shares;
+
+CREATE POLICY expense_shares_insert_payer ON expense_shares FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM expenses e WHERE e.id = expense_shares.expense_id AND e.payer_id = (SELECT auth.uid())));
+
+CREATE POLICY expense_shares_update_self_or_payer ON expense_shares FOR UPDATE TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM expenses e WHERE e.id = expense_shares.expense_id AND e.payer_id = (SELECT auth.uid())
+  ))
+  WITH CHECK (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM expenses e WHERE e.id = expense_shares.expense_id AND e.payer_id = (SELECT auth.uid())
+  ));
+
+CREATE POLICY expense_shares_delete_payer ON expense_shares FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM expenses e WHERE e.id = expense_shares.expense_id AND e.payer_id = (SELECT auth.uid())));
+
+-- ============== friend_group_members ==============
+
+DROP POLICY friend_group_members_write_by_owner ON friend_group_members;
+DROP POLICY friend_group_members_leave_self ON friend_group_members;
+
+CREATE POLICY friend_group_members_insert_owner ON friend_group_members FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM friend_groups fg WHERE fg.id = friend_group_members.friend_group_id AND fg.owner_id = (SELECT auth.uid())));
+
+CREATE POLICY friend_group_members_update_owner ON friend_group_members FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM friend_groups fg WHERE fg.id = friend_group_members.friend_group_id AND fg.owner_id = (SELECT auth.uid())))
+  WITH CHECK (EXISTS (SELECT 1 FROM friend_groups fg WHERE fg.id = friend_group_members.friend_group_id AND fg.owner_id = (SELECT auth.uid())));
+
+CREATE POLICY friend_group_members_delete_self_or_owner ON friend_group_members FOR DELETE TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR EXISTS (
+    SELECT 1 FROM friend_groups fg WHERE fg.id = friend_group_members.friend_group_id AND fg.owner_id = (SELECT auth.uid())
+  ));
+
+-- ============== group_invites ==============
+
+DROP POLICY group_invites_write_manager ON group_invites;
+
+CREATE POLICY group_invites_insert_manager ON group_invites FOR INSERT TO authenticated
+  WITH CHECK (has_group_role(group_id, 'manager'::group_role));
+
+CREATE POLICY group_invites_update_manager ON group_invites FOR UPDATE TO authenticated
+  USING (has_group_role(group_id, 'manager'::group_role))
+  WITH CHECK (has_group_role(group_id, 'manager'::group_role));
+
+CREATE POLICY group_invites_delete_manager ON group_invites FOR DELETE TO authenticated
+  USING (has_group_role(group_id, 'manager'::group_role));
+
+-- ============== highlights ==============
+
+DROP POLICY highlights_write_self ON highlights;
+
+CREATE POLICY highlights_insert_self ON highlights FOR INSERT TO authenticated WITH CHECK (user_id = (SELECT auth.uid()));
+CREATE POLICY highlights_update_self ON highlights FOR UPDATE TO authenticated
+  USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
+CREATE POLICY highlights_delete_self ON highlights FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()));
+
+-- ============== photos ==============
+
+DROP POLICY photos_write_author ON photos;
+
+CREATE POLICY photos_insert_author ON photos FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM posts p WHERE p.id = photos.post_id AND p.author_id = (SELECT auth.uid())));
+
+CREATE POLICY photos_update_author ON photos FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM posts p WHERE p.id = photos.post_id AND p.author_id = (SELECT auth.uid())))
+  WITH CHECK (EXISTS (SELECT 1 FROM posts p WHERE p.id = photos.post_id AND p.author_id = (SELECT auth.uid())));
+
+CREATE POLICY photos_delete_author ON photos FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM posts p WHERE p.id = photos.post_id AND p.author_id = (SELECT auth.uid())));
+
+-- ============== poll_options ==============
+
+DROP POLICY poll_options_write_creator ON poll_options;
+
+CREATE POLICY poll_options_insert_creator ON poll_options FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM polls p WHERE p.id = poll_options.poll_id AND p.created_by_id = (SELECT auth.uid())));
+
+CREATE POLICY poll_options_update_creator ON poll_options FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM polls p WHERE p.id = poll_options.poll_id AND p.created_by_id = (SELECT auth.uid())))
+  WITH CHECK (EXISTS (SELECT 1 FROM polls p WHERE p.id = poll_options.poll_id AND p.created_by_id = (SELECT auth.uid())));
+
+CREATE POLICY poll_options_delete_creator ON poll_options FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM polls p WHERE p.id = poll_options.poll_id AND p.created_by_id = (SELECT auth.uid())));
+
+-- ============== post_targets ==============
+
+DROP POLICY post_targets_write_author ON post_targets;
+
+CREATE POLICY post_targets_insert_author ON post_targets FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM posts p WHERE p.id = post_targets.post_id AND p.author_id = (SELECT auth.uid())));
+
+CREATE POLICY post_targets_update_author ON post_targets FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM posts p WHERE p.id = post_targets.post_id AND p.author_id = (SELECT auth.uid())))
+  WITH CHECK (EXISTS (SELECT 1 FROM posts p WHERE p.id = post_targets.post_id AND p.author_id = (SELECT auth.uid())));
+
+CREATE POLICY post_targets_delete_author ON post_targets FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM posts p WHERE p.id = post_targets.post_id AND p.author_id = (SELECT auth.uid())));
+
+-- ============== practice_series + seasons + team_listings + team_matches ==============
+-- (all share the same "manager/captain writes, member reads" shape)
+
+DROP POLICY practice_series_write_captain ON practice_series;
+CREATE POLICY practice_series_insert_captain ON practice_series FOR INSERT TO authenticated WITH CHECK (has_group_role(group_id, 'captain'::group_role));
+CREATE POLICY practice_series_update_captain ON practice_series FOR UPDATE TO authenticated
+  USING (has_group_role(group_id, 'captain'::group_role)) WITH CHECK (has_group_role(group_id, 'captain'::group_role));
+CREATE POLICY practice_series_delete_captain ON practice_series FOR DELETE TO authenticated USING (has_group_role(group_id, 'captain'::group_role));
+
+DROP POLICY seasons_write_captain ON seasons;
+CREATE POLICY seasons_insert_captain ON seasons FOR INSERT TO authenticated WITH CHECK (has_group_role(group_id, 'captain'::group_role));
+CREATE POLICY seasons_update_captain ON seasons FOR UPDATE TO authenticated
+  USING (has_group_role(group_id, 'captain'::group_role)) WITH CHECK (has_group_role(group_id, 'captain'::group_role));
+CREATE POLICY seasons_delete_captain ON seasons FOR DELETE TO authenticated USING (has_group_role(group_id, 'captain'::group_role));
+
+DROP POLICY team_listings_write_captain ON team_listings;
+CREATE POLICY team_listings_insert_captain ON team_listings FOR INSERT TO authenticated WITH CHECK (has_group_role(group_id, 'captain'::group_role));
+CREATE POLICY team_listings_update_captain ON team_listings FOR UPDATE TO authenticated
+  USING (has_group_role(group_id, 'captain'::group_role)) WITH CHECK (has_group_role(group_id, 'captain'::group_role));
+CREATE POLICY team_listings_delete_captain ON team_listings FOR DELETE TO authenticated USING (has_group_role(group_id, 'captain'::group_role));
+
+DROP POLICY team_matches_write_captain ON team_matches;
+CREATE POLICY team_matches_insert_captain ON team_matches FOR INSERT TO authenticated WITH CHECK (has_group_role(group_id, 'captain'::group_role));
+CREATE POLICY team_matches_update_captain ON team_matches FOR UPDATE TO authenticated
+  USING (has_group_role(group_id, 'captain'::group_role)) WITH CHECK (has_group_role(group_id, 'captain'::group_role));
+CREATE POLICY team_matches_delete_captain ON team_matches FOR DELETE TO authenticated USING (has_group_role(group_id, 'captain'::group_role));
+
+-- ============== team_practices (captain gated via the parent series) ==============
+
+DROP POLICY team_practices_write_captain ON team_practices;
+CREATE POLICY team_practices_insert_captain ON team_practices FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM practice_series ps WHERE ps.id = team_practices.series_id AND has_group_role(ps.group_id, 'captain'::group_role)));
+CREATE POLICY team_practices_update_captain ON team_practices FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM practice_series ps WHERE ps.id = team_practices.series_id AND has_group_role(ps.group_id, 'captain'::group_role)))
+  WITH CHECK (EXISTS (SELECT 1 FROM practice_series ps WHERE ps.id = team_practices.series_id AND has_group_role(ps.group_id, 'captain'::group_role)));
+CREATE POLICY team_practices_delete_captain ON team_practices FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM practice_series ps WHERE ps.id = team_practices.series_id AND has_group_role(ps.group_id, 'captain'::group_role)));
+
+-- =====================================================================
+-- 0017_index_foreign_keys
+-- =====================================================================
+
+-- Migration 0017: Add covering indexes for every foreign key the
+-- advisor flagged. Each FK column without an index forces a sequential
+-- scan when the planner needs to resolve the join.
+
+-- album_items, albums
+CREATE INDEX IF NOT EXISTS album_items_added_by_id_idx ON album_items (added_by_id);
+CREATE INDEX IF NOT EXISTS albums_cover_item_idx ON albums (cover_item_id);
+CREATE INDEX IF NOT EXISTS albums_created_by_id_idx ON albums (created_by_id);
+
+-- court reports + reviews
+CREATE INDEX IF NOT EXISTS court_availability_reports_post_id_idx ON court_availability_reports (post_id);
+CREATE INDEX IF NOT EXISTS court_reviews_user_id_idx ON court_reviews (user_id);
+
+-- direct_message_reads partner side
+CREATE INDEX IF NOT EXISTS direct_message_reads_other_id_idx ON direct_message_reads (other_id);
+
+-- event_matches — every player slot + reporter / confirmer / proposer
+CREATE INDEX IF NOT EXISTS event_matches_player1_id_idx ON event_matches (player1_id);
+CREATE INDEX IF NOT EXISTS event_matches_player2_id_idx ON event_matches (player2_id);
+CREATE INDEX IF NOT EXISTS event_matches_player3_id_idx ON event_matches (player3_id) WHERE player3_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS event_matches_player4_id_idx ON event_matches (player4_id) WHERE player4_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS event_matches_reported_by_idx ON event_matches (reported_by) WHERE reported_by IS NOT NULL;
+CREATE INDEX IF NOT EXISTS event_matches_confirmed_by_idx ON event_matches (confirmed_by) WHERE confirmed_by IS NOT NULL;
+CREATE INDEX IF NOT EXISTS event_matches_proposed_by_idx ON event_matches (proposed_by) WHERE proposed_by IS NOT NULL;
+
+-- group files + invites
+CREATE INDEX IF NOT EXISTS group_files_uploaded_by_id_idx ON group_files (uploaded_by_id);
+CREATE INDEX IF NOT EXISTS group_invites_invited_by_id_idx ON group_invites (invited_by_id);
+CREATE INDEX IF NOT EXISTS group_invites_accepted_by_id_idx ON group_invites (accepted_by_id) WHERE accepted_by_id IS NOT NULL;
+
+-- group_messages — sender and shared_post
+CREATE INDEX IF NOT EXISTS group_messages_sender_id_idx ON group_messages (sender_id);
+CREATE INDEX IF NOT EXISTS group_messages_shared_post_id_idx ON group_messages (shared_post_id) WHERE shared_post_id IS NOT NULL;
+
+-- messages shared_post
+CREATE INDEX IF NOT EXISTS messages_shared_post_id_idx ON messages (shared_post_id) WHERE shared_post_id IS NOT NULL;
+
+-- notifications: post / comment / message / event / match (all optional)
+CREATE INDEX IF NOT EXISTS notifications_post_id_idx ON notifications (post_id) WHERE post_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS notifications_comment_id_idx ON notifications (comment_id) WHERE comment_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS notifications_message_id_idx ON notifications (message_id) WHERE message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS notifications_event_id_idx ON notifications (event_id) WHERE event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS notifications_match_id_idx ON notifications (match_id) WHERE match_id IS NOT NULL;
+
+-- poll_votes per user
+CREATE INDEX IF NOT EXISTS poll_votes_user_id_idx ON poll_votes (user_id);
+
+-- practice_series + team_matches season FKs
+CREATE INDEX IF NOT EXISTS practice_series_season_id_idx ON practice_series (season_id) WHERE season_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS team_matches_season_id_idx ON team_matches (season_id) WHERE season_id IS NOT NULL;
+
+-- team_listings created_by
+CREATE INDEX IF NOT EXISTS team_listings_created_by_id_idx ON team_listings (created_by_id);
+
