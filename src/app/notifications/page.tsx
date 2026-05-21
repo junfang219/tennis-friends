@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Avatar from "@/components/Avatar";
 import { emojiFor } from "@/lib/reactions";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listNotifications, markAllNotificationsRead } from "@/lib/supabase/queries";
 
 type Notification = {
   id: string;
@@ -147,17 +149,31 @@ export default function NotificationsPage() {
 
   useEffect(() => {
     if (status !== "authenticated") return;
-    fetch("/api/notifications")
-      .then((r) => r.json())
-      .then((data) => {
-        setNotifications(data.notifications || []);
+    const supabase = createSupabaseBrowserClient();
+    listNotifications(supabase)
+      .then((rows) => {
+        setNotifications(
+          rows.map((n) => ({
+            id: n.id,
+            type: n.type,
+            postId: n.post_id ?? "",
+            commentId: n.comment_id ?? "",
+            messageId: n.message_id ?? "",
+            eventId: n.event_id ?? "",
+            matchId: n.match_id ?? "",
+            emoji: n.emoji,
+            read: n.read,
+            createdAt: n.created_at,
+            actor: {
+              id: n.actor.id,
+              name: n.actor.name,
+              profileImageUrl: n.actor.profile_image_url,
+            },
+          }))
+        );
         setLoading(false);
-        // Mark all as read
-        fetch("/api/notifications", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        });
+        // Mark all as read (fire-and-forget).
+        void markAllNotificationsRead(supabase);
       })
       .catch(() => setLoading(false));
   }, [status]);

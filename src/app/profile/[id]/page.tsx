@@ -5,6 +5,8 @@ import { createPortal } from "react-dom";
 import { useParams } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import { useRouter } from "next/navigation";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getProfile } from "@/lib/supabase/queries";
 import Avatar from "@/components/Avatar";
 import FriendRequestButton from "@/components/FriendRequestButton";
 import PostCard from "@/components/PostCard";
@@ -85,9 +87,39 @@ export default function UserProfilePage() {
       router.push("/profile");
       return;
     }
-    fetch(`/api/users/${params.id}`)
-      .then((r) => r.json())
-      .then(setUser);
+    const supabase = createSupabaseBrowserClient();
+    getProfile(supabase, String(params.id)).then((p) => {
+      if (!p) return;
+      setUser({
+        id: p.id,
+        name: p.name,
+        profileImageUrl: p.profile_image_url,
+        bio: p.bio,
+        skillLevel: p.skill_level,
+        gender: p.gender,
+        ageRange: p.age_range,
+        ratingSystem: p.rating_system,
+        ntrpRating: p.ntrp_rating,
+        utrRating: p.utr_rating,
+        coverImageUrl: p.cover_image_url,
+        coverOffsetY: p.cover_offset_y,
+        coverScale: p.cover_scale,
+        customTags: p.custom_tags ? p.custom_tags.split(",").filter(Boolean) : [],
+        latitude: p.latitude,
+        longitude: p.longitude,
+        createdAt: p.created_at,
+        venmoHandle: p.venmo_handle ?? "",
+        paypalHandle: p.paypal_handle ?? "",
+        cashappHandle: p.cashapp_handle ?? "",
+        zelleHandle: p.zelle_handle ?? "",
+        handle: p.handle,
+        highlights: [],
+        posts: [],
+        friendStatus: null,
+        isFriend: false,
+        isBlocked: false,
+      } as unknown as UserProfile);
+    });
   }, [params.id, session?.user?.id, router]);
 
   if (!user) {

@@ -1,6 +1,8 @@
 "use client";
 
 import { useSession, signOut } from "@/lib/supabase/nextauth-compat";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getMyProfile, updateMyProfile } from "@/lib/supabase/queries";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
@@ -197,71 +199,113 @@ export default function ProfilePage() {
   }, [menuOpen]);
 
   useEffect(() => {
-    fetch("/api/profile")
-      .then(async (r) => {
-        if (r.status === 401) {
-          router.replace("/login");
-          return null;
-        }
-        return r.json();
-      })
-      .then((data) => {
-        if (!data || data.error) return;
-        setProfile(data);
-        setForm({
-          name: data.name,
-          handle: data.handle || "",
-          bio: data.bio,
-          skillLevel: data.skillLevel,
-          profileImageUrl: data.profileImageUrl,
-          gender: data.gender || "",
-          ageRange: data.ageRange || "",
-          ratingSystem: data.ratingSystem || "",
-          ntrpRating: data.ntrpRating ?? "",
-          utrRating: data.utrRating ?? "",
-          venmoHandle: data.venmoHandle || "",
-          paypalHandle: data.paypalHandle || "",
-          cashappHandle: data.cashappHandle || "",
-          zelleHandle: data.zelleHandle || "",
-          isPrivate: data.isPrivate === true,
-        });
+    const supabase = createSupabaseBrowserClient();
+    getMyProfile(supabase).then((p) => {
+      if (!p) {
+        router.replace("/login");
+        return;
+      }
+      // Adapt snake_case Supabase shape to the page's camelCase state. The
+      // page predates the Supabase migration; full snake_case rewrite is
+      // future cleanup. customTags + highlights + posts are populated by
+      // separate fetches below.
+      setProfile({
+        id: p.id,
+        name: p.name,
+        email: p.email ?? "",
+        bio: p.bio,
+        skillLevel: p.skill_level,
+        favoriteSurface: p.favorite_surface,
+        profileImageUrl: p.profile_image_url,
+        gender: p.gender,
+        ageRange: p.age_range,
+        ratingSystem: p.rating_system,
+        ntrpRating: p.ntrp_rating,
+        utrRating: p.utr_rating,
+        handle: p.handle,
+        coverImageUrl: p.cover_image_url,
+        coverOffsetY: p.cover_offset_y,
+        coverScale: p.cover_scale,
+        customTags: p.custom_tags ? p.custom_tags.split(",").filter(Boolean) : [],
+        latitude: p.latitude,
+        longitude: p.longitude,
+        createdAt: p.created_at,
+        highlights: [],
+        _count: { sentRequests: 0, receivedRequests: 0 },
+        posts: [],
       });
-  }, []);
+      setForm({
+        name: p.name,
+        handle: p.handle ?? "",
+        bio: p.bio,
+        skillLevel: p.skill_level,
+        profileImageUrl: p.profile_image_url,
+        gender: p.gender,
+        ageRange: p.age_range,
+        ratingSystem: p.rating_system,
+        ntrpRating: p.ntrp_rating ?? "",
+        utrRating: p.utr_rating ?? "",
+        venmoHandle: p.venmo_handle ?? "",
+        paypalHandle: p.paypal_handle ?? "",
+        cashappHandle: p.cashapp_handle ?? "",
+        zelleHandle: p.zelle_handle ?? "",
+        isPrivate: p.is_private,
+      });
+    });
+  }, [router]);
 
   const handleSave = async () => {
     setSaving(true);
     setHandleError("");
-    const payload: Record<string, unknown> = {
+    const patch = {
       name: form.name,
-      handle: form.handle.trim(),
+      handle: form.handle.trim() || null,
       bio: form.bio,
-      skillLevel: form.skillLevel,
-      profileImageUrl: form.profileImageUrl,
+      skill_level: form.skillLevel,
+      profile_image_url: form.profileImageUrl,
       gender: form.gender,
-      ageRange: form.ageRange,
-      ratingSystem: form.ratingSystem,
-      ntrpRating: form.ratingSystem === "ntrp" && form.ntrpRating !== "" ? Number(form.ntrpRating) : null,
-      utrRating: form.ratingSystem === "utr" && form.utrRating !== "" ? Number(form.utrRating) : null,
-      venmoHandle: form.venmoHandle.trim(),
-      paypalHandle: form.paypalHandle.trim(),
-      cashappHandle: form.cashappHandle.trim(),
-      zelleHandle: form.zelleHandle.trim(),
-      isPrivate: form.isPrivate,
+      age_range: form.ageRange,
+      rating_system: form.ratingSystem,
+      ntrp_rating:
+        form.ratingSystem === "ntrp" && form.ntrpRating !== ""
+          ? Number(form.ntrpRating)
+          : null,
+      utr_rating:
+        form.ratingSystem === "utr" && form.utrRating !== ""
+          ? Number(form.utrRating)
+          : null,
+      venmo_handle: form.venmoHandle.trim() || null,
+      paypal_handle: form.paypalHandle.trim() || null,
+      cashapp_handle: form.cashappHandle.trim() || null,
+      zelle_handle: form.zelleHandle.trim() || null,
+      is_private: form.isPrivate,
     };
-    const res = await fetch("/api/profile", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setProfile({ ...profile!, ...updated });
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const updated = await updateMyProfile(supabase, patch);
+      // Merge the snake_case updated row back into the camelCase Profile
+      // state. Just copy fields we display — the rest is stable.
+      if (profile) {
+        setProfile({
+          ...profile,
+          name: updated.name,
+          handle: updated.handle,
+          bio: updated.bio,
+          skillLevel: updated.skill_level,
+          profileImageUrl: updated.profile_image_url,
+          gender: updated.gender,
+          ageRange: updated.age_range,
+          ratingSystem: updated.rating_system,
+          ntrpRating: updated.ntrp_rating,
+          utrRating: updated.utr_rating,
+        });
+      }
       setEditing(false);
       await updateSession();
-    } else {
-      const err = await res.json().catch(() => ({}));
-      if (err.field === "handle" && err.error) {
-        setHandleError(err.error);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/handle/i.test(message)) {
+        setHandleError(message);
       }
     }
     setSaving(false);
