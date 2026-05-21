@@ -7,6 +7,8 @@ import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import { DEFAULT_MEMBER_TYPES, isAtLeast, ROLE } from "@/lib/groupRoles";
 import { parseReminderPrefs, REMINDER_HOUR_CHOICES, type ReminderPrefs } from "@/lib/reminderPrefs";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
 
 type Member = {
   id: string;
@@ -73,25 +75,58 @@ export default function GroupSettingsPage() {
   const canManage = !!myRole && isAtLeast(myRole, ROLE.MANAGER);
 
   const loadGroup = useCallback(async () => {
-    const res = await fetch(`/api/groups/${groupId}`);
-    if (res.status === 403) {
-      setError("You are not a member of this team.");
-      setLoading(false);
-      return;
-    }
-    if (!res.ok) {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const [g, members] = await Promise.all([
+        getGroup(supabase, groupId),
+        listGroupMembers(supabase, groupId),
+      ]);
+      if (!g) {
+        setError("You are not a member of this team.");
+        setLoading(false);
+        return;
+      }
+      setGroup({
+        id: g.id,
+        name: g.name,
+        imageUrl: g.image_url,
+        ownerId: g.owner_id,
+        memberTypes: Array.isArray(g.member_types) ? (g.member_types as string[]) : [],
+        reminderPrefs: g.reminder_prefs,
+        members: members.map((m) => ({
+          id: m.id,
+          userId: m.user_id,
+          role: m.role,
+          memberType: m.member_type,
+          user: {
+            id: m.user.id,
+            name: m.user.name,
+            profileImageUrl: m.user.profile_image_url,
+          },
+        })),
+      } as unknown as typeof group);
+    } catch {
       setError("Failed to load team.");
-      setLoading(false);
-      return;
     }
-    const data = await res.json();
-    setGroup(data);
     setLoading(false);
   }, [groupId]);
 
   const loadSeasons = useCallback(async () => {
-    const res = await fetch(`/api/groups/${groupId}/seasons`);
-    if (res.ok) setSeasons(await res.json());
+    const supabase = createSupabaseBrowserClient();
+    const { data } = await supabase
+      .from("seasons")
+      .select("id, name, start_date, end_date, group_id")
+      .eq("group_id", groupId)
+      .order("start_date", { ascending: false });
+    setSeasons(
+      (data ?? []).map((s) => ({
+        id: s.id,
+        name: s.name,
+        startDate: s.start_date,
+        endDate: s.end_date,
+        groupId: s.group_id,
+      })) as unknown as typeof seasons
+    );
   }, [groupId]);
 
   // Fetch on mount + when groupId changes. The async loaders setState only
@@ -230,17 +265,16 @@ function TeamTab({
     setSavingName(true);
     setErr("");
     setMsg("");
-    const res = await fetch("/api/groups", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groupId: group.id, name: name.trim() }),
-    });
-    if (res.ok) {
+    const supabase = createSupabaseBrowserClient();
+    const { error: upErr } = await supabase
+      .from("groups")
+      .update({ name: name.trim() })
+      .eq("id", group.id);
+    if (!upErr) {
       setMsg("Team name updated.");
       onSaved();
     } else {
-      const d = await res.json().catch(() => ({}));
-      setErr(d.error || "Failed to save.");
+      setErr(upErr.message || "Failed to save.");
     }
     setSavingName(false);
   };
@@ -260,17 +294,16 @@ function TeamTab({
     setSavingTypes(true);
     setErr("");
     setMsg("");
-    const res = await fetch("/api/groups", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groupId: group.id, memberTypes: types }),
-    });
-    if (res.ok) {
+    const supabase = createSupabaseBrowserClient();
+    const { error: upErr } = await supabase
+      .from("groups")
+      .update({ member_types: types })
+      .eq("id", group.id);
+    if (!upErr) {
       setMsg("Member types saved.");
       onSaved();
     } else {
-      const d = await res.json().catch(() => ({}));
-      setErr(d.error || "Failed to save.");
+      setErr(upErr.message || "Failed to save.");
     }
     setSavingTypes(false);
   };
@@ -394,8 +427,28 @@ function RosterTab({
   const [inviteErr, setInviteErr] = useState("");
 
   const loadInvites = useCallback(async () => {
-    const res = await fetch(`/api/groups/${group.id}/invites`);
-    if (res.ok) setInvites(await res.json());
+    const supabase = createSupabaseBrowserClient();
+    const { data } = await supabase
+      .from("group_invites")
+      .select(
+        "id, email, role, member_type, status, expires_at, accepted_by_id, accepted_at, created_at, invited_by_id, token"
+      )
+      .eq("group_id", group.id)
+      .order("created_at", { ascending: false });
+    setInvites(
+      (data ?? []).map((i) => ({
+        id: i.id,
+        email: i.email,
+        role: i.role,
+        memberType: i.member_type,
+        status: i.status,
+        expiresAt: i.expires_at,
+        acceptedById: i.accepted_by_id,
+        acceptedAt: i.accepted_at,
+        createdAt: i.created_at,
+        token: i.token,
+      })) as unknown as typeof invites
+    );
   }, [group.id]);
 
   useEffect(() => {
@@ -408,54 +461,63 @@ function RosterTab({
     setSending(true);
     setInviteErr("");
     setInviteMsg("");
-    const res = await fetch(`/api/groups/${group.id}/invites`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth.user) throw new Error("Not signed in");
+      // Token: 24 hex chars. Cheap unique random.
+      const token = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+      const { error: insErr } = await supabase.from("group_invites").insert({
+        group_id: group.id,
         email: inviteEmail.trim(),
-        role: inviteRole,
-        memberType: inviteType,
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.emailError) {
-        setInviteMsg(`Invite saved, but email send failed: ${data.emailError}`);
-      } else {
-        setInviteMsg(`Invite sent to ${inviteEmail.trim()}.`);
-      }
+        role: inviteRole as "owner" | "manager" | "captain" | "member",
+        member_type: inviteType,
+        token,
+        invited_by_id: auth.user.id,
+        // 30-day expiry by default.
+        expires_at: new Date(Date.now() + 30 * 86400_000).toISOString(),
+      });
+      if (insErr) throw insErr;
+      setInviteMsg(`Invite saved for ${inviteEmail.trim()}. Email dispatch is owned by an Edge Function — needs reinstatement before launch.`);
       setInviteEmail("");
       setInviteType("");
       void loadInvites();
-    } else {
-      const d = await res.json().catch(() => ({}));
-      setInviteErr(d.error || "Failed to send invite.");
+    } catch (err) {
+      setInviteErr(err instanceof Error ? err.message : "Failed to send invite.");
     }
     setSending(false);
   };
 
   const cancelInvite = async (inviteId: string) => {
     setInviteErr("");
-    const res = await fetch(`/api/groups/${group.id}/invites/${inviteId}`, { method: "DELETE" });
-    if (res.ok) {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { error: delErr } = await supabase
+        .from("group_invites")
+        .update({ status: "cancelled" })
+        .eq("id", inviteId);
+      if (delErr) throw delErr;
       void loadInvites();
-    } else {
-      const d = await res.json().catch(() => ({}));
-      setInviteErr(d.error || "Failed to cancel invite.");
+    } catch (err) {
+      setInviteErr(err instanceof Error ? err.message : "Failed to cancel invite.");
     }
   };
 
   const updateMember = async (memberId: string, patch: { role?: string; memberType?: string }) => {
     setBusyId(memberId);
     setErr("");
-    const res = await fetch(`/api/groups/${group.id}/members/${memberId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      setErr(d.error || "Failed to save.");
+    const supabase = createSupabaseBrowserClient();
+    const dbPatch: { role?: "owner" | "manager" | "captain" | "member"; member_type?: string } = {};
+    if (patch.role) dbPatch.role = patch.role as "owner" | "manager" | "captain" | "member";
+    if (patch.memberType !== undefined) dbPatch.member_type = patch.memberType;
+    const { error: upErr } = await supabase
+      .from("group_members")
+      .update(dbPatch)
+      .eq("id", memberId);
+    if (upErr) {
+      setErr(upErr.message || "Failed to save.");
     } else {
       onSaved();
     }
@@ -656,17 +718,22 @@ function SeasonsTab({
     if (!newName.trim()) return;
     setSaving(true);
     setErr("");
-    const res = await fetch(`/api/groups/${groupId}/seasons`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: newName.trim(),
-        startDate: newStart || null,
-        endDate: newEnd || null,
-        isActive: newActive,
-      }),
+    const supabase = createSupabaseBrowserClient();
+    if (newActive) {
+      // Only one season per group is active at a time.
+      await supabase
+        .from("seasons")
+        .update({ is_active: false })
+        .eq("group_id", groupId);
+    }
+    const { error: insErr } = await supabase.from("seasons").insert({
+      group_id: groupId,
+      name: newName.trim(),
+      start_date: newStart || null,
+      end_date: newEnd || null,
+      is_active: newActive,
     });
-    if (res.ok) {
+    if (!insErr) {
       setShowCreate(false);
       setNewName("");
       setNewStart("");
@@ -674,8 +741,7 @@ function SeasonsTab({
       setNewActive(true);
       onSaved();
     } else {
-      const d = await res.json().catch(() => ({}));
-      setErr(d.error || "Failed to create season.");
+      setErr(insErr.message || "Failed to create season.");
     }
     setSaving(false);
   };
@@ -683,14 +749,19 @@ function SeasonsTab({
   const setActive = async (seasonId: string, isActive: boolean) => {
     setBusyId(seasonId);
     setErr("");
-    const res = await fetch(`/api/groups/${groupId}/seasons/${seasonId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isActive }),
-    });
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      setErr(d.error || "Failed to update season.");
+    const supabase = createSupabaseBrowserClient();
+    if (isActive) {
+      await supabase
+        .from("seasons")
+        .update({ is_active: false })
+        .eq("group_id", groupId);
+    }
+    const { error: upErr } = await supabase
+      .from("seasons")
+      .update({ is_active: isActive })
+      .eq("id", seasonId);
+    if (upErr) {
+      setErr(upErr.message || "Failed to update season.");
     } else {
       onSaved();
     }
@@ -701,10 +772,10 @@ function SeasonsTab({
     if (!confirm("Delete this season? Matches and practices tagged with it become unscheduled.")) return;
     setBusyId(seasonId);
     setErr("");
-    const res = await fetch(`/api/groups/${groupId}/seasons/${seasonId}`, { method: "DELETE" });
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      setErr(d.error || "Failed to delete season.");
+    const supabase = createSupabaseBrowserClient();
+    const { error: delErr } = await supabase.from("seasons").delete().eq("id", seasonId);
+    if (delErr) {
+      setErr(delErr.message || "Failed to delete season.");
     } else {
       onSaved();
     }
@@ -859,20 +930,21 @@ function NotificationsTab({
     setSaving(true);
     setMsg("");
     setErr("");
-    const res = await fetch("/api/groups", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groupId: group.id, reminderPrefs: prefs }),
-    });
-    if (res.ok) {
+    const supabase = createSupabaseBrowserClient();
+    const { error: upErr } = await supabase
+      .from("groups")
+      .update({ reminder_prefs: prefs })
+      .eq("id", group.id);
+    if (!upErr) {
       setMsg("Reminder preferences saved.");
       onSaved();
     } else {
-      const d = await res.json().catch(() => ({}));
-      setErr(d.error || "Failed to save.");
+      setErr(upErr.message || "Failed to save.");
     }
     setSaving(false);
   };
+
+  // Legacy fetch-based save (now unreachable; retained for reference only):
 
   return (
     <div className="space-y-5">
