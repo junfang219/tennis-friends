@@ -351,8 +351,13 @@ function Lightbox({
       className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center"
       onClick={onClose}
     >
-      {/* Top-right actions: download + close */}
-      <div className="absolute top-4 right-4 flex items-center gap-2 z-10" onClick={(e) => e.stopPropagation()}>
+      {/* Top-right actions: download + close. Top offset respects the iOS
+          status-bar / Dynamic Island via env(safe-area-inset-top). */}
+      <div
+        className="absolute right-4 flex items-center gap-2 z-10"
+        style={{ top: "calc(env(safe-area-inset-top, 0px) + 1rem)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
         <a
           href={item.url}
           download={downloadName(item)}
@@ -383,8 +388,11 @@ function Lightbox({
         </button>
       </div>
 
-      {/* Counter */}
-      <div className="absolute top-4 left-4 text-white/80 text-sm font-medium z-10 bg-black/40 backdrop-blur px-3 py-1 rounded-full">
+      {/* Counter — matches the toolbar's safe-area offset on the left. */}
+      <div
+        className="absolute left-4 text-white/80 text-sm font-medium z-10 bg-black/40 backdrop-blur px-3 py-1 rounded-full"
+        style={{ top: "calc(env(safe-area-inset-top, 0px) + 1rem)" }}
+      >
         {index + 1} / {items.length}
       </div>
 
