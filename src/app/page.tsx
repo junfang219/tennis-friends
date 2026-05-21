@@ -6,6 +6,44 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import PostComposer from "@/components/PostComposer";
 import PostCard from "@/components/PostCard";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listFeed, type Post as FeedPost } from "@/lib/supabase/queries";
+
+// Map a Supabase feed row (snake_case) into the legacy camelCase Post
+// shape this page (and PostCard) currently expects. Will go away once
+// every consumer migrates to the snake_case shape natively.
+function adaptFeedPost(p: FeedPost): Post {
+  return {
+    id: p.id,
+    content: p.content,
+    mediaUrl: p.media_url,
+    mediaType: p.media_type,
+    postType: p.post_type,
+    playDate: p.play_date,
+    playTime: p.play_time,
+    courtLocation: p.court_location,
+    gameType: p.game_type,
+    playersNeeded: p.players_needed,
+    playersConfirmed: p.players_confirmed,
+    courtBooked: p.court_booked,
+    isComplete: p.is_complete,
+    isBroadcast: p.is_broadcast,
+    broadcastRadiusMi: p.broadcast_radius_mi,
+    distanceMiles: null,
+    pendingRequestCount: 0,
+    myPlayRequest: null,
+    createdAt: p.created_at,
+    author: {
+      id: p.author.id,
+      name: p.author.name,
+      profileImageUrl: p.author.profile_image_url,
+    },
+    likeCount: p.like_count,
+    isLiked: p.is_liked,
+    groups: [],
+    friendGroups: [],
+  };
+}
 
 const SEEN_KEY = "tennisfriend_seen_posts";
 
@@ -65,9 +103,9 @@ export default function HomePage() {
     setRefreshing(true);
     setActiveFilter(null);
     try {
-      const res = await fetch("/api/posts");
-      const data = await res.json();
-      setPosts(data);
+      const supabase = createSupabaseBrowserClient();
+      const rows = await listFeed(supabase, { limit: 50 });
+      setPosts(rows.map(adaptFeedPost));
     } finally {
       setRefreshing(false);
       setPullDistance(0);
@@ -165,8 +203,9 @@ export default function HomePage() {
 
   useEffect(() => {
     if (status === "authenticated") {
-      fetch("/api/posts")
-        .then((r) => r.json())
+      const supabase = createSupabaseBrowserClient();
+      listFeed(supabase, { limit: 50 })
+        .then((rows) => rows.map(adaptFeedPost))
         .then((data) => {
           setPosts(data);
           setLoading(false);
