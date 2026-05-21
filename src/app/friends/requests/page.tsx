@@ -3,6 +3,12 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import {
+  listPendingRequests,
+  acceptFriendRequest,
+  rejectFriendRequest,
+} from "@/lib/supabase/queries";
 
 type FriendRequest = {
   friendshipId: string;
@@ -41,10 +47,22 @@ export default function FriendRequestsPage() {
 
   const fetchRequests = useCallback(async () => {
     try {
-      const res = await fetch("/api/users?tab=friends");
-      if (!res.ok) throw new Error("Failed");
-      const data = await res.json();
-      setRequests(data.incomingRequests || []);
+      const supabase = createSupabaseBrowserClient();
+      const rows = await listPendingRequests(supabase);
+      setRequests(
+        rows
+          .filter((r) => r.direction === "incoming")
+          .map((r) => ({
+            friendshipId: r.id,
+            createdAt: r.created_at,
+            user: {
+              id: r.other.id,
+              name: r.other.name,
+              profileImageUrl: r.other.profile_image_url,
+              skillLevel: r.other.skill_level,
+            },
+          }))
+      );
     } catch {
       // Silently fail — empty list
     } finally {
@@ -59,16 +77,9 @@ export default function FriendRequestsPage() {
   const acceptRequest = async (friendshipId: string) => {
     setActionLoading(friendshipId);
     try {
-      const res = await fetch("/api/friends/accept", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ friendshipId }),
-      });
-      if (res.ok) {
-        setRequests((prev) =>
-          prev.filter((r) => r.friendshipId !== friendshipId)
-        );
-      }
+      const supabase = createSupabaseBrowserClient();
+      await acceptFriendRequest(supabase, friendshipId);
+      setRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId));
     } catch {
       // ignore
     } finally {
@@ -79,16 +90,9 @@ export default function FriendRequestsPage() {
   const rejectRequest = async (friendshipId: string) => {
     setActionLoading(friendshipId);
     try {
-      const res = await fetch("/api/friends/reject", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ friendshipId }),
-      });
-      if (res.ok) {
-        setRequests((prev) =>
-          prev.filter((r) => r.friendshipId !== friendshipId)
-        );
-      }
+      const supabase = createSupabaseBrowserClient();
+      await rejectFriendRequest(supabase, friendshipId);
+      setRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId));
     } catch {
       // ignore
     } finally {

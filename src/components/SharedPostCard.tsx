@@ -4,6 +4,9 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import Avatar from "@/components/Avatar";
 import PostCard from "@/components/PostCard";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getPost } from "@/lib/supabase/queries";
+import { toPostCamel } from "@/lib/supabase/adapters";
 
 export type SharedPost = {
   id: string;
@@ -32,10 +35,12 @@ export default function SharedPostCard({ post }: { post: SharedPost }) {
     setShowFullPost(true);
     if (!fullPostData) {
       setLoadingPost(true);
-      const res = await fetch(`/api/posts/${post.id}`);
-      if (res.ok) {
-        const data = await res.json();
-        setFullPostData(data);
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const p = await getPost(supabase, post.id);
+        if (p) setFullPostData(toPostCamel(p) as unknown as Record<string, unknown>);
+      } catch {
+        // ignore
       }
       setLoadingPost(false);
     }
