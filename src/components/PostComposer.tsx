@@ -5,6 +5,15 @@ import { createPortal } from "react-dom";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Avatar from "./Avatar";
 import EmojiPicker from "./EmojiPicker";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import {
+  getMyProfile,
+  updateMyProfile,
+  listMyGroups,
+  listMyFriendGroups,
+  createPost,
+} from "@/lib/supabase/queries";
+import { buildObjectKey, type StorageBucket } from "@/lib/supabase/storage";
 
 const PLACEHOLDERS = [
   "Just finished a great match...",
@@ -219,11 +228,9 @@ function ComposerModal({
   // the user actually opens the broadcast toggle to avoid a needless API call.
   useEffect(() => {
     if (!isBroadcast || hasLocation !== null) return;
-    fetch("/api/profile")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        setHasLocation(!!(data?.latitude != null && data?.longitude != null));
-      })
+    const supabase = createSupabaseBrowserClient();
+    getMyProfile(supabase)
+      .then((p) => setHasLocation(!!(p && p.latitude != null && p.longitude != null)))
       .catch(() => setHasLocation(false));
   }, [isBroadcast, hasLocation]);
 
@@ -237,19 +244,12 @@ function ComposerModal({
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         try {
-          const res = await fetch("/api/profile", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              latitude: pos.coords.latitude,
-              longitude: pos.coords.longitude,
-            }),
+          const supabase = createSupabaseBrowserClient();
+          await updateMyProfile(supabase, {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
           });
-          if (res.ok) {
-            setHasLocation(true);
-          } else {
-            setLocationError("Could not save location.");
-          }
+          setHasLocation(true);
         } catch {
           setLocationError("Could not save location.");
         }
@@ -276,12 +276,13 @@ function ComposerModal({
   const [skillMax, setSkillMax] = useState("4.0");
 
   useEffect(() => {
-    fetch("/api/groups")
-      .then((r) => r.json())
-      .then((data) => setGroups(Array.isArray(data) ? data : []));
-    fetch("/api/friend-groups")
-      .then((r) => r.json())
-      .then((data) => setFriendGroups(Array.isArray(data) ? data : []));
+    const supabase = createSupabaseBrowserClient();
+    listMyGroups(supabase).then((rows) =>
+      setGroups(rows.map((g) => ({ id: g.id, name: g.name, _count: { members: 0 } })))
+    );
+    listMyFriendGroups(supabase).then((rows) =>
+      setFriendGroups(rows.map((g) => ({ id: g.id, name: g.name, _count: { members: 0 } })))
+    );
   }, []);
 
   // Auto-focus textarea
@@ -321,18 +322,47 @@ function ComposerModal({
         ...friendGroups.filter((g) => selectedFriendGroupIds.has(g.id)).map((g) => g.name),
       ].join(", ");
 
-  // Upload a single file. Used for the video button.
+  // Upload a single file directly to Supabase Storage via a signed upload URL.
+  // The /api/storage/sign-upload route validates ownership + size + mime, mints
+  // a one-shot URL, and returns the eventual publicUrl.
   const uploadOne = async (file: File): Promise<{ url: string; mediaType: string } | null> => {
-    const fd = new FormData();
-    fd.append("file", file);
     try {
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
+      // Pick bucket based on the file's broad type. Posts get the larger
+      // 100MB ceiling; profile/cover live in avatars (handled elsewhere).
+      const isVideo = file.type.startsWith("video/");
+      const bucket: StorageBucket = "posts";
+      const sigRes = await fetch("/api/storage/sign-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bucket,
+          filename: file.name,
+          mimeType: file.type || (isVideo ? "video/mp4" : "image/jpeg"),
+          sizeBytes: file.size,
+        }),
+      });
+      if (!sigRes.ok) {
+        const data = await sigRes.json().catch(() => ({}));
         setUploadError(data.error || "Upload failed");
         return null;
       }
-      return await res.json();
+      const { signedUrl, publicUrl } = (await sigRes.json()) as {
+        signedUrl: string;
+        publicUrl: string;
+      };
+      // PUT the bytes to the signed URL.
+      const put = await fetch(signedUrl, {
+        method: "PUT",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      });
+      if (!put.ok) {
+        setUploadError("Upload failed");
+        return null;
+      }
+      // Reference: buildObjectKey is the same naming used by the route.
+      void buildObjectKey;
+      return { url: publicUrl, mediaType: isVideo ? "video" : "image" };
     } catch {
       setUploadError("Upload failed. Please try again.");
       return null;
@@ -489,23 +519,49 @@ function ComposerModal({
     }
 
     try {
-      const res = await fetch("/api/posts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+      const supabase = createSupabaseBrowserClient();
+      // Translate the page's camelCase body into snake_case columns the
+      // posts table expects. Group / friend-group targeting goes via the
+      // post_groups / post_friend_groups join tables after the post inserts.
+      const photoUrls = (body.photoUrls as string[] | undefined) ?? [];
+      const groupIds = (body.groupIds as string[] | undefined) ?? [];
+      const friendGroupIds = (body.friendGroupIds as string[] | undefined) ?? [];
+      const newPost = await createPost(supabase, {
+        content: typeof body.content === "string" ? body.content : "",
+        media_url: typeof body.mediaUrl === "string" ? body.mediaUrl : "",
+        media_type: typeof body.mediaType === "string" ? body.mediaType : "",
+        post_type:
+          (body.postType as "regular" | "find_players" | "propose_team" | "event") ||
+          "regular",
+        play_date: typeof body.playDate === "string" ? body.playDate : "",
+        play_time: typeof body.playTime === "string" ? body.playTime : "",
+        play_duration: typeof body.playDuration === "number" ? body.playDuration : 90,
+        court_location: typeof body.courtLocation === "string" ? body.courtLocation : "",
+        game_type: typeof body.gameType === "string" ? body.gameType : "",
+        players_needed: typeof body.playersNeeded === "number" ? body.playersNeeded : 0,
+        skill_min: typeof body.skillMin === "number" ? body.skillMin : null,
+        skill_max: typeof body.skillMax === "number" ? body.skillMax : null,
+        court_booked: !!body.courtBooked,
+        is_broadcast: !!body.isBroadcast,
+        broadcast_radius_mi:
+          typeof body.broadcastRadiusMi === "number" ? body.broadcastRadiusMi : 0,
+        photoUrls,
       });
-
-      if (res.ok) {
-        const post = await res.json();
-        onPost(post);
-      } else {
-        let msg = `Post failed (${res.status})`;
-        try {
-          const data = await res.json();
-          if (data?.error) msg = data.error;
-        } catch {}
-        setPostError(msg);
+      // Target groups / friend groups.
+      if (groupIds.length > 0) {
+        await supabase.from("post_groups").insert(
+          groupIds.map((gid) => ({ post_id: newPost.id, group_id: gid }))
+        );
       }
+      if (friendGroupIds.length > 0) {
+        await supabase.from("post_friend_groups").insert(
+          friendGroupIds.map((fgid) => ({
+            post_id: newPost.id,
+            friend_group_id: fgid,
+          }))
+        );
+      }
+      onPost(newPost as unknown as Record<string, unknown>);
     } catch (err) {
       setPostError(err instanceof Error ? err.message : "Network error");
     } finally {
