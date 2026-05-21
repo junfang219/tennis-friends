@@ -48,4 +48,16 @@ describe("parseMemberTypes", () => {
   it("returns the custom list when valid", () => {
     expect(parseMemberTypes('["A","B"]')).toEqual(["A", "B"]);
   });
+
+  it("accepts a real array (jsonb shape returned by Supabase client)", () => {
+    expect(parseMemberTypes(["A", "B"])).toEqual(["A", "B"]);
+  });
+
+  it("falls back to defaults when array contains non-strings", () => {
+    expect(parseMemberTypes([1, 2, 3] as unknown[])).toEqual([...DEFAULT_MEMBER_TYPES]);
+  });
+
+  it("falls back to defaults when array is empty", () => {
+    expect(parseMemberTypes([])).toEqual([...DEFAULT_MEMBER_TYPES]);
+  });
 });

@@ -1,8 +1,46 @@
 # Supabase Auth — dashboard configuration
 
+## Status as of 2026-05-21
+
+| Item | Status |
+|---|---|
+| Site URL (`https://mytennisfriends.com`) | ✅ configured |
+| Redirect URLs: localhost, capacitor, mytennisfriends.com, www, `*.vercel.app` | ✅ configured |
+| Email provider (confirm email on, signups on, anonymous off) | ✅ configured |
+| Password hardening (HIBP + reauth + min 8 chars) | ✅ configured |
+| Google OAuth (using existing `.env` creds) | ✅ configured |
+| Google Cloud Console: add Supabase callback to authorized URIs | ⏳ user action — see below |
+| Apple OAuth | ⏸️ deferred per user (2026-05-21) |
+| Phone OTP (Twilio) | ⏸️ deferred per user (2026-05-21) |
+| Custom SMTP (Resend) | ✅ configured — needs domain verification in Resend |
+
+## Google Cloud Console — still needed
+
+The Google OAuth client needs `https://fqopzafmnaviipumsmfm.supabase.co/auth/v1/callback`
+in its **Authorized redirect URIs**. Open
+https://console.cloud.google.com/apis/credentials, click your OAuth 2.0
+client, and paste that URL.
+
+## Resend — verify mytennisfriends.com
+
+SMTP is wired to send from `noreply@mytennisfriends.com` via Resend, but
+emails will bounce until you verify the domain in Resend:
+
+1. Go to https://resend.com/domains and click "Add Domain".
+2. Enter `mytennisfriends.com`.
+3. Resend gives you DNS records (SPF, DKIM, MX). Add them in Cloudflare
+   for the domain.
+4. Wait for Resend to detect them (~minutes), then mark the domain verified.
+
+Until then, the only emails that will deliver are to your own Resend
+account email. After verification, all signup/reset/confirm flows work.
+
+---
+
+## Reference: how it was configured (for future redos)
+
 The TS code in `src/app/auth/*` is wired up, but a handful of provider
 secrets live in the Supabase dashboard (the MCP doesn't expose them).
-Take these in order before the auth cutover in Phase 5.
 
 ## 1. Site URL + redirect allowlist
 

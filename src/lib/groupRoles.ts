@@ -1,21 +1,23 @@
-import { prisma } from "@/lib/prisma";
+// Pure role-hierarchy helpers. Database-touching helpers (getMemberRole,
+// hasRole) were deleted when we burned down the Prisma layer — rebuild them
+// against Supabase as needed.
 
-// Role values stored as strings on GroupMember.role (SQLite has no enum support).
-// Hierarchy (highest privilege first): OWNER > MANAGER > CAPTAIN > MEMBER.
+// Hierarchy (highest privilege first): owner > manager > captain > member.
+// Lowercase to match the Postgres group_role enum.
 export const ROLE = {
-  OWNER: "OWNER",
-  MANAGER: "MANAGER",
-  CAPTAIN: "CAPTAIN",
-  MEMBER: "MEMBER",
+  OWNER: "owner",
+  MANAGER: "manager",
+  CAPTAIN: "captain",
+  MEMBER: "member",
 } as const;
 
 export type GroupRole = (typeof ROLE)[keyof typeof ROLE];
 
 const RANK: Record<GroupRole, number> = {
-  OWNER: 4,
-  MANAGER: 3,
-  CAPTAIN: 2,
-  MEMBER: 1,
+  owner: 4,
+  manager: 3,
+  captain: 2,
+  member: 1,
 };
 
 export function isAtLeast(role: string, min: GroupRole): boolean {
@@ -23,32 +25,8 @@ export function isAtLeast(role: string, min: GroupRole): boolean {
   return r >= RANK[min];
 }
 
-// Single source of truth for "what role does this user have on this team?"
-// Returns null when the user is not a member.
-export async function getMemberRole(
-  groupId: string,
-  userId: string
-): Promise<string | null> {
-  const m = await prisma.groupMember.findUnique({
-    where: { groupId_userId: { groupId, userId } },
-    select: { role: true },
-  });
-  return m?.role ?? null;
-}
-
-// "Does this user have at least `minRole` on this team?" Returns false for
-// non-members. Use this in API route guards instead of comparing Group.ownerId.
-export async function hasRole(
-  groupId: string,
-  userId: string,
-  minRole: GroupRole
-): Promise<boolean> {
-  const role = await getMemberRole(groupId, userId);
-  return role !== null && isAtLeast(role, minRole);
-}
-
-// Default member-type list applied when a team hasn't customized its Group.memberTypes.
-// Stored on Group.memberTypes as JSON, so the API can read defaults if the column is "[]".
+// Default member-type list applied when a team hasn't customized its
+// Group.memberTypes. Stored on groups.member_types as jsonb.
 export const DEFAULT_MEMBER_TYPES = [
   "Full-time",
   "Sub",
@@ -57,7 +35,13 @@ export const DEFAULT_MEMBER_TYPES = [
   "Guest",
 ] as const;
 
-export function parseMemberTypes(raw: string): string[] {
+export function parseMemberTypes(raw: string | unknown[]): string[] {
+  // Postgres returns jsonb arrays as actual arrays in the JS client.
+  if (Array.isArray(raw)) {
+    const filtered = raw.filter((s): s is string => typeof s === "string");
+    return filtered.length > 0 ? filtered : [...DEFAULT_MEMBER_TYPES];
+  }
+  if (typeof raw !== "string") return [...DEFAULT_MEMBER_TYPES];
   try {
     const parsed = JSON.parse(raw || "[]");
     if (Array.isArray(parsed) && parsed.every((s) => typeof s === "string")) {

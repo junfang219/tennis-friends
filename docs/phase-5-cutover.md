@@ -1,10 +1,32 @@
-# Phase 5 cutover guide — migrating route handlers from Prisma + NextAuth to Supabase
+# Phase 5 cutover guide — migrating from Prisma + NextAuth to Supabase
 
-The Supabase infrastructure is fully in place (schema, RLS, helpers, auth
-pages, storage, realtime, edge functions). What remains is the mechanical
-migration of ~119 route handlers and the components that call them.
+## Status as of 2026-05-21
 
-**Estimated effort:** 5-7 days of focused work for one developer.
+The legacy stack has been **burned down** (per user decision). The app
+won't typecheck — exactly 36 errors remain, all in pages/components that
+imported `next-auth/react` or `@prisma/client`. Each error is a guided
+TODO for incremental migration.
+
+**What survives:**
+- `/login`, `/register`, `/auth/reset`, `/auth/update-password`,
+  `/auth/callback` — Supabase Auth pages
+- `/api/storage/sign-upload` — the one route built on Supabase
+- All Supabase clients, RLS policies, Edge Function template
+- The `useSupabaseUser()` hook in `src/lib/supabase/useUser.ts` for
+  Client Components (replaces NextAuth's `useSession()`)
+- 27 unit tests, 22 integration tests — all green against live Supabase
+
+**What's gone:**
+- Entire `prisma/` directory
+- `src/lib/{prisma,auth,session,eventStream,rateLimit,push,teamGroup,sessionChat,eventGroup,eventCompetitive,tournamentAdvance,useArrivalDetection,friendship}.ts`
+- `src/lib/events/visibility.ts` (now `public.can_see_event` SQL function)
+- `src/types/next-auth.d.ts`
+- 106 API route handlers under `src/app/api/` (all except `storage/sign-upload`)
+- `@prisma/client`, `prisma`, `next-auth`, `@next-auth/prisma-adapter`,
+  `bcryptjs` deps
+- Prisma-dependent scripts in `scripts/`
+
+**Estimated remaining effort:** 3-5 days of focused work for one developer.
 
 This doc captures the mechanical patterns so the cutover can proceed
 incrementally without re-deriving the strategy each time.
@@ -26,7 +48,29 @@ incrementally without re-deriving the strategy each time.
 
 ## Per-call transformation patterns
 
-### `auth()` → `requireSupabaseUser()`
+### `useSession()` → `useSupabaseUser()` (Client Components)
+
+Before:
+```typescript
+import { useSession } from "next-auth/react";
+
+const { data: session, status } = useSession();
+if (status === "loading") return <Spinner />;
+if (!session?.user?.id) return <SignInPrompt />;
+const userId = session.user.id; // cuid string
+```
+
+After:
+```typescript
+import { useSupabaseUser } from "@/lib/supabase/useUser";
+
+const { user, loading } = useSupabaseUser();
+if (loading) return <Spinner />;
+if (!user) return <SignInPrompt />;
+const userId = user.id; // uuid string — matches profiles.id
+```
+
+### `auth()` → `requireSupabaseUser()` (Server Components / Route Handlers)
 
 Before:
 ```typescript

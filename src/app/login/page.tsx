@@ -1,158 +1,117 @@
 "use client";
 
-import { signIn } from "next-auth/react";
-import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import OAuthButtons from "@/components/OAuthButtons";
-import PhoneAuthForm from "@/components/PhoneAuthForm";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, useState } from "react";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
-type Tab = "email" | "phone";
-
-// Restrict the post-login redirect to same-origin relative paths so a crafted
-// ?next=https://evil.example URL can't be used to phish users.
-function safeNext(raw: string | null): string {
-  if (!raw) return "/";
-  if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
-  return raw;
-}
-
-export default function LoginPage() {
-  const [tab, setTab] = useState<Tab>("email");
+export default function SupabaseLoginPage() {
+  const router = useRouter();
+  const search = useSearchParams();
+  const redirectTo = search.get("redirectTo") ?? "/";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const next = safeNext(searchParams.get("next"));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setLoading(true);
-    setError("");
-
-    const result = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-    });
-
-    if (result?.error) {
-      setError("Invalid email or password. Game, set, try again!");
-      setLoading(false);
-    } else {
-      router.push(next);
+    setError(null);
+    setBusy(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (signInError) {
+        setError(signInError.message);
+        return;
+      }
+      router.push(redirectTo);
       router.refresh();
+    } finally {
+      setBusy(false);
     }
-  };
+  }
+
+  async function onOAuth(provider: "google") {
+    setError(null);
+    setBusy(true);
+    const supabase = createSupabaseBrowserClient();
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(redirectTo)}`,
+      },
+    });
+    if (oauthError) {
+      setError(oauthError.message);
+      setBusy(false);
+    }
+  }
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4 py-12">
-      {/* Background decoration */}
-      <div className="fixed inset-0 -z-10 overflow-hidden">
-        <div className="absolute top-20 -right-20 w-96 h-96 bg-court-green/5 rounded-full blur-3xl" />
-        <div className="absolute -bottom-20 -left-20 w-80 h-80 bg-ball-yellow/10 rounded-full blur-3xl" />
+    <main className="mx-auto max-w-md p-6 pt-16">
+      <h1 className="text-2xl font-semibold text-gray-900 mb-6">Log in</h1>
+
+      <form onSubmit={onSubmit} className="space-y-3">
+        <input
+          type="email"
+          required
+          placeholder="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+          autoComplete="email"
+        />
+        <input
+          type="password"
+          required
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+          autoComplete="current-password"
+        />
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        <button
+          type="submit"
+          disabled={busy}
+          className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+        >
+          {busy ? "Signing in…" : "Log in"}
+        </button>
+      </form>
+
+      <div className="mt-4 flex items-center gap-3 text-xs text-gray-500">
+        <div className="flex-1 h-px bg-gray-200" />
+        <span>or</span>
+        <div className="flex-1 h-px bg-gray-200" />
       </div>
 
-      <div className="w-full max-w-md animate-fade-in-up">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-court-green shadow-xl mb-4">
-            <div className="w-10 h-10 rounded-full bg-ball-yellow animate-ball-bounce" />
-          </div>
-          <h1 className="font-display text-3xl font-bold text-court-green">
-            Welcome Back
-          </h1>
-          <p className="text-gray-500 mt-2 text-sm">Sign in to your TennisFriends account</p>
-        </div>
-
-        {/* Card */}
-        <div className="bg-white rounded-3xl shadow-xl shadow-court-green/5 border border-court-green-pale/20 p-8">
-          <OAuthButtons callbackUrl={next} />
-
-          <div className="flex bg-surface/70 rounded-xl p-1 mb-5 mt-6">
-            <button
-              type="button"
-              onClick={() => setTab("email")}
-              className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${
-                tab === "email" ? "bg-white text-court-green shadow-sm" : "text-gray-500"
-              }`}
-            >
-              Email
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab("phone")}
-              className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${
-                tab === "phone" ? "bg-white text-court-green shadow-sm" : "text-gray-500"
-              }`}
-            >
-              Phone
-            </button>
-          </div>
-
-          {tab === "email" ? (
-            <form onSubmit={handleSubmit} className="space-y-5">
-              {error && (
-                <div className="bg-red-50 text-red-600 text-sm font-medium px-4 py-3 rounded-xl border border-red-100">
-                  {error}
-                </div>
-              )}
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Email</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm bg-surface/50 transition-colors"
-                  placeholder="your@email.com"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Password</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm bg-surface/50 transition-colors"
-                  placeholder="Your password"
-                  required
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="btn-primary w-full py-3 text-base"
-              >
-                {loading ? (
-                  <svg className="animate-spin w-5 h-5 mx-auto" viewBox="0 0 24 24" fill="none">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
-                    <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                  </svg>
-                ) : (
-                  "Sign In"
-                )}
-              </button>
-            </form>
-          ) : (
-            <PhoneAuthForm callbackUrl={next} />
-          )}
-
-          <div className="mt-6 text-center">
-            <p className="text-sm text-gray-500">
-              New to the court?{" "}
-              <Link href="/register" className="font-semibold text-court-green hover:text-court-green-light transition-colors">
-                Create an account
-              </Link>
-            </p>
-          </div>
-        </div>
+      <div className="mt-4 space-y-2">
+        <button
+          type="button"
+          onClick={() => onOAuth("google")}
+          disabled={busy}
+          className="w-full px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+        >
+          Continue with Google
+        </button>
+        {/* Apple OAuth is provisioned but not yet configured in Supabase
+            (Services ID + secret JWT pending). Re-enable this button when
+            the provider config lands. */}
       </div>
-    </div>
+
+      <div className="mt-6 flex justify-between text-sm text-gray-600">
+        <Link href="/auth/reset" className="text-green-700 hover:underline">
+          Forgot password?
+        </Link>
+        <Link href="/auth/register" className="text-green-700 hover:underline">
+          Create account
+        </Link>
+      </div>
+    </main>
   );
 }
