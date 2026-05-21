@@ -3,6 +3,7 @@ import { open, stat } from "fs/promises";
 import path from "path";
 
 const MIME_TYPES: Record<string, string> = {
+  // Inline-rendered (album lightbox, chat thumbnails, post photos).
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
   png: "image/png",
@@ -11,7 +12,34 @@ const MIME_TYPES: Record<string, string> = {
   mp4: "video/mp4",
   webm: "video/webm",
   mov: "video/quicktime",
+  // Documents (Files feature). These get Content-Disposition: attachment
+  // below so the iOS WebView triggers a save/share sheet rather than
+  // rendering them in-place with no close affordance.
+  pdf: "application/pdf",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  txt: "text/plain",
+  csv: "text/csv",
 };
+
+// Anything not in this set is served with attachment disposition.
+const INLINE_TYPES = new Set([
+  "image/jpeg", "image/png", "image/gif", "image/webp",
+  "video/mp4", "video/webm", "video/quicktime",
+]);
+
+// RFC 5987 + RFC 6266 — encode the filename for the Content-Disposition
+// header. ASCII fallback in `filename=` plus UTF-8 `filename*=` for
+// non-ASCII names (so "résumé.pdf" arrives intact).
+function dispositionHeader(filename: string): string {
+  const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
+  const utf8 = encodeURIComponent(filename);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${utf8}`;
+}
 
 // Read a byte range from a file as a Uint8Array (compatible with both
 // Buffer and Web Streams response bodies).
@@ -42,6 +70,15 @@ export async function GET(
   const ext = filename.split(".").pop()?.toLowerCase() || "";
   const contentType = MIME_TYPES[ext] || "application/octet-stream";
 
+  // Force download for non-image/video types. Caller may override the
+  // filename via ?name= (the Files page passes the original upload name).
+  const url = new URL(request.url);
+  const downloadName = url.searchParams.get("name");
+  const isInline = INLINE_TYPES.has(contentType);
+  const dispositionExtras: Record<string, string> = isInline
+    ? {}
+    : { "Content-Disposition": dispositionHeader(downloadName || filename) };
+
   let fileSize: number;
   try {
     const s = await stat(filePath);
@@ -62,6 +99,7 @@ export async function GET(
         "Content-Length": String(fileSize),
         "Accept-Ranges": "bytes",
         "Cache-Control": "public, max-age=31536000, immutable",
+        ...dispositionExtras,
       },
     });
   }
@@ -76,7 +114,7 @@ export async function GET(
   }
   const startStr = match[1];
   const endStr = match[2];
-  let start = startStr ? parseInt(startStr, 10) : 0;
+  const start = startStr ? parseInt(startStr, 10) : 0;
   let end = endStr ? parseInt(endStr, 10) : fileSize - 1;
   if (Number.isNaN(start) || Number.isNaN(end) || start > end || end >= fileSize) {
     return new NextResponse(null, {
@@ -97,6 +135,7 @@ export async function GET(
       "Content-Range": `bytes ${start}-${end}/${fileSize}`,
       "Accept-Ranges": "bytes",
       "Cache-Control": "public, max-age=31536000, immutable",
+      ...dispositionExtras,
     },
   });
 }

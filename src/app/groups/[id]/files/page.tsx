@@ -212,10 +212,15 @@ export default function GroupFilesPage() {
             return (
               <div key={f.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-3 flex items-center gap-3">
                 <span className="text-2xl shrink-0" aria-hidden>{fileEmoji(f.mimeType)}</span>
+                {/* target=_self + ?name= so the serving route sends
+                    Content-Disposition: attachment with the user-facing
+                    filename. iOS WebView then shows a save/share sheet
+                    instead of rendering the raw file content in-place
+                    (which had no close affordance). */}
                 <a
-                  href={f.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  href={`${f.url}?name=${encodeURIComponent(f.filename)}`}
+                  target="_self"
+                  rel="noopener"
                   className="flex-1 min-w-0 group"
                   download={f.filename}
                 >
