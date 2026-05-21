@@ -179,6 +179,14 @@ describe.skipIf(!integrationEnvReady)("extended query helpers (live Supabase)", 
   });
 
   describe("device tokens", () => {
+    beforeAll(async () => {
+      // Tokens are uniquely keyed by (token) — sweep any leftover from prior
+      // runs so the upsert below isn't blocked by an RLS USING that refers
+      // to a stale user_id.
+      const admin = adminClient();
+      await admin.from("device_tokens").delete().eq("token", "test-token-abc");
+    });
+
     it("registerDeviceToken upserts on conflict", async () => {
       await registerDeviceToken(alice.client, "test-token-abc", "ios");
       await registerDeviceToken(alice.client, "test-token-abc", "ios");
