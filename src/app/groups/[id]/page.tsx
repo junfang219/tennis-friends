@@ -8,6 +8,15 @@ import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import PostCard from "@/components/PostCard";
 import EmojiPicker from "@/components/EmojiPicker";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import {
+  getGroup,
+  listGroupMembers,
+  listFriends,
+  createPost,
+} from "@/lib/supabase/queries";
+import { toGroupCamel, toGroupMemberCamel } from "@/lib/supabase/adapters";
+import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 
 type Member = {
   id: string;
@@ -53,14 +62,46 @@ export default function GroupPage() {
   const [group, setGroup] = useState<GroupData | null>(null);
   const [error, setError] = useState("");
 
-  const loadGroup = () => {
-    fetch(`/api/groups/${params.id}`)
-      .then((r) => {
-        if (!r.ok) throw new Error("Failed");
-        return r.json();
-      })
-      .then(setGroup)
-      .catch(() => setError("Group not found or you're not a member."));
+  const loadGroup = async () => {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const id = String(params.id);
+      const [g, members] = await Promise.all([
+        getGroup(supabase, id),
+        listGroupMembers(supabase, id),
+      ]);
+      if (!g) {
+        setError("Group not found or you're not a member.");
+        return;
+      }
+      // Fetch posts pinned to this group via post_groups join.
+      const { data: postLinks } = await supabase
+        .from("post_groups")
+        .select("post_id")
+        .eq("group_id", id);
+      const postIds = (postLinks ?? []).map((r) => r.post_id);
+      const groupCamel = toGroupCamel(g);
+      setGroup({
+        ...groupCamel,
+        owner: { id: g.owner_id, name: "", profileImageUrl: "" },
+        members: members.map((m) => ({
+          id: m.id,
+          user: {
+            id: m.user.id,
+            name: m.user.name,
+            profileImageUrl: m.user.profile_image_url,
+            skillLevel: "",
+          },
+        })),
+        posts: [],
+        postIds,
+      } as unknown as GroupData);
+      // Also fetch full post rows separately if needed; we just expose IDs
+      // for now and let post links resolve when clicked.
+      void toGroupMemberCamel;
+    } catch {
+      setError("Group not found or you're not a member.");
+    }
   };
 
   useEffect(() => {
@@ -332,27 +373,26 @@ function TeamCoverEditor({
     }
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const upRes = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!upRes.ok) {
-        const d = await upRes.json().catch(() => ({}));
-        setError(d.error || "Upload failed.");
+      const upResult = await uploadToBucket(file, "avatars");
+      if (isUploadError(upResult)) {
+        setError(upResult.message);
         setUploading(false);
         e.target.value = "";
         return;
       }
-      const { url } = await upRes.json();
-      const putRes = await fetch("/api/groups", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ groupId, coverImageUrl: url, coverOffsetY: 50, coverScale: 100 }),
-      });
-      if (!putRes.ok) {
-        const d = await putRes.json().catch(() => ({}));
-        setError(d.error || "Could not save cover.");
+      const supabase = createSupabaseBrowserClient();
+      const { error: upErr } = await supabase
+        .from("groups")
+        .update({
+          cover_image_url: upResult.url,
+          cover_offset_y: 50,
+          cover_scale: 100,
+        })
+        .eq("id", groupId);
+      if (upErr) {
+        setError(upErr.message || "Could not save cover.");
       } else {
-        onUpdate({ coverImageUrl: url, coverOffsetY: 50, coverScale: 100 });
+        onUpdate({ coverImageUrl: upResult.url, coverOffsetY: 50, coverScale: 100 });
         setDraftOffsetY(50);
         setDraftScale(100);
         setRepositioning(true);
@@ -430,12 +470,12 @@ function TeamCoverEditor({
   const saveFraming = async () => {
     const offsetY = Math.round(draftOffsetY);
     const scale = Math.round(draftScale);
-    const res = await fetch("/api/groups", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groupId, coverOffsetY: offsetY, coverScale: scale }),
-    });
-    if (res.ok) {
+    const supabase = createSupabaseBrowserClient();
+    const { error: upErr } = await supabase
+      .from("groups")
+      .update({ cover_offset_y: offsetY, cover_scale: scale })
+      .eq("id", groupId);
+    if (!upErr) {
       onUpdate({ coverOffsetY: offsetY, coverScale: scale });
       setRepositioning(false);
     } else {
@@ -609,25 +649,22 @@ function TeamAvatarEditor({
     const fd = new FormData();
     fd.append("file", file);
     try {
-      const upRes = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!upRes.ok) {
-        const d = await upRes.json().catch(() => ({}));
-        setError(d.error || "Upload failed");
+      const upResult = await uploadToBucket(file, "avatars");
+      if (isUploadError(upResult)) {
+        setError(upResult.message);
         setUploading(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
-      const { url } = await upRes.json();
-      const putRes = await fetch("/api/groups", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ groupId, imageUrl: url }),
-      });
-      if (!putRes.ok) {
-        const d = await putRes.json().catch(() => ({}));
-        setError(d.error || "Failed to update photo");
+      const supabase = createSupabaseBrowserClient();
+      const { error: upErr } = await supabase
+        .from("groups")
+        .update({ image_url: upResult.url })
+        .eq("id", groupId);
+      if (upErr) {
+        setError(upErr.message || "Failed to update photo");
       } else {
-        onUpdate(url);
+        onUpdate(upResult.url);
       }
     } catch {
       setError("Upload failed. Please try again.");
@@ -734,11 +771,19 @@ function MembersButton({
     setMode("edit");
     setErrorMsg("");
     if (friends.length === 0) {
-      const res = await fetch("/api/friends");
-      if (res.ok) {
-        const data = await res.json();
-        setFriends(data.friends || []);
-      }
+      const supabase = createSupabaseBrowserClient();
+      const rows = await listFriends(supabase);
+      setFriends(
+        rows.map((u) => ({
+          friendshipId: u.id,
+          user: {
+            id: u.id,
+            name: u.name,
+            profileImageUrl: u.profile_image_url,
+            skillLevel: u.skill_level,
+          },
+        }))
+      );
     }
   };
 
@@ -761,55 +806,71 @@ function MembersButton({
   const saveChanges = async () => {
     setSaving(true);
     setErrorMsg("");
-    const body: Record<string, unknown> = { groupId };
-    if (selected.size > 0) body.addMemberIds = Array.from(selected);
-    if (isOwner && removed.size > 0) body.removeMemberIds = Array.from(removed);
-
-    const res = await fetch("/api/groups", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      onUpdate(updated.members);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      if (selected.size > 0) {
+        const rows = Array.from(selected).map((uid) => ({
+          group_id: groupId,
+          user_id: uid,
+          role: "member" as const,
+        }));
+        await supabase.from("group_members").insert(rows);
+      }
+      if (isOwner && removed.size > 0) {
+        await supabase
+          .from("group_members")
+          .delete()
+          .eq("group_id", groupId)
+          .in("user_id", Array.from(removed));
+      }
+      // Reload members.
+      const members = await listGroupMembers(supabase, groupId);
+      onUpdate(
+        members.map((m) => ({
+          id: m.id,
+          user: {
+            id: m.user.id,
+            name: m.user.name,
+            profileImageUrl: m.user.profile_image_url,
+            skillLevel: "",
+          },
+        }))
+      );
       setMode("view");
       setSelected(new Set());
       setRemoved(new Set());
-    } else {
-      const data = await res.json().catch(() => ({}));
-      setErrorMsg(data.error || "Failed to save changes");
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Failed to save changes");
     }
     setSaving(false);
   };
 
   const leaveTeam = async () => {
     if (!confirm("Leave this team? You'll lose access to the team chat and feed.")) return;
-    const res = await fetch("/api/inbox/state", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "team", id: groupId, action: "leave" }),
-    });
-    if (res.ok) {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth.user) return;
+      await supabase
+        .from("group_members")
+        .delete()
+        .eq("group_id", groupId)
+        .eq("user_id", auth.user.id);
       window.location.href = "/groups";
-    } else {
-      const data = await res.json().catch(() => ({}));
-      alert(data.error || "Failed to leave team");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to leave team");
     }
   };
 
   const deleteTeam = async () => {
     if (!confirm("Delete this team? This removes the team and its chat, matches, and practices for all members. This cannot be undone.")) return;
-    const res = await fetch("/api/groups", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groupId }),
-    });
-    if (res.ok) {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { error: delErr } = await supabase.from("groups").delete().eq("id", groupId);
+      if (delErr) throw delErr;
       window.location.href = "/groups";
-    } else {
-      const data = await res.json().catch(() => ({}));
-      alert(data.error || "Failed to delete team");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete team");
     }
   };
 
@@ -1142,15 +1203,13 @@ function GroupComposerModal({
     if (!file) return;
     setUploadError("");
     setUploading(true);
-    const formData = new FormData();
-    formData.append("file", file);
-    try {
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      if (!res.ok) { const d = await res.json(); setUploadError(d.error || "Upload failed"); setUploading(false); return; }
-      const data = await res.json();
-      setMediaUrl(data.url);
-      setMediaType(data.mediaType);
-    } catch { setUploadError("Upload failed."); }
+    const upResult = await uploadToBucket(file, "posts");
+    if (isUploadError(upResult)) {
+      setUploadError(upResult.message);
+    } else {
+      setMediaUrl(upResult.url);
+      setMediaType(upResult.mediaType);
+    }
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -1186,22 +1245,23 @@ function GroupComposerModal({
     }
 
     try {
-      const res = await fetch("/api/posts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+      const supabase = createSupabaseBrowserClient();
+      const newPost = await createPost(supabase, {
+        content: typeof body.content === "string" ? body.content : "",
+        media_url: typeof body.mediaUrl === "string" ? body.mediaUrl : "",
+        media_type: typeof body.mediaType === "string" ? body.mediaType : "",
+        post_type: (body.postType as "regular" | "find_players") || "regular",
+        play_date: typeof body.playDate === "string" ? body.playDate : "",
+        play_time: typeof body.playTime === "string" ? body.playTime : "",
+        play_duration: typeof body.playDuration === "number" ? body.playDuration : 90,
+        court_location: typeof body.courtLocation === "string" ? body.courtLocation : "",
+        game_type: typeof body.gameType === "string" ? body.gameType : "",
+        players_needed: typeof body.playersNeeded === "number" ? body.playersNeeded : 0,
+        court_booked: !!body.courtBooked,
       });
-      if (res.ok) {
-        const post = await res.json();
-        onPost(post);
-      } else {
-        let msg = `Post failed (${res.status})`;
-        try {
-          const data = await res.json();
-          if (data?.error) msg = data.error;
-        } catch {}
-        setPostError(msg);
-      }
+      // Cross-post to this group via the join table.
+      await supabase.from("post_groups").insert({ post_id: newPost.id, group_id: groupId });
+      onPost(newPost as unknown as Record<string, unknown>);
     } catch (err) {
       setPostError(err instanceof Error ? err.message : "Network error");
     } finally {
