@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/supabase/nextauth-compat";
 import Avatar from "./Avatar";
 import EmojiPicker from "./EmojiPicker";
 

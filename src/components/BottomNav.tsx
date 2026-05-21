@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/supabase/nextauth-compat";
 import { useEffect, useState } from "react";
 
 const TAB_ROUTES = ["/", "/groups", "/courts", "/chat", "/profile"] as const;

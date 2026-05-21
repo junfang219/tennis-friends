@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/supabase/nextauth-compat";
 
 type Gender = "male" | "female" | "non_binary" | "prefer_not_to_say";
 type AgeRange = "under_18" | "18_29" | "30_49" | "50_plus";

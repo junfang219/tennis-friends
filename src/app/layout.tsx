@@ -1,10 +1,13 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import SessionProvider from "@/components/SessionProvider";
 import Navbar from "@/components/Navbar";
 import BottomNav from "@/components/BottomNav";
 import PushRegistrar from "@/components/PushRegistrar";
-import ArrivalDetector from "@/components/ArrivalDetector";
+
+// SessionProvider is gone: Supabase's auth state is hydrated per-component
+// via useSupabaseUser / the nextauth-compat shim. ArrivalDetector was
+// deleted along with its useArrivalDetection hook — port it to a Supabase
+// Realtime presence channel when the feature is rebuilt.
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -27,13 +30,10 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full">
       <body className="min-h-full flex flex-col bg-surface" suppressHydrationWarning>
-        <SessionProvider>
-          <PushRegistrar />
-          <ArrivalDetector />
-          <Navbar />
-          <main className="flex-1">{children}</main>
-          <BottomNav />
-        </SessionProvider>
+        <PushRegistrar />
+        <Navbar />
+        <main className="flex-1">{children}</main>
+        <BottomNav />
       </body>
     </html>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSession, signOut } from "next-auth/react";
+import { useSession, signOut } from "@/lib/supabase/nextauth-compat";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import Avatar from "./Avatar";

@@ -6,7 +6,8 @@ import { useRouter, usePathname } from "next/navigation";
 import Avatar from "./Avatar";
 import PostCard from "./PostCard";
 import { emojiFor } from "@/lib/reactions";
-import { onAppEvent } from "@/lib/eventStream";
+import { useSession } from "@/lib/supabase/nextauth-compat";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 type Notification = {
   id: string;
@@ -181,6 +182,8 @@ type FriendRequest = {
 export default function NotificationBell() {
   const router = useRouter();
   const pathname = usePathname();
+  const { data: session } = useSession();
+  const userId = session?.user?.id;
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [pendingFriendRequests, setPendingFriendRequests] = useState(0);
@@ -316,17 +319,35 @@ export default function NotificationBell() {
 
   useEffect(() => {
     loadNotifications();
-    // Real-time refresh via SSE; the safety poll covers any gap when the
-    // connection is briefly down (mobile network change, proxy timeout).
-    const unsubscribe = onAppEvent((e) => {
-      if (e.kind === "notifications" || e.kind === "hello") loadNotifications();
-    });
+    // 60s safety poll; Supabase Realtime is the primary signal.
     pollRef.current = setInterval(loadNotifications, 60000);
     return () => {
-      unsubscribe();
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
+
+  // Subscribe to notification INSERTs and refresh the dropdown when a new
+  // one lands. RLS scopes the stream to rows for this user.
+  useEffect(() => {
+    if (!userId) return;
+    const supabase = createSupabaseBrowserClient();
+    const channel = supabase
+      .channel(`notifications-${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
+        () => loadNotifications()
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
+        () => loadNotifications()
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userId]);
 
   // Close any open modal/dropdown when the route changes (e.g. tapping
   // "Open chat" inside the post-detail modal navigates to /chat/group/[id]).

@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/supabase/nextauth-compat";
 
 // Registers the device for APNs (or FCM on Android) and POSTs the token to the
 // backend whenever a user is authenticated. Routes the user to the right place

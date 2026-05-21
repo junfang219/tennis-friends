@@ -3,9 +3,9 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useSession } from "@/lib/supabase/nextauth-compat";
 import ConversationRow, { type InboxItem, type InboxAction } from "./ConversationRow";
-import { onAppEvent } from "@/lib/eventStream";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 // Per-user localStorage key so dismissals are scoped to the signed-in user.
 const DISMISS_KEY = (userId: string) => `tf_msg_tray_dismissed_${userId}`;
@@ -57,15 +57,40 @@ export default function MessageBell() {
 
   useEffect(() => {
     loadInbox();
-    const unsubscribe = onAppEvent((e) => {
-      if (e.kind === "inbox" || e.kind === "hello") loadInbox();
-    });
+    // Belt-and-suspenders poll every 60s; Realtime is the primary signal.
     pollRef.current = setInterval(loadInbox, 60000);
     return () => {
-      unsubscribe();
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, [loadInbox]);
+
+  // Subscribe to anything that could change my inbox count. RLS scopes the
+  // event stream to rows I can already read, so a single channel is safe.
+  useEffect(() => {
+    if (!userId) return;
+    const supabase = createSupabaseBrowserClient();
+    const channel = supabase
+      .channel(`inbox-${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages", filter: `receiver_id=eq.${userId}` },
+        () => loadInbox()
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "chat_messages" },
+        () => loadInbox()
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "group_messages" },
+        () => loadInbox()
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userId, loadInbox]);
 
   // Load persisted dismissals once we know the user
   useEffect(() => {
