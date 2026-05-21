@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Avatar from "@/components/Avatar";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 type Participant = {
   id: string;
@@ -37,19 +38,20 @@ export default function CheckinDrawer({
     const next = !localState[userId];
     setPending(userId);
     setError("");
-    const res = await fetch(`/api/events/${eventId}/checkin`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId, checkedIn: next }),
-    });
-    setPending(null);
-    if (!res.ok) {
-      const d = await res.json().catch(() => null);
-      setError(d?.error || "Couldn't update check-in");
-      return;
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { error: upErr } = await supabase
+        .from("event_participants")
+        .update({ checked_in_at: next ? new Date().toISOString() : null })
+        .eq("event_id", eventId)
+        .eq("user_id", userId);
+      if (upErr) throw upErr;
+      setLocalState((prev) => ({ ...prev, [userId]: next }));
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't update check-in");
     }
-    setLocalState((prev) => ({ ...prev, [userId]: next }));
-    onChanged?.();
+    setPending(null);
   }
 
   return (

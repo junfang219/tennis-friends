@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Avatar from "@/components/Avatar";
 import type { StandingsRowView } from "./types";
 import ChallengeModal from "./ChallengeModal";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listEventParticipants } from "@/lib/supabase/queries";
 
 const DEFAULT_MAX_GAP = 3;
 
@@ -22,13 +24,32 @@ export default function LadderList({
 
   const load = () => {
     setLoading(true);
-    fetch(`/api/events/${eventId}/standings`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data) => {
-        setRows(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    (async () => {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const parts = await listEventParticipants(supabase, eventId);
+        const sorted = [...parts].sort((a, b) => b.points - a.points);
+        setRows(
+          sorted.map((p, i) => ({
+            rank: i + 1,
+            userId: p.user_id,
+            user: {
+              id: p.user.id,
+              name: p.user.name,
+              profileImageUrl: p.user.profile_image_url,
+            },
+            wins: p.wins,
+            losses: p.losses,
+            setsWon: p.sets_won,
+            setsLost: p.sets_lost,
+            points: p.points,
+          })) as unknown as StandingsRowView[]
+        );
+      } catch {
+        setRows([]);
+      }
+      setLoading(false);
+    })();
   };
 
   useEffect(() => {

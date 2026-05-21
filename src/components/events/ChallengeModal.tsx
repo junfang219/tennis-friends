@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { StandingsRowView } from "./types";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 export default function ChallengeModal({
   eventId,
@@ -22,22 +23,25 @@ export default function ChallengeModal({
   async function send() {
     setSending(true);
     setError("");
-    const res = await fetch(`/api/events/${eventId}/challenges`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        opponentId: opponent.userId,
-        scheduledAt: scheduledAt || undefined,
-        courtAssign: courtAssign || undefined,
-      }),
-    });
-    setSending(false);
-    if (!res.ok) {
-      const d = await res.json().catch(() => null);
-      setError(d?.error || "Couldn't send challenge");
-      return;
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth.user) throw new Error("Not signed in");
+      const { error: insErr } = await supabase.from("event_matches").insert({
+        event_id: eventId,
+        player1_id: auth.user.id,
+        player2_id: opponent.userId,
+        proposed_by: auth.user.id,
+        scheduled_at: scheduledAt || null,
+        court_assign: courtAssign,
+        status: "proposed",
+      });
+      if (insErr) throw insErr;
+      onSent();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't send challenge");
     }
-    onSent();
+    setSending(false);
   }
 
   return (

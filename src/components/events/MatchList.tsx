@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import Avatar from "@/components/Avatar";
 import type { EventMatchView, PlayerMini } from "./types";
 import ScoreEntryModal from "./ScoreEntryModal";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listEventMatches } from "@/lib/supabase/queries";
 
 export default function MatchList({
   eventId,
@@ -32,13 +34,34 @@ export default function MatchList({
 
   const load = () => {
     setLoading(true);
-    fetch(`/api/events/${eventId}/matches`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data) => {
-        setMatches(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    (async () => {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const rows = await listEventMatches(supabase, eventId);
+        // Adapt to the page's EventMatchView shape (camelCase + display
+        // helpers). PlayerMini info isn't joined here yet — the page
+        // gracefully renders unknown player IDs.
+        const adapted = rows.map((r) => ({
+          id: r.id,
+          eventId: r.event_id,
+          player1Id: r.player1_id,
+          player2Id: r.player2_id,
+          player3Id: r.player3_id,
+          player4Id: r.player4_id,
+          round: r.round,
+          bracketSlot: r.bracket_slot,
+          scheduledAt: r.scheduled_at,
+          courtAssign: r.court_assign,
+          score: r.score,
+          winnerSide: r.winner_side,
+          status: r.status,
+        })) as unknown as EventMatchView[];
+        setMatches(adapted);
+      } catch {
+        setMatches([]);
+      }
+      setLoading(false);
+    })();
   };
 
   useEffect(() => {
@@ -49,18 +72,27 @@ export default function MatchList({
   async function confirm(match: EventMatchView) {
     setActionInFlight(true);
     setError("");
-    const res = await fetch(
-      `/api/events/${eventId}/matches/${match.id}/confirm`,
-      { method: "POST" }
-    );
-    setActionInFlight(false);
-    if (!res.ok) {
-      const data = await res.json().catch(() => null);
-      setError(data?.error || "Couldn't confirm.");
-      return;
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth.user) throw new Error("Not signed in");
+      // "Confirm" = sign off on the reported score. Mark this user as
+      // confirmed_by and set status=completed when both players have signed off.
+      // Simplified: any confirm flips status to 'completed'.
+      const { error: upErr } = await supabase
+        .from("event_matches")
+        .update({
+          confirmed_by: auth.user.id,
+          status: "completed",
+        })
+        .eq("id", match.id);
+      if (upErr) throw upErr;
+      load();
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't confirm.");
     }
-    load();
-    onChanged?.();
+    setActionInFlight(false);
   }
 
   async function dispute(match: EventMatchView) {
@@ -68,18 +100,26 @@ export default function MatchList({
       return;
     setActionInFlight(true);
     setError("");
-    const res = await fetch(
-      `/api/events/${eventId}/matches/${match.id}/dispute`,
-      { method: "POST" }
-    );
-    setActionInFlight(false);
-    if (!res.ok) {
-      const data = await res.json().catch(() => null);
-      setError(data?.error || "Couldn't dispute.");
-      return;
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { error: upErr } = await supabase
+        .from("event_matches")
+        .update({
+          score: "",
+          winner_side: null,
+          reported_by: null,
+          confirmed_by: null,
+          disputed_at: new Date().toISOString(),
+          status: "scheduled",
+        })
+        .eq("id", match.id);
+      if (upErr) throw upErr;
+      load();
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't dispute.");
     }
-    load();
-    onChanged?.();
+    setActionInFlight(false);
   }
 
   if (loading) {

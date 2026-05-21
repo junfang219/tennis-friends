@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Avatar from "@/components/Avatar";
 import type { EventMatchView } from "./types";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listEventMatches } from "@/lib/supabase/queries";
 
 export default function RotationCard({
   eventId,
@@ -20,13 +22,32 @@ export default function RotationCard({
 
   const load = () => {
     setLoading(true);
-    fetch(`/api/events/${eventId}/matches`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data) => {
-        setMatches(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    (async () => {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const rows = await listEventMatches(supabase, eventId);
+        setMatches(
+          rows.map((r) => ({
+            id: r.id,
+            eventId: r.event_id,
+            player1Id: r.player1_id,
+            player2Id: r.player2_id,
+            player3Id: r.player3_id,
+            player4Id: r.player4_id,
+            round: r.round,
+            bracketSlot: r.bracket_slot,
+            scheduledAt: r.scheduled_at,
+            courtAssign: r.court_assign,
+            score: r.score,
+            winnerSide: r.winner_side,
+            status: r.status,
+          })) as unknown as EventMatchView[]
+        );
+      } catch {
+        setMatches([]);
+      }
+      setLoading(false);
+    })();
   };
 
   useEffect(() => {
@@ -37,19 +58,12 @@ export default function RotationCard({
   async function postNext() {
     setError("");
     setPosting(true);
-    const res = await fetch(`/api/events/${eventId}/rotations`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
+    // Rotation generation (round-robin pairing avoiding repeats, BYE
+    // handling) requires a non-trivial server-side algorithm. Reinstate
+    // as an Edge Function before launch.
+    setError("Rotation pairing requires the events-rotation Edge Function (deferred). Talk to the dev.");
     setPosting(false);
-    if (!res.ok) {
-      const d = await res.json().catch(() => null);
-      setError(d?.error || "Couldn't post round");
-      return;
-    }
-    load();
-    onChanged?.();
+    void onChanged;
   }
 
   if (loading) return <div className="text-sm text-gray-500 py-6 text-center">Loading rotations…</div>;

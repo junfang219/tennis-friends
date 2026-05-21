@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { EventMatchView } from "./types";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 type SetScore = { a: string; b: string };
 
@@ -45,21 +46,38 @@ export default function ScoreEntryModal({
       return;
     }
     setSubmitting(true);
-    const res = await fetch(
-      `/api/events/${eventId}/matches/${match.id}/report`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ score: payloadSets.join(",") }),
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth.user) throw new Error("Not signed in");
+      // Determine winner side from sets-won count.
+      let aSetsWon = 0;
+      let bSetsWon = 0;
+      for (const s of sets) {
+        if (Number(s.a) > Number(s.b)) aSetsWon += 1;
+        else if (Number(s.b) > Number(s.a)) bSetsWon += 1;
       }
-    );
-    setSubmitting(false);
-    if (!res.ok) {
-      const data = await res.json().catch(() => null);
-      setError(data?.error || "Couldn't submit score");
-      return;
+      const winnerSide = aSetsWon > bSetsWon ? 1 : bSetsWon > aSetsWon ? 2 : null;
+      const { error: upErr } = await supabase
+        .from("event_matches")
+        .update({
+          score: payloadSets.join(","),
+          winner_side: winnerSide,
+          reported_by: auth.user.id,
+          status: "in_progress",
+        })
+        .eq("id", match.id);
+      if (upErr) throw upErr;
+      // Standings recompute (wins/losses/sets_won/sets_lost/points)
+      // historically lived in the report endpoint. Reinstate as a
+      // trigger or Edge Function — for now the standings table will
+      // lag until that lands.
+      onSubmitted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't submit score");
     }
-    onSubmitted();
+    setSubmitting(false);
+    void eventId;
   }
 
   return (

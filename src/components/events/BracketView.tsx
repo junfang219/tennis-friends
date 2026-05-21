@@ -3,6 +3,32 @@
 import { useEffect, useState } from "react";
 import Avatar from "@/components/Avatar";
 import type { BracketView as BracketViewT } from "./types";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listEventMatches, type EventMatchRow } from "@/lib/supabase/queries";
+
+// Group event_matches by round into the shape BracketViewT expects.
+function groupByRound(rows: EventMatchRow[]): BracketViewT["rounds"] {
+  const byRound = new Map<number, EventMatchRow[]>();
+  for (const r of rows) {
+    const round = r.round ?? 0;
+    if (!byRound.has(round)) byRound.set(round, []);
+    byRound.get(round)!.push(r);
+  }
+  return Array.from(byRound.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([round, matches]) => ({
+      round,
+      label: round === 0 ? "Round 1" : `Round ${round + 1}`,
+      matches: matches.map((m) => ({
+        id: m.id,
+        player1Id: m.player1_id,
+        player2Id: m.player2_id,
+        score: m.score,
+        winnerSide: m.winner_side,
+        status: m.status,
+      })),
+    })) as unknown as BracketViewT["rounds"];
+}
 
 export default function BracketView({
   eventId,
@@ -20,13 +46,24 @@ export default function BracketView({
 
   const load = () => {
     setLoading(true);
-    fetch(`/api/events/${eventId}/bracket`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        setData(d);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    (async () => {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const rows = await listEventMatches(supabase, eventId);
+        const seeded = rows.length > 0;
+        setData(
+          seeded
+            ? ({
+                seeded: true,
+                rounds: groupByRound(rows),
+              } as unknown as BracketViewT)
+            : ({ seeded: false } as unknown as BracketViewT)
+        );
+      } catch {
+        setData(null);
+      }
+      setLoading(false);
+    })();
   };
 
   useEffect(() => {
@@ -39,15 +76,12 @@ export default function BracketView({
       return;
     setSeeding(true);
     setError("");
-    const res = await fetch(`/api/events/${eventId}/bracket`, { method: "POST" });
+    // Bracket seeding is a non-trivial algorithm (random pairing,
+    // optional ELO seeding, BYEs for odd counts). Reinstate as a Supabase
+    // Edge Function before launch — keeping the button disabled until then.
+    setError("Bracket seeding requires the events-bracket Edge Function (deferred). Talk to the dev.");
     setSeeding(false);
-    if (!res.ok) {
-      const d = await res.json().catch(() => null);
-      setError(d?.error || "Couldn't seed bracket");
-      return;
-    }
-    load();
-    onSeeded?.();
+    void onSeeded;
   }
 
   if (loading) return <div className="text-sm text-gray-500 py-6 text-center">Loading bracket…</div>;

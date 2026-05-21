@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { createPost } from "@/lib/supabase/queries";
 
 // A focused composer for posting a "I want to play within this event" note.
 // Writes to the same /api/posts endpoint as the main composer but with the
@@ -33,28 +35,24 @@ export default function FindPartnerComposer({
     }
     setSubmitting(true);
     setError("");
-    const res = await fetch("/api/posts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await createPost(supabase, {
         content: content.trim(),
-        postType: "match-seek",
-        eventId,
-        playDate: playDate || "",
-        playTime: playTime || "",
-        gameType: "singles",
-        skillMin: defaultSkillMin ?? null,
-        skillMax: defaultSkillMax ?? null,
-        playersNeeded: 1,
-      }),
-    });
-    setSubmitting(false);
-    if (!res.ok) {
-      const d = await res.json().catch(() => null);
-      setError(d?.error || "Couldn't post. Try again.");
-      return;
+        post_type: "find_players",
+        event_id: eventId,
+        play_date: playDate || "",
+        play_time: playTime || "",
+        game_type: "singles",
+        skill_min: defaultSkillMin ?? null,
+        skill_max: defaultSkillMax ?? null,
+        players_needed: 1,
+      });
+      onPosted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't post. Try again.");
     }
-    onPosted();
+    setSubmitting(false);
   }
 
   return (

@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Avatar from "@/components/Avatar";
 import type { StandingsRowView } from "./types";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listEventParticipants } from "@/lib/supabase/queries";
 
 export default function StandingsTable({
   eventId,
@@ -16,13 +18,37 @@ export default function StandingsTable({
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/events/${eventId}/standings`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data) => {
-        setRows(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    (async () => {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const parts = await listEventParticipants(supabase, eventId);
+        // Sort by points desc, then wins desc, then set differential.
+        const sorted = [...parts].sort((a, b) => {
+          if (b.points !== a.points) return b.points - a.points;
+          if (b.wins !== a.wins) return b.wins - a.wins;
+          return b.sets_won - b.sets_lost - (a.sets_won - a.sets_lost);
+        });
+        setRows(
+          sorted.map((p, i) => ({
+            rank: i + 1,
+            userId: p.user_id,
+            user: {
+              id: p.user.id,
+              name: p.user.name,
+              profileImageUrl: p.user.profile_image_url,
+            },
+            wins: p.wins,
+            losses: p.losses,
+            setsWon: p.sets_won,
+            setsLost: p.sets_lost,
+            points: p.points,
+          })) as unknown as StandingsRowView[]
+        );
+      } catch {
+        setRows([]);
+      }
+      setLoading(false);
+    })();
   }, [eventId]);
 
   if (loading) {
