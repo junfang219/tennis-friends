@@ -1,0 +1,3890 @@
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[]
+
+export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
+  public: {
+    Tables: {
+      album_items: {
+        Row: {
+          added_by_id: string
+          album_id: string
+          caption: string
+          created_at: string
+          id: string
+          media_type: string
+          order: number
+          url: string
+        }
+        Insert: {
+          added_by_id: string
+          album_id: string
+          caption?: string
+          created_at?: string
+          id?: string
+          media_type: string
+          order?: number
+          url: string
+        }
+        Update: {
+          added_by_id?: string
+          album_id?: string
+          caption?: string
+          created_at?: string
+          id?: string
+          media_type?: string
+          order?: number
+          url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "album_items_added_by_id_fkey"
+            columns: ["added_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "album_items_album_id_fkey"
+            columns: ["album_id"]
+            isOneToOne: false
+            referencedRelation: "albums"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      albums: {
+        Row: {
+          cover_item_id: string | null
+          created_at: string
+          created_by_id: string
+          description: string
+          group_id: string
+          id: string
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          cover_item_id?: string | null
+          created_at?: string
+          created_by_id: string
+          description?: string
+          group_id: string
+          id?: string
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          cover_item_id?: string | null
+          created_at?: string
+          created_by_id?: string
+          description?: string
+          group_id?: string
+          id?: string
+          name?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "albums_cover_item_fk"
+            columns: ["cover_item_id"]
+            isOneToOne: false
+            referencedRelation: "album_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "albums_created_by_id_fkey"
+            columns: ["created_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "albums_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      blocks: {
+        Row: {
+          blocked_id: string
+          blocker_id: string
+          created_at: string
+          id: string
+        }
+        Insert: {
+          blocked_id: string
+          blocker_id: string
+          created_at?: string
+          id?: string
+        }
+        Update: {
+          blocked_id?: string
+          blocker_id?: string
+          created_at?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "blocks_blocked_id_fkey"
+            columns: ["blocked_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "blocks_blocker_id_fkey"
+            columns: ["blocker_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      booking_players: {
+        Row: {
+          booking_id: string
+          created_at: string
+          id: string
+          status: Database["public"]["Enums"]["booking_player_status"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          booking_id: string
+          created_at?: string
+          id?: string
+          status?: Database["public"]["Enums"]["booking_player_status"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          booking_id?: string
+          created_at?: string
+          id?: string
+          status?: Database["public"]["Enums"]["booking_player_status"]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "booking_players_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "booking_players_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bookings: {
+        Row: {
+          active_net_url: string
+          court_id: string
+          created_at: string
+          end_time: string
+          id: string
+          organizer_id: string
+          start_time: string
+          status: Database["public"]["Enums"]["booking_status"]
+          updated_at: string
+        }
+        Insert: {
+          active_net_url?: string
+          court_id: string
+          created_at?: string
+          end_time: string
+          id?: string
+          organizer_id: string
+          start_time: string
+          status?: Database["public"]["Enums"]["booking_status"]
+          updated_at?: string
+        }
+        Update: {
+          active_net_url?: string
+          court_id?: string
+          created_at?: string
+          end_time?: string
+          id?: string
+          organizer_id?: string
+          start_time?: string
+          status?: Database["public"]["Enums"]["booking_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bookings_court_id_fkey"
+            columns: ["court_id"]
+            isOneToOne: false
+            referencedRelation: "venue_courts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bookings_organizer_id_fkey"
+            columns: ["organizer_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_messages: {
+        Row: {
+          chat_id: string
+          content: string
+          created_at: string
+          id: string
+          media_type: string
+          media_url: string
+          sender_id: string
+        }
+        Insert: {
+          chat_id: string
+          content: string
+          created_at?: string
+          id?: string
+          media_type?: string
+          media_url?: string
+          sender_id: string
+        }
+        Update: {
+          chat_id?: string
+          content?: string
+          created_at?: string
+          id?: string
+          media_type?: string
+          media_url?: string
+          sender_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_messages_chat_id_fkey"
+            columns: ["chat_id"]
+            isOneToOne: false
+            referencedRelation: "chats"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_sender_id_fkey"
+            columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_participants: {
+        Row: {
+          chat_id: string
+          cleared_at: string | null
+          hidden_at: string | null
+          id: string
+          joined_at: string
+          last_read_at: string
+          muted: boolean
+          pinned_at: string | null
+          user_id: string
+        }
+        Insert: {
+          chat_id: string
+          cleared_at?: string | null
+          hidden_at?: string | null
+          id?: string
+          joined_at?: string
+          last_read_at?: string
+          muted?: boolean
+          pinned_at?: string | null
+          user_id: string
+        }
+        Update: {
+          chat_id?: string
+          cleared_at?: string | null
+          hidden_at?: string | null
+          id?: string
+          joined_at?: string
+          last_read_at?: string
+          muted?: boolean
+          pinned_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_participants_chat_id_fkey"
+            columns: ["chat_id"]
+            isOneToOne: false
+            referencedRelation: "chats"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_participants_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chats: {
+        Row: {
+          created_at: string
+          creator_id: string
+          friend_group_id: string | null
+          id: string
+          manual_player_names: string
+          name: string
+          post_id: string | null
+          session_end_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          creator_id: string
+          friend_group_id?: string | null
+          id?: string
+          manual_player_names?: string
+          name?: string
+          post_id?: string | null
+          session_end_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          creator_id?: string
+          friend_group_id?: string | null
+          id?: string
+          manual_player_names?: string
+          name?: string
+          post_id?: string | null
+          session_end_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chats_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chats_friend_group_id_fkey"
+            columns: ["friend_group_id"]
+            isOneToOne: true
+            referencedRelation: "friend_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chats_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      comments: {
+        Row: {
+          author_id: string
+          content: string
+          created_at: string
+          id: string
+          post_id: string
+        }
+        Insert: {
+          author_id: string
+          content: string
+          created_at?: string
+          id?: string
+          post_id: string
+        }
+        Update: {
+          author_id?: string
+          content?: string
+          created_at?: string
+          id?: string
+          post_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "comments_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "comments_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      court_availability_reports: {
+        Row: {
+          court_id: string
+          has_empty: boolean
+          id: string
+          post_id: string | null
+          reported_at: string
+          user_id: string
+        }
+        Insert: {
+          court_id: string
+          has_empty: boolean
+          id?: string
+          post_id?: string | null
+          reported_at?: string
+          user_id: string
+        }
+        Update: {
+          court_id?: string
+          has_empty?: boolean
+          id?: string
+          post_id?: string | null
+          reported_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "court_availability_reports_court_id_fkey"
+            columns: ["court_id"]
+            isOneToOne: false
+            referencedRelation: "courts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "court_availability_reports_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "court_availability_reports_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      court_review_photos: {
+        Row: {
+          created_at: string
+          id: string
+          order: number
+          review_id: string
+          url: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          order?: number
+          review_id: string
+          url: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          order?: number
+          review_id?: string
+          url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "court_review_photos_review_id_fkey"
+            columns: ["review_id"]
+            isOneToOne: false
+            referencedRelation: "court_reviews"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      court_reviews: {
+        Row: {
+          content: string
+          court_id: string
+          created_at: string
+          id: string
+          stars: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          content?: string
+          court_id: string
+          created_at?: string
+          id?: string
+          stars: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          content?: string
+          court_id?: string
+          created_at?: string
+          id?: string
+          stars?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "court_reviews_court_id_fkey"
+            columns: ["court_id"]
+            isOneToOne: false
+            referencedRelation: "courts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "court_reviews_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      courts: {
+        Row: {
+          added_by_id: string
+          created_at: string
+          id: string
+          latitude: number
+          location: unknown
+          longitude: number
+          name: string
+          notes: string
+        }
+        Insert: {
+          added_by_id: string
+          created_at?: string
+          id?: string
+          latitude: number
+          location?: unknown
+          longitude: number
+          name: string
+          notes?: string
+        }
+        Update: {
+          added_by_id?: string
+          created_at?: string
+          id?: string
+          latitude?: number
+          location?: unknown
+          longitude?: number
+          name?: string
+          notes?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "courts_added_by_id_fkey"
+            columns: ["added_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      device_tokens: {
+        Row: {
+          created_at: string
+          id: string
+          platform: Database["public"]["Enums"]["device_platform"]
+          token: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          platform: Database["public"]["Enums"]["device_platform"]
+          token: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          platform?: Database["public"]["Enums"]["device_platform"]
+          token?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "device_tokens_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      direct_message_reads: {
+        Row: {
+          cleared_at: string | null
+          hidden_at: string | null
+          id: string
+          last_read_at: string
+          muted: boolean
+          other_id: string
+          pinned_at: string | null
+          user_id: string
+        }
+        Insert: {
+          cleared_at?: string | null
+          hidden_at?: string | null
+          id?: string
+          last_read_at?: string
+          muted?: boolean
+          other_id: string
+          pinned_at?: string | null
+          user_id: string
+        }
+        Update: {
+          cleared_at?: string | null
+          hidden_at?: string | null
+          id?: string
+          last_read_at?: string
+          muted?: boolean
+          other_id?: string
+          pinned_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "direct_message_reads_other_id_fkey"
+            columns: ["other_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "direct_message_reads_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      event_matches: {
+        Row: {
+          bracket_slot: string
+          confirmed_by: string | null
+          court_assign: string
+          created_at: string
+          disputed_at: string | null
+          event_id: string
+          id: string
+          player1_id: string
+          player2_id: string
+          player3_id: string | null
+          player4_id: string | null
+          proposed_by: string | null
+          reported_by: string | null
+          round: number | null
+          scheduled_at: string | null
+          score: string
+          status: Database["public"]["Enums"]["event_match_status"]
+          winner_side: number | null
+        }
+        Insert: {
+          bracket_slot?: string
+          confirmed_by?: string | null
+          court_assign?: string
+          created_at?: string
+          disputed_at?: string | null
+          event_id: string
+          id?: string
+          player1_id: string
+          player2_id: string
+          player3_id?: string | null
+          player4_id?: string | null
+          proposed_by?: string | null
+          reported_by?: string | null
+          round?: number | null
+          scheduled_at?: string | null
+          score?: string
+          status?: Database["public"]["Enums"]["event_match_status"]
+          winner_side?: number | null
+        }
+        Update: {
+          bracket_slot?: string
+          confirmed_by?: string | null
+          court_assign?: string
+          created_at?: string
+          disputed_at?: string | null
+          event_id?: string
+          id?: string
+          player1_id?: string
+          player2_id?: string
+          player3_id?: string | null
+          player4_id?: string | null
+          proposed_by?: string | null
+          reported_by?: string | null
+          round?: number | null
+          scheduled_at?: string | null
+          score?: string
+          status?: Database["public"]["Enums"]["event_match_status"]
+          winner_side?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "event_matches_confirmed_by_fkey"
+            columns: ["confirmed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "event_matches_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "event_matches_player1_id_fkey"
+            columns: ["player1_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "event_matches_player2_id_fkey"
+            columns: ["player2_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "event_matches_player3_id_fkey"
+            columns: ["player3_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "event_matches_player4_id_fkey"
+            columns: ["player4_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "event_matches_proposed_by_fkey"
+            columns: ["proposed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "event_matches_reported_by_fkey"
+            columns: ["reported_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      event_participants: {
+        Row: {
+          checked_in_at: string | null
+          event_id: string
+          id: string
+          losses: number
+          points: number
+          registered_at: string
+          sets_lost: number
+          sets_won: number
+          status: Database["public"]["Enums"]["event_participant_status"]
+          user_id: string
+          wins: number
+        }
+        Insert: {
+          checked_in_at?: string | null
+          event_id: string
+          id?: string
+          losses?: number
+          points?: number
+          registered_at?: string
+          sets_lost?: number
+          sets_won?: number
+          status?: Database["public"]["Enums"]["event_participant_status"]
+          user_id: string
+          wins?: number
+        }
+        Update: {
+          checked_in_at?: string | null
+          event_id?: string
+          id?: string
+          losses?: number
+          points?: number
+          registered_at?: string
+          sets_lost?: number
+          sets_won?: number
+          status?: Database["public"]["Enums"]["event_participant_status"]
+          user_id?: string
+          wins?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "event_participants_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "event_participants_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      events: {
+        Row: {
+          config: Json
+          cover_image_url: string
+          created_at: string
+          description: string
+          end_date: string
+          event_lat: number | null
+          event_lng: number | null
+          event_location: unknown
+          event_type: string
+          group_id: string | null
+          host_group_id: string | null
+          id: string
+          is_public_signup: boolean
+          max_participants: number | null
+          ntrp_max: number | null
+          ntrp_min: number | null
+          owner_id: string
+          radius_mi: number | null
+          season_id: string | null
+          signup_deadline: string | null
+          start_date: string
+          status: Database["public"]["Enums"]["event_status"]
+          title: string
+          updated_at: string
+          venue_address: string
+          venue_name: string
+          visibility: Database["public"]["Enums"]["event_visibility"]
+        }
+        Insert: {
+          config?: Json
+          cover_image_url?: string
+          created_at?: string
+          description?: string
+          end_date: string
+          event_lat?: number | null
+          event_lng?: number | null
+          event_location?: unknown
+          event_type: string
+          group_id?: string | null
+          host_group_id?: string | null
+          id?: string
+          is_public_signup?: boolean
+          max_participants?: number | null
+          ntrp_max?: number | null
+          ntrp_min?: number | null
+          owner_id: string
+          radius_mi?: number | null
+          season_id?: string | null
+          signup_deadline?: string | null
+          start_date: string
+          status?: Database["public"]["Enums"]["event_status"]
+          title: string
+          updated_at?: string
+          venue_address?: string
+          venue_name?: string
+          visibility?: Database["public"]["Enums"]["event_visibility"]
+        }
+        Update: {
+          config?: Json
+          cover_image_url?: string
+          created_at?: string
+          description?: string
+          end_date?: string
+          event_lat?: number | null
+          event_lng?: number | null
+          event_location?: unknown
+          event_type?: string
+          group_id?: string | null
+          host_group_id?: string | null
+          id?: string
+          is_public_signup?: boolean
+          max_participants?: number | null
+          ntrp_max?: number | null
+          ntrp_min?: number | null
+          owner_id?: string
+          radius_mi?: number | null
+          season_id?: string | null
+          signup_deadline?: string | null
+          start_date?: string
+          status?: Database["public"]["Enums"]["event_status"]
+          title?: string
+          updated_at?: string
+          venue_address?: string
+          venue_name?: string
+          visibility?: Database["public"]["Enums"]["event_visibility"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "events_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: true
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "events_host_group_id_fkey"
+            columns: ["host_group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "events_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "events_season_id_fkey"
+            columns: ["season_id"]
+            isOneToOne: false
+            referencedRelation: "seasons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      expense_shares: {
+        Row: {
+          amount_cents: number
+          expense_id: string
+          id: string
+          settled_at: string | null
+          user_id: string
+        }
+        Insert: {
+          amount_cents: number
+          expense_id: string
+          id?: string
+          settled_at?: string | null
+          user_id: string
+        }
+        Update: {
+          amount_cents?: number
+          expense_id?: string
+          id?: string
+          settled_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "expense_shares_expense_id_fkey"
+            columns: ["expense_id"]
+            isOneToOne: false
+            referencedRelation: "expenses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expense_shares_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      expenses: {
+        Row: {
+          amount_cents: number
+          chat_id: string
+          created_at: string
+          description: string
+          id: string
+          payer_id: string
+        }
+        Insert: {
+          amount_cents: number
+          chat_id: string
+          created_at?: string
+          description?: string
+          id?: string
+          payer_id: string
+        }
+        Update: {
+          amount_cents?: number
+          chat_id?: string
+          created_at?: string
+          description?: string
+          id?: string
+          payer_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "expenses_chat_id_fkey"
+            columns: ["chat_id"]
+            isOneToOne: false
+            referencedRelation: "chats"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expenses_payer_id_fkey"
+            columns: ["payer_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      friend_group_members: {
+        Row: {
+          created_at: string
+          friend_group_id: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          friend_group_id: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          friend_group_id?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "friend_group_members_friend_group_id_fkey"
+            columns: ["friend_group_id"]
+            isOneToOne: false
+            referencedRelation: "friend_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "friend_group_members_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      friend_groups: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          owner_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          owner_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          owner_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "friend_groups_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      friendships: {
+        Row: {
+          addressee_id: string
+          created_at: string
+          id: string
+          requester_id: string
+          status: Database["public"]["Enums"]["friendship_status"]
+          updated_at: string
+        }
+        Insert: {
+          addressee_id: string
+          created_at?: string
+          id?: string
+          requester_id: string
+          status?: Database["public"]["Enums"]["friendship_status"]
+          updated_at?: string
+        }
+        Update: {
+          addressee_id?: string
+          created_at?: string
+          id?: string
+          requester_id?: string
+          status?: Database["public"]["Enums"]["friendship_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "friendships_addressee_id_fkey"
+            columns: ["addressee_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "friendships_requester_id_fkey"
+            columns: ["requester_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      group_files: {
+        Row: {
+          created_at: string
+          description: string
+          filename: string
+          group_id: string
+          id: string
+          mime_type: string
+          size_bytes: number
+          uploaded_by_id: string
+          url: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string
+          filename: string
+          group_id: string
+          id?: string
+          mime_type?: string
+          size_bytes?: number
+          uploaded_by_id: string
+          url: string
+        }
+        Update: {
+          created_at?: string
+          description?: string
+          filename?: string
+          group_id?: string
+          id?: string
+          mime_type?: string
+          size_bytes?: number
+          uploaded_by_id?: string
+          url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_files_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_files_uploaded_by_id_fkey"
+            columns: ["uploaded_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      group_invites: {
+        Row: {
+          accepted_at: string | null
+          accepted_by_id: string | null
+          created_at: string
+          email: string
+          expires_at: string
+          group_id: string
+          id: string
+          invited_by_id: string
+          member_type: string
+          role: Database["public"]["Enums"]["group_role"]
+          status: Database["public"]["Enums"]["group_invite_status"]
+          token: string
+          updated_at: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          accepted_by_id?: string | null
+          created_at?: string
+          email: string
+          expires_at: string
+          group_id: string
+          id?: string
+          invited_by_id: string
+          member_type?: string
+          role?: Database["public"]["Enums"]["group_role"]
+          status?: Database["public"]["Enums"]["group_invite_status"]
+          token: string
+          updated_at?: string
+        }
+        Update: {
+          accepted_at?: string | null
+          accepted_by_id?: string | null
+          created_at?: string
+          email?: string
+          expires_at?: string
+          group_id?: string
+          id?: string
+          invited_by_id?: string
+          member_type?: string
+          role?: Database["public"]["Enums"]["group_role"]
+          status?: Database["public"]["Enums"]["group_invite_status"]
+          token?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_invites_accepted_by_id_fkey"
+            columns: ["accepted_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_invites_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_invites_invited_by_id_fkey"
+            columns: ["invited_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      group_members: {
+        Row: {
+          archived_at: string | null
+          cleared_at: string | null
+          created_at: string
+          group_id: string
+          hidden_at: string | null
+          id: string
+          last_read_at: string
+          member_type: string
+          muted: boolean
+          pinned_at: string | null
+          role: Database["public"]["Enums"]["group_role"]
+          user_id: string
+        }
+        Insert: {
+          archived_at?: string | null
+          cleared_at?: string | null
+          created_at?: string
+          group_id: string
+          hidden_at?: string | null
+          id?: string
+          last_read_at?: string
+          member_type?: string
+          muted?: boolean
+          pinned_at?: string | null
+          role?: Database["public"]["Enums"]["group_role"]
+          user_id: string
+        }
+        Update: {
+          archived_at?: string | null
+          cleared_at?: string | null
+          created_at?: string
+          group_id?: string
+          hidden_at?: string | null
+          id?: string
+          last_read_at?: string
+          member_type?: string
+          muted?: boolean
+          pinned_at?: string | null
+          role?: Database["public"]["Enums"]["group_role"]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_members_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_members_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      group_messages: {
+        Row: {
+          content: string
+          created_at: string
+          group_id: string
+          id: string
+          kind: Database["public"]["Enums"]["message_kind"]
+          media_type: string
+          media_url: string
+          notify_email: boolean
+          pinned_at: string | null
+          poll_id: string | null
+          sender_id: string
+          shared_post_id: string | null
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          group_id: string
+          id?: string
+          kind?: Database["public"]["Enums"]["message_kind"]
+          media_type?: string
+          media_url?: string
+          notify_email?: boolean
+          pinned_at?: string | null
+          poll_id?: string | null
+          sender_id: string
+          shared_post_id?: string | null
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          group_id?: string
+          id?: string
+          kind?: Database["public"]["Enums"]["message_kind"]
+          media_type?: string
+          media_url?: string
+          notify_email?: boolean
+          pinned_at?: string | null
+          poll_id?: string | null
+          sender_id?: string
+          shared_post_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_messages_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_messages_poll_id_fkey"
+            columns: ["poll_id"]
+            isOneToOne: true
+            referencedRelation: "polls"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_messages_sender_id_fkey"
+            columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "group_messages_shared_post_id_fkey"
+            columns: ["shared_post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      groups: {
+        Row: {
+          cover_image_url: string
+          cover_offset_y: number
+          cover_scale: number
+          created_at: string
+          id: string
+          image_url: string
+          member_types: Json
+          name: string
+          owner_id: string
+          reminder_prefs: Json
+          updated_at: string
+        }
+        Insert: {
+          cover_image_url?: string
+          cover_offset_y?: number
+          cover_scale?: number
+          created_at?: string
+          id?: string
+          image_url?: string
+          member_types?: Json
+          name: string
+          owner_id: string
+          reminder_prefs?: Json
+          updated_at?: string
+        }
+        Update: {
+          cover_image_url?: string
+          cover_offset_y?: number
+          cover_scale?: number
+          created_at?: string
+          id?: string
+          image_url?: string
+          member_types?: Json
+          name?: string
+          owner_id?: string
+          reminder_prefs?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "groups_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      guest_expense_shares: {
+        Row: {
+          amount_cents: number
+          expense_id: string
+          guest_name: string
+          id: string
+          settled_at: string | null
+        }
+        Insert: {
+          amount_cents: number
+          expense_id: string
+          guest_name: string
+          id?: string
+          settled_at?: string | null
+        }
+        Update: {
+          amount_cents?: number
+          expense_id?: string
+          guest_name?: string
+          id?: string
+          settled_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "guest_expense_shares_expense_id_fkey"
+            columns: ["expense_id"]
+            isOneToOne: false
+            referencedRelation: "expenses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      hidden_posts: {
+        Row: {
+          id: string
+          post_id: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          post_id: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          post_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hidden_posts_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hidden_posts_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      highlights: {
+        Row: {
+          caption: string
+          created_at: string
+          id: string
+          media_type: string
+          media_url: string
+          user_id: string
+        }
+        Insert: {
+          caption?: string
+          created_at?: string
+          id?: string
+          media_type?: string
+          media_url: string
+          user_id: string
+        }
+        Update: {
+          caption?: string
+          created_at?: string
+          id?: string
+          media_type?: string
+          media_url?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "highlights_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      likes: {
+        Row: {
+          created_at: string
+          id: string
+          post_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          post_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          post_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "likes_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "likes_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      match_availabilities: {
+        Row: {
+          created_at: string
+          id: string
+          lineup_slot: string
+          match_id: string
+          match_types: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          lineup_slot?: string
+          match_id: string
+          match_types?: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          lineup_slot?: string
+          match_id?: string
+          match_types?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_availabilities_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: false
+            referencedRelation: "team_matches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_availabilities_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      message_reactions: {
+        Row: {
+          created_at: string
+          emoji: string
+          id: string
+          target_id: string
+          target_type: Database["public"]["Enums"]["reaction_target"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          emoji: string
+          id?: string
+          target_id: string
+          target_type: Database["public"]["Enums"]["reaction_target"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          emoji?: string
+          id?: string
+          target_id?: string
+          target_type?: Database["public"]["Enums"]["reaction_target"]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_reactions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      messages: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          media_type: string
+          media_url: string
+          receiver_id: string
+          sender_id: string
+          shared_post_id: string | null
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          id?: string
+          media_type?: string
+          media_url?: string
+          receiver_id: string
+          sender_id: string
+          shared_post_id?: string | null
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          media_type?: string
+          media_url?: string
+          receiver_id?: string
+          sender_id?: string
+          shared_post_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messages_receiver_id_fkey"
+            columns: ["receiver_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_sender_id_fkey"
+            columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_shared_post_id_fkey"
+            columns: ["shared_post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notifications: {
+        Row: {
+          actor_id: string
+          comment_id: string | null
+          created_at: string
+          emoji: string
+          event_id: string | null
+          id: string
+          match_id: string | null
+          message_id: string | null
+          post_id: string | null
+          read: boolean
+          type: Database["public"]["Enums"]["notification_type"]
+          user_id: string
+        }
+        Insert: {
+          actor_id: string
+          comment_id?: string | null
+          created_at?: string
+          emoji?: string
+          event_id?: string | null
+          id?: string
+          match_id?: string | null
+          message_id?: string | null
+          post_id?: string | null
+          read?: boolean
+          type: Database["public"]["Enums"]["notification_type"]
+          user_id: string
+        }
+        Update: {
+          actor_id?: string
+          comment_id?: string | null
+          created_at?: string
+          emoji?: string
+          event_id?: string | null
+          id?: string
+          match_id?: string | null
+          message_id?: string | null
+          post_id?: string | null
+          read?: boolean
+          type?: Database["public"]["Enums"]["notification_type"]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notifications_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_comment_id_fkey"
+            columns: ["comment_id"]
+            isOneToOne: false
+            referencedRelation: "comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: false
+            referencedRelation: "event_matches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      photos: {
+        Row: {
+          created_at: string
+          id: string
+          order: number
+          post_id: string
+          url: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          order?: number
+          post_id: string
+          url: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          order?: number
+          post_id?: string
+          url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "photos_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      play_requests: {
+        Row: {
+          created_at: string
+          id: string
+          note: string
+          post_id: string
+          status: Database["public"]["Enums"]["play_request_status"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          note?: string
+          post_id: string
+          status?: Database["public"]["Enums"]["play_request_status"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          note?: string
+          post_id?: string
+          status?: Database["public"]["Enums"]["play_request_status"]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "play_requests_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "play_requests_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      poll_options: {
+        Row: {
+          created_at: string
+          id: string
+          order: number
+          poll_id: string
+          text: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          order?: number
+          poll_id: string
+          text: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          order?: number
+          poll_id?: string
+          text?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "poll_options_poll_id_fkey"
+            columns: ["poll_id"]
+            isOneToOne: false
+            referencedRelation: "polls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      poll_votes: {
+        Row: {
+          created_at: string
+          id: string
+          option_id: string
+          poll_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          option_id: string
+          poll_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          option_id?: string
+          poll_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "poll_votes_option_id_fkey"
+            columns: ["option_id"]
+            isOneToOne: false
+            referencedRelation: "poll_options"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "poll_votes_poll_id_fkey"
+            columns: ["poll_id"]
+            isOneToOne: false
+            referencedRelation: "polls"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "poll_votes_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      polls: {
+        Row: {
+          created_at: string
+          created_by_id: string
+          id: string
+          is_closed: boolean
+          is_multi: boolean
+          question: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_id: string
+          id?: string
+          is_closed?: boolean
+          is_multi?: boolean
+          question: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by_id?: string
+          id?: string
+          is_closed?: boolean
+          is_multi?: boolean
+          question?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "polls_created_by_id_fkey"
+            columns: ["created_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      post_friend_groups: {
+        Row: {
+          friend_group_id: string
+          id: string
+          post_id: string
+        }
+        Insert: {
+          friend_group_id: string
+          id?: string
+          post_id: string
+        }
+        Update: {
+          friend_group_id?: string
+          id?: string
+          post_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "post_friend_groups_friend_group_id_fkey"
+            columns: ["friend_group_id"]
+            isOneToOne: false
+            referencedRelation: "friend_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_friend_groups_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      post_groups: {
+        Row: {
+          group_id: string
+          id: string
+          post_id: string
+        }
+        Insert: {
+          group_id: string
+          id?: string
+          post_id: string
+        }
+        Update: {
+          group_id?: string
+          id?: string
+          post_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "post_groups_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_groups_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      posts: {
+        Row: {
+          author_id: string
+          broadcast_lat: number | null
+          broadcast_lng: number | null
+          broadcast_location: unknown
+          broadcast_radius_mi: number
+          comments_disabled: boolean
+          content: string
+          court_booked: boolean
+          court_location: string
+          created_at: string
+          event_id: string | null
+          game_type: string
+          id: string
+          is_broadcast: boolean
+          is_complete: boolean
+          manual_players: string
+          media_type: string
+          media_url: string
+          pinned_at: string | null
+          play_date: string
+          play_duration: number
+          play_time: string
+          players_confirmed: number
+          players_needed: number
+          post_type: Database["public"]["Enums"]["post_type"]
+          skill_max: number | null
+          skill_min: number | null
+          team_group_id: string
+        }
+        Insert: {
+          author_id: string
+          broadcast_lat?: number | null
+          broadcast_lng?: number | null
+          broadcast_location?: unknown
+          broadcast_radius_mi?: number
+          comments_disabled?: boolean
+          content?: string
+          court_booked?: boolean
+          court_location?: string
+          created_at?: string
+          event_id?: string | null
+          game_type?: string
+          id?: string
+          is_broadcast?: boolean
+          is_complete?: boolean
+          manual_players?: string
+          media_type?: string
+          media_url?: string
+          pinned_at?: string | null
+          play_date?: string
+          play_duration?: number
+          play_time?: string
+          players_confirmed?: number
+          players_needed?: number
+          post_type?: Database["public"]["Enums"]["post_type"]
+          skill_max?: number | null
+          skill_min?: number | null
+          team_group_id?: string
+        }
+        Update: {
+          author_id?: string
+          broadcast_lat?: number | null
+          broadcast_lng?: number | null
+          broadcast_location?: unknown
+          broadcast_radius_mi?: number
+          comments_disabled?: boolean
+          content?: string
+          court_booked?: boolean
+          court_location?: string
+          created_at?: string
+          event_id?: string | null
+          game_type?: string
+          id?: string
+          is_broadcast?: boolean
+          is_complete?: boolean
+          manual_players?: string
+          media_type?: string
+          media_url?: string
+          pinned_at?: string | null
+          play_date?: string
+          play_duration?: number
+          play_time?: string
+          players_confirmed?: number
+          players_needed?: number
+          post_type?: Database["public"]["Enums"]["post_type"]
+          skill_max?: number | null
+          skill_min?: number | null
+          team_group_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "posts_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "posts_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      practice_availabilities: {
+        Row: {
+          created_at: string
+          id: string
+          practice_id: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          practice_id: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          practice_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "practice_availabilities_practice_id_fkey"
+            columns: ["practice_id"]
+            isOneToOne: false
+            referencedRelation: "team_practices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "practice_availabilities_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      practice_series: {
+        Row: {
+          created_at: string
+          group_id: string
+          id: string
+          location: string
+          name: string
+          notes: string
+          practice_time: string
+          season_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          group_id: string
+          id?: string
+          location: string
+          name: string
+          notes?: string
+          practice_time?: string
+          season_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          group_id?: string
+          id?: string
+          location?: string
+          name?: string
+          notes?: string
+          practice_time?: string
+          season_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "practice_series_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "practice_series_season_id_fkey"
+            columns: ["season_id"]
+            isOneToOne: false
+            referencedRelation: "seasons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          age_range: string
+          bio: string
+          cashapp_handle: string | null
+          cover_image_url: string
+          cover_offset_y: number
+          cover_scale: number
+          created_at: string
+          custom_tags: string
+          email: string | null
+          favorite_surface: string
+          gender: string
+          handle: string | null
+          id: string
+          is_private: boolean
+          latitude: number | null
+          location: unknown
+          longitude: number | null
+          name: string
+          ntrp_rating: number | null
+          onboarding_complete: boolean
+          paypal_handle: string | null
+          phone: string | null
+          profile_image_url: string
+          rating_system: string
+          skill_level: string
+          updated_at: string
+          utr_rating: number | null
+          venmo_handle: string | null
+          zelle_handle: string | null
+        }
+        Insert: {
+          age_range?: string
+          bio?: string
+          cashapp_handle?: string | null
+          cover_image_url?: string
+          cover_offset_y?: number
+          cover_scale?: number
+          created_at?: string
+          custom_tags?: string
+          email?: string | null
+          favorite_surface?: string
+          gender?: string
+          handle?: string | null
+          id: string
+          is_private?: boolean
+          latitude?: number | null
+          location?: unknown
+          longitude?: number | null
+          name?: string
+          ntrp_rating?: number | null
+          onboarding_complete?: boolean
+          paypal_handle?: string | null
+          phone?: string | null
+          profile_image_url?: string
+          rating_system?: string
+          skill_level?: string
+          updated_at?: string
+          utr_rating?: number | null
+          venmo_handle?: string | null
+          zelle_handle?: string | null
+        }
+        Update: {
+          age_range?: string
+          bio?: string
+          cashapp_handle?: string | null
+          cover_image_url?: string
+          cover_offset_y?: number
+          cover_scale?: number
+          created_at?: string
+          custom_tags?: string
+          email?: string | null
+          favorite_surface?: string
+          gender?: string
+          handle?: string | null
+          id?: string
+          is_private?: boolean
+          latitude?: number | null
+          location?: unknown
+          longitude?: number | null
+          name?: string
+          ntrp_rating?: number | null
+          onboarding_complete?: boolean
+          paypal_handle?: string | null
+          phone?: string | null
+          profile_image_url?: string
+          rating_system?: string
+          skill_level?: string
+          updated_at?: string
+          utr_rating?: number | null
+          venmo_handle?: string | null
+          zelle_handle?: string | null
+        }
+        Relationships: []
+      }
+      reminder_sent: {
+        Row: {
+          hours_before: number
+          id: string
+          kind: string
+          ref_id: string
+          sent_at: string
+          user_id: string
+        }
+        Insert: {
+          hours_before: number
+          id?: string
+          kind: string
+          ref_id: string
+          sent_at?: string
+          user_id: string
+        }
+        Update: {
+          hours_before?: number
+          id?: string
+          kind?: string
+          ref_id?: string
+          sent_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reminder_sent_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      seasons: {
+        Row: {
+          created_at: string
+          end_date: string | null
+          group_id: string
+          id: string
+          is_active: boolean
+          name: string
+          start_date: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          end_date?: string | null
+          group_id: string
+          id?: string
+          is_active?: boolean
+          name: string
+          start_date?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          end_date?: string | null
+          group_id?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          start_date?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "seasons_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      spatial_ref_sys: {
+        Row: {
+          auth_name: string | null
+          auth_srid: number | null
+          proj4text: string | null
+          srid: number
+          srtext: string | null
+        }
+        Insert: {
+          auth_name?: string | null
+          auth_srid?: number | null
+          proj4text?: string | null
+          srid: number
+          srtext?: string | null
+        }
+        Update: {
+          auth_name?: string | null
+          auth_srid?: number | null
+          proj4text?: string | null
+          srid?: number
+          srtext?: string | null
+        }
+        Relationships: []
+      }
+      team_listings: {
+        Row: {
+          city: string
+          created_at: string
+          created_by_id: string
+          description: string
+          expires_at: string | null
+          format: Database["public"]["Enums"]["team_listing_format"]
+          group_id: string
+          id: string
+          ntrp_max: number | null
+          ntrp_min: number | null
+          status: Database["public"]["Enums"]["team_listing_status"]
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          city?: string
+          created_at?: string
+          created_by_id: string
+          description?: string
+          expires_at?: string | null
+          format?: Database["public"]["Enums"]["team_listing_format"]
+          group_id: string
+          id?: string
+          ntrp_max?: number | null
+          ntrp_min?: number | null
+          status?: Database["public"]["Enums"]["team_listing_status"]
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          city?: string
+          created_at?: string
+          created_by_id?: string
+          description?: string
+          expires_at?: string | null
+          format?: Database["public"]["Enums"]["team_listing_format"]
+          group_id?: string
+          id?: string
+          ntrp_max?: number | null
+          ntrp_min?: number | null
+          status?: Database["public"]["Enums"]["team_listing_status"]
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_listings_created_by_id_fkey"
+            columns: ["created_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "team_listings_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      team_matches: {
+        Row: {
+          created_at: string
+          group_id: string
+          home_away: string
+          id: string
+          location: string
+          match_date: string
+          match_time: string
+          notes: string
+          opponent: string
+          season_id: string | null
+          shirt_color: string
+        }
+        Insert: {
+          created_at?: string
+          group_id: string
+          home_away?: string
+          id?: string
+          location: string
+          match_date: string
+          match_time?: string
+          notes?: string
+          opponent?: string
+          season_id?: string | null
+          shirt_color?: string
+        }
+        Update: {
+          created_at?: string
+          group_id?: string
+          home_away?: string
+          id?: string
+          location?: string
+          match_date?: string
+          match_time?: string
+          notes?: string
+          opponent?: string
+          season_id?: string | null
+          shirt_color?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_matches_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "team_matches_season_id_fkey"
+            columns: ["season_id"]
+            isOneToOne: false
+            referencedRelation: "seasons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      team_practices: {
+        Row: {
+          created_at: string
+          id: string
+          practice_date: string
+          series_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          practice_date: string
+          series_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          practice_date?: string
+          series_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_practices_series_id_fkey"
+            columns: ["series_id"]
+            isOneToOne: false
+            referencedRelation: "practice_series"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      venue_courts: {
+        Row: {
+          active_net_id: string
+          court_number: number
+          created_at: string
+          id: string
+          is_lighted: boolean
+          surface: string
+          updated_at: string
+          venue_id: string
+        }
+        Insert: {
+          active_net_id?: string
+          court_number: number
+          created_at?: string
+          id?: string
+          is_lighted?: boolean
+          surface?: string
+          updated_at?: string
+          venue_id: string
+        }
+        Update: {
+          active_net_id?: string
+          court_number?: number
+          created_at?: string
+          id?: string
+          is_lighted?: boolean
+          surface?: string
+          updated_at?: string
+          venue_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "venue_courts_venue_id_fkey"
+            columns: ["venue_id"]
+            isOneToOne: false
+            referencedRelation: "venues"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      venues: {
+        Row: {
+          active_net_id: string
+          address: string
+          amenities: Json
+          created_at: string
+          id: string
+          image_url: string
+          latitude: number
+          location: unknown
+          longitude: number
+          name: string
+          neighborhood: string
+          updated_at: string
+        }
+        Insert: {
+          active_net_id?: string
+          address: string
+          amenities?: Json
+          created_at?: string
+          id?: string
+          image_url?: string
+          latitude: number
+          location?: unknown
+          longitude: number
+          name: string
+          neighborhood?: string
+          updated_at?: string
+        }
+        Update: {
+          active_net_id?: string
+          address?: string
+          amenities?: Json
+          created_at?: string
+          id?: string
+          image_url?: string
+          latitude?: number
+          location?: unknown
+          longitude?: number
+          name?: string
+          neighborhood?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+    }
+    Views: {
+      geography_columns: {
+        Row: {
+          coord_dimension: number | null
+          f_geography_column: unknown
+          f_table_catalog: unknown
+          f_table_name: unknown
+          f_table_schema: unknown
+          srid: number | null
+          type: string | null
+        }
+        Relationships: []
+      }
+      geometry_columns: {
+        Row: {
+          coord_dimension: number | null
+          f_geometry_column: unknown
+          f_table_catalog: string | null
+          f_table_name: unknown
+          f_table_schema: unknown
+          srid: number | null
+          type: string | null
+        }
+        Insert: {
+          coord_dimension?: number | null
+          f_geometry_column?: unknown
+          f_table_catalog?: string | null
+          f_table_name?: unknown
+          f_table_schema?: unknown
+          srid?: number | null
+          type?: string | null
+        }
+        Update: {
+          coord_dimension?: number | null
+          f_geometry_column?: unknown
+          f_table_catalog?: string | null
+          f_table_name?: unknown
+          f_table_schema?: unknown
+          srid?: number | null
+          type?: string | null
+        }
+        Relationships: []
+      }
+    }
+    Functions: {
+      _postgis_deprecate: {
+        Args: { newname: string; oldname: string; version: string }
+        Returns: undefined
+      }
+      _postgis_index_extent: {
+        Args: { col: string; tbl: unknown }
+        Returns: unknown
+      }
+      _postgis_pgsql_version: { Args: never; Returns: string }
+      _postgis_scripts_pgsql_version: { Args: never; Returns: string }
+      _postgis_selectivity: {
+        Args: { att_name: string; geom: unknown; mode?: string; tbl: unknown }
+        Returns: number
+      }
+      _postgis_stats: {
+        Args: { ""?: string; att_name: string; tbl: unknown }
+        Returns: string
+      }
+      _st_3dintersects: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_contains: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_containsproperly: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_coveredby:
+        | { Args: { geog1: unknown; geog2: unknown }; Returns: boolean }
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      _st_covers:
+        | { Args: { geog1: unknown; geog2: unknown }; Returns: boolean }
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      _st_crosses: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_dwithin: {
+        Args: {
+          geog1: unknown
+          geog2: unknown
+          tolerance: number
+          use_spheroid?: boolean
+        }
+        Returns: boolean
+      }
+      _st_equals: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      _st_intersects: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_linecrossingdirection: {
+        Args: { line1: unknown; line2: unknown }
+        Returns: number
+      }
+      _st_longestline: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      _st_maxdistance: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      _st_orderingequals: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_overlaps: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_sortablehash: { Args: { geom: unknown }; Returns: number }
+      _st_touches: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_voronoi: {
+        Args: {
+          clip?: unknown
+          g1: unknown
+          return_polygons?: boolean
+          tolerance?: number
+        }
+        Returns: unknown
+      }
+      _st_within: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      addauth: { Args: { "": string }; Returns: boolean }
+      addgeometrycolumn:
+        | {
+            Args: {
+              catalog_name: string
+              column_name: string
+              new_dim: number
+              new_srid_in: number
+              new_type: string
+              schema_name: string
+              table_name: string
+              use_typmod?: boolean
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              column_name: string
+              new_dim: number
+              new_srid: number
+              new_type: string
+              schema_name: string
+              table_name: string
+              use_typmod?: boolean
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              column_name: string
+              new_dim: number
+              new_srid: number
+              new_type: string
+              table_name: string
+              use_typmod?: boolean
+            }
+            Returns: string
+          }
+      disablelongtransactions: { Args: never; Returns: string }
+      dropgeometrycolumn:
+        | {
+            Args: {
+              catalog_name: string
+              column_name: string
+              schema_name: string
+              table_name: string
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              column_name: string
+              schema_name: string
+              table_name: string
+            }
+            Returns: string
+          }
+        | { Args: { column_name: string; table_name: string }; Returns: string }
+      dropgeometrytable:
+        | {
+            Args: {
+              catalog_name: string
+              schema_name: string
+              table_name: string
+            }
+            Returns: string
+          }
+        | { Args: { schema_name: string; table_name: string }; Returns: string }
+        | { Args: { table_name: string }; Returns: string }
+      enablelongtransactions: { Args: never; Returns: string }
+      equals: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      geometry: { Args: { "": string }; Returns: unknown }
+      geometry_above: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_below: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_cmp: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      geometry_contained_3d: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_contains: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_contains_3d: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_distance_box: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      geometry_distance_centroid: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      geometry_eq: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_ge: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_gt: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_le: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_left: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_lt: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_overabove: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_overbelow: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_overlaps: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_overlaps_3d: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_overleft: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_overright: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_right: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_same: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_same_3d: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_within: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geomfromewkt: { Args: { "": string }; Returns: unknown }
+      gettransactionid: { Args: never; Returns: unknown }
+      longtransactionsenabled: { Args: never; Returns: boolean }
+      populate_geometry_columns:
+        | { Args: { tbl_oid: unknown; use_typmod?: boolean }; Returns: number }
+        | { Args: { use_typmod?: boolean }; Returns: string }
+      postgis_constraint_dims: {
+        Args: { geomcolumn: string; geomschema: string; geomtable: string }
+        Returns: number
+      }
+      postgis_constraint_srid: {
+        Args: { geomcolumn: string; geomschema: string; geomtable: string }
+        Returns: number
+      }
+      postgis_constraint_type: {
+        Args: { geomcolumn: string; geomschema: string; geomtable: string }
+        Returns: string
+      }
+      postgis_extensions_upgrade: { Args: never; Returns: string }
+      postgis_full_version: { Args: never; Returns: string }
+      postgis_geos_version: { Args: never; Returns: string }
+      postgis_lib_build_date: { Args: never; Returns: string }
+      postgis_lib_revision: { Args: never; Returns: string }
+      postgis_lib_version: { Args: never; Returns: string }
+      postgis_libjson_version: { Args: never; Returns: string }
+      postgis_liblwgeom_version: { Args: never; Returns: string }
+      postgis_libprotobuf_version: { Args: never; Returns: string }
+      postgis_libxml_version: { Args: never; Returns: string }
+      postgis_proj_version: { Args: never; Returns: string }
+      postgis_scripts_build_date: { Args: never; Returns: string }
+      postgis_scripts_installed: { Args: never; Returns: string }
+      postgis_scripts_released: { Args: never; Returns: string }
+      postgis_svn_version: { Args: never; Returns: string }
+      postgis_type_name: {
+        Args: {
+          coord_dimension: number
+          geomname: string
+          use_new_name?: boolean
+        }
+        Returns: string
+      }
+      postgis_version: { Args: never; Returns: string }
+      postgis_wagyu_version: { Args: never; Returns: string }
+      st_3dclosestpoint: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_3ddistance: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      st_3dintersects: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      st_3dlongestline: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_3dmakebox: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_3dmaxdistance: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      st_3dshortestline: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_addpoint: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_angle:
+        | { Args: { line1: unknown; line2: unknown }; Returns: number }
+        | {
+            Args: { pt1: unknown; pt2: unknown; pt3: unknown; pt4?: unknown }
+            Returns: number
+          }
+      st_area:
+        | { Args: { geog: unknown; use_spheroid?: boolean }; Returns: number }
+        | { Args: { "": string }; Returns: number }
+      st_asencodedpolyline: {
+        Args: { geom: unknown; nprecision?: number }
+        Returns: string
+      }
+      st_asewkt: { Args: { "": string }; Returns: string }
+      st_asgeojson:
+        | {
+            Args: { geog: unknown; maxdecimaldigits?: number; options?: number }
+            Returns: string
+          }
+        | {
+            Args: { geom: unknown; maxdecimaldigits?: number; options?: number }
+            Returns: string
+          }
+        | {
+            Args: {
+              geom_column?: string
+              maxdecimaldigits?: number
+              pretty_bool?: boolean
+              r: Record<string, unknown>
+            }
+            Returns: string
+          }
+        | { Args: { "": string }; Returns: string }
+      st_asgml:
+        | {
+            Args: {
+              geog: unknown
+              id?: string
+              maxdecimaldigits?: number
+              nprefix?: string
+              options?: number
+            }
+            Returns: string
+          }
+        | {
+            Args: { geom: unknown; maxdecimaldigits?: number; options?: number }
+            Returns: string
+          }
+        | { Args: { "": string }; Returns: string }
+        | {
+            Args: {
+              geog: unknown
+              id?: string
+              maxdecimaldigits?: number
+              nprefix?: string
+              options?: number
+              version: number
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              geom: unknown
+              id?: string
+              maxdecimaldigits?: number
+              nprefix?: string
+              options?: number
+              version: number
+            }
+            Returns: string
+          }
+      st_askml:
+        | {
+            Args: { geog: unknown; maxdecimaldigits?: number; nprefix?: string }
+            Returns: string
+          }
+        | {
+            Args: { geom: unknown; maxdecimaldigits?: number; nprefix?: string }
+            Returns: string
+          }
+        | { Args: { "": string }; Returns: string }
+      st_aslatlontext: {
+        Args: { geom: unknown; tmpl?: string }
+        Returns: string
+      }
+      st_asmarc21: { Args: { format?: string; geom: unknown }; Returns: string }
+      st_asmvtgeom: {
+        Args: {
+          bounds: unknown
+          buffer?: number
+          clip_geom?: boolean
+          extent?: number
+          geom: unknown
+        }
+        Returns: unknown
+      }
+      st_assvg:
+        | {
+            Args: { geog: unknown; maxdecimaldigits?: number; rel?: number }
+            Returns: string
+          }
+        | {
+            Args: { geom: unknown; maxdecimaldigits?: number; rel?: number }
+            Returns: string
+          }
+        | { Args: { "": string }; Returns: string }
+      st_astext: { Args: { "": string }; Returns: string }
+      st_astwkb:
+        | {
+            Args: {
+              geom: unknown
+              prec?: number
+              prec_m?: number
+              prec_z?: number
+              with_boxes?: boolean
+              with_sizes?: boolean
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              geom: unknown[]
+              ids: number[]
+              prec?: number
+              prec_m?: number
+              prec_z?: number
+              with_boxes?: boolean
+              with_sizes?: boolean
+            }
+            Returns: string
+          }
+      st_asx3d: {
+        Args: { geom: unknown; maxdecimaldigits?: number; options?: number }
+        Returns: string
+      }
+      st_azimuth:
+        | { Args: { geog1: unknown; geog2: unknown }; Returns: number }
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: number }
+      st_boundingdiagonal: {
+        Args: { fits?: boolean; geom: unknown }
+        Returns: unknown
+      }
+      st_buffer:
+        | {
+            Args: { geom: unknown; options?: string; radius: number }
+            Returns: unknown
+          }
+        | {
+            Args: { geom: unknown; quadsegs: number; radius: number }
+            Returns: unknown
+          }
+      st_centroid: { Args: { "": string }; Returns: unknown }
+      st_clipbybox2d: {
+        Args: { box: unknown; geom: unknown }
+        Returns: unknown
+      }
+      st_closestpoint: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_collect: { Args: { geom1: unknown; geom2: unknown }; Returns: unknown }
+      st_concavehull: {
+        Args: {
+          param_allow_holes?: boolean
+          param_geom: unknown
+          param_pctconvex: number
+        }
+        Returns: unknown
+      }
+      st_contains: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      st_containsproperly: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      st_coorddim: { Args: { geometry: unknown }; Returns: number }
+      st_coveredby:
+        | { Args: { geog1: unknown; geog2: unknown }; Returns: boolean }
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      st_covers:
+        | { Args: { geog1: unknown; geog2: unknown }; Returns: boolean }
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      st_crosses: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      st_curvetoline: {
+        Args: { flags?: number; geom: unknown; tol?: number; toltype?: number }
+        Returns: unknown
+      }
+      st_delaunaytriangles: {
+        Args: { flags?: number; g1: unknown; tolerance?: number }
+        Returns: unknown
+      }
+      st_difference: {
+        Args: { geom1: unknown; geom2: unknown; gridsize?: number }
+        Returns: unknown
+      }
+      st_disjoint: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      st_distance:
+        | {
+            Args: { geog1: unknown; geog2: unknown; use_spheroid?: boolean }
+            Returns: number
+          }
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: number }
+      st_distancesphere:
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: number }
+        | {
+            Args: { geom1: unknown; geom2: unknown; radius: number }
+            Returns: number
+          }
+      st_distancespheroid: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      st_dwithin: {
+        Args: {
+          geog1: unknown
+          geog2: unknown
+          tolerance: number
+          use_spheroid?: boolean
+        }
+        Returns: boolean
+      }
+      st_equals: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      st_expand:
+        | { Args: { box: unknown; dx: number; dy: number }; Returns: unknown }
+        | {
+            Args: { box: unknown; dx: number; dy: number; dz?: number }
+            Returns: unknown
+          }
+        | {
+            Args: {
+              dm?: number
+              dx: number
+              dy: number
+              dz?: number
+              geom: unknown
+            }
+            Returns: unknown
+          }
+      st_force3d: { Args: { geom: unknown; zvalue?: number }; Returns: unknown }
+      st_force3dm: {
+        Args: { geom: unknown; mvalue?: number }
+        Returns: unknown
+      }
+      st_force3dz: {
+        Args: { geom: unknown; zvalue?: number }
+        Returns: unknown
+      }
+      st_force4d: {
+        Args: { geom: unknown; mvalue?: number; zvalue?: number }
+        Returns: unknown
+      }
+      st_generatepoints:
+        | { Args: { area: unknown; npoints: number }; Returns: unknown }
+        | {
+            Args: { area: unknown; npoints: number; seed: number }
+            Returns: unknown
+          }
+      st_geogfromtext: { Args: { "": string }; Returns: unknown }
+      st_geographyfromtext: { Args: { "": string }; Returns: unknown }
+      st_geohash:
+        | { Args: { geog: unknown; maxchars?: number }; Returns: string }
+        | { Args: { geom: unknown; maxchars?: number }; Returns: string }
+      st_geomcollfromtext: { Args: { "": string }; Returns: unknown }
+      st_geometricmedian: {
+        Args: {
+          fail_if_not_converged?: boolean
+          g: unknown
+          max_iter?: number
+          tolerance?: number
+        }
+        Returns: unknown
+      }
+      st_geometryfromtext: { Args: { "": string }; Returns: unknown }
+      st_geomfromewkt: { Args: { "": string }; Returns: unknown }
+      st_geomfromgeojson:
+        | { Args: { "": Json }; Returns: unknown }
+        | { Args: { "": Json }; Returns: unknown }
+        | { Args: { "": string }; Returns: unknown }
+      st_geomfromgml: { Args: { "": string }; Returns: unknown }
+      st_geomfromkml: { Args: { "": string }; Returns: unknown }
+      st_geomfrommarc21: { Args: { marc21xml: string }; Returns: unknown }
+      st_geomfromtext: { Args: { "": string }; Returns: unknown }
+      st_gmltosql: { Args: { "": string }; Returns: unknown }
+      st_hasarc: { Args: { geometry: unknown }; Returns: boolean }
+      st_hausdorffdistance: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      st_hexagon: {
+        Args: { cell_i: number; cell_j: number; origin?: unknown; size: number }
+        Returns: unknown
+      }
+      st_hexagongrid: {
+        Args: { bounds: unknown; size: number }
+        Returns: Record<string, unknown>[]
+      }
+      st_interpolatepoint: {
+        Args: { line: unknown; point: unknown }
+        Returns: number
+      }
+      st_intersection: {
+        Args: { geom1: unknown; geom2: unknown; gridsize?: number }
+        Returns: unknown
+      }
+      st_intersects:
+        | { Args: { geog1: unknown; geog2: unknown }; Returns: boolean }
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      st_isvaliddetail: {
+        Args: { flags?: number; geom: unknown }
+        Returns: Database["public"]["CompositeTypes"]["valid_detail"]
+        SetofOptions: {
+          from: "*"
+          to: "valid_detail"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      st_length:
+        | { Args: { geog: unknown; use_spheroid?: boolean }; Returns: number }
+        | { Args: { "": string }; Returns: number }
+      st_letters: { Args: { font?: Json; letters: string }; Returns: unknown }
+      st_linecrossingdirection: {
+        Args: { line1: unknown; line2: unknown }
+        Returns: number
+      }
+      st_linefromencodedpolyline: {
+        Args: { nprecision?: number; txtin: string }
+        Returns: unknown
+      }
+      st_linefromtext: { Args: { "": string }; Returns: unknown }
+      st_linelocatepoint: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      st_linetocurve: { Args: { geometry: unknown }; Returns: unknown }
+      st_locatealong: {
+        Args: { geometry: unknown; leftrightoffset?: number; measure: number }
+        Returns: unknown
+      }
+      st_locatebetween: {
+        Args: {
+          frommeasure: number
+          geometry: unknown
+          leftrightoffset?: number
+          tomeasure: number
+        }
+        Returns: unknown
+      }
+      st_locatebetweenelevations: {
+        Args: { fromelevation: number; geometry: unknown; toelevation: number }
+        Returns: unknown
+      }
+      st_longestline: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_makebox2d: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_makeline: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_makevalid: {
+        Args: { geom: unknown; params: string }
+        Returns: unknown
+      }
+      st_maxdistance: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      st_minimumboundingcircle: {
+        Args: { inputgeom: unknown; segs_per_quarter?: number }
+        Returns: unknown
+      }
+      st_mlinefromtext: { Args: { "": string }; Returns: unknown }
+      st_mpointfromtext: { Args: { "": string }; Returns: unknown }
+      st_mpolyfromtext: { Args: { "": string }; Returns: unknown }
+      st_multilinestringfromtext: { Args: { "": string }; Returns: unknown }
+      st_multipointfromtext: { Args: { "": string }; Returns: unknown }
+      st_multipolygonfromtext: { Args: { "": string }; Returns: unknown }
+      st_node: { Args: { g: unknown }; Returns: unknown }
+      st_normalize: { Args: { geom: unknown }; Returns: unknown }
+      st_offsetcurve: {
+        Args: { distance: number; line: unknown; params?: string }
+        Returns: unknown
+      }
+      st_orderingequals: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      st_overlaps: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      st_perimeter: {
+        Args: { geog: unknown; use_spheroid?: boolean }
+        Returns: number
+      }
+      st_pointfromtext: { Args: { "": string }; Returns: unknown }
+      st_pointm: {
+        Args: {
+          mcoordinate: number
+          srid?: number
+          xcoordinate: number
+          ycoordinate: number
+        }
+        Returns: unknown
+      }
+      st_pointz: {
+        Args: {
+          srid?: number
+          xcoordinate: number
+          ycoordinate: number
+          zcoordinate: number
+        }
+        Returns: unknown
+      }
+      st_pointzm: {
+        Args: {
+          mcoordinate: number
+          srid?: number
+          xcoordinate: number
+          ycoordinate: number
+          zcoordinate: number
+        }
+        Returns: unknown
+      }
+      st_polyfromtext: { Args: { "": string }; Returns: unknown }
+      st_polygonfromtext: { Args: { "": string }; Returns: unknown }
+      st_project: {
+        Args: { azimuth: number; distance: number; geog: unknown }
+        Returns: unknown
+      }
+      st_quantizecoordinates: {
+        Args: {
+          g: unknown
+          prec_m?: number
+          prec_x: number
+          prec_y?: number
+          prec_z?: number
+        }
+        Returns: unknown
+      }
+      st_reduceprecision: {
+        Args: { geom: unknown; gridsize: number }
+        Returns: unknown
+      }
+      st_relate: { Args: { geom1: unknown; geom2: unknown }; Returns: string }
+      st_removerepeatedpoints: {
+        Args: { geom: unknown; tolerance?: number }
+        Returns: unknown
+      }
+      st_segmentize: {
+        Args: { geog: unknown; max_segment_length: number }
+        Returns: unknown
+      }
+      st_setsrid:
+        | { Args: { geog: unknown; srid: number }; Returns: unknown }
+        | { Args: { geom: unknown; srid: number }; Returns: unknown }
+      st_sharedpaths: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_shortestline: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_simplifypolygonhull: {
+        Args: { geom: unknown; is_outer?: boolean; vertex_fraction: number }
+        Returns: unknown
+      }
+      st_split: { Args: { geom1: unknown; geom2: unknown }; Returns: unknown }
+      st_square: {
+        Args: { cell_i: number; cell_j: number; origin?: unknown; size: number }
+        Returns: unknown
+      }
+      st_squaregrid: {
+        Args: { bounds: unknown; size: number }
+        Returns: Record<string, unknown>[]
+      }
+      st_srid:
+        | { Args: { geog: unknown }; Returns: number }
+        | { Args: { geom: unknown }; Returns: number }
+      st_subdivide: {
+        Args: { geom: unknown; gridsize?: number; maxvertices?: number }
+        Returns: unknown[]
+      }
+      st_swapordinates: {
+        Args: { geom: unknown; ords: unknown }
+        Returns: unknown
+      }
+      st_symdifference: {
+        Args: { geom1: unknown; geom2: unknown; gridsize?: number }
+        Returns: unknown
+      }
+      st_symmetricdifference: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_tileenvelope: {
+        Args: {
+          bounds?: unknown
+          margin?: number
+          x: number
+          y: number
+          zoom: number
+        }
+        Returns: unknown
+      }
+      st_touches: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      st_transform:
+        | {
+            Args: { from_proj: string; geom: unknown; to_proj: string }
+            Returns: unknown
+          }
+        | {
+            Args: { from_proj: string; geom: unknown; to_srid: number }
+            Returns: unknown
+          }
+        | { Args: { geom: unknown; to_proj: string }; Returns: unknown }
+      st_triangulatepolygon: { Args: { g1: unknown }; Returns: unknown }
+      st_union:
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: unknown }
+        | {
+            Args: { geom1: unknown; geom2: unknown; gridsize: number }
+            Returns: unknown
+          }
+      st_voronoilines: {
+        Args: { extend_to?: unknown; g1: unknown; tolerance?: number }
+        Returns: unknown
+      }
+      st_voronoipolygons: {
+        Args: { extend_to?: unknown; g1: unknown; tolerance?: number }
+        Returns: unknown
+      }
+      st_within: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      st_wkbtosql: { Args: { wkb: string }; Returns: unknown }
+      st_wkttosql: { Args: { "": string }; Returns: unknown }
+      st_wrapx: {
+        Args: { geom: unknown; move: number; wrap: number }
+        Returns: unknown
+      }
+      unlockrows: { Args: { "": string }; Returns: number }
+      updategeometrysrid: {
+        Args: {
+          catalogn_name: string
+          column_name: string
+          new_srid_in: number
+          schema_name: string
+          table_name: string
+        }
+        Returns: string
+      }
+    }
+    Enums: {
+      booking_player_status: "invited" | "accepted" | "declined"
+      booking_status: "pending" | "confirmed" | "cancelled"
+      device_platform: "ios" | "android"
+      event_match_status:
+        | "proposed"
+        | "declined"
+        | "scheduled"
+        | "in_progress"
+        | "completed"
+        | "cancelled"
+      event_participant_status: "registered" | "waitlist" | "withdrawn"
+      event_status: "open" | "closed" | "active" | "completed" | "cancelled"
+      event_visibility: "public" | "group"
+      friendship_status: "pending" | "accepted" | "rejected"
+      group_invite_status: "pending" | "accepted" | "cancelled" | "expired"
+      group_role: "owner" | "manager" | "captain" | "member"
+      message_kind: "chat" | "announcement"
+      notification_type:
+        | "comment"
+        | "like"
+        | "join_request"
+        | "request_approved"
+        | "request_rejected"
+        | "message_reaction"
+        | "event_invite"
+        | "friend_request"
+        | "group_invite_accepted"
+      play_request_status: "pending" | "approved" | "rejected"
+      post_type: "regular" | "find_players" | "propose_team" | "event"
+      reaction_target: "dm" | "group" | "chat"
+      team_listing_format: "singles" | "doubles" | "mixed_doubles" | "any"
+      team_listing_status: "open" | "filled" | "closed"
+    }
+    CompositeTypes: {
+      geometry_dump: {
+        path: number[] | null
+        geom: unknown
+      }
+      valid_detail: {
+        valid: boolean | null
+        reason: string | null
+        location: unknown
+      }
+    }
+  }
+}
+
+type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
+
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
+
+export type Tables<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+      Row: infer R
+    }
+    ? R
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])
+    ? (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+        Row: infer R
+      }
+      ? R
+      : never
+    : never
+
+export type TablesInsert<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Insert: infer I
+    }
+    ? I
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Insert: infer I
+      }
+      ? I
+      : never
+    : never
+
+export type TablesUpdate<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Update: infer U
+    }
+    ? U
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Update: infer U
+      }
+      ? U
+      : never
+    : never
+
+export type Enums<
+  DefaultSchemaEnumNameOrOptions extends
+    | keyof DefaultSchema["Enums"]
+    | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    : never = never,
+> = DefaultSchemaEnumNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
+  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
+    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+    : never
+
+export type CompositeTypes<
+  PublicCompositeTypeNameOrOptions extends
+    | keyof DefaultSchema["CompositeTypes"]
+    | { schema: keyof DatabaseWithoutInternals },
+  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+    : never = never,
+> = PublicCompositeTypeNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
+  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
+    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+    : never
+
+export const Constants = {
+  public: {
+    Enums: {
+      booking_player_status: ["invited", "accepted", "declined"],
+      booking_status: ["pending", "confirmed", "cancelled"],
+      device_platform: ["ios", "android"],
+      event_match_status: [
+        "proposed",
+        "declined",
+        "scheduled",
+        "in_progress",
+        "completed",
+        "cancelled",
+      ],
+      event_participant_status: ["registered", "waitlist", "withdrawn"],
+      event_status: ["open", "closed", "active", "completed", "cancelled"],
+      event_visibility: ["public", "group"],
+      friendship_status: ["pending", "accepted", "rejected"],
+      group_invite_status: ["pending", "accepted", "cancelled", "expired"],
+      group_role: ["owner", "manager", "captain", "member"],
+      message_kind: ["chat", "announcement"],
+      notification_type: [
+        "comment",
+        "like",
+        "join_request",
+        "request_approved",
+        "request_rejected",
+        "message_reaction",
+        "event_invite",
+        "friend_request",
+        "group_invite_accepted",
+      ],
+      play_request_status: ["pending", "approved", "rejected"],
+      post_type: ["regular", "find_players", "propose_team", "event"],
+      reaction_target: ["dm", "group", "chat"],
+      team_listing_format: ["singles", "doubles", "mixed_doubles", "any"],
+      team_listing_status: ["open", "filled", "closed"],
+    },
+  },
+} as const
