@@ -13,6 +13,18 @@ import { useLongPress } from "@/hooks/useLongPress";
 import type { ReactionKey } from "@/lib/reactions";
 import { isAtLeast, ROLE } from "@/lib/groupRoles";
 import PollCard, { type PollData } from "@/components/PollCard";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import {
+  getGroup,
+  listGroupMembers,
+  listGroupMessages,
+  sendGroupMessage,
+  addReaction,
+  createPollInGroup,
+  votePoll,
+  setPollClosed,
+} from "@/lib/supabase/queries";
+import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 
 type Message = {
   id: string;
@@ -99,19 +111,11 @@ export default function GroupChatPage() {
     if (!file) return;
     setUploadError("");
     setUploading(true);
-    const fd = new FormData();
-    fd.append("file", file);
-    try {
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setUploadError(data.error || "Upload failed");
-      } else {
-        const data = await res.json();
-        setPendingMedia({ url: data.url, type: data.mediaType });
-      }
-    } catch {
-      setUploadError("Upload failed. Try again.");
+    const upResult = await uploadToBucket(file, "posts");
+    if (isUploadError(upResult)) {
+      setUploadError(upResult.message);
+    } else {
+      setPendingMedia({ url: upResult.url, type: upResult.mediaType });
     }
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -138,23 +142,65 @@ export default function GroupChatPage() {
 
   // Load group info
   useEffect(() => {
-    fetch(`/api/groups/${groupId}`)
-      .then((r) => {
-        if (r.status === 403) { setError("You are not a member of this group."); return null; }
-        if (!r.ok) { setError("Group not found."); return null; }
-        return r.json();
-      })
-      .then((data) => { if (data) setGroupInfo(data); });
+    (async () => {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const [g, members] = await Promise.all([
+          getGroup(supabase, groupId),
+          listGroupMembers(supabase, groupId),
+        ]);
+        if (!g) {
+          setError("Group not found.");
+          return;
+        }
+        setGroupInfo({
+          id: g.id,
+          name: g.name,
+          imageUrl: g.image_url,
+          members: members.map((m) => ({
+            id: m.id,
+            userId: m.user_id,
+            role: m.role,
+            user: {
+              id: m.user.id,
+              name: m.user.name,
+              profileImageUrl: m.user.profile_image_url,
+            },
+          })),
+        } as unknown as typeof groupInfo);
+      } catch {
+        setError("You are not a member of this group.");
+      }
+    })();
   }, [groupId]);
 
   // Load messages
   const loadMessages = () => {
-    fetch(`/api/groups/${groupId}/messages`)
-      .then((r) => {
-        if (!r.ok) return;
-        return r.json();
-      })
-      .then((data) => { if (Array.isArray(data)) setMessages(data); });
+    const supabase = createSupabaseBrowserClient();
+    listGroupMessages(supabase, groupId)
+      .then((rows) =>
+        setMessages(
+          rows.map((m) => ({
+            id: m.id,
+            content: m.content,
+            mediaUrl: m.media_url,
+            mediaType: m.media_type,
+            sharedPostId: m.shared_post_id,
+            kind: m.kind,
+            pinnedAt: m.pinned_at,
+            pollId: m.poll_id,
+            createdAt: m.created_at,
+            senderId: m.sender_id,
+            sender: {
+              id: m.sender.id,
+              name: m.sender.name,
+              profileImageUrl: m.sender.profile_image_url,
+            },
+            reactions: [],
+          })) as unknown as Message[]
+        )
+      )
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -173,32 +219,38 @@ export default function GroupChatPage() {
     if ((!input.trim() && !pendingMedia) || sending || uploading) return;
     setSending(true);
     setSendError("");
-
-    const res = await fetch(`/api/groups/${groupId}/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content: input,
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const row = await sendGroupMessage(supabase, groupId, input, {
         mediaUrl: pendingMedia?.url,
         mediaType: pendingMedia?.type,
-        ...(announcementMode
-          ? { kind: "announcement", notifyEmail: announcementEmail }
-          : {}),
-      }),
-    });
-
-    if (res.ok) {
-      const msg = await res.json();
+        kind: announcementMode ? "announcement" : "chat",
+      });
+      const msg = {
+        id: row.id,
+        content: row.content,
+        mediaUrl: row.media_url,
+        mediaType: row.media_type,
+        sharedPostId: row.shared_post_id,
+        kind: row.kind,
+        pinnedAt: row.pinned_at,
+        pollId: row.poll_id,
+        createdAt: row.created_at,
+        senderId: row.sender_id,
+        sender: {
+          id: row.sender.id,
+          name: row.sender.name,
+          profileImageUrl: row.sender.profile_image_url,
+        },
+        reactions: [],
+      } as unknown as Message;
       setMessages((prev) => [...prev, msg]);
       setInput("");
       setPendingMedia(null);
-      // Reset announcement toggle after a successful send so the next
-      // message defaults back to regular chat.
       setAnnouncementMode(false);
       inputRef.current?.focus();
-    } else {
-      const d = await res.json().catch(() => ({}));
-      setSendError(d.error || "Failed to send.");
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Failed to send.");
     }
     setSending(false);
   };
@@ -222,25 +274,20 @@ export default function GroupChatPage() {
     if (!pollQuestion.trim() || cleanOptions.length < 2 || pollSending) return;
     setPollSending(true);
     setSendError("");
-    const res = await fetch(`/api/groups/${groupId}/polls`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await createPollInGroup(supabase, groupId, {
         question: pollQuestion.trim(),
         options: cleanOptions,
         isMulti: pollIsMulti,
-      }),
-    });
-    if (res.ok) {
-      const msg = await res.json();
-      setMessages((prev) => [...prev, msg]);
+      });
+      loadMessages();
       setPollMode(false);
       setPollQuestion("");
       setPollOptions(["", ""]);
       setPollIsMulti(false);
-    } else {
-      const d = await res.json().catch(() => ({}));
-      setSendError(d.error || "Failed to create poll.");
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Failed to create poll.");
     }
     setPollSending(false);
   };
@@ -265,22 +312,24 @@ export default function GroupChatPage() {
         return { ...m, poll: { ...m.poll, options: nextOptions, myOptionIds: optionIds, totalVotes } };
       })
     );
-    await fetch(`/api/polls/${pollId}/vote`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ optionIds }),
-    });
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await votePoll(supabase, pollId, optionIds);
+    } catch {
+      // Polling will reconcile.
+    }
   };
 
   const togglePollClose = async (pollId: string, isClosed: boolean) => {
     setMessages((prev) =>
       prev.map((m) => m.poll?.id === pollId ? { ...m, poll: { ...m.poll, isClosed } } : m)
     );
-    await fetch(`/api/polls/${pollId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isClosed }),
-    });
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await setPollClosed(supabase, pollId, isClosed);
+    } catch {
+      // ignore
+    }
   };
 
   const applyReaction = async (msgId: string, key: ReactionKey | null) => {
@@ -294,11 +343,8 @@ export default function GroupChatPage() {
       }),
     );
     try {
-      await fetch("/api/messages/reactions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messageType: "GROUP", messageId: msgId, emoji: key }),
-      });
+      const supabase = createSupabaseBrowserClient();
+      if (key !== null) await addReaction(supabase, "group", msgId, key);
     } catch {
       // Polling will reconcile.
     }

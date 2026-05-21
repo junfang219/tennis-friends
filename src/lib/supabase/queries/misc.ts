@@ -415,6 +415,90 @@ export async function respondToPlayRequest(
 }
 
 // ---------------------------------------------------------------------
+// Polls
+// ---------------------------------------------------------------------
+
+export async function createPollInGroup(
+  supabase: SupabaseClient<Database>,
+  groupId: string,
+  input: { question: string; options: string[]; isMulti?: boolean }
+): Promise<{ pollId: string; messageId: string }> {
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) throw new Error("Not signed in");
+
+  // polls is a standalone table; group association comes via group_messages.poll_id.
+  void groupId;
+  const { data: poll, error: pollErr } = await supabase
+    .from("polls")
+    .insert({
+      question: input.question,
+      is_multi: input.isMulti ?? false,
+      created_by_id: auth.user.id,
+    })
+    .select("id")
+    .single();
+  if (pollErr || !poll) throw pollErr ?? new Error("poll insert failed");
+
+  const optionRows = input.options.map((text, i) => ({
+    poll_id: poll.id,
+    text,
+    order: i,
+  }));
+  const { error: optErr } = await supabase.from("poll_options").insert(optionRows);
+  if (optErr) throw optErr;
+
+  const { data: message, error: msgErr } = await supabase
+    .from("group_messages")
+    .insert({
+      group_id: groupId,
+      sender_id: auth.user.id,
+      content: input.question,
+      poll_id: poll.id,
+      kind: "chat",
+    })
+    .select("id")
+    .single();
+  if (msgErr || !message) throw msgErr ?? new Error("group_messages insert failed");
+
+  return { pollId: poll.id, messageId: message.id };
+}
+
+export async function votePoll(
+  supabase: SupabaseClient<Database>,
+  pollId: string,
+  optionIds: string[]
+): Promise<void> {
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) throw new Error("Not signed in");
+  await supabase
+    .from("poll_votes")
+    .delete()
+    .eq("poll_id", pollId)
+    .eq("user_id", auth.user.id);
+  if (optionIds.length > 0) {
+    const rows = optionIds.map((oid) => ({
+      poll_id: pollId,
+      option_id: oid,
+      user_id: auth.user!.id,
+    }));
+    const { error } = await supabase.from("poll_votes").insert(rows);
+    if (error) throw error;
+  }
+}
+
+export async function setPollClosed(
+  supabase: SupabaseClient<Database>,
+  pollId: string,
+  isClosed: boolean
+): Promise<void> {
+  const { error } = await supabase
+    .from("polls")
+    .update({ is_closed: isClosed })
+    .eq("id", pollId);
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------
 // Dashboard aggregator
 // ---------------------------------------------------------------------
 
