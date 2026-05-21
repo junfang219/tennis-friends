@@ -9,6 +9,8 @@ import Avatar from "@/components/Avatar";
 import RsvpPicker, { pickerOptionMeta } from "@/components/attendance/RsvpPicker";
 import AttendanceTally from "@/components/attendance/AttendanceTally";
 import { normalizePracticeStatus } from "@/lib/rsvpStatus";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getGroup, listGroupMembers, sendGroupMessage } from "@/lib/supabase/queries";
 
 type Member = {
   id: string;
@@ -110,21 +112,85 @@ export default function TeamPracticePage() {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [teamRes, seriesRes] = await Promise.all([
-        fetch(`/api/groups/${groupId}`),
-        fetch(`/api/groups/${groupId}/practices`),
+      const supabase = createSupabaseBrowserClient();
+      const [g, members] = await Promise.all([
+        getGroup(supabase, groupId),
+        listGroupMembers(supabase, groupId),
       ]);
-      if (!teamRes.ok) {
-        setError(teamRes.status === 403 ? "You are not a member of this team." : "Failed to load team.");
+      if (!g) {
+        setError("You are not a member of this team.");
         setLoading(false);
         return;
       }
-      const teamData = await teamRes.json();
-      setTeam(teamData);
-      if (seriesRes.ok) {
-        const s = await seriesRes.json();
-        setSeriesList(Array.isArray(s) ? s : []);
-      }
+      setTeam({
+        id: g.id,
+        name: g.name,
+        ownerId: g.owner_id,
+        members: members.map((m) => ({
+          id: m.id,
+          user: {
+            id: m.user.id,
+            name: m.user.name,
+            profileImageUrl: m.user.profile_image_url,
+            skillLevel: "",
+          },
+        })),
+      } as unknown as Team);
+
+      const { data: seriesRows } = await supabase
+        .from("practice_series")
+        .select(
+          `id, name, location, practice_time, notes,
+           team_practices ( id, practice_date,
+             availabilities ( id, user_id, status,
+               user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url )
+             )
+           )`
+        )
+        .eq("group_id", groupId)
+        .order("created_at", { ascending: false });
+      type RawSeries = {
+        id: string;
+        name: string;
+        location: string;
+        practice_time: string;
+        notes: string;
+        team_practices: {
+          id: string;
+          practice_date: string;
+          availabilities: {
+            id: string;
+            user_id: string;
+            status: string;
+            user: { id: string; name: string; profile_image_url: string };
+          }[];
+        }[];
+      };
+      setSeriesList(
+        ((seriesRows ?? []) as unknown as RawSeries[]).map((s) => ({
+          id: s.id,
+          name: s.name,
+          location: s.location,
+          practiceTime: s.practice_time,
+          notes: s.notes,
+          practices: s.team_practices
+            .map((p) => ({
+              id: p.id,
+              practiceDate: p.practice_date,
+              availabilities: p.availabilities.map((a) => ({
+                id: a.id,
+                userId: a.user_id,
+                status: a.status,
+                user: {
+                  id: a.user.id,
+                  name: a.user.name,
+                  profileImageUrl: a.user.profile_image_url,
+                },
+              })),
+            }))
+            .sort((x, y) => x.practiceDate.localeCompare(y.practiceDate)),
+        })) as unknown as Series[]
+      );
     } catch {
       setError("Something went wrong.");
     }
@@ -165,23 +231,57 @@ export default function TeamPracticePage() {
       return;
     }
     setAdding(true);
-    const res = await fetch(`/api/groups/${groupId}/practices`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: name.trim(),
-        practiceDate,
-        practiceTime,
-        location: location.trim(),
-        notes: notes.trim(),
-        repeats,
-        repeatUntil: repeats ? repeatUntil : undefined,
-        weekdays: repeats === "twice_weekly" ? weekdays : undefined,
-      }),
-    });
-    if (res.ok) {
-      const newSeries = await res.json();
+    try {
+      const supabase = createSupabaseBrowserClient();
+      // Insert the parent series.
+      const { data: series, error: insErr } = await supabase
+        .from("practice_series")
+        .insert({
+          group_id: groupId,
+          name: name.trim(),
+          location: location.trim(),
+          practice_time: practiceTime,
+          notes: notes.trim(),
+        })
+        .select("id, name, location, practice_time, notes")
+        .single();
+      if (insErr || !series) throw insErr ?? new Error("Failed");
+
+      // Compute every concrete practice date.
+      const dates: string[] = [];
+      const start = new Date(`${practiceDate}T00:00:00`);
+      if (!repeats) {
+        dates.push(practiceDate);
+      } else {
+        const end = new Date(`${repeatUntil}T00:00:00`);
+        const intervalDays = repeats === "weekly" ? 7 : repeats === "biweekly" ? 14 : 7;
+        if (repeats === "twice_weekly") {
+          for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+            if (weekdays.includes(d.getDay())) {
+              dates.push(d.toISOString().slice(0, 10));
+            }
+          }
+        } else {
+          for (let d = new Date(start); d <= end; d.setDate(d.getDate() + intervalDays)) {
+            dates.push(d.toISOString().slice(0, 10));
+          }
+        }
+      }
+      const rows = dates.map((d) => ({ series_id: series.id, practice_date: d }));
+      await supabase.from("team_practices").insert(rows);
+
+      const newSeries = {
+        id: series.id,
+        name: series.name,
+        location: series.location,
+        practiceTime: series.practice_time,
+        notes: series.notes,
+        practices: dates.map((d, i) => ({ id: `tmp-${i}`, practiceDate: d, availabilities: [] })),
+      } as unknown as Series;
       setSeriesList((prev) => [...prev, newSeries]);
+      // Refetch to get real practice IDs.
+      void loadAll();
+
       setShowAdd(false);
       setName("");
       setPracticeDate("");
@@ -191,9 +291,8 @@ export default function TeamPracticePage() {
       setRepeats("");
       setRepeatUntil("");
       setWeekdays([]);
-    } else {
-      const data = await res.json().catch(() => ({}));
-      setAddError(data.error || "Failed to add practice");
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : "Failed to add practice");
     }
     setAdding(false);
   };
@@ -221,19 +320,32 @@ export default function TeamPracticePage() {
   const saveEdit = async (seriesId: string) => {
     if (!editName.trim() || !editLocation.trim() || savingEdit) return;
     setSavingEdit(true);
-    const res = await fetch(`/api/groups/${groupId}/practice-series/${seriesId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const supabase = createSupabaseBrowserClient();
+    const { data, error: upErr } = await supabase
+      .from("practice_series")
+      .update({
         name: editName.trim(),
         location: editLocation.trim(),
-        practiceTime: editTime,
+        practice_time: editTime,
         notes: editNotes.trim(),
-      }),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setSeriesList((prev) => prev.map((s) => (s.id === seriesId ? updated : s)));
+      })
+      .eq("id", seriesId)
+      .select("id, name, location, practice_time, notes")
+      .single();
+    if (!upErr && data) {
+      setSeriesList((prev) =>
+        prev.map((s) =>
+          s.id === seriesId
+            ? {
+                ...s,
+                name: data.name,
+                location: data.location,
+                practiceTime: data.practice_time,
+                notes: data.notes,
+              }
+            : s
+        )
+      );
       setEditingSeriesId(null);
     }
     setSavingEdit(false);
@@ -244,18 +356,18 @@ export default function TeamPracticePage() {
       ? `Delete "${series.name}"?`
       : `Delete "${series.name}" and all ${series.practices.length} of its practice dates?`;
     if (!confirm(label)) return;
-    const res = await fetch(`/api/groups/${groupId}/practice-series/${series.id}`, {
-      method: "DELETE",
-    });
-    if (res.ok) {
+    const supabase = createSupabaseBrowserClient();
+    const { error: delErr } = await supabase.from("practice_series").delete().eq("id", series.id);
+    if (!delErr) {
       setSeriesList((prev) => prev.filter((s) => s.id !== series.id));
     }
   };
 
   const deletePractice = async (seriesId: string, practiceId: string) => {
     if (!confirm("Delete this date? Member availability for it will be removed.")) return;
-    const res = await fetch(`/api/groups/${groupId}/practices/${practiceId}`, { method: "DELETE" });
-    if (res.ok) {
+    const supabase = createSupabaseBrowserClient();
+    const { error: delErr } = await supabase.from("team_practices").delete().eq("id", practiceId);
+    if (!delErr) {
       setSeriesList((prev) =>
         prev.map((s) =>
           s.id === seriesId
@@ -267,13 +379,42 @@ export default function TeamPracticePage() {
   };
 
   const setMyAvailability = async (seriesId: string, practiceId: string, status: string) => {
-    const res = await fetch(`/api/groups/${groupId}/practices/${practiceId}/availability`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
-    if (res.ok) {
-      const upserted = await res.json();
+    const supabase = createSupabaseBrowserClient();
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) return;
+    const { data, error: upErr } = await supabase
+      .from("availabilities")
+      .upsert(
+        {
+          event_kind: "practice",
+          practice_id: practiceId,
+          user_id: auth.user.id,
+          status,
+        },
+        { onConflict: "practice_id,user_id" }
+      )
+      .select(
+        `id, user_id, status,
+         user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url )`
+      )
+      .single();
+    if (!upErr && data) {
+      const a = data as unknown as {
+        id: string;
+        user_id: string;
+        status: string;
+        user: { id: string; name: string; profile_image_url: string };
+      };
+      const upserted = {
+        id: a.id,
+        userId: a.user_id,
+        status: a.status,
+        user: {
+          id: a.user.id,
+          name: a.user.name,
+          profileImageUrl: a.user.profile_image_url,
+        },
+      };
       setSeriesList((prev) =>
         prev.map((s) => {
           if (s.id !== seriesId) return s;
@@ -281,11 +422,11 @@ export default function TeamPracticePage() {
             ...s,
             practices: s.practices.map((p) => {
               if (p.id !== practiceId) return p;
-              const others = p.availabilities.filter((a) => a.userId !== myId);
+              const others = p.availabilities.filter((av) => av.userId !== myId);
               return { ...p, availabilities: [...others, upserted] };
             }),
           };
-        })
+        }) as Series[]
       );
     }
   };
@@ -308,18 +449,14 @@ export default function TeamPracticePage() {
     const content = header + roster;
 
     setSendingPracticeId(practice.id);
-    const res = await fetch(`/api/groups/${groupId}/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
-    });
-    if (res.ok) {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await sendGroupMessage(supabase, groupId, content);
       router.push(`/groups/${groupId}/chat`);
-      return;
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to send to team chat");
+      setSendingPracticeId(null);
     }
-    const data = await res.json().catch(() => ({}));
-    alert(data.error || "Failed to send to team chat");
-    setSendingPracticeId(null);
   };
 
   const getAvail = (practice: Practice, userId: string) =>
