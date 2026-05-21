@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import { useEffect, useState } from "react";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listDmThreads } from "@/lib/supabase/queries";
 
 const TAB_ROUTES = ["/", "/groups", "/courts", "/chat", "/profile"] as const;
 
@@ -37,10 +39,11 @@ export default function BottomNav() {
   const isActive = (path: string) => pathname === path || pathname.startsWith(path + "/");
 
   const fetchUnread = () => {
-    fetch("/api/inbox")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: { totalUnread?: number } | null) => {
-        setUnreadMessages(data?.totalUnread ?? 0);
+    const supabase = createSupabaseBrowserClient();
+    listDmThreads(supabase)
+      .then((threads) => {
+        const total = threads.reduce((sum, t) => sum + t.unread_count, 0);
+        setUnreadMessages(total);
       })
       .catch(() => {});
   };

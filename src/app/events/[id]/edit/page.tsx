@@ -3,6 +3,9 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { EVENT_TYPE_META } from "@/lib/eventTypeMeta";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getEvent } from "@/lib/supabase/queries";
+import { toEventCamel } from "@/lib/supabase/adapters";
 
 const VALID_STATUSES = ["open", "closed", "active", "completed", "cancelled"] as const;
 
@@ -31,22 +34,15 @@ export default function EditEventPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch(`/api/events/${params.id}`)
-      .then(async (r) => {
-        if (r.status === 404) {
+    const supabase = createSupabaseBrowserClient();
+    getEvent(supabase, String(params.id))
+      .then((row) => {
+        if (!row) {
           setNotFound(true);
           setLoading(false);
-          return null;
+          return;
         }
-        if (!r.ok) {
-          setForbidden(true);
-          setLoading(false);
-          return null;
-        }
-        return r.json();
-      })
-      .then((data) => {
-        if (!data) return;
+        const data = toEventCamel(row);
         setEventType(data.eventType);
         setTitle(data.title);
         setDescription(data.description || "");
@@ -59,10 +55,13 @@ export default function EditEventPage() {
         setNtrpMin(data.ntrpMin != null ? String(data.ntrpMin) : "");
         setNtrpMax(data.ntrpMax != null ? String(data.ntrpMax) : "");
         setIsPublicSignup(data.isPublicSignup);
-        setStatus(data.status);
+        setStatus(data.status as typeof status);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        setForbidden(true);
+        setLoading(false);
+      });
   }, [params.id]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -78,34 +77,32 @@ export default function EditEventPage() {
     }
     setSubmitting(true);
     try {
-      const body = {
-        title: title.trim(),
-        description: description.trim(),
-        startDate: new Date(startDate).toISOString(),
-        endDate: new Date(endDate).toISOString(),
-        signupDeadline: signupDeadline ? new Date(signupDeadline).toISOString() : null,
-        venueName: venueName.trim(),
-        venueAddress: venueAddress.trim(),
-        maxParticipants: maxParticipants ? Number(maxParticipants) : null,
-        ntrpMin: ntrpMin ? Number(ntrpMin) : null,
-        ntrpMax: ntrpMax ? Number(ntrpMax) : null,
-        isPublicSignup,
-        status,
-      };
-      const res = await fetch(`/api/events/${params.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        setError(data?.error || "Couldn't save changes. Try again.");
+      const supabase = createSupabaseBrowserClient();
+      const { error: upErr } = await supabase
+        .from("events")
+        .update({
+          title: title.trim(),
+          description: description.trim(),
+          start_date: new Date(startDate).toISOString(),
+          end_date: new Date(endDate).toISOString(),
+          signup_deadline: signupDeadline ? new Date(signupDeadline).toISOString() : null,
+          venue_name: venueName.trim(),
+          venue_address: venueAddress.trim(),
+          max_participants: maxParticipants ? Number(maxParticipants) : null,
+          ntrp_min: ntrpMin ? Number(ntrpMin) : null,
+          ntrp_max: ntrpMax ? Number(ntrpMax) : null,
+          is_public_signup: isPublicSignup,
+          status,
+        })
+        .eq("id", String(params.id));
+      if (upErr) {
+        setError(upErr.message || "Couldn't save changes. Try again.");
         setSubmitting(false);
         return;
       }
       router.push(`/events/${params.id}`);
-    } catch {
-      setError("Network error. Try again.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error. Try again.");
       setSubmitting(false);
     }
   }
@@ -115,20 +112,19 @@ export default function EditEventPage() {
     setSubmitting(true);
     setError("");
     try {
-      const res = await fetch(`/api/events/${params.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "cancelled" }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        setError(data?.error || "Couldn't cancel the event.");
+      const supabase = createSupabaseBrowserClient();
+      const { error: upErr } = await supabase
+        .from("events")
+        .update({ status: "cancelled" })
+        .eq("id", String(params.id));
+      if (upErr) {
+        setError(upErr.message || "Couldn't cancel the event.");
         setSubmitting(false);
         return;
       }
       router.push(`/events/${params.id}`);
-    } catch {
-      setError("Network error. Try again.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error. Try again.");
       setSubmitting(false);
     }
   }

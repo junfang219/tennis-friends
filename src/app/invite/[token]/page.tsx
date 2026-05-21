@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { validateInvite, acceptInvite } from "@/lib/supabase/queries";
 
 type InviteInfo = {
   status: "PENDING" | "ACCEPTED" | "CANCELLED" | "EXPIRED";
@@ -25,16 +27,27 @@ export default function InviteAcceptPage() {
 
   const loadInvite = useCallback(async () => {
     setLoadError("");
-    const res = await fetch(`/api/invites/${token}`);
-    if (res.status === 404) {
-      setLoadError("This invite link is invalid.");
-      return;
-    }
-    if (!res.ok) {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const row = await validateInvite(supabase, token);
+      if (!row) {
+        setLoadError("This invite link is invalid.");
+        return;
+      }
+      // Map the row to the page's local InviteInfo (uppercase status).
+      setInfo({
+        status: row.status.toUpperCase() as InviteInfo["status"],
+        expiresAt: row.expires_at,
+        team: {
+          id: row.group?.id ?? row.group_id,
+          name: row.group?.name ?? "",
+          imageUrl: row.group?.image_url ?? "",
+        },
+        inviterName: "",
+      });
+    } catch {
       setLoadError("Couldn't load the invite.");
-      return;
     }
-    setInfo(await res.json());
   }, [token]);
 
   useEffect(() => {
@@ -45,15 +58,21 @@ export default function InviteAcceptPage() {
   const accept = async () => {
     setAccepting(true);
     setAcceptError("");
-    const res = await fetch(`/api/invites/${token}/accept`, { method: "POST" });
-    if (res.ok) {
-      const data = await res.json();
-      router.push(`/groups/${data.groupId}`);
-      return;
+    try {
+      const supabase = createSupabaseBrowserClient();
+      // Re-resolve the invite to grab the latest role/member_type.
+      const row = await validateInvite(supabase, token);
+      if (!row || row.status !== "pending") {
+        setAcceptError("This invite is no longer valid.");
+        setAccepting(false);
+        return;
+      }
+      await acceptInvite(supabase, row.id, row.group_id, row.role, row.member_type);
+      router.push(`/groups/${row.group_id}`);
+    } catch (err) {
+      setAcceptError(err instanceof Error ? err.message : "Couldn't accept the invite.");
+      setAccepting(false);
     }
-    const d = await res.json().catch(() => ({}));
-    setAcceptError(d.error || "Couldn't accept the invite.");
-    setAccepting(false);
   };
 
   if (loadError) {

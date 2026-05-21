@@ -2,6 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listMyGroups, createEvent } from "@/lib/supabase/queries";
 
 const TYPES = [
   { id: "tournament", label: "Tournament", emoji: "🏆", blurb: "Single-elimination bracket. Organizer seeds pairings." },
@@ -52,11 +54,9 @@ export default function NewEventPage() {
   useEffect(() => {
     if (visibility !== "group" || groups.length > 0 || groupsLoading) return;
     setGroupsLoading(true);
-    fetch("/api/groups")
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: Array<{ id: string; name: string }>) => {
-        setGroups(data.map((g) => ({ id: g.id, name: g.name })));
-      })
+    const supabase = createSupabaseBrowserClient();
+    listMyGroups(supabase)
+      .then((rows) => setGroups(rows.map((g) => ({ id: g.id, name: g.name }))))
       .catch(() => setGroups([]))
       .finally(() => setGroupsLoading(false));
   }, [visibility, groups.length, groupsLoading]);
@@ -72,20 +72,27 @@ export default function NewEventPage() {
     setGeocodeState("loading");
     const handle = setTimeout(() => {
       let cancelled = false;
-      fetch(`/api/geocode?q=${encodeURIComponent(q)}`)
+      // Geocode via Nominatim directly from the client. This was previously
+      // proxied through /api/geocode for rate limiting; that server-side
+      // throttling should be reinstated as an Edge Function before launch.
+      const url =
+        "https://nominatim.openstreetmap.org/search?" +
+        "q=" + encodeURIComponent(q) +
+        "&format=json&limit=1";
+      fetch(url, { headers: { "Accept-Language": "en" } })
         .then(async (r) => {
           if (cancelled) return;
-          if (r.status === 404) {
-            setGeocodeState("not_found");
-            return;
-          }
           if (!r.ok) {
             setGeocodeState("error");
             return;
           }
-          const data = (await r.json()) as { lat: number; lng: number };
-          setEventLat(data.lat);
-          setEventLng(data.lng);
+          const data = (await r.json()) as Array<{ lat: string; lon: string }>;
+          if (!data.length) {
+            setGeocodeState("not_found");
+            return;
+          }
+          setEventLat(parseFloat(data[0].lat));
+          setEventLng(parseFloat(data[0].lon));
           setGeocodeState("ok");
         })
         .catch(() => {
@@ -145,40 +152,32 @@ export default function NewEventPage() {
     }
     setSubmitting(true);
     try {
-      const body = {
+      const supabase = createSupabaseBrowserClient();
+      const created = await createEvent(supabase, {
         title: title.trim(),
         description: description.trim(),
-        eventType: type,
-        startDate: new Date(startDate).toISOString(),
-        endDate: new Date(endDate).toISOString(),
-        signupDeadline: signupDeadline ? new Date(signupDeadline).toISOString() : null,
-        venueName: venueName.trim(),
-        venueAddress: venueAddress.trim(),
-        maxParticipants: maxParticipants ? Number(maxParticipants) : null,
-        ntrpMin: ntrpMin ? Number(ntrpMin) : null,
-        ntrpMax: ntrpMax ? Number(ntrpMax) : null,
-        postToFeed: visibility === "public" ? postToFeed : false,
+        event_type: type,
+        start_date: new Date(startDate).toISOString(),
+        end_date: new Date(endDate).toISOString(),
+        signup_deadline: signupDeadline ? new Date(signupDeadline).toISOString() : null,
+        venue_name: venueName.trim(),
+        venue_address: venueAddress.trim(),
+        max_participants: maxParticipants ? Number(maxParticipants) : null,
+        ntrp_min: ntrpMin ? Number(ntrpMin) : null,
+        ntrp_max: ntrpMax ? Number(ntrpMax) : null,
         visibility,
-        eventLat: visibility === "public" ? eventLat : null,
-        eventLng: visibility === "public" ? eventLng : null,
-        radiusMi: visibility === "public" ? radiusMi : null,
-        hostGroupId: visibility === "group" ? hostGroupId : null,
-      };
-      const res = await fetch("/api/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        event_lat: visibility === "public" ? eventLat : null,
+        event_lng: visibility === "public" ? eventLng : null,
+        radius_mi: visibility === "public" ? radiusMi : null,
+        host_group_id: visibility === "group" ? hostGroupId : null,
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        setError(data?.error || "Couldn't create the event. Try again.");
-        setSubmitting(false);
-        return;
-      }
-      const event = await res.json();
-      router.push(`/events/${event.id}`);
-    } catch {
-      setError("Network error. Try again.");
+      // postToFeed (cross-post to feed) is a follow-up: the event-creating
+      // post used to be inserted by the route handler. Could be reinstated
+      // via a Postgres trigger or done client-side here when needed.
+      void postToFeed;
+      router.push(`/events/${created.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't create the event. Try again.");
       setSubmitting(false);
     }
   }

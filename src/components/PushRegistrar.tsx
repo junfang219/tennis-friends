@@ -3,6 +3,8 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { registerDeviceToken } from "@/lib/supabase/queries";
 
 // Registers the device for APNs (or FCM on Android) and POSTs the token to the
 // backend whenever a user is authenticated. Routes the user to the right place
@@ -51,13 +53,10 @@ export default function PushRegistrar() {
 
       const onRegistered = await cap.Push.addListener("registration", async (token) => {
         try {
-          await fetch("/api/devices/register", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: token.value, platform }),
-          });
+          const supabase = createSupabaseBrowserClient();
+          await registerDeviceToken(supabase, token.value, platform);
         } catch {
-          // Backend will retry on next sign-in.
+          // Will be re-registered on next sign-in.
         }
       });
 

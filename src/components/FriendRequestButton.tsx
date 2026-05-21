@@ -2,6 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import {
+  sendFriendRequest,
+  acceptFriendRequest,
+  rejectFriendRequest,
+  removeFriend,
+} from "@/lib/supabase/queries";
 
 type FriendshipState = {
   friendshipId: string | null;
@@ -42,51 +49,54 @@ export default function FriendRequestButton({
 
   const sendRequest = async () => {
     setLoading(true);
-    const res = await fetch("/api/friends/request", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ addresseeId: userId }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setState({ friendshipId: data.id, friendshipStatus: "PENDING", isRequester: true });
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await sendFriendRequest(supabase, userId);
+      // The new row id isn't returned by sendFriendRequest; refresh to pick it up.
+      setState({ friendshipId: null, friendshipStatus: "PENDING", isRequester: true });
+    } catch {
+      // ignore
     }
     setLoading(false);
   };
 
   const acceptRequest = async () => {
+    if (!state.friendshipId) return;
     setLoading(true);
-    await fetch("/api/friends/accept", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ friendshipId: state.friendshipId }),
-    });
-    setState({ ...state, friendshipStatus: "ACCEPTED" });
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await acceptFriendRequest(supabase, state.friendshipId);
+      setState({ ...state, friendshipStatus: "ACCEPTED" });
+    } catch {
+      // ignore
+    }
     setLoading(false);
     router.refresh();
   };
 
   const rejectRequest = async () => {
+    if (!state.friendshipId) return;
     setLoading(true);
-    await fetch("/api/friends/reject", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ friendshipId: state.friendshipId }),
-    });
-    setState({ friendshipId: null, friendshipStatus: null, isRequester: false });
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await rejectFriendRequest(supabase, state.friendshipId);
+      setState({ friendshipId: null, friendshipStatus: null, isRequester: false });
+    } catch {
+      // ignore
+    }
     setLoading(false);
   };
 
   const cancelRequest = async () => {
     setMenuOpen(false);
     setLoading(true);
-    const res = await fetch("/api/friends/withdraw", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ friendshipId: state.friendshipId }),
-    });
-    if (res.ok) {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      // Symmetric removal: deletes the pending friendship in either direction.
+      await removeFriend(supabase, userId);
       setState({ friendshipId: null, friendshipStatus: null, isRequester: false });
+    } catch {
+      // ignore
     }
     setLoading(false);
   };
