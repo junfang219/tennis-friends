@@ -10,6 +10,13 @@ import MessageReactionBar from "@/components/MessageReactionBar";
 import MessageReactions, { type MessageReaction as MsgReaction } from "@/components/MessageReactions";
 import { useLongPress } from "@/hooks/useLongPress";
 import type { ReactionKey } from "@/lib/reactions";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import {
+  getChat,
+  listChatMessages,
+  sendChatMessage,
+  addReaction,
+} from "@/lib/supabase/queries";
 
 type Message = {
   id: string;
@@ -75,16 +82,36 @@ export default function GroupChatThreadPage() {
     if (!file) return;
     setUploadError("");
     setUploading(true);
-    const fd = new FormData();
-    fd.append("file", file);
     try {
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
+      const isVideo = file.type.startsWith("video/");
+      const sigRes = await fetch("/api/storage/sign-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bucket: "posts",
+          filename: file.name,
+          mimeType: file.type || (isVideo ? "video/mp4" : "image/jpeg"),
+          sizeBytes: file.size,
+        }),
+      });
+      if (!sigRes.ok) {
+        const data = await sigRes.json().catch(() => ({}));
         setUploadError(data.error || "Upload failed");
       } else {
-        const data = await res.json();
-        setPendingMedia({ url: data.url, type: data.mediaType });
+        const { signedUrl, publicUrl } = (await sigRes.json()) as {
+          signedUrl: string;
+          publicUrl: string;
+        };
+        const put = await fetch(signedUrl, {
+          method: "PUT",
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+          body: file,
+        });
+        if (!put.ok) {
+          setUploadError("Upload failed");
+        } else {
+          setPendingMedia({ url: publicUrl, type: isVideo ? "video" : "image" });
+        }
       }
     } catch {
       setUploadError("Upload failed. Try again.");
@@ -115,24 +142,49 @@ export default function GroupChatThreadPage() {
 
   // Load chat metadata
   useEffect(() => {
-    fetch(`/api/chats/${chatId}`)
-      .then((r) => {
-        if (r.status === 403) { setError("You are not a participant of this chat."); return null; }
-        if (!r.ok) { setError("Chat not found."); return null; }
-        return r.json();
+    const supabase = createSupabaseBrowserClient();
+    getChat(supabase, chatId)
+      .then((c) => {
+        if (!c) {
+          setError("Chat not found.");
+          return;
+        }
+        setChatInfo({
+          id: c.id,
+          name: c.name,
+          creatorId: c.creator_id,
+          postId: c.post_id,
+          friendGroupId: c.friend_group_id,
+          sessionEndAt: c.session_end_at,
+          manualPlayerNames: c.manual_player_names,
+          participants: [],
+        } as unknown as typeof chatInfo);
       })
-      .then((data) => { if (data) setChatInfo(data); })
-      .catch(() => {});
+      .catch(() => setError("You are not a participant of this chat."));
   }, [chatId]);
 
   // Load messages
   const loadMessages = () => {
-    fetch(`/api/chats/${chatId}/messages`)
-      .then((r) => {
-        if (!r.ok) return;
-        return r.json();
-      })
-      .then((data) => { if (Array.isArray(data)) setMessages(data); })
+    const supabase = createSupabaseBrowserClient();
+    listChatMessages(supabase, chatId)
+      .then((rows) =>
+        setMessages(
+          rows.map((m) => ({
+            id: m.id,
+            content: m.content,
+            mediaUrl: m.media_url,
+            mediaType: m.media_type,
+            createdAt: m.created_at,
+            senderId: m.sender_id,
+            sender: {
+              id: m.sender.id,
+              name: m.sender.name,
+              profileImageUrl: m.sender.profile_image_url,
+            },
+            reactions: [],
+          })) as unknown as Message[]
+        )
+      )
       .catch(() => {});
   };
 
@@ -151,23 +203,32 @@ export default function GroupChatThreadPage() {
   const handleSend = async () => {
     if ((!input.trim() && !pendingMedia) || sending || uploading) return;
     setSending(true);
-
-    const res = await fetch(`/api/chats/${chatId}/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content: input,
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const row = await sendChatMessage(supabase, chatId, input, {
         mediaUrl: pendingMedia?.url,
         mediaType: pendingMedia?.type,
-      }),
-    });
-
-    if (res.ok) {
-      const msg = await res.json();
+      });
+      const msg = {
+        id: row.id,
+        content: row.content,
+        mediaUrl: row.media_url,
+        mediaType: row.media_type,
+        createdAt: row.created_at,
+        senderId: row.sender_id,
+        sender: {
+          id: row.sender.id,
+          name: row.sender.name,
+          profileImageUrl: row.sender.profile_image_url,
+        },
+        reactions: [],
+      } as unknown as Message;
       setMessages((prev) => [...prev, msg]);
       setInput("");
       setPendingMedia(null);
       inputRef.current?.focus();
+    } catch {
+      // ignore
     }
     setSending(false);
   };
@@ -180,12 +241,12 @@ export default function GroupChatThreadPage() {
   };
 
   const saveRename = async () => {
-    const res = await fetch(`/api/chats/${chatId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: renameValue }),
-    });
-    if (res.ok && chatInfo) {
+    const supabase = createSupabaseBrowserClient();
+    const { error: upErr } = await supabase
+      .from("chats")
+      .update({ name: renameValue.trim() })
+      .eq("id", chatId);
+    if (!upErr && chatInfo) {
       setChatInfo({ ...chatInfo, name: renameValue.trim() });
       setShowRename(false);
     }
@@ -193,18 +254,29 @@ export default function GroupChatThreadPage() {
 
   const leaveChat = async () => {
     if (!confirm("Leave this chat? You won't see new messages.")) return;
-    const res = await fetch(`/api/chats/${chatId}`, { method: "DELETE" });
-    if (res.ok) router.push("/friends");
+    const supabase = createSupabaseBrowserClient();
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) return;
+    // Soft-leave: hide the participant row for this user.
+    const { error: hideErr } = await supabase
+      .from("chat_participants")
+      .update({ hidden_at: new Date().toISOString() })
+      .eq("chat_id", chatId)
+      .eq("user_id", auth.user.id);
+    if (!hideErr) router.push("/friends");
   };
 
   const clearHistory = async () => {
     if (!confirm("Clear chat history? This only hides messages from your view; other members still see them.")) return;
-    const res = await fetch("/api/inbox/state", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "group", id: chatId, action: "clear" }),
-    });
-    if (res.ok) {
+    const supabase = createSupabaseBrowserClient();
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) return;
+    const { error: cErr } = await supabase
+      .from("chat_participants")
+      .update({ cleared_at: new Date().toISOString() })
+      .eq("chat_id", chatId)
+      .eq("user_id", auth.user.id);
+    if (!cErr) {
       setMessages([]);
       loadMessages();
     }
@@ -221,11 +293,8 @@ export default function GroupChatThreadPage() {
       }),
     );
     try {
-      await fetch("/api/messages/reactions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messageType: "CHAT", messageId: msgId, emoji: key }),
-      });
+      const supabase = createSupabaseBrowserClient();
+      if (key !== null) await addReaction(supabase, "chat", msgId, key);
     } catch {
       // Polling will reconcile.
     }

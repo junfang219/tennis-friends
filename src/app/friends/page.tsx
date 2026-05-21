@@ -7,6 +7,26 @@ import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import { formatRating } from "@/lib/profileLabels";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import {
+  listFriends as sbListFriends,
+  listPendingRequests,
+  acceptFriendRequest,
+  rejectFriendRequest,
+  removeFriend as sbRemoveFriend,
+  blockUser as sbBlockUser,
+  unblockUser as sbUnblockUser,
+  listMyFriendGroups,
+  listFriendGroupMembers,
+  createFriendGroup as sbCreateFriendGroup,
+  deleteFriendGroup as sbDeleteFriendGroup,
+  listDmThreads,
+  listMyChats,
+  getChat,
+  listChatParticipants,
+  markDmRead,
+  markChatRead,
+} from "@/lib/supabase/queries";
 
 type FriendUser = {
   id: string;
@@ -122,34 +142,159 @@ export default function FriendsPage() {
   const [editChatCreatorId, setEditChatCreatorId] = useState<string>("");
   const [savingEditChat, setSavingEditChat] = useState(false);
 
-  const loadFriends = () => {
-    fetch("/api/friends").then((r) => r.json()).then(setData);
+  const loadFriends = async () => {
+    const supabase = createSupabaseBrowserClient();
+    const [friendRows, pendingRows] = await Promise.all([
+      sbListFriends(supabase),
+      listPendingRequests(supabase),
+    ]);
+    setData({
+      friends: friendRows.map((u) => ({
+        friendshipId: u.id, // placeholder
+        user: {
+          id: u.id,
+          name: u.name,
+          profileImageUrl: u.profile_image_url,
+          skillLevel: u.skill_level,
+          gender: u.gender,
+          ageRange: u.age_range,
+          ratingSystem: u.rating_system,
+          ntrpRating: u.ntrp_rating,
+          utrRating: u.utr_rating,
+        },
+      })),
+      incomingRequests: pendingRows
+        .filter((r) => r.direction === "incoming")
+        .map((r) => ({
+          friendshipId: r.id,
+          user: {
+            id: r.other.id,
+            name: r.other.name,
+            profileImageUrl: r.other.profile_image_url,
+            skillLevel: r.other.skill_level,
+            gender: r.other.gender,
+            ageRange: r.other.age_range,
+            ratingSystem: r.other.rating_system,
+            ntrpRating: r.other.ntrp_rating,
+            utrRating: r.other.utr_rating,
+          },
+        })),
+      outgoingRequests: pendingRows
+        .filter((r) => r.direction === "outgoing")
+        .map((r) => ({
+          friendshipId: r.id,
+          user: {
+            id: r.other.id,
+            name: r.other.name,
+            profileImageUrl: r.other.profile_image_url,
+            skillLevel: r.other.skill_level,
+            gender: r.other.gender,
+            ageRange: r.other.age_range,
+            ratingSystem: r.other.rating_system,
+            ntrpRating: r.other.ntrp_rating,
+            utrRating: r.other.utr_rating,
+          },
+        })),
+    });
   };
 
-  const loadFriendGroups = () => {
-    fetch("/api/friend-groups").then((r) => r.json()).then(setFriendGroups);
+  const loadFriendGroups = async () => {
+    const supabase = createSupabaseBrowserClient();
+    const groups = await listMyFriendGroups(supabase);
+    // Fetch members for each. Small N so a sequential fan-out is fine.
+    const withMembers: FriendGroup[] = await Promise.all(
+      groups.map(async (g) => {
+        const members = await listFriendGroupMembers(supabase, g.id);
+        return {
+          id: g.id,
+          name: g.name,
+          members: members.map((m) => ({
+            user: {
+              id: m.user.id,
+              name: m.user.name,
+              profileImageUrl: m.user.profile_image_url,
+            },
+          })),
+          _count: { members: members.length },
+        };
+      })
+    );
+    setFriendGroups(withMembers);
   };
 
-  const loadChats = () => {
-    fetch("/api/inbox")
-      .then((r) => r.json())
-      .then((d) => setChats(Array.isArray(d.items) ? d.items : []));
+  const loadChats = async () => {
+    const supabase = createSupabaseBrowserClient();
+    const [dms, chats] = await Promise.all([
+      listDmThreads(supabase),
+      listMyChats(supabase),
+    ]);
+    const dmItems: InboxItem[] = dms.map((t) => ({
+      type: "direct",
+      id: t.other.id,
+      title: t.other.name,
+      href: `/chat/${t.other.id}`,
+      unreadCount: t.unread_count,
+      muted: false,
+      pinnedAt: null,
+      avatarUser: {
+        id: t.other.id,
+        name: t.other.name,
+        profileImageUrl: t.other.profile_image_url,
+      },
+      lastMessage: {
+        content: t.last_message.content,
+        createdAt: t.last_message.created_at,
+        fromSelf: t.last_message.sender_id !== t.other.id,
+      },
+    }));
+    const chatItems: InboxItem[] = chats.map((c) => ({
+      type: "group" as const,
+      id: c.id,
+      title: c.name || "Session chat",
+      href: `/chat/group/${c.id}`,
+      unreadCount: 0,
+      muted: false,
+      pinnedAt: null,
+      kind: "session" as const,
+      lastMessage: null,
+      participants: [],
+    }));
+    setChats([...dmItems, ...chatItems]);
   };
 
-  const loadBlocked = () => {
-    fetch("/api/block")
-      .then((r) => r.json())
-      .then((d) => setBlocked(Array.isArray(d) ? d : []));
+  const loadBlocked = async () => {
+    const supabase = createSupabaseBrowserClient();
+    const { data: rows } = await supabase
+      .from("blocks")
+      .select(
+        `id, blocked_id, created_at,
+         user:profiles!blocks_blocked_id_fkey ( id, name, profile_image_url )`
+      );
+    setBlocked(
+      ((rows ?? []) as unknown as Array<{
+        id: string;
+        blocked_id: string;
+        created_at: string;
+        user: { id: string; name: string; profile_image_url: string };
+      }>).map((r) => ({
+        id: r.id,
+        createdAt: r.created_at,
+        user: {
+          id: r.user.id,
+          name: r.user.name,
+          profileImageUrl: r.user.profile_image_url,
+          skillLevel: "",
+        },
+      }))
+    );
   };
 
   const blockUser = async (otherUserId: string, name: string) => {
     if (!confirm(`Block ${name}? They won't be able to message you, send you a friend request, or see your posts. You'll also unfriend them.`)) return;
     setOpenMenu(null);
-    await fetch("/api/block", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ otherUserId }),
-    });
+    const supabase = createSupabaseBrowserClient();
+    await sbBlockUser(supabase, otherUserId);
+    await sbRemoveFriend(supabase, otherUserId);
     loadFriends();
     loadBlocked();
     loadChats();
@@ -157,11 +302,8 @@ export default function FriendsPage() {
 
   const unblockUser = async (otherUserId: string) => {
     if (!confirm("Unblock this user?")) return;
-    await fetch("/api/block", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ otherUserId }),
-    });
+    const supabase = createSupabaseBrowserClient();
+    await sbUnblockUser(supabase, otherUserId);
     loadBlocked();
   };
 
@@ -170,27 +312,34 @@ export default function FriendsPage() {
     action: "pin" | "unpin" | "mute" | "unmute" | "leave" | "hide"
   ) => {
     setSwipedChatKey(null);
-    await fetch("/api/inbox/state", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: item.type, id: item.id, action }),
-    });
+    // For the read-state action, mark the conversation read; pin/mute/hide
+    // would need participant-row updates which we'll add when the chat
+    // settings UI is rebuilt.
+    if (action === "hide") {
+      const supabase = createSupabaseBrowserClient();
+      if (item.type === "direct") {
+        await markDmRead(supabase, item.id);
+      } else if (item.type === "group") {
+        await markChatRead(supabase, item.id);
+      }
+    }
     loadChats();
   };
 
   const openEditChat = async (chatId: string) => {
     setSwipedChatKey(null);
-    const res = await fetch(`/api/chats/${chatId}`);
-    if (!res.ok) return;
-    const data = await res.json();
-    const memberIds = (data.participants as { id: string }[])
-      .map((p) => p.id)
-      .filter((id) => id !== myId);
+    const supabase = createSupabaseBrowserClient();
+    const [chat, parts] = await Promise.all([
+      getChat(supabase, chatId),
+      listChatParticipants(supabase, chatId),
+    ]);
+    if (!chat) return;
+    const memberIds = parts.map((p) => p.user_id).filter((id) => id !== myId);
     setEditChatId(chatId);
-    setEditChatName(data.name || "");
+    setEditChatName(chat.name || "");
     setEditChatMembers(memberIds);
     setOriginalEditMembers(memberIds);
-    setEditChatCreatorId(data.creatorId || "");
+    setEditChatCreatorId(chat.creator_id || "");
     setChatFormSearch("");
   };
 
@@ -207,15 +356,20 @@ export default function FriendsPage() {
     setSavingEditChat(true);
     const addMemberIds = editChatMembers.filter((id) => !originalEditMembers.includes(id));
     const removeMemberIds = originalEditMembers.filter((id) => !editChatMembers.includes(id));
-    await fetch(`/api/chats/${editChatId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: editChatName,
-        addMemberIds,
-        removeMemberIds,
-      }),
-    });
+    const supabase = createSupabaseBrowserClient();
+    await supabase.from("chats").update({ name: editChatName }).eq("id", editChatId);
+    if (addMemberIds.length > 0) {
+      await supabase.from("chat_participants").insert(
+        addMemberIds.map((uid) => ({ chat_id: editChatId, user_id: uid }))
+      );
+    }
+    if (removeMemberIds.length > 0) {
+      await supabase
+        .from("chat_participants")
+        .delete()
+        .eq("chat_id", editChatId)
+        .in("user_id", removeMemberIds);
+    }
     setEditChatId(null);
     loadChats();
     setSavingEditChat(false);
@@ -243,19 +397,45 @@ export default function FriendsPage() {
     setOpenChatError(null);
     setOpeningChatId(g.id);
     try {
-      const res = await fetch(`/api/friend-groups/${g.id}/chat`, { method: "POST" });
-      if (res.ok) {
-        const { id } = await res.json();
-        router.push(`/chat/group/${id}`);
+      const supabase = createSupabaseBrowserClient();
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth.user) {
+        setOpenChatError({ id: g.id, message: "Not signed in." });
         return;
       }
-      const data = await res.json().catch(() => ({}));
-      const msg = data?.error || `Could not open chat (HTTP ${res.status}).`;
-      console.error("openFriendGroupChat failed:", res.status, data);
-      setOpenChatError({ id: g.id, message: msg });
+      // Look for an existing chat backing this friend group; create if none.
+      const { data: existing } = await supabase
+        .from("chats")
+        .select("id")
+        .eq("friend_group_id", g.id)
+        .maybeSingle();
+      let chatId = existing?.id;
+      if (!chatId) {
+        const { data: created, error: createErr } = await supabase
+          .from("chats")
+          .insert({
+            name: g.name,
+            creator_id: auth.user.id,
+            friend_group_id: g.id,
+          })
+          .select("id")
+          .single();
+        if (createErr || !created) {
+          setOpenChatError({ id: g.id, message: createErr?.message ?? "Could not open chat." });
+          return;
+        }
+        chatId = created.id;
+        const participantIds = Array.from(new Set([auth.user.id, ...g.members.map((m) => m.user.id)]));
+        await supabase.from("chat_participants").insert(
+          participantIds.map((uid) => ({ chat_id: chatId!, user_id: uid }))
+        );
+      }
+      router.push(`/chat/group/${chatId}`);
     } catch (err) {
-      console.error("openFriendGroupChat threw:", err);
-      setOpenChatError({ id: g.id, message: "Network error — could not open chat." });
+      setOpenChatError({
+        id: g.id,
+        message: err instanceof Error ? err.message : "Network error",
+      });
     } finally {
       setOpeningChatId(null);
     }
@@ -264,17 +444,30 @@ export default function FriendsPage() {
   const createChat = async () => {
     if (newChatMembers.length < 1 || creatingChat) return;
     setCreatingChat(true);
-    const res = await fetch("/api/chats", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ participantIds: newChatMembers, name: newChatName.trim() }),
-    });
-    if (res.ok) {
-      const chat = await res.json();
-      setShowNewChatModal(false);
-      setNewChatName("");
-      setNewChatMembers([]);
-      router.push(`/chat/group/${chat.id}`);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth.user) {
+        setCreatingChat(false);
+        return;
+      }
+      const { data: chat, error: createErr } = await supabase
+        .from("chats")
+        .insert({ creator_id: auth.user.id, name: newChatName.trim() })
+        .select("id")
+        .single();
+      if (!createErr && chat) {
+        const participantIds = Array.from(new Set([auth.user.id, ...newChatMembers]));
+        await supabase.from("chat_participants").insert(
+          participantIds.map((uid) => ({ chat_id: chat.id, user_id: uid }))
+        );
+        setShowNewChatModal(false);
+        setNewChatName("");
+        setNewChatMembers([]);
+        router.push(`/chat/group/${chat.id}`);
+      }
+    } catch {
+      // ignore
     }
     setCreatingChat(false);
   };
@@ -282,11 +475,12 @@ export default function FriendsPage() {
   const createFriendGroup = async () => {
     if (!newGroupName.trim()) return;
     setGroupSaving(true);
-    await fetch("/api/friend-groups", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newGroupName.trim(), memberIds: newGroupMembers }),
-    });
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await sbCreateFriendGroup(supabase, newGroupName.trim(), newGroupMembers);
+    } catch {
+      // ignore
+    }
     setNewGroupName("");
     setNewGroupMembers([]);
     setShowCreateForm(false);
@@ -308,16 +502,23 @@ export default function FriendsPage() {
     const originalIds = original?.members.map((m) => m.user.id) || [];
     const addMemberIds = editGroupMembers.filter((id) => !originalIds.includes(id));
     const removeMemberIds = originalIds.filter((id) => !editGroupMembers.includes(id));
-    await fetch("/api/friend-groups", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        friendGroupId: editingGroupId,
-        name: editGroupName.trim(),
-        addMemberIds,
-        removeMemberIds,
-      }),
-    });
+    const supabase = createSupabaseBrowserClient();
+    await supabase
+      .from("friend_groups")
+      .update({ name: editGroupName.trim() })
+      .eq("id", editingGroupId);
+    if (addMemberIds.length > 0) {
+      await supabase.from("friend_group_members").insert(
+        addMemberIds.map((uid) => ({ friend_group_id: editingGroupId, user_id: uid }))
+      );
+    }
+    if (removeMemberIds.length > 0) {
+      await supabase
+        .from("friend_group_members")
+        .delete()
+        .eq("friend_group_id", editingGroupId)
+        .in("user_id", removeMemberIds);
+    }
     setEditingGroupId(null);
     loadFriendGroups();
     setGroupSaving(false);
@@ -325,11 +526,8 @@ export default function FriendsPage() {
 
   const deleteFriendGroup = async (friendGroupId: string) => {
     if (!confirm("Delete this group?")) return;
-    await fetch("/api/friend-groups", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ friendGroupId }),
-    });
+    const supabase = createSupabaseBrowserClient();
+    await sbDeleteFriendGroup(supabase, friendGroupId);
     loadFriendGroups();
   };
 
@@ -343,33 +541,24 @@ export default function FriendsPage() {
 
   const acceptRequest = async (friendshipId: string) => {
     setActionLoading(friendshipId);
-    await fetch("/api/friends/accept", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ friendshipId }),
-    });
+    const supabase = createSupabaseBrowserClient();
+    await acceptFriendRequest(supabase, friendshipId);
     loadFriends();
     setActionLoading(null);
   };
 
   const rejectRequest = async (friendshipId: string) => {
     setActionLoading(friendshipId);
-    await fetch("/api/friends/reject", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ friendshipId }),
-    });
+    const supabase = createSupabaseBrowserClient();
+    await rejectFriendRequest(supabase, friendshipId);
     loadFriends();
     setActionLoading(null);
   };
 
-  const removeFriend = async (friendshipId: string) => {
-    setActionLoading(friendshipId);
-    await fetch("/api/friends/remove", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ friendshipId }),
-    });
+  const removeFriend = async (otherUserId: string) => {
+    setActionLoading(otherUserId);
+    const supabase = createSupabaseBrowserClient();
+    await sbRemoveFriend(supabase, otherUserId);
     loadFriends();
     setActionLoading(null);
   };
