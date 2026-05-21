@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useSession } from "@/lib/supabase/nextauth-compat";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { completeOnboarding } from "@/lib/supabase/queries";
 
 type Gender = "male" | "female" | "non_binary" | "prefer_not_to_say";
 type AgeRange = "under_18" | "18_29" | "30_49" | "50_plus";
@@ -26,7 +27,6 @@ const NTRP_VALUES = [2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0];
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { update: updateSession } = useSession();
 
   const [gender, setGender] = useState<Gender | "">("");
   const [ageRange, setAgeRange] = useState<AgeRange | "">("");
@@ -83,33 +83,29 @@ export default function OnboardingPage() {
     setSubmitting(true);
     setError("");
 
-    const payload: Record<string, unknown> = { gender, ageRange, ratingSystem };
-    if (ratingSystem === "ntrp") payload.ntrpRating = ntrp;
-    if (ratingSystem === "utr") payload.utrRating = Number(utr);
-    if (ratingSystem === "self") payload.skillLevel = selfLevel;
-    if (club.trim()) payload.club = club.trim();
-    if (city.trim()) payload.city = city.trim();
+    const patch: Record<string, unknown> = {
+      gender,
+      age_range: ageRange,
+      rating_system: ratingSystem,
+    };
+    if (ratingSystem === "ntrp") patch.ntrp_rating = ntrp;
+    if (ratingSystem === "utr") patch.utr_rating = Number(utr);
+    if (ratingSystem === "self") patch.skill_level = selfLevel;
+    if (club.trim()) patch.custom_tags = club.trim();
     if (locationLat != null && locationLng != null) {
-      payload.latitude = locationLat;
-      payload.longitude = locationLng;
+      patch.latitude = locationLat;
+      patch.longitude = locationLng;
     }
 
-    const res = await fetch("/api/onboarding", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error || "Something went wrong");
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await completeOnboarding(supabase, patch);
+      router.replace("/");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
       setSubmitting(false);
-      return;
     }
-
-    await updateSession();
-    router.replace("/");
-    router.refresh();
   };
 
   return (
