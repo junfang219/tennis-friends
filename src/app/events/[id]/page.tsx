@@ -6,6 +6,15 @@ import { useEffect, useState } from "react";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Avatar from "@/components/Avatar";
 import { EVENT_TYPE_META } from "@/lib/eventTypeMeta";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import {
+  getEvent,
+  listEventParticipants,
+  listEventMatches,
+  signupForEvent,
+  withdrawFromEvent,
+  listFriends,
+} from "@/lib/supabase/queries";
 import MatchList from "@/components/events/MatchList";
 import BracketView from "@/components/events/BracketView";
 import StandingsTable from "@/components/events/StandingsTable";
@@ -81,14 +90,86 @@ export default function EventDetailPage() {
     if (focusMatchId) setActivePanel("matches");
   }, [focusMatchId]);
 
-  const load = () => {
-    fetch(`/api/events/${params.id}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        setEvent(data);
+  const load = async () => {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const id = String(params.id);
+      const [ev, participants, matches] = await Promise.all([
+        getEvent(supabase, id),
+        listEventParticipants(supabase, id),
+        listEventMatches(supabase, id),
+      ]);
+      if (!ev) {
+        setEvent(null);
         setLoading(false);
-      })
-      .catch(() => setLoading(false));
+        return;
+      }
+      // Adapt the snake_case Supabase shape to the page's camelCase types.
+      const adapted = {
+        id: ev.id,
+        ownerId: ev.owner_id,
+        groupId: ev.group_id,
+        title: ev.title,
+        description: ev.description,
+        eventType: ev.event_type,
+        startDate: ev.start_date,
+        endDate: ev.end_date,
+        signupDeadline: ev.signup_deadline,
+        isPublicSignup: ev.is_public_signup,
+        maxParticipants: ev.max_participants,
+        ntrpMin: ev.ntrp_min,
+        ntrpMax: ev.ntrp_max,
+        status: ev.status,
+        venueName: ev.venue_name,
+        venueAddress: ev.venue_address,
+        visibility: ev.visibility,
+        eventLat: ev.event_lat,
+        eventLng: ev.event_lng,
+        radiusMi: ev.radius_mi,
+        hostGroupId: ev.host_group_id,
+        config: ev.config,
+        coverImageUrl: ev.cover_image_url,
+        seasonId: ev.season_id,
+        owner: { id: ev.owner_id, name: "", profileImageUrl: "" },
+        participants: participants.map((p) => ({
+          id: p.id,
+          userId: p.user_id,
+          status: p.status,
+          checkedInAt: p.checked_in_at,
+          wins: p.wins,
+          losses: p.losses,
+          setsWon: p.sets_won,
+          setsLost: p.sets_lost,
+          points: p.points,
+          user: {
+            id: p.user.id,
+            name: p.user.name,
+            profileImageUrl: p.user.profile_image_url,
+            ntrpRating: p.user.ntrp_rating,
+          },
+        })),
+        matches: matches.map((m) => ({
+          id: m.id,
+          eventId: m.event_id,
+          player1Id: m.player1_id,
+          player2Id: m.player2_id,
+          player3Id: m.player3_id,
+          player4Id: m.player4_id,
+          round: m.round,
+          bracketSlot: m.bracket_slot,
+          scheduledAt: m.scheduled_at,
+          courtAssign: m.court_assign,
+          score: m.score,
+          winnerSide: m.winner_side,
+          status: m.status,
+        })),
+      };
+      // Cast to whatever the page's local Event type expects.
+      setEvent(adapted as unknown as typeof event);
+      setLoading(false);
+    } catch {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -100,14 +181,15 @@ export default function EventDetailPage() {
     if (!event) return;
     setActionInFlight(true);
     setError("");
-    const res = await fetch(`/api/events/${event.id}/signup`, { method: "POST" });
-    setActionInFlight(false);
-    if (!res.ok) {
-      const data = await res.json().catch(() => null);
-      setError(data?.error || "Couldn't sign up. Try again.");
-      return;
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await signupForEvent(supabase, event.id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't sign up. Try again.");
+    } finally {
+      setActionInFlight(false);
     }
-    load();
   }
 
   async function withdraw() {
@@ -115,14 +197,15 @@ export default function EventDetailPage() {
     if (!confirm("Withdraw from this event?")) return;
     setActionInFlight(true);
     setError("");
-    const res = await fetch(`/api/events/${event.id}/signup`, { method: "DELETE" });
-    setActionInFlight(false);
-    if (!res.ok) {
-      const data = await res.json().catch(() => null);
-      setError(data?.error || "Couldn't withdraw.");
-      return;
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await withdrawFromEvent(supabase, event.id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't withdraw.");
+    } finally {
+      setActionInFlight(false);
     }
-    load();
   }
 
   if (loading) {
@@ -555,10 +638,20 @@ function InviteFriendsModal({
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch("/api/friends")
-      .then((r) => r.json())
-      .then((data) => {
-        setFriends(data.friends || []);
+    const supabase = createSupabaseBrowserClient();
+    listFriends(supabase)
+      .then((rows) => {
+        setFriends(
+          rows.map((u) => ({
+            friendshipId: u.id,
+            user: {
+              id: u.id,
+              name: u.name,
+              profileImageUrl: u.profile_image_url,
+              skillLevel: u.skill_level,
+            },
+          }))
+        );
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -582,21 +675,29 @@ function InviteFriendsModal({
     setSending(true);
     setError("");
     try {
-      const res = await fetch(`/api/events/${eventId}/invite`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userIds: Array.from(selectedIds) }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        setError(data?.error || "Couldn't send invites.");
+      const supabase = createSupabaseBrowserClient();
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth.user) {
+        setError("Not signed in.");
         setSending(false);
         return;
       }
-      const data = await res.json();
-      onSent(data.invited ?? selectedIds.size);
-    } catch {
-      setError("Network error. Try again.");
+      // Invites = notifications of type "event_invite" pointing at the event.
+      const rows = Array.from(selectedIds).map((uid) => ({
+        user_id: uid,
+        actor_id: auth.user!.id,
+        type: "event_invite" as const,
+        event_id: eventId,
+      }));
+      const { error: insErr } = await supabase.from("notifications").insert(rows);
+      if (insErr) {
+        setError(insErr.message);
+        setSending(false);
+        return;
+      }
+      onSent(selectedIds.size);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error. Try again.");
       setSending(false);
     }
   }
