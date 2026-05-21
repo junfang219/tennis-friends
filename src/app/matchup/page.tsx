@@ -5,6 +5,8 @@ import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import { isAtLeast, ROLE } from "@/lib/groupRoles";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listTeamListings, listMyGroups, createTeamListing } from "@/lib/supabase/queries";
 
 type Listing = {
   id: string;
@@ -63,17 +65,55 @@ export default function MatchUpPage() {
   const [createErr, setCreateErr] = useState("");
 
   const loadListings = useCallback(async () => {
-    const params = new URLSearchParams();
-    if (formatFilter) params.set("format", formatFilter);
-    if (cityFilter.trim()) params.set("city", cityFilter.trim());
-    const res = await fetch(`/api/matchup?${params.toString()}`);
-    if (res.ok) setListings(await res.json());
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const rows = await listTeamListings(supabase, {
+        format: formatFilter || undefined,
+        city: cityFilter.trim() || undefined,
+      });
+      setListings(
+        rows.map((l) => ({
+          id: l.id,
+          title: l.title,
+          description: l.description,
+          format: l.format,
+          ntrpMin: l.ntrp_min,
+          ntrpMax: l.ntrp_max,
+          city: l.city,
+          status: l.status,
+          createdAt: l.created_at,
+          group: {
+            id: l.group?.id ?? l.group_id,
+            name: l.group?.name ?? "",
+            imageUrl: l.group?.image_url ?? "",
+          },
+          createdBy: { id: l.created_by_id, name: "", profileImageUrl: "" },
+        }))
+      );
+    } catch {
+      // ignore
+    }
     setLoading(false);
   }, [formatFilter, cityFilter]);
 
   const loadMyTeams = useCallback(async () => {
-    const res = await fetch("/api/groups");
-    if (res.ok) setMyTeams(await res.json());
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const rows = await listMyGroups(supabase);
+      // myTeams shape doesn't carry members list anymore — pass an empty
+      // placeholder; the "can post" check below will narrow to teams the
+      // user owns (which RLS-wise are all in listMyGroups).
+      setMyTeams(
+        rows.map((g) => ({
+          id: g.id,
+          name: g.name,
+          ownerId: g.owner_id,
+          members: [],
+        }))
+      );
+    } catch {
+      // ignore
+    }
   }, []);
 
   useEffect(() => {
@@ -87,28 +127,36 @@ export default function MatchUpPage() {
   }, [loadMyTeams]);
 
   const userId = session?.user?.id || "";
-  // Teams where the caller is MANAGER+ can post listings.
-  const teamsICanPostFor = myTeams.filter((t) =>
-    t.members.some((m) => m.userId === userId && isAtLeast(m.role, ROLE.MANAGER))
-  );
+  // listMyGroups returns groups where the user is owner/manager/captain/
+  // member; here we surface only teams the user owns (the simplest pre-MVP
+  // guard until we wire has_group_role-style helper to the client).
+  const teamsICanPostFor = myTeams.filter((t) => t.ownerId === userId);
+  void isAtLeast; void ROLE; // legacy gate vars retained for follow-up wiring
 
   const createListing = async () => {
     if (!createTitle.trim() || !createTeamId) return;
     setCreating(true);
     setCreateErr("");
-    const res = await fetch(`/api/groups/${createTeamId}/listings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    let success = false;
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const expiresAt = createExpiresDays
+        ? new Date(Date.now() + Number(createExpiresDays) * 86400_000).toISOString()
+        : null;
+      await createTeamListing(supabase, createTeamId, {
         title: createTitle.trim(),
         description: createDescription.trim(),
-        format: createFormat,
-        ntrpMin: createNtrpMin ? Number(createNtrpMin) : null,
-        ntrpMax: createNtrpMax ? Number(createNtrpMax) : null,
+        format: createFormat as "singles" | "doubles" | "mixed_doubles" | "any",
+        ntrp_min: createNtrpMin ? Number(createNtrpMin) : null,
+        ntrp_max: createNtrpMax ? Number(createNtrpMax) : null,
         city: createCity.trim(),
-        expiresInDays: createExpiresDays ? Number(createExpiresDays) : undefined,
-      }),
-    });
+        expires_at: expiresAt,
+      });
+      success = true;
+    } catch (err) {
+      setCreateErr(err instanceof Error ? err.message : "Failed to create listing");
+    }
+    const res = { ok: success };
     if (res.ok) {
       setShowCreate(false);
       setCreateTitle("");
@@ -119,10 +167,8 @@ export default function MatchUpPage() {
       setCreateCity("");
       setCreateExpiresDays("30");
       await loadListings();
-    } else {
-      const d = await res.json().catch(() => ({}));
-      setCreateErr(d.error || "Failed to create listing.");
     }
+    // The error path already set createErr inside the try/catch above.
     setCreating(false);
   };
 

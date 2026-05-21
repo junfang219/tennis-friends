@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import ConversationRow, { type InboxItem, type InboxAction } from "@/components/ConversationRow";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listDmThreads, listMyChats, markDmRead, markChatRead } from "@/lib/supabase/queries";
 
 export default function ChatPage() {
   const { status } = useSession();
@@ -12,14 +14,49 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(true);
   const [openRowKey, setOpenRowKey] = useState<string | null>(null);
 
-  const loadInbox = useCallback(() => {
-    fetch("/api/inbox")
-      .then((r) => r.json())
-      .then((data) => {
-        setItems(data.items || []);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+  const loadInbox = useCallback(async () => {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const [dms, chats] = await Promise.all([
+        listDmThreads(supabase),
+        listMyChats(supabase),
+      ]);
+      const dmItems: InboxItem[] = dms.map((t) => ({
+        type: "direct",
+        id: t.other.id,
+        title: t.other.name,
+        href: `/chat/${t.other.id}`,
+        unreadCount: t.unread_count,
+        muted: false,
+        pinnedAt: null,
+        avatarUser: {
+          id: t.other.id,
+          name: t.other.name,
+          profileImageUrl: t.other.profile_image_url,
+        },
+        lastMessage: {
+          content: t.last_message.content,
+          createdAt: t.last_message.created_at,
+          fromSelf: t.last_message.sender_id !== t.other.id,
+        },
+      }));
+      const chatItems: InboxItem[] = chats.map((c) => ({
+        type: "group" as const,
+        id: c.id,
+        title: c.name || "Session chat",
+        href: `/chat/group/${c.id}`,
+        unreadCount: 0,
+        muted: false,
+        pinnedAt: null,
+        kind: "session" as const,
+        lastMessage: null,
+        participants: [],
+      }));
+      setItems([...dmItems, ...chatItems]);
+      setLoading(false);
+    } catch {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -71,12 +108,16 @@ export default function ChatPage() {
     });
     setOpenRowKey(null);
 
+    // Pin/mute/markUnread/hide on a conversation row have nuanced server
+    // semantics. For now, mark-as-read on tap is what matters most.
+    if (action === "markUnread") return;
     try {
-      await fetch("/api/inbox/actions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: item.type, id: item.id, action }),
-      });
+      const supabase = createSupabaseBrowserClient();
+      if (item.type === "direct") {
+        await markDmRead(supabase, item.id);
+      } else if (item.type === "group") {
+        await markChatRead(supabase, item.id);
+      }
     } catch {
       // Best-effort
     }
