@@ -7,6 +7,21 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Avatar from "./Avatar";
 import EmojiPicker from "./EmojiPicker";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import {
+  likePost,
+  unlikePost,
+  hidePost,
+  deletePost,
+  listComments,
+  addComment,
+  requestToJoin,
+  cancelPlayRequest,
+  listMyGroups,
+  listMyFriendGroups,
+  listFriends,
+} from "@/lib/supabase/queries";
+import { toCommentCamel } from "@/lib/supabase/adapters";
 
 type PlayRequestInfo = { id: string; status: string; note: string } | null;
 
@@ -234,8 +249,23 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
     setShowLikes(true);
     setLoadingLikers(true);
     try {
-      const res = await fetch(`/api/posts/likes?postId=${post.id}`);
-      if (res.ok) setLikers(await res.json());
+      const supabase = createSupabaseBrowserClient();
+      const { data } = await supabase
+        .from("likes")
+        .select(
+          `user:profiles!likes_user_id_fkey ( id, name, profile_image_url, skill_level )`
+        )
+        .eq("post_id", post.id);
+      const rows = (data ?? [])
+        .map((r) => (r as unknown as { user: { id: string; name: string; profile_image_url: string; skill_level: string } }).user)
+        .filter(Boolean)
+        .map((u) => ({
+          id: u.id,
+          name: u.name,
+          profileImageUrl: u.profile_image_url,
+          skillLevel: u.skill_level,
+        }));
+      setLikers(rows);
     } catch {}
     setLoadingLikers(false);
   };
@@ -247,48 +277,51 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
 
   const toggleLike = async () => {
     setAnimating(true);
-    setLiked(!liked);
+    const newLiked = !liked;
+    setLiked(newLiked);
     setLikeCount(liked ? likeCount - 1 : likeCount + 1);
-    await fetch("/api/posts/like", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ postId: post.id }),
-    });
+    try {
+      const supabase = createSupabaseBrowserClient();
+      if (newLiked) await likePost(supabase, post.id);
+      else await unlikePost(supabase, post.id);
+    } catch {
+      setLiked(!newLiked);
+      setLikeCount(liked ? likeCount + 1 : likeCount - 1);
+    }
     setTimeout(() => setAnimating(false), 300);
   };
 
   const handleJoin = async () => {
     if (joining) return;
     setJoining(true);
-    const res = await fetch("/api/posts/join", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ postId: post.id }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setMyRequest({ id: data.id, status: "PENDING", note: "" });
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const req = await requestToJoin(supabase, post.id);
+      setMyRequest({ id: req.id, status: "PENDING", note: "" });
+    } catch {
+      // ignore
     }
     setJoining(false);
   };
 
   const handleDelete = async () => {
     setDeleting(true);
-    const res = await fetch(`/api/posts/${post.id}`, { method: "DELETE" });
-    if (res.ok) {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await deletePost(supabase, post.id);
       setDeleted(true);
       onDelete?.(post.id);
+    } catch {
+      // ignore
     }
     setDeleting(false);
   };
 
   const loadComments = async () => {
-    const res = await fetch(`/api/comments?postId=${post.id}`);
-    if (res.ok) {
-      const data = await res.json();
-      setComments(data);
-      setCommentsLoaded(true);
-    }
+    const supabase = createSupabaseBrowserClient();
+    const rows = await listComments(supabase, post.id);
+    setComments(rows.map(toCommentCamel) as unknown as typeof comments);
+    setCommentsLoaded(true);
   };
 
   useEffect(() => {
@@ -299,16 +332,14 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
   const handleComment = async () => {
     if (!commentInput.trim() || postingComment) return;
     setPostingComment(true);
-    const res = await fetch("/api/comments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ postId: post.id, content: commentInput }),
-    });
-    if (res.ok) {
-      const comment = await res.json();
-      setComments((prev) => [...prev, comment]);
-      setCommentCount((c) => c + 1);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const c = await addComment(supabase, post.id, commentInput);
+      setComments((prev) => [...prev, toCommentCamel(c) as unknown as typeof prev[number]]);
+      setCommentCount((cc) => cc + 1);
       setCommentInput("");
+    } catch {
+      // ignore
     }
     setPostingComment(false);
   };
@@ -534,11 +565,9 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
               {!isAuthor && (
                 <button
                   onClick={() => {
-                    fetch("/api/posts/hide", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ postId: post.id }),
-                    }).then((res) => {
+                    const supabase = createSupabaseBrowserClient();
+                    hidePost(supabase, post.id).then(() => {
+                      const res = { ok: true };
                       if (res.ok) {
                         setDeleted(true);
                         onDelete?.(post.id);
@@ -695,12 +724,13 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
                     <button
                       onClick={async () => {
                         setCancelling(true);
-                        const res = await fetch("/api/posts/join/cancel", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ postId: post.id }),
-                        });
-                        if (res.ok) setMyRequest(null);
+                        try {
+                          const supabase = createSupabaseBrowserClient();
+                          await cancelPlayRequest(supabase, post.id);
+                          setMyRequest(null);
+                        } catch {
+                          // ignore
+                        }
                         setCancelling(false);
                       }}
                       disabled={cancelling}
@@ -738,18 +768,17 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
                           <button
                             onClick={async () => {
                               setCancelling(true);
-                              const res = await fetch("/api/posts/join/cancel", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ postId: post.id, note: withdrawNote }),
-                              });
-                              if (res.ok) {
+                              try {
+                                const supabase = createSupabaseBrowserClient();
+                                await cancelPlayRequest(supabase, post.id);
                                 setMyRequest({ id: myRequest.id, status: "WITHDRAWN", note: withdrawNote });
                                 const newConfirmed = Math.max(0, confirmed - 1);
                                 setConfirmed(newConfirmed);
                                 setComplete(false);
                                 setShowWithdrawNote(false);
                                 onUpdate?.(post.id, { isComplete: false, playersConfirmed: newConfirmed });
+                              } catch {
+                                // ignore
                               }
                               setCancelling(false);
                             }}
@@ -1025,8 +1054,9 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
                   setEditCourtBooked(liveCourtBooked);
                   setEditSelectedTeamIds(new Set(liveGroups.map((g) => g.id)));
                   setEditSelectedFriendGroupIds(new Set(liveFriendGroups.map((g) => g.id)));
-                  fetch("/api/groups").then((r) => r.json()).then((d) => setAvailableTeams(Array.isArray(d) ? d : []));
-                  fetch("/api/friend-groups").then((r) => r.json()).then((d) => setAvailableFriendGroups(Array.isArray(d) ? d : []));
+                  const sb = createSupabaseBrowserClient();
+                  listMyGroups(sb).then((rows) => setAvailableTeams(rows.map((g) => ({ id: g.id, name: g.name }))));
+                  listMyFriendGroups(sb).then((rows) => setAvailableFriendGroups(rows.map((g) => ({ id: g.id, name: g.name }))));
                   setShowEditModal(true);
                 }}
                 className="w-full flex items-center gap-3 px-5 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
@@ -1041,12 +1071,12 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
               {/* Toggle comments */}
               <button
                 onClick={async () => {
-                  const res = await fetch(`/api/posts/${post.id}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ commentsDisabled: !commentsOff }),
-                  });
-                  if (res.ok) setCommentsOff(!commentsOff);
+                  const supabase = createSupabaseBrowserClient();
+                  const { error: upErr } = await supabase
+                    .from("posts")
+                    .update({ comments_disabled: !commentsOff })
+                    .eq("id", post.id);
+                  if (!upErr) setCommentsOff(!commentsOff);
                   setShowMenu(false);
                 }}
                 className="w-full flex items-center gap-3 px-5 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
@@ -1473,18 +1503,26 @@ function SendToModal({
   const targetKey = (t: SendTarget) => `${t.kind}:${t.id}`;
 
   useEffect(() => {
-    Promise.all([
-      fetch("/api/friends").then((r) => (r.ok ? r.json() : { friends: [] })).catch(() => ({ friends: [] })),
-      fetch("/api/groups").then((r) => (r.ok ? r.json() : [])).catch(() => []),
-    ]).then(([friendsData, groupsData]) => {
-      setFriends(
-        friendsData.friends?.map(
-          (f: { user: { id: string; name: string; profileImageUrl: string } }) => f.user
-        ) || []
-      );
-      setGroups(Array.isArray(groupsData) ? groupsData : []);
-      setLoading(false);
-    });
+    const supabase = createSupabaseBrowserClient();
+    Promise.all([listFriends(supabase), listMyGroups(supabase)]).then(
+      ([friendRows, groupRows]) => {
+        setFriends(
+          friendRows.map((u) => ({
+            id: u.id,
+            name: u.name,
+            profileImageUrl: u.profile_image_url,
+          }))
+        );
+        setGroups(
+          groupRows.map((g) => ({
+            id: g.id,
+            name: g.name,
+            imageUrl: g.image_url,
+          }))
+        );
+        setLoading(false);
+      }
+    );
   }, []);
 
   const send = async (target: SendTarget) => {
@@ -1492,27 +1530,33 @@ function SendToModal({
     setSendingKey(key);
     setSendError("");
 
-    const res = target.kind === "friend"
-      ? await fetch("/api/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ receiverId: target.id, content: "", sharedPostId: postId }),
-        })
-      : await fetch(`/api/groups/${target.id}/messages`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: "", sharedPostId: postId }),
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth.user) throw new Error("Not signed in");
+      if (target.kind === "friend") {
+        const { error: msgErr } = await supabase.from("messages").insert({
+          sender_id: auth.user.id,
+          receiver_id: target.id,
+          content: "",
+          shared_post_id: postId,
         });
-
-    if (res.ok) {
+        if (msgErr) throw msgErr;
+      } else {
+        const { error: gmErr } = await supabase.from("group_messages").insert({
+          group_id: target.id,
+          sender_id: auth.user.id,
+          content: "",
+          shared_post_id: postId,
+        });
+        if (gmErr) throw gmErr;
+      }
       setSentKeys((prev) => new Set(prev).add(key));
       router.push(target.kind === "friend" ? `/chat/${target.id}` : `/groups/${target.id}/chat`);
-      return;
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Failed to send");
+      setSendingKey(null);
     }
-
-    const data = await res.json().catch(() => ({}));
-    setSendError(data.error || `Failed to send (${res.status})`);
-    setSendingKey(null);
   };
 
   const SendBtn = ({ target }: { target: SendTarget }) => {
@@ -1665,21 +1709,24 @@ function ManageRequestsModal({
 
   const handleRespond = async (requestId: string, action: "approve" | "reject", note?: string) => {
     setRespondingTo(requestId);
-    const res = await fetch("/api/posts/join/respond", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requestId, action, note: note || "" }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      loadRequests();
-      if (action === "approve") {
-        onUpdate(approvedCount + 1 + manualCount, data.isComplete, data.sessionChatId ?? null, data.teamGroupId ?? null);
-        // Close the modal when this approval just filled the game — the
-        // underlying PostCard will snap back to its compact confirmation
-        // state, which is the signal the creator needs to see.
-        if (data.isComplete) onClose();
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const status = action === "approve" ? "approved" : "rejected";
+      const { error: upErr } = await supabase
+        .from("play_requests")
+        .update({ status, note: note || "" })
+        .eq("id", requestId);
+      if (!upErr) {
+        loadRequests();
+        if (action === "approve") {
+          const nextConfirmed = approvedCount + 1 + manualCount;
+          const isComplete = nextConfirmed >= playersNeeded;
+          onUpdate(nextConfirmed, isComplete, null, null);
+          if (isComplete) onClose();
+        }
       }
+    } catch {
+      // ignore
     }
     setRespondingTo(null);
     setRejectNoteFor(null);
@@ -1973,16 +2020,20 @@ function ManageRequestsModal({
                       <button
                         onClick={async () => {
                           setRemovingId(req.id);
-                          const res = await fetch("/api/posts/join/remove", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ requestId: req.id, note: removeNote }),
-                          });
-                          if (res.ok) {
-                            const data = await res.json();
-                            onUpdate(data.playersConfirmed, false);
-                            setIsMarkedFull(false);
-                            loadRequests();
+                          try {
+                            const supabase = createSupabaseBrowserClient();
+                            const { error: upErr } = await supabase
+                              .from("play_requests")
+                              .update({ status: "rejected", note: removeNote })
+                              .eq("id", req.id);
+                            if (!upErr) {
+                              const next = Math.max(0, approvedCount - 1);
+                              onUpdate(next + manualCount, false);
+                              setIsMarkedFull(false);
+                              loadRequests();
+                            }
+                          } catch {
+                            // ignore
                           }
                           setRemovingId(null);
                           setRemoveNoteFor(null);
