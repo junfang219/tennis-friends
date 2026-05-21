@@ -74,10 +74,11 @@ export default function GroupPage() {
         setError("Group not found or you're not a member.");
         return;
       }
-      // Fetch posts pinned to this group via post_groups join.
+      // Fetch posts targeted at this group via post_targets join.
       const { data: postLinks } = await supabase
-        .from("post_groups")
+        .from("post_targets")
         .select("post_id")
+        .eq("target_kind", "group")
         .eq("group_id", id);
       const postIds = (postLinks ?? []).map((r) => r.post_id);
       const groupCamel = toGroupCamel(g);
@@ -1260,7 +1261,9 @@ function GroupComposerModal({
         court_booked: !!body.courtBooked,
       });
       // Cross-post to this group via the join table.
-      await supabase.from("post_groups").insert({ post_id: newPost.id, group_id: groupId });
+      await supabase
+        .from("post_targets")
+        .insert({ post_id: newPost.id, target_kind: "group", group_id: groupId });
       onPost(newPost as unknown as Record<string, unknown>);
     } catch (err) {
       setPostError(err instanceof Error ? err.message : "Network error");

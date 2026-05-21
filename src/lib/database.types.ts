@@ -117,6 +117,67 @@ export type Database = {
           },
         ]
       }
+      availabilities: {
+        Row: {
+          created_at: string
+          event_kind: Database["public"]["Enums"]["availability_event_kind"]
+          id: string
+          lineup_slot: string
+          match_id: string | null
+          match_types: string
+          practice_id: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          event_kind: Database["public"]["Enums"]["availability_event_kind"]
+          id?: string
+          lineup_slot?: string
+          match_id?: string | null
+          match_types?: string
+          practice_id?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          event_kind?: Database["public"]["Enums"]["availability_event_kind"]
+          id?: string
+          lineup_slot?: string
+          match_id?: string | null
+          match_types?: string
+          practice_id?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "availabilities_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: false
+            referencedRelation: "team_matches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "availabilities_practice_id_fkey"
+            columns: ["practice_id"]
+            isOneToOne: false
+            referencedRelation: "team_practices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "availabilities_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       blocks: {
         Row: {
           blocked_id: string
@@ -989,23 +1050,26 @@ export type Database = {
         Row: {
           amount_cents: number
           expense_id: string
+          guest_name: string | null
           id: string
           settled_at: string | null
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           amount_cents: number
           expense_id: string
+          guest_name?: string | null
           id?: string
           settled_at?: string | null
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           amount_cents?: number
           expense_id?: string
+          guest_name?: string | null
           id?: string
           settled_at?: string | null
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -1481,38 +1545,6 @@ export type Database = {
           },
         ]
       }
-      guest_expense_shares: {
-        Row: {
-          amount_cents: number
-          expense_id: string
-          guest_name: string
-          id: string
-          settled_at: string | null
-        }
-        Insert: {
-          amount_cents: number
-          expense_id: string
-          guest_name: string
-          id?: string
-          settled_at?: string | null
-        }
-        Update: {
-          amount_cents?: number
-          expense_id?: string
-          guest_name?: string
-          id?: string
-          settled_at?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "guest_expense_shares_expense_id_fkey"
-            columns: ["expense_id"]
-            isOneToOne: false
-            referencedRelation: "expenses"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       hidden_posts: {
         Row: {
           id: string
@@ -1610,54 +1642,6 @@ export type Database = {
           },
           {
             foreignKeyName: "likes_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      match_availabilities: {
-        Row: {
-          created_at: string
-          id: string
-          lineup_slot: string
-          match_id: string
-          match_types: string
-          status: string
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          lineup_slot?: string
-          match_id: string
-          match_types?: string
-          status?: string
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          lineup_slot?: string
-          match_id?: string
-          match_types?: string
-          status?: string
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "match_availabilities_match_id_fkey"
-            columns: ["match_id"]
-            isOneToOne: false
-            referencedRelation: "team_matches"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "match_availabilities_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
@@ -2043,65 +2027,48 @@ export type Database = {
           },
         ]
       }
-      post_friend_groups: {
+      post_targets: {
         Row: {
-          friend_group_id: string
+          created_at: string
+          friend_group_id: string | null
+          group_id: string | null
           id: string
           post_id: string
+          target_kind: Database["public"]["Enums"]["post_target_kind"]
         }
         Insert: {
-          friend_group_id: string
+          created_at?: string
+          friend_group_id?: string | null
+          group_id?: string | null
           id?: string
           post_id: string
+          target_kind: Database["public"]["Enums"]["post_target_kind"]
         }
         Update: {
-          friend_group_id?: string
+          created_at?: string
+          friend_group_id?: string | null
+          group_id?: string | null
           id?: string
           post_id?: string
+          target_kind?: Database["public"]["Enums"]["post_target_kind"]
         }
         Relationships: [
           {
-            foreignKeyName: "post_friend_groups_friend_group_id_fkey"
+            foreignKeyName: "post_targets_friend_group_id_fkey"
             columns: ["friend_group_id"]
             isOneToOne: false
             referencedRelation: "friend_groups"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "post_friend_groups_post_id_fkey"
-            columns: ["post_id"]
-            isOneToOne: false
-            referencedRelation: "posts"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      post_groups: {
-        Row: {
-          group_id: string
-          id: string
-          post_id: string
-        }
-        Insert: {
-          group_id: string
-          id?: string
-          post_id: string
-        }
-        Update: {
-          group_id?: string
-          id?: string
-          post_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "post_groups_group_id_fkey"
+            foreignKeyName: "post_targets_group_id_fkey"
             columns: ["group_id"]
             isOneToOne: false
             referencedRelation: "groups"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "post_groups_post_id_fkey"
+            foreignKeyName: "post_targets_post_id_fkey"
             columns: ["post_id"]
             isOneToOne: false
             referencedRelation: "posts"
@@ -2213,48 +2180,6 @@ export type Database = {
             columns: ["event_id"]
             isOneToOne: false
             referencedRelation: "events"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      practice_availabilities: {
-        Row: {
-          created_at: string
-          id: string
-          practice_id: string
-          status: string
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          practice_id: string
-          status?: string
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          practice_id?: string
-          status?: string
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "practice_availabilities_practice_id_fkey"
-            columns: ["practice_id"]
-            isOneToOne: false
-            referencedRelation: "team_practices"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "practice_availabilities_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -2917,6 +2842,14 @@ export type Database = {
             }
             Returns: string
           }
+      can_see_event: {
+        Args: { e: Database["public"]["Tables"]["events"]["Row"] }
+        Returns: boolean
+      }
+      can_see_post: {
+        Args: { p: Database["public"]["Tables"]["posts"]["Row"] }
+        Returns: boolean
+      }
       disablelongtransactions: { Args: never; Returns: string }
       dropgeometrycolumn:
         | {
@@ -3049,6 +2982,14 @@ export type Database = {
       }
       geomfromewkt: { Args: { "": string }; Returns: unknown }
       gettransactionid: { Args: never; Returns: unknown }
+      has_group_role: {
+        Args: { g: string; min_role: Database["public"]["Enums"]["group_role"] }
+        Returns: boolean
+      }
+      is_blocked: { Args: { a: string; b: string }; Returns: boolean }
+      is_chat_participant: { Args: { c: string }; Returns: boolean }
+      is_friend: { Args: { other_user: string }; Returns: boolean }
+      is_group_member: { Args: { g: string }; Returns: boolean }
       longtransactionsenabled: { Args: never; Returns: boolean }
       populate_geometry_columns:
         | { Args: { tbl_oid: unknown; use_typmod?: boolean }; Returns: number }
@@ -3684,6 +3625,7 @@ export type Database = {
       }
     }
     Enums: {
+      availability_event_kind: "match" | "practice"
       booking_player_status: "invited" | "accepted" | "declined"
       booking_status: "pending" | "confirmed" | "cancelled"
       device_platform: "ios" | "android"
@@ -3712,6 +3654,7 @@ export type Database = {
         | "friend_request"
         | "group_invite_accepted"
       play_request_status: "pending" | "approved" | "rejected"
+      post_target_kind: "group" | "friend_group"
       post_type: "regular" | "find_players" | "propose_team" | "event"
       reaction_target: "dm" | "group" | "chat"
       team_listing_format: "singles" | "doubles" | "mixed_doubles" | "any"
@@ -3851,6 +3794,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      availability_event_kind: ["match", "practice"],
       booking_player_status: ["invited", "accepted", "declined"],
       booking_status: ["pending", "confirmed", "cancelled"],
       device_platform: ["ios", "android"],
@@ -3881,6 +3825,7 @@ export const Constants = {
         "group_invite_accepted",
       ],
       play_request_status: ["pending", "approved", "rejected"],
+      post_target_kind: ["group", "friend_group"],
       post_type: ["regular", "find_players", "propose_team", "event"],
       reaction_target: ["dm", "group", "chat"],
       team_listing_format: ["singles", "doubles", "mixed_doubles", "any"],

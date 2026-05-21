@@ -122,6 +122,54 @@ All domain tables move to the default `public` schema, retaining their current n
 - `group_messages (group_id, kind, created_at DESC)` — team chat scroll
 - `notifications (user_id, read, created_at DESC)` — notification list
 
+### Post-port consolidation review (added 2026-05-21)
+
+After the initial port the live schema settled at **54 application tables**. Audit found three duplicate-shape clusters where consolidation reduces maintenance burden without sacrificing query plans or RLS scoping. Two additional indexes are needed to support common access patterns the original migration missed.
+
+**Findings — keep as-is (justified)**
+
+| Table cluster | Why split is correct |
+|---|---|
+| `messages`, `chat_messages`, `group_messages` | Each has distinct visibility rules + distinct relations. DMs are sender↔receiver pair; chat is many-to-many via `chat_participants`; group is many-to-many via `group_members` with announcement/kind discriminator. Unifying would force polymorphic foreign keys and complicate RLS. |
+| `message_reactions` | Already the consolidated form — one table with `target_type` (`dm`/`group`/`chat`) + `target_id`. |
+| `chat_participants`, `group_members`, `friend_group_members` | Each has different per-row state (mute/pin/hide/clear/read vs. role/member_type/archived vs. minimal join). State-machine divergence justifies the split. |
+| `events`, `event_matches`, `event_participants` | Tournament/round-robin scheduling has different needs than ad-hoc team play. |
+| `team_matches`, `team_practices`, `practice_series` | `practice_series` is the recurrence rule, `team_practices` are materialized instances, `team_matches` are competitive fixtures. |
+| `bookings`, `booking_players` | Court bookings + their participants — semantics differ from event_participants (paid reservation vs. event signup). |
+| `polls`, `poll_options`, `poll_votes` | Standard survey schema. |
+| `notifications` | Single denormalized table with nullable refs. Watch: if nullable-FK count grows past ~6, move to a `metadata jsonb` column. |
+| `hidden_posts`, `blocks` | Different granularities (per-post vs. per-user). |
+| `direct_message_reads` | Per-pair read state — justified for query performance (avoid scanning messages to compute unread). |
+
+**Findings — consolidate (proposed migrations)**
+
+| # | Migration | What | Risk |
+|---|---|---|---|
+| 1 | `0010_consolidate_availabilities.sql` | Merge `match_availabilities` + `practice_availabilities` into `availabilities` with `event_kind` discriminator + nullable `match_id`/`practice_id` + CHECK constraint. Drop both legacy tables. Rewrite RLS + integration tests. | Medium — RLS rewrite + every availability query path |
+| 2 | `0011_consolidate_expense_shares.sql` | Drop `guest_expense_shares`; add nullable `user_id` and `guest_name` columns to `expense_shares`; CHECK that exactly one is set. One settle endpoint instead of two. | Low |
+| 3 | `0012_consolidate_post_targets.sql` | Collapse `post_groups` + `post_friend_groups` into `post_targets` with `target_kind`. Rewrite `can_see_post()` helper. | Medium — `can_see_post` is on the feed hot path |
+
+**Additional indexes (migration `0013_access_pattern_indexes.sql`)**
+
+| Index | Rationale |
+|---|---|
+| `events (start_date, end_date) WHERE status <> 'cancelled'` | `listEvents({ upcoming: true })` was doing a non-partial scan |
+| `team_matches (match_date)` | `getDashboardUpcoming` filters team_matches by a 14-day date window |
+
+**Maintenance hygiene (migration `0014_table_comments.sql`)**
+
+`COMMENT ON TABLE` for every application table documenting its purpose + why splits exist (especially the messages-table triple). One-time write, big payoff for future reviewers.
+
+**Explicitly deferred / not proposed**
+
+- Unifying `messages` / `chat_messages` / `group_messages` — RLS divergence too high
+- Unifying `chat_participants` / `group_members` / `friend_group_members` — state-machine divergence too high
+- Touching `courts` / `venues` / `venue_courts` — curated-vs-user split has real semantics (ActiveNet metadata)
+
+Each consolidation migration ships with a paired integration test asserting (a) all rows from the legacy table appear in the new table, (b) RLS still scopes correctly across the three personas (alice / bob = friend / carol = stranger), (c) `EXPLAIN ANALYZE` confirms the new indexes are used.
+
+Since the project has no real users yet (memory: `project_no_real_users`), these migrations are safe to apply without a maintenance window.
+
 ---
 
 ## Row-Level Security (RLS) Policies
@@ -397,6 +445,16 @@ Six phases, sequenced to keep the app shippable at each step. Estimated effort a
 - Configure Supabase Pro: daily backups, PITR, custom domain, branded auth emails.
 - Set up monitoring dashboards (Supabase, Sentry, Vercel).
 - Document runbooks: how to read query insights, how to roll back a migration, how to rotate keys.
+
+### Phase 7 — Schema consolidation *(1–2 days)*
+
+Detailed in §"Post-port consolidation review" above. Lands after the read/write migration is stable but before launch.
+
+- `0010_consolidate_availabilities.sql` + paired test
+- `0011_consolidate_expense_shares.sql` + paired test
+- `0012_consolidate_post_targets.sql` + paired test (also rewrites `can_see_post()`)
+- `0013_access_pattern_indexes.sql` for the two missing partial / single-column indexes
+- `0014_table_comments.sql` for the `COMMENT ON TABLE` pass
 
 **Total estimated effort:** 4–6 weeks of focused work.
 

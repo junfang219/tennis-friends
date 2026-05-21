@@ -139,8 +139,8 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
         .single();
       groupPostId = gp!.id;
       await alice.client
-        .from("post_groups")
-        .insert({ post_id: groupPostId, group_id: groupId });
+        .from("post_targets")
+        .insert({ post_id: groupPostId, target_kind: "group", group_id: groupId });
     });
 
     it("author sees their own post", async () => {

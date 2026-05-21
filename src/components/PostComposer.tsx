@@ -522,7 +522,7 @@ function ComposerModal({
       const supabase = createSupabaseBrowserClient();
       // Translate the page's camelCase body into snake_case columns the
       // posts table expects. Group / friend-group targeting goes via the
-      // post_groups / post_friend_groups join tables after the post inserts.
+      // post_targets join table (with target_kind = 'group' | 'friend_group').
       const photoUrls = (body.photoUrls as string[] | undefined) ?? [];
       const groupIds = (body.groupIds as string[] | undefined) ?? [];
       const friendGroupIds = (body.friendGroupIds as string[] | undefined) ?? [];
@@ -549,14 +549,19 @@ function ComposerModal({
       });
       // Target groups / friend groups.
       if (groupIds.length > 0) {
-        await supabase.from("post_groups").insert(
-          groupIds.map((gid) => ({ post_id: newPost.id, group_id: gid }))
+        await supabase.from("post_targets").insert(
+          groupIds.map((gid) => ({
+            post_id: newPost.id,
+            target_kind: "group" as const,
+            group_id: gid,
+          }))
         );
       }
       if (friendGroupIds.length > 0) {
-        await supabase.from("post_friend_groups").insert(
+        await supabase.from("post_targets").insert(
           friendGroupIds.map((fgid) => ({
             post_id: newPost.id,
+            target_kind: "friend_group" as const,
             friend_group_id: fgid,
           }))
         );
