@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const TYPES = [
   { id: "tournament", label: "Tournament", emoji: "🏆", blurb: "Single-elimination bracket. Organizer seeds pairings." },
@@ -13,6 +13,12 @@ const TYPES = [
 ] as const;
 
 type TypeId = (typeof TYPES)[number]["id"];
+type Visibility = "public" | "group";
+type GroupOption = { id: string; name: string };
+
+const RADII = [5, 10, 25, 50] as const;
+const DEFAULT_RADIUS = 25;
+type GeocodeState = "idle" | "loading" | "ok" | "not_found" | "error";
 
 export default function NewEventPage() {
   const router = useRouter();
@@ -31,6 +37,93 @@ export default function NewEventPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
+  // Visibility state.
+  const [visibility, setVisibility] = useState<Visibility>("public");
+  const [eventLat, setEventLat] = useState<number | null>(null);
+  const [eventLng, setEventLng] = useState<number | null>(null);
+  const [radiusMi, setRadiusMi] = useState<(typeof RADII)[number]>(DEFAULT_RADIUS);
+  const [geocodeState, setGeocodeState] = useState<GeocodeState>("idle");
+  const [locatingMe, setLocatingMe] = useState(false);
+  const [hostGroupId, setHostGroupId] = useState("");
+  const [groups, setGroups] = useState<GroupOption[]>([]);
+  const [groupsLoading, setGroupsLoading] = useState(false);
+
+  // Load the user's non-event-backed groups when the group branch is chosen.
+  useEffect(() => {
+    if (visibility !== "group" || groups.length > 0 || groupsLoading) return;
+    setGroupsLoading(true);
+    fetch("/api/groups")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: Array<{ id: string; name: string }>) => {
+        setGroups(data.map((g) => ({ id: g.id, name: g.name })));
+      })
+      .catch(() => setGroups([]))
+      .finally(() => setGroupsLoading(false));
+  }, [visibility, groups.length, groupsLoading]);
+
+  // Debounced geocode whenever the address settles.
+  useEffect(() => {
+    if (visibility !== "public") return;
+    const q = venueAddress.trim();
+    if (!q) {
+      setGeocodeState("idle");
+      return;
+    }
+    setGeocodeState("loading");
+    const handle = setTimeout(() => {
+      let cancelled = false;
+      fetch(`/api/geocode?q=${encodeURIComponent(q)}`)
+        .then(async (r) => {
+          if (cancelled) return;
+          if (r.status === 404) {
+            setGeocodeState("not_found");
+            return;
+          }
+          if (!r.ok) {
+            setGeocodeState("error");
+            return;
+          }
+          const data = (await r.json()) as { lat: number; lng: number };
+          setEventLat(data.lat);
+          setEventLng(data.lng);
+          setGeocodeState("ok");
+        })
+        .catch(() => {
+          if (!cancelled) setGeocodeState("error");
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, 600);
+    return () => clearTimeout(handle);
+  }, [venueAddress, visibility]);
+
+  function useCurrentLocation() {
+    if (!navigator.geolocation) {
+      setError("Your browser doesn't support location lookup. Type an address instead.");
+      return;
+    }
+    setLocatingMe(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setEventLat(pos.coords.latitude);
+        setEventLng(pos.coords.longitude);
+        setGeocodeState("ok");
+        setLocatingMe(false);
+      },
+      () => {
+        setLocatingMe(false);
+        setError("Couldn't read your location. Type an address instead.");
+      },
+      { enableHighAccuracy: false, maximumAge: 60_000, timeout: 10_000 }
+    );
+  }
+
+  const publicReady =
+    visibility === "public" && eventLat != null && eventLng != null;
+  const groupReady = visibility === "group" && !!hostGroupId;
+  const visibilityReady = publicReady || groupReady;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -40,6 +133,14 @@ export default function NewEventPage() {
     }
     if (!startDate || !endDate) {
       setError("Pick a start and end date.");
+      return;
+    }
+    if (visibility === "public" && (eventLat == null || eventLng == null)) {
+      setError("Set a location — use your current location or enter an address.");
+      return;
+    }
+    if (visibility === "group" && !hostGroupId) {
+      setError("Pick which group will see this event.");
       return;
     }
     setSubmitting(true);
@@ -56,7 +157,12 @@ export default function NewEventPage() {
         maxParticipants: maxParticipants ? Number(maxParticipants) : null,
         ntrpMin: ntrpMin ? Number(ntrpMin) : null,
         ntrpMax: ntrpMax ? Number(ntrpMax) : null,
-        postToFeed,
+        postToFeed: visibility === "public" ? postToFeed : false,
+        visibility,
+        eventLat: visibility === "public" ? eventLat : null,
+        eventLng: visibility === "public" ? eventLng : null,
+        radiusMi: visibility === "public" ? radiusMi : null,
+        hostGroupId: visibility === "group" ? hostGroupId : null,
       };
       const res = await fetch("/api/events", {
         method: "POST",
@@ -172,19 +278,137 @@ export default function NewEventPage() {
         </section>
 
         <section className="bg-white rounded-2xl p-5 shadow-sm space-y-4">
+          <div>
+            <div className="block text-sm font-semibold text-gray-700 mb-2">Who can see this event</div>
+            <div className="grid grid-cols-2 gap-2">
+              <VisOption
+                selected={visibility === "public"}
+                onSelect={() => setVisibility("public")}
+                title="Public"
+                blurb="Anyone within your chosen radius can see and sign up."
+                icon="🌎"
+              />
+              <VisOption
+                selected={visibility === "group"}
+                onSelect={() => setVisibility("group")}
+                title="Group"
+                blurb="Only members of a group you pick will see this event."
+                icon="🔒"
+              />
+            </div>
+          </div>
+
+          {visibility === "public" && (
+            <div className="space-y-3 pt-1">
+              <div>
+                <div className="block text-sm font-semibold text-gray-700 mb-1">Location anchor</div>
+                <div className="flex items-center gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={useCurrentLocation}
+                    disabled={locatingMe}
+                    className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    {locatingMe ? "Locating…" : "Use my current location"}
+                  </button>
+                  {eventLat != null && eventLng != null && (
+                    <span className="text-[11px] text-gray-500">
+                      {eventLat.toFixed(4)}, {eventLng.toFixed(4)}
+                    </span>
+                  )}
+                </div>
+                <Field label="Venue address (geocoded)">
+                  <input
+                    value={venueAddress}
+                    onChange={(e) => setVenueAddress(e.target.value)}
+                    placeholder="2000 Martin Luther King Jr Way S, Seattle"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-court-green/30 focus:border-court-green text-sm"
+                  />
+                </Field>
+                <div className="text-[11px] mt-1 h-4">
+                  {geocodeState === "loading" && <span className="text-gray-500">Looking up address…</span>}
+                  {geocodeState === "ok" && <span className="text-court-green">Location set ✓</span>}
+                  {geocodeState === "not_found" && (
+                    <span className="text-amber-600">Couldn&apos;t geocode that address — try a more specific one.</span>
+                  )}
+                  {geocodeState === "error" && (
+                    <span className="text-red-600">Geocoder error — try again or use current location.</span>
+                  )}
+                </div>
+              </div>
+
+              <Field label="Visible within">
+                <div className="flex items-center gap-2">
+                  {RADII.map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setRadiusMi(r)}
+                      className={`px-3 py-1.5 rounded-lg border text-sm ${
+                        radiusMi === r
+                          ? "border-court-green bg-court-green/10 text-court-green font-semibold"
+                          : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                      }`}
+                    >
+                      {r} mi
+                    </button>
+                  ))}
+                </div>
+              </Field>
+
+              <label className="flex items-start gap-3 cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={postToFeed}
+                  onChange={(e) => setPostToFeed(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded accent-court-green"
+                />
+                <span className="flex-1">
+                  <span className="block text-sm font-semibold text-gray-700">Cross-post to feed</span>
+                  <span className="block text-[12px] text-gray-500 mt-0.5">
+                    Share an event card in the main feed so eligible players spot it sooner.
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
+
+          {visibility === "group" && (
+            <div className="space-y-2 pt-1">
+              <Field label="Host group">
+                {groupsLoading ? (
+                  <div className="text-sm text-gray-500 py-2">Loading your groups…</div>
+                ) : groups.length === 0 ? (
+                  <div className="text-sm text-gray-500 py-2">
+                    You&apos;re not in any groups yet.{" "}
+                    <a className="text-court-green underline" href="/groups">Create one</a>.
+                  </div>
+                ) : (
+                  <select
+                    value={hostGroupId}
+                    onChange={(e) => setHostGroupId(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-court-green/30 focus:border-court-green text-sm bg-white"
+                  >
+                    <option value="">Pick a group…</option>
+                    {groups.map((g) => (
+                      <option key={g.id} value={g.id}>{g.name}</option>
+                    ))}
+                  </select>
+                )}
+              </Field>
+              <p className="text-[12px] text-gray-500">
+                Only members of this group will see the event. Group events can&apos;t be cross-posted to the public feed.
+              </p>
+            </div>
+          )}
+        </section>
+
+        <section className="bg-white rounded-2xl p-5 shadow-sm space-y-4">
           <Field label="Venue name (optional)">
             <input
               value={venueName}
               onChange={(e) => setVenueName(e.target.value)}
               placeholder="Amy Yee Tennis Center"
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-court-green/30 focus:border-court-green text-sm"
-            />
-          </Field>
-          <Field label="Venue address (optional)">
-            <input
-              value={venueAddress}
-              onChange={(e) => setVenueAddress(e.target.value)}
-              placeholder="2000 Martin Luther King Jr Way S"
               className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-court-green/30 focus:border-court-green text-sm"
             />
           </Field>
@@ -228,26 +452,6 @@ export default function NewEventPage() {
           </Field>
         </section>
 
-        <section className="bg-white rounded-2xl p-5 shadow-sm">
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={postToFeed}
-              onChange={(e) => setPostToFeed(e.target.checked)}
-              className="mt-0.5 w-4 h-4 rounded accent-court-green"
-            />
-            <span className="flex-1">
-              <span className="block text-sm font-semibold text-gray-700">
-                Post to feed for discovery
-              </span>
-              <span className="block text-[12px] text-gray-500 mt-0.5">
-                Other players see your event in their feed and can sign up. Uncheck if you only
-                plan to invite specific friends.
-              </span>
-            </span>
-          </label>
-        </section>
-
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
             {error}
@@ -255,7 +459,11 @@ export default function NewEventPage() {
         )}
 
         <div className="flex items-center gap-3">
-          <button type="submit" disabled={submitting} className="btn-primary">
+          <button
+            type="submit"
+            disabled={submitting || !visibilityReady}
+            className="btn-primary"
+          >
             {submitting ? "Creating…" : "Create event"}
           </button>
           <button
@@ -286,5 +494,35 @@ function Field({
       {children}
       {hint && <span className="block text-[11px] text-gray-500 mt-1">{hint}</span>}
     </label>
+  );
+}
+
+function VisOption({
+  selected,
+  onSelect,
+  title,
+  blurb,
+  icon,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  title: string;
+  blurb: string;
+  icon: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`text-left p-3 rounded-xl border-2 transition-all ${
+        selected
+          ? "border-court-green bg-court-green/5"
+          : "border-gray-200 hover:border-gray-300 bg-white"
+      }`}
+    >
+      <div className="text-xl mb-1">{icon}</div>
+      <div className="font-semibold text-sm text-gray-900">{title}</div>
+      <div className="text-[11px] text-gray-500 leading-snug mt-0.5">{blurb}</div>
+    </button>
   );
 }

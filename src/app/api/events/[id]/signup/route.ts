@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { syncEventGroupMembers } from "@/lib/eventGroup";
+import { userCanSeeEvent } from "@/lib/events/visibility";
 
 // POST /api/events/[id]/signup — join or claim a waitlist seat
 export async function POST(
@@ -27,10 +28,20 @@ export async function POST(
       isPublicSignup: true,
       ownerId: true,
       eventType: true,
+      visibility: true,
+      eventLat: true,
+      eventLng: true,
+      radiusMi: true,
+      hostGroupId: true,
       _count: { select: { matches: true } },
     },
   });
   if (!event) return NextResponse.json({ error: "Event not found" }, { status: 404 });
+
+  // 404 if the viewer can't see the event — closes the "scrape an id and POST"
+  // bypass for group/out-of-radius events.
+  const allowed = await userCanSeeEvent(event, userId);
+  if (!allowed) return NextResponse.json({ error: "Event not found" }, { status: 404 });
   if (event.status === "cancelled" || event.status === "completed") {
     return NextResponse.json({ error: "Event is closed for signups" }, { status: 409 });
   }
@@ -129,12 +140,8 @@ export async function DELETE(
     select: { id: true, ownerId: true, maxParticipants: true },
   });
   if (!event) return NextResponse.json({ error: "Event not found" }, { status: 404 });
-  if (event.ownerId === userId) {
-    return NextResponse.json(
-      { error: "Organizers can't withdraw — cancel the event instead" },
-      { status: 409 }
-    );
-  }
+  // Organizers can withdraw their own playing slot without cancelling — being
+  // the organizer and being a player are independent roles.
 
   const existing = await prisma.eventParticipant.findUnique({
     where: { eventId_userId: { eventId: id, userId } },

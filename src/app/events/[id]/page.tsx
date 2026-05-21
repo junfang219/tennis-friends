@@ -46,6 +46,10 @@ type EventDetail = {
   venueName: string;
   venueAddress: string;
   coverImageUrl: string;
+  visibility: "public" | "group";
+  radiusMi: number | null;
+  hostGroupId: string | null;
+  hostGroup: { id: string; name: string } | null;
   owner: { id: string; name: string; profileImageUrl: string };
   participants: Participant[];
   myStatus: "registered" | "waitlist" | "withdrawn" | null;
@@ -151,8 +155,9 @@ export default function EventDetailPage() {
     event.signupDeadline != null && new Date(event.signupDeadline) < new Date();
   const eventEnded = new Date(event.endDate) < new Date();
   const tournamentLocked = event.eventType === "tournament" && event.hasBracket;
+  // Organizers can sign up like anyone else — being the organizer doesn't
+  // make them a player. They see organizer actions AND signup buttons.
   const canSignup =
-    !isOwner &&
     !signupDeadlinePassed &&
     !eventEnded &&
     !tournamentLocked &&
@@ -210,11 +215,17 @@ export default function EventDetailPage() {
           </svg>
         </button>
         <div className={`${event.coverImageUrl ? "text-white" : "text-court-green"}`}>
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${event.coverImageUrl ? "bg-white/20 backdrop-blur" : "bg-white/70"} ${typeMeta.text}`}>
               <span>{typeMeta.emoji}</span> {typeMeta.label}
             </span>
             <StatusBadge status={event.status} dimmed={!!event.coverImageUrl} />
+            <VisibilityBadge
+              visibility={event.visibility}
+              radiusMi={event.radiusMi}
+              hostGroup={event.hostGroup}
+              dimmed={!!event.coverImageUrl}
+            />
           </div>
           <h1 className="font-display text-2xl font-bold leading-tight drop-shadow-sm">
             {event.title}
@@ -271,9 +282,9 @@ export default function EventDetailPage() {
           )}
         </div>
 
-        {/* Signup action */}
+        {/* Signup + organizer actions */}
         <div className="flex items-center gap-3 flex-wrap">
-          {isOwner ? (
+          {isOwner && (
             <>
               <span className="inline-flex items-center px-3 py-1.5 rounded-full bg-court-green/10 text-court-green text-xs font-semibold">
                 Organizer
@@ -291,7 +302,8 @@ export default function EventDetailPage() {
                 Edit
               </Link>
             </>
-          ) : event.myStatus === "registered" ? (
+          )}
+          {event.myStatus === "registered" ? (
             <button
               onClick={withdraw}
               disabled={actionInFlight}
@@ -311,11 +323,15 @@ export default function EventDetailPage() {
             <button
               onClick={signup}
               disabled={actionInFlight}
-              className="px-4 py-2 rounded-full bg-court-green text-white text-sm font-semibold hover:bg-court-green-light disabled:opacity-60"
+              className={`px-4 py-2 rounded-full text-sm font-semibold disabled:opacity-60 ${
+                isOwner
+                  ? "bg-white border border-court-green/30 text-court-green hover:bg-court-green/5"
+                  : "bg-court-green text-white hover:bg-court-green-light"
+              }`}
             >
-              {actionInFlight ? "…" : "Sign up"}
+              {actionInFlight ? "…" : isOwner ? "Sign up to play" : "Sign up"}
             </button>
-          ) : (
+          ) : !isOwner ? (
             <span className="inline-flex items-center px-3 py-1.5 rounded-full bg-gray-100 text-gray-500 text-xs font-semibold">
               {tournamentLocked
                 ? "Bracket locked"
@@ -325,7 +341,7 @@ export default function EventDetailPage() {
                 ? "Event ended"
                 : "Not available"}
             </span>
-          )}
+          ) : null}
         </div>
 
         {error && (
@@ -716,6 +732,37 @@ function InviteFriendsModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function VisibilityBadge({
+  visibility,
+  radiusMi,
+  hostGroup,
+  dimmed,
+}: {
+  visibility: "public" | "group";
+  radiusMi: number | null;
+  hostGroup: { id: string; name: string } | null;
+  dimmed: boolean;
+}) {
+  const base = "inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full";
+  const cls = dimmed ? "bg-white/20 backdrop-blur text-white" : "bg-white/70 text-court-green";
+  if (visibility === "group") {
+    const label = hostGroup ? `🔒 ${hostGroup.name}` : "🔒 Group";
+    if (hostGroup) {
+      return (
+        <Link href={`/groups/${hostGroup.id}`} className={`${base} ${cls} hover:opacity-90`}>
+          {label}
+        </Link>
+      );
+    }
+    return <span className={`${base} ${cls}`}>{label}</span>;
+  }
+  return (
+    <span className={`${base} ${cls}`}>
+      🌎 Public{radiusMi ? ` · ${radiusMi} mi` : ""}
+    </span>
   );
 }
 

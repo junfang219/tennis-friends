@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { syncEventGroupMembers } from "@/lib/eventGroup";
+import { userCanSeeEvent } from "@/lib/events/visibility";
 
 // GET /api/events/[id] — full detail + roster
 export async function GET(
@@ -27,11 +28,16 @@ export async function GET(
         },
         orderBy: [{ status: "asc" }, { registeredAt: "asc" }],
       },
+      hostGroup: { select: { id: true, name: true } },
       _count: { select: { matches: true } },
     },
   });
 
   if (!event) return NextResponse.json({ error: "Event not found" }, { status: 404 });
+
+  // 404 (not 403) for events the viewer can't see — don't leak existence.
+  const allowed = await userCanSeeEvent(event, userId);
+  if (!allowed) return NextResponse.json({ error: "Event not found" }, { status: 404 });
 
   const me = event.participants.find((p) => p.userId === userId);
   // A tournament with any matches at all has a seeded bracket — seed creates
@@ -71,12 +77,31 @@ export async function PATCH(
   const body = await request.json().catch(() => null);
   if (!body) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
 
+  // Visibility is locked at creation. Switching public↔group post-create would
+  // orphan registered users or expose them, so reject any attempt explicitly.
+  if (body.visibility !== undefined) {
+    return NextResponse.json(
+      { error: "Event visibility can't be changed after creation" },
+      { status: 400 }
+    );
+  }
+
   const data: Record<string, unknown> = {};
   if (typeof body.title === "string" && body.title.trim()) data.title = body.title.trim();
   if (typeof body.description === "string") data.description = body.description;
   if (typeof body.venueName === "string") data.venueName = body.venueName;
   if (typeof body.venueAddress === "string") data.venueAddress = body.venueAddress;
   if (typeof body.coverImageUrl === "string") data.coverImageUrl = body.coverImageUrl;
+  // Organizer may re-anchor or re-tune radius on public events.
+  if (typeof body.eventLat === "number" && body.eventLat >= -90 && body.eventLat <= 90) {
+    data.eventLat = body.eventLat;
+  }
+  if (typeof body.eventLng === "number" && body.eventLng >= -180 && body.eventLng <= 180) {
+    data.eventLng = body.eventLng;
+  }
+  if ([5, 10, 25, 50].includes(body.radiusMi)) {
+    data.radiusMi = body.radiusMi;
+  }
   if (typeof body.isPublicSignup === "boolean") data.isPublicSignup = body.isPublicSignup;
   if (body.maxParticipants === null || typeof body.maxParticipants === "number") {
     data.maxParticipants = body.maxParticipants;

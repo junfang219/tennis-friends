@@ -37,6 +37,7 @@ export default function EventsListPage() {
   const [filter, setFilter] = useState<FilterId>("upcoming");
   const [events, setEvents] = useState<EventListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasLocation, setHasLocation] = useState<boolean | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -48,6 +49,21 @@ export default function EventsListPage() {
       })
       .catch(() => setLoading(false));
   }, [filter]);
+
+  // One-shot: figure out if the viewer has a profile location set so we know
+  // whether to nudge them. Missing location means public events stay hidden.
+  useEffect(() => {
+    fetch("/api/profile")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && (data.latitude == null || data.longitude == null)) {
+          setHasLocation(false);
+        } else if (data) {
+          setHasLocation(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
@@ -70,6 +86,21 @@ export default function EventsListPage() {
           New Event
         </Link>
       </div>
+
+      {hasLocation === false && filter === "upcoming" && (
+        <div className="mb-4 bg-ball-yellow/20 border border-ball-yellow/40 rounded-xl px-4 py-3 text-sm text-gray-700 flex items-start gap-3">
+          <span className="text-base">📍</span>
+          <div className="flex-1">
+            <div className="font-semibold text-gray-900 mb-0.5">Set your location</div>
+            <p className="text-xs text-gray-600">
+              Add a home location in your profile to see public events near you.{" "}
+              <Link href="/profile/settings" className="text-court-green underline">
+                Update profile
+              </Link>
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center gap-1 mb-5 bg-gray-100 p-1 rounded-full w-fit">
         {FILTER_TABS.map((tab) => (

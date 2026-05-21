@@ -6,6 +6,7 @@ import { ensureTeamGroup } from "@/lib/teamGroup";
 import { haversineMiles } from "@/lib/distance";
 import { rateLimit } from "@/lib/rateLimit";
 import { getAcceptedFriendIds } from "@/lib/friendship";
+import { fetchVisibleEventIds } from "@/lib/events/visibility";
 
 const BROADCAST_RADII = [5, 10, 25] as const;
 const MAX_BROADCAST_RADIUS = 25;
@@ -32,6 +33,7 @@ export async function GET() {
     hiddenPosts,
     blocks,
     me,
+    visibleEventIds,
   ] = await Promise.all([
     getAcceptedFriendIds(userId),
     // Active memberships only — archived teams are hidden from the feed, so
@@ -60,6 +62,10 @@ export async function GET() {
       where: { id: userId },
       select: { latitude: true, longitude: true },
     }),
+    // Event cross-posts should surface to anyone who can see the underlying
+    // event (radius / group / invite / participant / owner), not just the
+    // author's friends.
+    fetchVisibleEventIds(userId),
   ]);
 
   const userGroupIds = userGroupMemberships.map((m) => m.groupId);
@@ -124,6 +130,12 @@ export async function GET() {
         // distance filtered post-fetch). Skipped entirely when viewer has
         // no location.
         ...(broadcastClause ? [broadcastClause] : []),
+        // Cross-posts of events the viewer can see (radius / group / invite
+        // / participant / owner). Mirrors event-feed visibility so a public
+        // event Alex creates surfaces to non-friends in his radius.
+        ...(visibleEventIds.length > 0
+          ? [{ eventId: { in: visibleEventIds } }]
+          : []),
       ],
     },
     orderBy: { createdAt: "desc" },
@@ -162,6 +174,10 @@ export async function GET() {
           ntrpMin: true,
           ntrpMax: true,
           coverImageUrl: true,
+          // Pulled so we can hide event posts linked to group-visibility
+          // events from non-members below.
+          visibility: true,
+          hostGroup: { select: { members: { where: { userId }, select: { id: true } } } },
           _count: { select: { participants: { where: { status: "registered" } } } },
         },
       },
@@ -172,8 +188,18 @@ export async function GET() {
   // Exact distance filter for broadcasts. The SQL bounding box keeps the
   // query cheap but lets in posts up to ~25mi away; here we tighten to each
   // post's own broadcastRadiusMi and stash the rounded distance for the UI.
+  // Also drops event-typed posts whose linked event is group-visibility and
+  // the viewer isn't a member — they'd otherwise leak via the public feed.
   const distanceByPost = new Map<string, number>();
   const filteredPosts = posts.filter((post) => {
+    if (
+      post.event &&
+      post.event.visibility === "group" &&
+      post.authorId !== userId &&
+      (!post.event.hostGroup || post.event.hostGroup.members.length === 0)
+    ) {
+      return false;
+    }
     if (!post.isBroadcast || post.authorId === userId || friendIds.includes(post.authorId)) {
       return true;
     }

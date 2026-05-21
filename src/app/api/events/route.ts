@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { auth } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { ensureEventGroup } from "@/lib/eventGroup";
+import {
+  applyPublicDistanceFilter,
+  buildEventVisibilityWhere,
+  isValidRadius,
+  loadViewerContext,
+} from "@/lib/events/visibility";
 
 const VALID_EVENT_TYPES = new Set([
   "tournament",
@@ -24,41 +31,62 @@ export async function GET(request: Request) {
   const type = searchParams.get("type") ?? undefined;
 
   const now = new Date();
-  const where: Record<string, unknown> = {};
-  if (type && VALID_EVENT_TYPES.has(type)) where.eventType = type;
+  const baseFilters: Prisma.EventWhereInput[] = [];
+  if (type && VALID_EVENT_TYPES.has(type)) baseFilters.push({ eventType: type });
 
   if (filter === "past") {
-    where.endDate = { lt: now };
+    baseFilters.push({ endDate: { lt: now } });
   } else if (filter === "joined") {
-    where.participants = { some: { userId, status: { in: ["registered", "waitlist"] } } };
+    baseFilters.push({
+      participants: { some: { userId, status: { in: ["registered", "waitlist"] } } },
+    });
   } else {
     // upcoming = currently open or running
-    where.endDate = { gte: now };
-    where.status = { in: ["open", "closed", "active"] };
+    baseFilters.push({ endDate: { gte: now } });
+    baseFilters.push({ status: { in: ["open", "closed", "active"] } });
   }
 
-  const events = await prisma.event.findMany({
+  // Apply visibility scope on top of the existing filters. `joined` is already
+  // participant-scoped, but we still AND the visibility predicate so the OR
+  // branches (participant/owner) trivially match — no extra cost.
+  const ctx = await loadViewerContext(userId);
+  const where: Prisma.EventWhereInput = {
+    AND: [...baseFilters, buildEventVisibilityWhere(ctx)],
+  };
+
+  const rawEvents = await prisma.event.findMany({
     where,
     include: {
       owner: { select: { id: true, name: true, profileImageUrl: true } },
+      participants: { select: { userId: true, status: true } },
+      hostGroup: { select: { id: true, name: true } },
       _count: { select: { participants: { where: { status: "registered" } } } },
     },
     orderBy: [{ startDate: filter === "past" ? "desc" : "asc" }],
     take: 100,
   });
 
-  const myParticipations = await prisma.eventParticipant.findMany({
-    where: { userId, eventId: { in: events.map((e) => e.id) } },
-    select: { eventId: true, status: true },
-  });
-  const myStatusByEvent = new Map(myParticipations.map((p) => [p.eventId, p.status]));
+  // Tighten the public-branch bounding box with exact Haversine.
+  const { kept, distanceById } = applyPublicDistanceFilter(rawEvents, ctx);
+
+  const myStatusByEvent = new Map<string, string>();
+  for (const e of kept) {
+    const me = e.participants.find((p) => p.userId === userId);
+    if (me) myStatusByEvent.set(e.id, me.status);
+  }
 
   return NextResponse.json(
-    events.map((e) => ({
-      ...e,
-      myStatus: myStatusByEvent.get(e.id) ?? null,
-      registeredCount: e._count.participants,
-    }))
+    kept.map((e) => {
+      const { participants: _participants, _count, ...rest } = e;
+      return {
+        ...rest,
+        myStatus: myStatusByEvent.get(e.id) ?? null,
+        registeredCount: _count.participants,
+        distanceMi: distanceById.has(e.id)
+          ? Math.round(distanceById.get(e.id) as number)
+          : null,
+      };
+    })
   );
 }
 
@@ -87,6 +115,11 @@ export async function POST(request: Request) {
     venueAddress,
     coverImageUrl,
     postToFeed,
+    visibility,
+    eventLat,
+    eventLng,
+    radiusMi,
+    hostGroupId,
   } = body;
 
   if (!title?.trim()) {
@@ -118,6 +151,65 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "ntrpMin cannot exceed ntrpMax" }, { status: 400 });
   }
 
+  // Visibility — required choice; default to "public" for backward-compat clients.
+  const vis = visibility === "group" ? "group" : "public";
+  let resolvedLat: number | null = null;
+  let resolvedLng: number | null = null;
+  let resolvedRadius: number | null = null;
+  let resolvedHostGroupId: string | null = null;
+
+  if (vis === "public") {
+    const lat = Number(eventLat);
+    const lng = Number(eventLng);
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+      return NextResponse.json({ error: "Valid eventLat required for public events" }, { status: 400 });
+    }
+    if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+      return NextResponse.json({ error: "Valid eventLng required for public events" }, { status: 400 });
+    }
+    if (!isValidRadius(radiusMi)) {
+      return NextResponse.json({ error: "radiusMi must be 5, 10, 25, or 50" }, { status: 400 });
+    }
+    resolvedLat = lat;
+    resolvedLng = lng;
+    resolvedRadius = radiusMi as number;
+  } else {
+    if (typeof hostGroupId !== "string" || !hostGroupId) {
+      return NextResponse.json({ error: "hostGroupId required for group events" }, { status: 400 });
+    }
+    if (postToFeed === true) {
+      return NextResponse.json(
+        { error: "Group events can't be cross-posted to the public feed" },
+        { status: 400 }
+      );
+    }
+    // Verify creator membership AND that the group isn't itself an event-
+    // backing group (those are auto-created chat shells, not real clubs).
+    const group = await prisma.group.findUnique({
+      where: { id: hostGroupId },
+      select: {
+        event: { select: { id: true } },
+        members: { where: { userId }, select: { id: true } },
+      },
+    });
+    if (!group) {
+      return NextResponse.json({ error: "Host group not found" }, { status: 404 });
+    }
+    if (group.event) {
+      return NextResponse.json(
+        { error: "Can't host an event in an event-backing group" },
+        { status: 400 }
+      );
+    }
+    if (group.members.length === 0) {
+      return NextResponse.json(
+        { error: "You must be a member of the host group" },
+        { status: 403 }
+      );
+    }
+    resolvedHostGroupId = hostGroupId;
+  }
+
   const event = await prisma.event.create({
     data: {
       ownerId: userId,
@@ -134,15 +226,22 @@ export async function POST(request: Request) {
       venueName: typeof venueName === "string" ? venueName : "",
       venueAddress: typeof venueAddress === "string" ? venueAddress : "",
       coverImageUrl: typeof coverImageUrl === "string" ? coverImageUrl : "",
-      // Auto-register the organizer.
-      participants: { create: [{ userId, status: "registered" }] },
+      visibility: vis,
+      eventLat: resolvedLat,
+      eventLng: resolvedLng,
+      radiusMi: resolvedRadius,
+      hostGroupId: resolvedHostGroupId,
+      // Organizer is not auto-registered as a player — they choose to sign up
+      // (or not) like anyone else. The backing chat group still includes them
+      // via ensureEventGroup so they can run the event without playing.
     },
   });
 
   await ensureEventGroup(event.id);
 
-  // Auto cross-post to the feed for discovery, unless the organizer opted out.
-  if (postToFeed !== false) {
+  // Cross-post to the public feed only for public events. Group events stay
+  // inside their host group — cross-posting would leak them to the global feed.
+  if (vis === "public" && postToFeed !== false) {
     const teaser = (description || "").trim();
     await prisma.post.create({
       data: {
