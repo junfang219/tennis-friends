@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import { normalizeMatchStatus, normalizePracticeStatus, RSVP, RSVP_LABEL, type RsvpStatus } from "@/lib/rsvpStatus";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getDashboardUpcoming } from "@/lib/supabase/queries";
 
 type Team = { id: string; name: string; imageUrl: string };
 
@@ -66,19 +68,29 @@ export default function DashboardPage() {
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/dashboard/upcoming");
-    if (res.status === 401) {
-      setErr("Sign in to see your dashboard.");
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const u = await getDashboardUpcoming(supabase);
+      setData({
+        matches: u.teamMatches.map((m) => ({
+          id: m.id,
+          groupId: m.group_id,
+          group: { id: m.group.id, name: m.group.name, imageUrl: "" },
+          matchDate: m.match_date,
+          matchTime: m.match_time,
+          location: m.location,
+          opponent: m.opponent,
+          homeAway: "",
+          myRsvp: null,
+        })),
+        practices: [],
+        announcements: [],
+      });
       setLoading(false);
-      return;
-    }
-    if (!res.ok) {
-      setErr("Failed to load dashboard.");
+    } catch (err) {
+      setErr(err instanceof Error ? err.message : "Failed to load dashboard.");
       setLoading(false);
-      return;
     }
-    setData(await res.json());
-    setLoading(false);
   }, []);
 
   useEffect(() => {

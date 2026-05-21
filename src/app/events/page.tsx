@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import CommunitiesTabs from "@/components/CommunitiesTabs";
 import Avatar from "@/components/Avatar";
 import { EVENT_TYPE_META } from "@/lib/eventTypeMeta";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listEvents, getMyProfile } from "@/lib/supabase/queries";
 
 type EventListItem = {
   id: string;
@@ -41,26 +43,40 @@ export default function EventsListPage() {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/events?filter=${filter}`)
-      .then((r) => r.json())
-      .then((data) => {
-        setEvents(Array.isArray(data) ? data : []);
+    const supabase = createSupabaseBrowserClient();
+    listEvents(supabase, { upcoming: filter === "upcoming" })
+      .then((rows) =>
+        rows.map((e) => ({
+          id: e.id,
+          title: e.title,
+          description: e.description,
+          eventType: e.event_type,
+          startDate: e.start_date,
+          endDate: e.end_date,
+          signupDeadline: e.signup_deadline,
+          status: e.status,
+          venueName: e.venue_name,
+          maxParticipants: e.max_participants,
+          ntrpMin: e.ntrp_min,
+          ntrpMax: e.ntrp_max,
+          coverImageUrl: e.cover_image_url,
+          owner: { id: e.owner_id, name: "", profileImageUrl: "" },
+          myStatus: null,
+          registeredCount: 0,
+        }))
+      )
+      .then((mapped) => {
+        setEvents(mapped);
         setLoading(false);
       })
       .catch(() => setLoading(false));
   }, [filter]);
 
-  // One-shot: figure out if the viewer has a profile location set so we know
-  // whether to nudge them. Missing location means public events stay hidden.
   useEffect(() => {
-    fetch("/api/profile")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data && (data.latitude == null || data.longitude == null)) {
-          setHasLocation(false);
-        } else if (data) {
-          setHasLocation(true);
-        }
+    const supabase = createSupabaseBrowserClient();
+    getMyProfile(supabase)
+      .then((p) => {
+        if (p) setHasLocation(p.latitude != null && p.longitude != null);
       })
       .catch(() => {});
   }, []);

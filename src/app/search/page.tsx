@@ -6,6 +6,8 @@ import Avatar from "@/components/Avatar";
 import FriendRequestButton from "@/components/FriendRequestButton";
 import { looksLikeEmail, looksLikePhone, normalizeE164 } from "@/lib/phone";
 import { AGE_LABELS, GENDER_LABELS, formatRating } from "@/lib/profileLabels";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getMyProfile, searchProfiles, updateMyProfile } from "@/lib/supabase/queries";
 
 type Bucket = "beginner" | "intermediate" | "advanced" | "pro";
 type AgeKey = "under_18" | "18_29" | "30_49" | "50_plus";
@@ -78,45 +80,70 @@ export default function SearchPage() {
   const [locationError, setLocationError] = useState("");
   const [locationDismissed, setLocationDismissed] = useState(false);
 
-  // On mount, fetch /api/profile to know if the viewer already has lat/lng.
   useEffect(() => {
-    fetch("/api/profile")
-      .then((r) => r.json())
-      .then((data) => {
-        const has = data?.latitude != null && data?.longitude != null;
+    const supabase = createSupabaseBrowserClient();
+    getMyProfile(supabase)
+      .then((p) => {
+        const has = p?.latitude != null && p?.longitude != null;
         setHasLocation(has);
         if (!has) setSort("recent");
       })
       .catch(() => setHasLocation(false));
   }, []);
 
-  const search = useCallback(async (raw: string) => {
-    const trimmed = raw.trim();
+  const search = useCallback(async (_raw: string) => {
     setLoading(true);
-    const params = new URLSearchParams();
-    if (looksLikeEmail(trimmed)) {
-      params.set("email", trimmed);
-    } else if (looksLikePhone(trimmed)) {
-      const e164 = normalizeE164(trimmed);
-      if (!e164) {
-        setResults([]);
-        setLoading(false);
-        setSearched(true);
-        return;
-      }
-      params.set("phone", e164);
-    } else if (trimmed) {
-      params.set("q", trimmed);
+    const supabase = createSupabaseBrowserClient();
+    // Map the UI's ntrp buckets to the searchProfiles range filter.
+    let ntrpMin: number | undefined;
+    let ntrpMax: number | undefined;
+    if (buckets.has("beginner")) {
+      ntrpMin = ntrpMin ?? 1.0;
+      ntrpMax = Math.max(ntrpMax ?? 3.0, 3.0);
     }
-    if (buckets.size > 0) params.set("bucket", Array.from(buckets).join(","));
-    if (ages.size > 0) params.set("ageRange", Array.from(ages).join(","));
-    if (genders.size > 0) params.set("gender", Array.from(genders).join(","));
-    if (tagFilter.trim()) params.set("tag", tagFilter.trim());
-    params.set("sort", sort);
-
-    const res = await fetch(`/api/users?${params.toString()}`);
-    const data = await res.json();
-    setResults(Array.isArray(data) ? data : []);
+    if (buckets.has("intermediate")) {
+      ntrpMin = Math.min(ntrpMin ?? 3.0, 3.0);
+      ntrpMax = Math.max(ntrpMax ?? 4.0, 4.0);
+    }
+    if (buckets.has("advanced")) {
+      ntrpMin = Math.min(ntrpMin ?? 4.0, 4.0);
+      ntrpMax = Math.max(ntrpMax ?? 5.0, 5.0);
+    }
+    if (buckets.has("pro")) {
+      ntrpMin = Math.min(ntrpMin ?? 5.0, 5.0);
+      ntrpMax = Math.max(ntrpMax ?? 7.0, 7.0);
+    }
+    const gender = genders.size === 1 ? Array.from(genders)[0] : undefined;
+    const ageRange = ages.size === 1 ? Array.from(ages)[0] : undefined;
+    try {
+      const rows = await searchProfiles(supabase, {
+        ntrpMin,
+        ntrpMax,
+        gender,
+        ageRange,
+        limit: 100,
+      });
+      // Coerce snake_case → the page's camelCase Result type.
+      setResults(
+        rows.map((p) => ({
+          id: p.id,
+          name: p.name,
+          profileImageUrl: p.profile_image_url,
+          bio: p.bio,
+          skillLevel: p.skill_level,
+          gender: p.gender,
+          ageRange: p.age_range,
+          ratingSystem: p.rating_system,
+          ntrpRating: p.ntrp_rating,
+          utrRating: p.utr_rating,
+          customTags: p.custom_tags ? p.custom_tags.split(",").filter(Boolean) : [],
+          handle: p.handle,
+          distanceMiles: null,
+        })) as unknown as UserResult[]
+      );
+    } catch {
+      setResults([]);
+    }
     setLoading(false);
     setSearched(true);
   }, [buckets, ages, genders, tagFilter, sort]);
@@ -139,14 +166,12 @@ export default function SearchPage() {
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         try {
-          const res = await fetch("/api/profile", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              latitude: pos.coords.latitude,
-              longitude: pos.coords.longitude,
-            }),
+          const supabase = createSupabaseBrowserClient();
+          await updateMyProfile(supabase, {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
           });
+          const res = { ok: true };
           if (res.ok) {
             setHasLocation(true);
             setSort("distance");

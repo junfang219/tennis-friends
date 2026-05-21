@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import CommunitiesTabs from "@/components/CommunitiesTabs";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { listMyGroups, listFriends } from "@/lib/supabase/queries";
 
 type FriendEntry = {
   friendshipId: string;
@@ -36,42 +38,70 @@ export default function GroupsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const loadGroups = () => {
-    Promise.all([
-      fetch("/api/groups").then((r) => r.json()),
-      fetch("/api/groups?archived=true").then((r) => r.json()),
-    ])
-      .then(([active, arch]) => {
-        setGroups(Array.isArray(active) ? active : []);
-        setArchivedGroups(Array.isArray(arch) ? arch : []);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+  const loadGroups = async () => {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const rows = await listMyGroups(supabase);
+      const mapped = rows.map((g) => ({
+        id: g.id,
+        name: g.name,
+        imageUrl: g.image_url,
+        ownerId: g.owner_id,
+        owner: { id: g.owner_id, name: "", profileImageUrl: "" },
+        members: [],
+        _count: { members: 0 },
+      }));
+      setGroups(mapped);
+      setArchivedGroups([]);
+      setLoading(false);
+    } catch {
+      setLoading(false);
+    }
   };
 
   const archiveTeam = async (groupId: string) => {
     setSwipedKey(null);
-    await fetch("/api/groups", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groupId, action: "archive" }),
-    });
-    loadGroups();
+    // Archive = update own membership row's archived_at.
+    const supabase = createSupabaseBrowserClient();
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) return;
+    await supabase
+      .from("group_members")
+      .update({ archived_at: new Date().toISOString() })
+      .eq("group_id", groupId)
+      .eq("user_id", auth.user.id);
+    void loadGroups();
   };
 
   const unarchiveTeam = async (groupId: string) => {
     setSwipedKey(null);
-    await fetch("/api/groups", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groupId, action: "unarchive" }),
-    });
-    loadGroups();
+    const supabase = createSupabaseBrowserClient();
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) return;
+    await supabase
+      .from("group_members")
+      .update({ archived_at: null })
+      .eq("group_id", groupId)
+      .eq("user_id", auth.user.id);
+    void loadGroups();
   };
 
   useEffect(() => {
-    loadGroups();
-    fetch("/api/friends").then((r) => r.json()).then((data) => setFriends(data.friends || []));
+    void loadGroups();
+    const supabase = createSupabaseBrowserClient();
+    listFriends(supabase).then((rows) => {
+      setFriends(
+        rows.map((u) => ({
+          friendshipId: u.id, // placeholder — list doesn't expose the join row id
+          user: {
+            id: u.id,
+            name: u.name,
+            profileImageUrl: u.profile_image_url,
+            skillLevel: u.skill_level,
+          },
+        }))
+      );
+    });
   }, []);
 
   if (loading) {
@@ -457,8 +487,21 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
     if (!name.trim() || creating) return;
     setCreating(true);
     try {
-      const res = await fetch("/api/groups", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), memberIds: Array.from(selectedIds) }) });
-      if (!res.ok) { setCreating(false); return; }
+      const supabase = createSupabaseBrowserClient();
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth.user) { setCreating(false); return; }
+      const { data: g, error } = await supabase
+        .from("groups")
+        .insert({ name: name.trim(), owner_id: auth.user.id })
+        .select("id")
+        .single();
+      if (error || !g) { setCreating(false); return; }
+      // Add owner as group_member, then any selected friends.
+      const memberRows = [{ group_id: g.id, user_id: auth.user.id, role: "owner" as const }];
+      for (const fid of selectedIds) {
+        memberRows.push({ group_id: g.id, user_id: fid, role: "member" as unknown as "owner" });
+      }
+      await supabase.from("group_members").insert(memberRows);
       setCreating(false);
       onCreated();
     } catch { setCreating(false); }
