@@ -5,6 +5,9 @@ import { useParams } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
 import { isAtLeast, ROLE } from "@/lib/groupRoles";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
+import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 
 type GroupFile = {
   id: string;
@@ -56,13 +59,56 @@ export default function GroupFilesPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadFiles = useCallback(async () => {
-    const res = await fetch(`/api/groups/${groupId}/files`);
-    if (res.ok) setFiles(await res.json());
+    const supabase = createSupabaseBrowserClient();
+    const { data } = await supabase
+      .from("group_files")
+      .select(
+        `id, url, filename, mime_type, size_bytes, description, created_at,
+         uploadedBy:profiles!group_files_uploaded_by_id_fkey ( id, name, profile_image_url )`
+      )
+      .eq("group_id", groupId)
+      .order("created_at", { ascending: false });
+    type Row = {
+      id: string;
+      url: string;
+      filename: string;
+      mime_type: string;
+      size_bytes: number;
+      description: string;
+      created_at: string;
+      uploadedBy: { id: string; name: string; profile_image_url: string };
+    };
+    setFiles(
+      ((data ?? []) as unknown as Row[]).map((f) => ({
+        id: f.id,
+        url: f.url,
+        filename: f.filename,
+        mimeType: f.mime_type,
+        sizeBytes: f.size_bytes,
+        description: f.description,
+        createdAt: f.created_at,
+        uploadedBy: {
+          id: f.uploadedBy.id,
+          name: f.uploadedBy.name,
+          profileImageUrl: f.uploadedBy.profile_image_url,
+        },
+      })) as unknown as GroupFile[]
+    );
   }, [groupId]);
 
   const loadGroup = useCallback(async () => {
-    const res = await fetch(`/api/groups/${groupId}`);
-    if (res.ok) setGroup(await res.json());
+    const supabase = createSupabaseBrowserClient();
+    const [g, members] = await Promise.all([
+      getGroup(supabase, groupId),
+      listGroupMembers(supabase, groupId),
+    ]);
+    if (g) {
+      setGroup({
+        id: g.id,
+        name: g.name,
+        members: members.map((m) => ({ userId: m.user_id, role: m.role })),
+      } as unknown as typeof group);
+    }
     setLoading(false);
   }, [groupId]);
 
@@ -84,35 +130,34 @@ export default function GroupFilesPage() {
     setErr("");
     setUploading(true);
 
-    const fd = new FormData();
-    fd.append("file", file);
-    const upRes = await fetch("/api/upload/file", { method: "POST", body: fd });
-    if (!upRes.ok) {
-      const d = await upRes.json().catch(() => ({}));
-      setErr(d.error || "Upload failed.");
+    const upResult = await uploadToBucket(file, "files");
+    if (isUploadError(upResult)) {
+      setErr(upResult.message);
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
-    const upData = await upRes.json();
-
-    const regRes = await fetch(`/api/groups/${groupId}/files`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url: upData.url,
-        filename: upData.filename,
-        mimeType: upData.mimeType,
-        sizeBytes: upData.sizeBytes,
-        description,
-      }),
+    const supabase = createSupabaseBrowserClient();
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) {
+      setErr("Not signed in.");
+      setUploading(false);
+      return;
+    }
+    const { error: insErr } = await supabase.from("group_files").insert({
+      group_id: groupId,
+      url: upResult.url,
+      filename: file.name,
+      mime_type: file.type || "application/octet-stream",
+      size_bytes: file.size,
+      description,
+      uploaded_by_id: auth.user.id,
     });
-    if (regRes.ok) {
+    if (!insErr) {
       setDescription("");
       await loadFiles();
     } else {
-      const d = await regRes.json().catch(() => ({}));
-      setErr(d.error || "Failed to register file.");
+      setErr(insErr.message || "Failed to register file.");
     }
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -120,12 +165,10 @@ export default function GroupFilesPage() {
 
   const removeFile = async (fileId: string) => {
     if (!confirm("Remove this file from the team?")) return;
-    const res = await fetch(`/api/groups/${groupId}/files/${fileId}`, { method: "DELETE" });
-    if (res.ok) await loadFiles();
-    else {
-      const d = await res.json().catch(() => ({}));
-      alert(d.error || "Failed to remove file.");
-    }
+    const supabase = createSupabaseBrowserClient();
+    const { error: delErr } = await supabase.from("group_files").delete().eq("id", fileId);
+    if (!delErr) await loadFiles();
+    else alert(delErr.message || "Failed to remove file.");
   };
 
   if (loading) {

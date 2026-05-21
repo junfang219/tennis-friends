@@ -9,6 +9,8 @@ import Avatar from "@/components/Avatar";
 import RsvpPicker, { pickerOptionMeta } from "@/components/attendance/RsvpPicker";
 import AttendanceTally from "@/components/attendance/AttendanceTally";
 import { normalizeMatchStatus, RSVP } from "@/lib/rsvpStatus";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getGroup, listGroupMembers, sendGroupMessage } from "@/lib/supabase/queries";
 
 type Member = {
   id: string;
@@ -134,22 +136,77 @@ export default function AvailabilityPage() {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [teamRes, matchesRes] = await Promise.all([
-        fetch(`/api/groups/${groupId}`),
-        fetch(`/api/groups/${groupId}/matches`),
+      const supabase = createSupabaseBrowserClient();
+      const [g, members] = await Promise.all([
+        getGroup(supabase, groupId),
+        listGroupMembers(supabase, groupId),
       ]);
-      if (!teamRes.ok) {
-        if (teamRes.status === 403) setError("You are not a member of this team.");
-        else setError("Failed to load team.");
+      if (!g) {
+        setError("You are not a member of this team.");
         setLoading(false);
         return;
       }
-      const teamData = await teamRes.json();
-      setTeam(teamData);
-      if (matchesRes.ok) {
-        const m = await matchesRes.json();
-        setMatches(Array.isArray(m) ? m : []);
-      }
+      setTeam({
+        id: g.id,
+        name: g.name,
+        ownerId: g.owner_id,
+        members: members.map((m) => ({
+          id: m.id,
+          user: {
+            id: m.user.id,
+            name: m.user.name,
+            profileImageUrl: m.user.profile_image_url,
+            skillLevel: "",
+          },
+        })),
+      } as unknown as Team);
+
+      const { data: matchRows } = await supabase
+        .from("team_matches")
+        .select(
+          `id, match_date, match_time, location, notes,
+           availabilities ( id, user_id, status, match_types, lineup_slot,
+             user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url ) )`
+        )
+        .eq("group_id", groupId)
+        .order("match_date", { ascending: true });
+      type RawAvail = {
+        id: string;
+        user_id: string;
+        status: string;
+        match_types: string;
+        lineup_slot: string;
+        user: { id: string; name: string; profile_image_url: string };
+      };
+      type Row = {
+        id: string;
+        match_date: string;
+        match_time: string;
+        location: string;
+        notes: string;
+        availabilities: RawAvail[];
+      };
+      setMatches(
+        ((matchRows ?? []) as unknown as Row[]).map((m) => ({
+          id: m.id,
+          matchDate: m.match_date,
+          matchTime: m.match_time,
+          location: m.location,
+          notes: m.notes,
+          availabilities: m.availabilities.map((a) => ({
+            id: a.id,
+            userId: a.user_id,
+            status: a.status,
+            matchTypes: a.match_types,
+            lineupSlot: a.lineup_slot,
+            user: {
+              id: a.user.id,
+              name: a.user.name,
+              profileImageUrl: a.user.profile_image_url,
+            },
+          })),
+        })) as unknown as Match[]
+      );
     } catch {
       setError("Something went wrong.");
     }
@@ -177,13 +234,27 @@ export default function AvailabilityPage() {
   const addMatch = async () => {
     if (!matchDate || !location.trim() || adding) return;
     setAdding(true);
-    const res = await fetch(`/api/groups/${groupId}/matches`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ matchDate, matchTime, location: location.trim(), notes: notes.trim() }),
-    });
-    if (res.ok) {
-      const newMatch = await res.json();
+    const supabase = createSupabaseBrowserClient();
+    const { data, error: insErr } = await supabase
+      .from("team_matches")
+      .insert({
+        group_id: groupId,
+        match_date: matchDate,
+        match_time: matchTime,
+        location: location.trim(),
+        notes: notes.trim(),
+      })
+      .select("id, match_date, match_time, location, notes")
+      .single();
+    if (!insErr && data) {
+      const newMatch: Match = {
+        id: data.id,
+        matchDate: data.match_date,
+        matchTime: data.match_time,
+        location: data.location,
+        notes: data.notes,
+        availabilities: [],
+      } as unknown as Match;
       setMatches((prev) => [...prev, newMatch].sort((a, b) => (a.matchDate + a.matchTime).localeCompare(b.matchDate + b.matchTime)));
       setShowAdd(false);
       setMatchDate("");
@@ -196,25 +267,60 @@ export default function AvailabilityPage() {
 
   const deleteMatch = async (matchId: string) => {
     if (!confirm("Delete this match? Member availability for it will be removed.")) return;
-    const res = await fetch(`/api/groups/${groupId}/matches/${matchId}`, { method: "DELETE" });
-    if (res.ok) {
+    const supabase = createSupabaseBrowserClient();
+    const { error: delErr } = await supabase.from("team_matches").delete().eq("id", matchId);
+    if (!delErr) {
       setMatches((prev) => prev.filter((m) => m.id !== matchId));
     }
   };
 
   const setMyAvailability = async (matchId: string, status: string, matchTypes: string) => {
-    const res = await fetch(`/api/groups/${groupId}/matches/${matchId}/availability`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status, matchTypes }),
-    });
-    if (res.ok) {
-      const upserted = await res.json();
+    const supabase = createSupabaseBrowserClient();
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) return;
+    const { data, error: upErr } = await supabase
+      .from("availabilities")
+      .upsert(
+        {
+          event_kind: "match",
+          match_id: matchId,
+          user_id: auth.user.id,
+          status,
+          match_types: matchTypes,
+        },
+        { onConflict: "match_id,user_id" }
+      )
+      .select(
+        `id, user_id, status, match_types, lineup_slot,
+         user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url )`
+      )
+      .single();
+    if (!upErr && data) {
+      const a = data as unknown as {
+        id: string;
+        user_id: string;
+        status: string;
+        match_types: string;
+        lineup_slot: string;
+        user: { id: string; name: string; profile_image_url: string };
+      };
+      const upserted = {
+        id: a.id,
+        userId: a.user_id,
+        status: a.status,
+        matchTypes: a.match_types,
+        lineupSlot: a.lineup_slot,
+        user: {
+          id: a.user.id,
+          name: a.user.name,
+          profileImageUrl: a.user.profile_image_url,
+        },
+      };
       setMatches((prev) =>
         prev.map((m) => {
           if (m.id !== matchId) return m;
-          const others = m.availabilities.filter((a) => a.userId !== myId);
-          return { ...m, availabilities: [...others, upserted] };
+          const others = m.availabilities.filter((a2) => a2.userId !== myId);
+          return { ...m, availabilities: [...others, upserted] as Availability[] };
         })
       );
     }
@@ -224,17 +330,49 @@ export default function AvailabilityPage() {
     match.availabilities.find((a) => a.userId === userId);
 
   const setLineupSlot = async (matchId: string, userId: string, slot: string) => {
-    const res = await fetch(`/api/groups/${groupId}/matches/${matchId}/lineup`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId, lineupSlot: slot }),
-    });
-    if (res.ok) {
-      const upserted: Availability = await res.json();
+    const supabase = createSupabaseBrowserClient();
+    const { data, error: upErr } = await supabase
+      .from("availabilities")
+      .upsert(
+        {
+          event_kind: "match",
+          match_id: matchId,
+          user_id: userId,
+          lineup_slot: slot,
+          status: "",
+        },
+        { onConflict: "match_id,user_id" }
+      )
+      .select(
+        `id, user_id, status, match_types, lineup_slot,
+         user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url )`
+      )
+      .single();
+    if (!upErr && data) {
+      const a = data as unknown as {
+        id: string;
+        user_id: string;
+        status: string;
+        match_types: string;
+        lineup_slot: string;
+        user: { id: string; name: string; profile_image_url: string };
+      };
+      const upserted: Availability = {
+        id: a.id,
+        userId: a.user_id,
+        status: a.status,
+        matchTypes: a.match_types,
+        lineupSlot: a.lineup_slot,
+        user: {
+          id: a.user.id,
+          name: a.user.name,
+          profileImageUrl: a.user.profile_image_url,
+        },
+      } as Availability;
       setMatches((prev) =>
         prev.map((m) => {
           if (m.id !== matchId) return m;
-          const others = m.availabilities.filter((a) => a.userId !== userId);
+          const others = m.availabilities.filter((av) => av.userId !== userId);
           return { ...m, availabilities: [...others, upserted] };
         })
       );
@@ -262,18 +400,14 @@ export default function AvailabilityPage() {
     const content = header + lineupLines.join("\n");
 
     setSendingLineupId(match.id);
-    const res = await fetch(`/api/groups/${groupId}/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
-    });
-    if (res.ok) {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await sendGroupMessage(supabase, groupId, content);
       router.push(`/groups/${groupId}/chat`);
-      return;
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to send to team chat");
+      setSendingLineupId(null);
     }
-    const data = await res.json().catch(() => ({}));
-    alert(data.error || "Failed to send to team chat");
-    setSendingLineupId(null);
   };
 
   if (error) {
