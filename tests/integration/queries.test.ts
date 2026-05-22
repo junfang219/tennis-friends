@@ -35,6 +35,7 @@ import {
   listFriends,
   listPendingRequests,
   sendFriendRequest,
+  getFriendshipWith,
   acceptFriendRequest,
   rejectFriendRequest,
   removeFriend,
@@ -164,6 +165,36 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       await removeFriend(alice.client, bob.id);
       const aliceFriends = await listFriends(alice.client);
       expect(aliceFriends.some((f) => f.id === bob.id)).toBe(false);
+    });
+
+    // Regression: profile page was always rendering "Add Friend" for the
+    // addressee because UserProfilePage never loaded the friendship state.
+    // getFriendshipWith must return the row from either direction so the
+    // button can show "Accept" / "Request Sent" correctly.
+    it("getFriendshipWith returns the row in both directions", async () => {
+      // alice → carol
+      await sendFriendRequest(alice.client, carol.id);
+
+      // alice (requester) sees herself as requester
+      const aliceView = await getFriendshipWith(alice.client, carol.id);
+      expect(aliceView.friendshipStatus).toBe("PENDING");
+      expect(aliceView.isRequester).toBe(true);
+
+      // carol (addressee) sees the same row, but isRequester=false
+      const carolView = await getFriendshipWith(carol.client, alice.id);
+      expect(carolView.friendshipStatus).toBe("PENDING");
+      expect(carolView.isRequester).toBe(false);
+      expect(carolView.friendshipId).toBe(aliceView.friendshipId);
+
+      // Cleanup so the next test isn't polluted.
+      await rejectFriendRequest(carol.client, carolView.friendshipId!);
+    });
+
+    it("getFriendshipWith returns nulls when no relationship exists", async () => {
+      const result = await getFriendshipWith(alice.client, carol.id);
+      expect(result.friendshipId).toBeNull();
+      expect(result.friendshipStatus).toBeNull();
+      expect(result.isRequester).toBe(false);
     });
 
     it("rejectFriendRequest removes the pending row", async () => {

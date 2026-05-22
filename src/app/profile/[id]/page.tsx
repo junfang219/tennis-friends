@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { getProfile } from "@/lib/supabase/queries";
+import { getProfile, getFriendshipWith } from "@/lib/supabase/queries";
 import Avatar from "@/components/Avatar";
 import FriendRequestButton from "@/components/FriendRequestButton";
 import PostCard from "@/components/PostCard";
@@ -88,7 +88,12 @@ export default function UserProfilePage() {
       return;
     }
     const supabase = createSupabaseBrowserClient();
-    getProfile(supabase, String(params.id)).then((p) => {
+    // Load profile + friendship state in parallel so the FriendRequestButton
+    // renders the right action ("Accept" vs "Add Friend") on first paint.
+    Promise.all([
+      getProfile(supabase, String(params.id)),
+      getFriendshipWith(supabase, String(params.id)),
+    ]).then(([p, friendship]) => {
       if (!p) return;
       setUser({
         id: p.id,
@@ -115,9 +120,9 @@ export default function UserProfilePage() {
         handle: p.handle,
         highlights: [],
         posts: [],
-        friendStatus: null,
-        isFriend: false,
-        isBlocked: false,
+        friendshipId: friendship.friendshipId,
+        friendshipStatus: friendship.friendshipStatus,
+        isRequester: friendship.isRequester,
       } as unknown as UserProfile);
     });
   }, [params.id, session?.user?.id, router]);

@@ -100,6 +100,53 @@ export async function listPendingRequests(
   });
 }
 
+/**
+ * Look up the friendship between the signed-in user and `otherId`, returning
+ * the row id, status, and whether the signed-in user is the original
+ * requester. Used by the profile page to render the right action button
+ * ("Add Friend" / "Request Sent" / "Accept" / "Friends").
+ *
+ * Returns null shape when no relationship exists yet.
+ */
+export async function getFriendshipWith(
+  supabase: SupabaseClient<Database>,
+  otherId: string
+): Promise<{
+  friendshipId: string | null;
+  friendshipStatus: string | null;
+  isRequester: boolean;
+}> {
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) {
+    return { friendshipId: null, friendshipStatus: null, isRequester: false };
+  }
+  const me = auth.user.id;
+
+  // The unique constraint friendships_pair_unique is on (requester_id,
+  // addressee_id), so at most one row exists in either direction.
+  const { data, error } = await supabase
+    .from("friendships")
+    .select("id, requester_id, addressee_id, status")
+    .or(
+      `and(requester_id.eq.${me},addressee_id.eq.${otherId}),` +
+      `and(requester_id.eq.${otherId},addressee_id.eq.${me})`
+    )
+    .maybeSingle();
+
+  if (error || !data) {
+    return { friendshipId: null, friendshipStatus: null, isRequester: false };
+  }
+
+  // The button component expects the legacy NextAuth-shape uppercase status
+  // ("PENDING" / "ACCEPTED"). DB stores lowercase enum values — uppercase
+  // here at the boundary so the UI stays unchanged.
+  return {
+    friendshipId: data.id,
+    friendshipStatus: data.status.toUpperCase(),
+    isRequester: data.requester_id === me,
+  };
+}
+
 export async function sendFriendRequest(
   supabase: SupabaseClient<Database>,
   addresseeId: string
