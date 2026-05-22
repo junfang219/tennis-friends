@@ -7,6 +7,8 @@ import { useState, useEffect } from "react";
 import Avatar from "./Avatar";
 import NotificationBell from "./NotificationBell";
 import MessageBell from "./MessageBell";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { unreadNotificationCount } from "@/lib/supabase/queries";
 
 export default function Navbar() {
   const { data: session, status } = useSession();
@@ -14,6 +16,10 @@ export default function Navbar() {
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isNative, setIsNative] = useState(false);
+  // Unread notification count, used to badge the mobile hamburger button +
+  // the in-menu "Notifications" link on native (where NotificationBell is
+  // suppressed and there's no other place to surface unread state).
+  const [unreadNotifs, setUnreadNotifs] = useState(0);
 
   useEffect(() => {
     // `window.Capacitor` exists in the web bundle too (the @capacitor/core
@@ -22,6 +28,36 @@ export default function Navbar() {
     const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
     setIsNative(!!cap?.isNativePlatform?.());
   }, []);
+
+  // Poll for unread notifications on native (where NotificationBell, which
+  // owns this state on web, isn't rendered). 30s mirrors BottomNav's
+  // message-count poll. Browser-mobile already sees the bell badge, so we
+  // skip the duplicate poll there.
+  useEffect(() => {
+    if (status !== "authenticated" || !isNative) return;
+    const supabase = createSupabaseBrowserClient();
+    const fetchCount = () => {
+      unreadNotificationCount(supabase)
+        .then(setUnreadNotifs)
+        .catch(() => { /* ignore — keep last value */ });
+    };
+    fetchCount();
+    const interval = setInterval(fetchCount, 30_000);
+    return () => clearInterval(interval);
+  }, [status, isNative]);
+
+  // Notifications page marks rows read on mount; refetch shortly after
+  // navigating into /notifications so the badge clears without waiting
+  // for the next poll.
+  useEffect(() => {
+    if (status !== "authenticated" || !isNative) return;
+    if (pathname !== "/notifications") return;
+    const supabase = createSupabaseBrowserClient();
+    const t = setTimeout(() => {
+      unreadNotificationCount(supabase).then(setUnreadNotifs).catch(() => {});
+    }, 500);
+    return () => clearTimeout(t);
+  }, [pathname, status, isNative]);
 
   const isActive = (path: string) => {
     if (pathname === path) return true;
@@ -131,11 +167,14 @@ export default function Navbar() {
               </div>
             ) : null}
 
-            {/* Mobile menu button */}
+            {/* Mobile menu button — gets a red dot when there are unread
+                notifications, since the in-menu "Notifications" item is
+                the only entry point on native. */}
             {status === "authenticated" && (
               <button
                 onClick={() => setMobileOpen(!mobileOpen)}
-                className="md:hidden text-white/70 hover:text-white p-2"
+                className="md:hidden relative text-white/70 hover:text-white p-2"
+                aria-label={unreadNotifs > 0 ? `Menu (${unreadNotifs} unread notifications)` : "Menu"}
               >
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
                   {mobileOpen ? (
@@ -144,6 +183,11 @@ export default function Navbar() {
                     <path fillRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
                   )}
                 </svg>
+                {isNative && !mobileOpen && unreadNotifs > 0 && (
+                  <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center bg-red-500 text-white text-[9px] font-bold rounded-full border border-court-green">
+                    {unreadNotifs > 9 ? "9+" : unreadNotifs}
+                  </span>
+                )}
               </button>
             )}
           </div>
@@ -183,7 +227,12 @@ export default function Navbar() {
                 }`}
               >
                 <NotificationIcon active={isActive("/notifications")} />
-                Notifications
+                <span className="flex-1">Notifications</span>
+                {unreadNotifs > 0 && (
+                  <span className="min-w-[20px] h-5 px-1.5 flex items-center justify-center bg-red-500 text-white text-[10px] font-bold rounded-full">
+                    {unreadNotifs > 99 ? "99+" : unreadNotifs}
+                  </span>
+                )}
               </Link>
             )}
             {isNative && (
