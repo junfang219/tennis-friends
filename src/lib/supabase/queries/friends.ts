@@ -147,18 +147,67 @@ export async function getFriendshipWith(
   };
 }
 
+/**
+ * Insert a pending friendship from the signed-in user to addresseeId,
+ * returning the resulting friendship state so the UI can render the new
+ * "Request Sent" button without a separate round-trip.
+ *
+ * Idempotent: if a row already exists in either direction (the unique
+ * constraint friendships_pair_unique would otherwise reject the insert),
+ * we fall back to the existing row and return its state. The previous
+ * shape — void return + silent catch in the UI — left the button stuck
+ * on "Add Friend" any time the request had already been sent.
+ */
 export async function sendFriendRequest(
   supabase: SupabaseClient<Database>,
   addresseeId: string
-): Promise<void> {
+): Promise<{
+  friendshipId: string;
+  friendshipStatus: string;
+  isRequester: boolean;
+}> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("Not signed in");
-  const { error } = await supabase.from("friendships").insert({
-    requester_id: auth.user.id,
-    addressee_id: addresseeId,
-    status: "pending",
-  });
-  if (error) throw error;
+
+  const { data, error } = await supabase
+    .from("friendships")
+    .insert({
+      requester_id: auth.user.id,
+      addressee_id: addresseeId,
+      status: "pending",
+    })
+    .select("id, status, requester_id")
+    .single();
+
+  if (!error && data) {
+    return {
+      friendshipId: data.id,
+      friendshipStatus: data.status.toUpperCase(),
+      isRequester: data.requester_id === auth.user.id,
+    };
+  }
+
+  // 23505 = unique violation. Anything else is a real error.
+  if (error && error.code !== "23505") throw error;
+
+  // The unique constraint friendships_pair_unique is on the ordered
+  // (requester_id, addressee_id) pair, so a 23505 here means *we* already
+  // sent this exact request. Look up our own row and return it.
+  const { data: own, error: ownErr } = await supabase
+    .from("friendships")
+    .select("id, status")
+    .eq("requester_id", auth.user.id)
+    .eq("addressee_id", addresseeId)
+    .maybeSingle();
+  if (ownErr) throw ownErr;
+  if (!own) {
+    throw new Error("Friendship insert hit unique constraint but no row found");
+  }
+  return {
+    friendshipId: own.id,
+    friendshipStatus: own.status.toUpperCase(),
+    isRequester: true,
+  };
 }
 
 export async function acceptFriendRequest(

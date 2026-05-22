@@ -26,6 +26,7 @@ export default function FriendRequestButton({
   const [state, setState] = useState(initial);
   const [loading, setLoading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -47,15 +48,26 @@ export default function FriendRequestButton({
     };
   }, [menuOpen]);
 
+  // PostgrestErrors don't extend Error, so a bare `e.message` check misses
+  // them. Surface whatever shape comes back so failures are visible
+  // instead of leaving the button stuck on stale state.
+  const formatError = (e: unknown): string => {
+    if (e instanceof Error) return e.message;
+    if (typeof e === "object" && e !== null && "message" in e) {
+      return String((e as { message: unknown }).message);
+    }
+    return "Something went wrong";
+  };
+
   const sendRequest = async () => {
     setLoading(true);
+    setError(null);
     try {
       const supabase = createSupabaseBrowserClient();
-      await sendFriendRequest(supabase, userId);
-      // The new row id isn't returned by sendFriendRequest; refresh to pick it up.
-      setState({ friendshipId: null, friendshipStatus: "PENDING", isRequester: true });
-    } catch {
-      // ignore
+      const result = await sendFriendRequest(supabase, userId);
+      setState(result);
+    } catch (e) {
+      setError(formatError(e));
     }
     setLoading(false);
   };
@@ -63,12 +75,13 @@ export default function FriendRequestButton({
   const acceptRequest = async () => {
     if (!state.friendshipId) return;
     setLoading(true);
+    setError(null);
     try {
       const supabase = createSupabaseBrowserClient();
       await acceptFriendRequest(supabase, state.friendshipId);
       setState({ ...state, friendshipStatus: "ACCEPTED" });
-    } catch {
-      // ignore
+    } catch (e) {
+      setError(formatError(e));
     }
     setLoading(false);
     router.refresh();
@@ -77,12 +90,13 @@ export default function FriendRequestButton({
   const rejectRequest = async () => {
     if (!state.friendshipId) return;
     setLoading(true);
+    setError(null);
     try {
       const supabase = createSupabaseBrowserClient();
       await rejectFriendRequest(supabase, state.friendshipId);
       setState({ friendshipId: null, friendshipStatus: null, isRequester: false });
-    } catch {
-      // ignore
+    } catch (e) {
+      setError(formatError(e));
     }
     setLoading(false);
   };
@@ -90,40 +104,52 @@ export default function FriendRequestButton({
   const cancelRequest = async () => {
     setMenuOpen(false);
     setLoading(true);
+    setError(null);
     try {
       const supabase = createSupabaseBrowserClient();
       // Symmetric removal: deletes the pending friendship in either direction.
       await removeFriend(supabase, userId);
       setState({ friendshipId: null, friendshipStatus: null, isRequester: false });
-    } catch {
-      // ignore
+    } catch (e) {
+      setError(formatError(e));
     }
     setLoading(false);
   };
 
+  const ErrorMsg = () =>
+    error ? (
+      <span className="block mt-1 text-xs text-red-600 max-w-[220px]">{error}</span>
+    ) : null;
+
   if (loading) {
     return (
-      <button disabled className="btn-secondary btn-sm opacity-60">
-        <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
-          <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-        </svg>
-      </button>
+      <div>
+        <button disabled className="btn-secondary btn-sm opacity-60">
+          <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
+            <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+          </svg>
+        </button>
+        <ErrorMsg />
+      </div>
     );
   }
 
   // No relationship
   if (!state.friendshipStatus) {
     return (
-      <button onClick={sendRequest} className="btn-primary btn-sm">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-          <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-          <circle cx="8.5" cy="7" r="4" />
-          <line x1="20" y1="8" x2="20" y2="14" />
-          <line x1="23" y1="11" x2="17" y2="11" />
-        </svg>
-        Add Friend
-      </button>
+      <div>
+        <button onClick={sendRequest} className="btn-primary btn-sm">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+            <circle cx="8.5" cy="7" r="4" />
+            <line x1="20" y1="8" x2="20" y2="14" />
+            <line x1="23" y1="11" x2="17" y2="11" />
+          </svg>
+          Add Friend
+        </button>
+        <ErrorMsg />
+      </div>
     );
   }
 

@@ -190,6 +190,45 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       await rejectFriendRequest(carol.client, carolView.friendshipId!);
     });
 
+    // Regression: sendFriendRequest used to return void, and the unique
+    // constraint violation from a repeat-click was swallowed by a silent
+    // catch in the UI — leaving the button stuck on "Add Friend". The new
+    // shape returns the friendship state and is idempotent on duplicate
+    // same-direction inserts. (The schema's unique constraint is on the
+    // ordered (requester_id, addressee_id) pair, so reverse-direction
+    // inserts are allowed and create a distinct row — not tested here.)
+    it("sendFriendRequest returns the friendship state and is idempotent", async () => {
+      const first = await sendFriendRequest(alice.client, carol.id);
+      expect(first.friendshipStatus).toBe("PENDING");
+      expect(first.isRequester).toBe(true);
+      expect(first.friendshipId).toBeTruthy();
+
+      // Sending again returns the same row instead of throwing.
+      const second = await sendFriendRequest(alice.client, carol.id);
+      expect(second.friendshipId).toBe(first.friendshipId);
+      expect(second.isRequester).toBe(true);
+
+      await rejectFriendRequest(carol.client, first.friendshipId);
+    });
+
+    // Regression: no trigger existed to create a friend_request notification
+    // on friendship insert, so the addressee never saw the bell light up.
+    it("inserting a friendship creates a friend_request notification for the addressee", async () => {
+      await sendFriendRequest(alice.client, carol.id);
+
+      // carol can read her own notifications (notifications_select_own RLS).
+      const { data: notes, error } = await carol.client
+        .from("notifications")
+        .select("type, actor_id")
+        .eq("user_id", carol.id)
+        .eq("type", "friend_request")
+        .eq("actor_id", alice.id);
+      expect(error).toBeNull();
+      expect(notes?.length).toBeGreaterThan(0);
+
+      await removeFriend(carol.client, alice.id);
+    });
+
     it("getFriendshipWith returns nulls when no relationship exists", async () => {
       const result = await getFriendshipWith(alice.client, carol.id);
       expect(result.friendshipId).toBeNull();

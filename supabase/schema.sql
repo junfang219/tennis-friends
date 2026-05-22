@@ -4016,3 +4016,33 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.cleanup_user_for_test(uuid) TO service_role;
 REVOKE EXECUTE ON FUNCTION public.cleanup_user_for_test(uuid) FROM PUBLIC, anon, authenticated;
+
+-- ============================================================
+-- FRIEND-REQUEST NOTIFICATION
+-- ============================================================
+--
+-- Create a 'friend_request' notification row for the addressee whenever a
+-- pending friendship is inserted. Without this trigger the addressee
+-- never sees the request in their bell — what June Fang hit when
+-- Chaoran sent her one through the UI.
+
+CREATE OR REPLACE FUNCTION public.notify_friend_request()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.status = 'pending' THEN
+    INSERT INTO public.notifications (user_id, actor_id, type)
+    VALUES (NEW.addressee_id, NEW.requester_id, 'friend_request');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS friendships_notify_request ON public.friendships;
+CREATE TRIGGER friendships_notify_request
+  AFTER INSERT ON public.friendships
+  FOR EACH ROW
+  EXECUTE FUNCTION public.notify_friend_request();
