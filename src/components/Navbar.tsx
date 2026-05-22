@@ -112,7 +112,11 @@ export default function Navbar() {
               <div className="flex items-center gap-3">
                 {!isNative && <MessageBell />}
                 {!isNative && <NotificationBell />}
-                <Link href="/profile" aria-label="Open profile" className="hidden sm:flex shrink-0 items-center group">
+                {/* Show the avatar on every viewport: in browser-mobile there's
+                    no bottom nav, so this is the only entry point to /profile.
+                    The native iOS shell has Profile in BottomNav, but the avatar
+                    here doesn't get in the way there either. */}
+                <Link href="/profile" aria-label="Open profile" className="flex shrink-0 items-center group">
                   <Avatar name={session.user.name || ""} image={session.user.image} size="sm" />
                 </Link>
               </div>
