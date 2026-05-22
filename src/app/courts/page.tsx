@@ -823,26 +823,13 @@ export default function CourtsPage() {
     if (courts.length === 0) return;
     if (summaryDebounceRef.current) clearTimeout(summaryDebounceRef.current);
     summaryDebounceRef.current = setTimeout(async () => {
-      // Only fetch ids we don't already have a summary for. court_reviews.
-      // court_id is a uuid, but the static-catalog facilities use string IDs
-      // like "tf-15" — including those would have PostgREST reject the whole
-      // .in() with a 400. The DB doesn't have reviews for those anyway.
-      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      const allIds = courts
+      // court_reviews.court_id is text and accepts both UUID user-added court
+      // IDs and "tf-N" static-catalog facility IDs, so we can batch-fetch
+      // every visible pin's summary in one call.
+      const ids = courts
         .map((c) => c.id)
         .filter((id) => summaries[id] === undefined)
         .slice(0, 200);
-      const ids = allIds.filter((id) => UUID_RE.test(id));
-      // Mark every facility-id (non-UUID) as "no summary" so we don't keep
-      // re-querying them on each render.
-      const facilityIds = allIds.filter((id) => !UUID_RE.test(id));
-      if (facilityIds.length > 0) {
-        setSummaries((prev) => {
-          const next = { ...prev };
-          for (const id of facilityIds) next[id] = { avg: 0, count: 0, thumbs: [] };
-          return next;
-        });
-      }
       if (ids.length === 0) return;
       try {
         const supabase = createSupabaseBrowserClient();

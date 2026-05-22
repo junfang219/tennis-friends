@@ -499,6 +499,23 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       expect(reviews.some((r) => r.id === review.id)).toBe(true);
     });
 
+    // Regression: static-catalog facilities (data/tennis_courts.json) use
+    // string IDs like "tf-15" rather than UUIDs. court_reviews.court_id is
+    // text precisely so those reviews can be written without an
+    // "invalid input syntax for type uuid" rejection — guard against any
+    // future attempt to re-add the FK to courts.id.
+    it("accepts static-catalog 'tf-*' string IDs as court_id", async () => {
+      const staticId = `tf-test-${Date.now()}`;
+      const review = await addCourtReview(carol.client, staticId, {
+        stars: 4,
+        content: "static-catalog review",
+      });
+      expect(review.stars).toBe(4);
+      expect(review.court_id).toBe(staticId);
+      const reviews = await listCourtReviews(carol.client, staticId);
+      expect(reviews.some((r) => r.id === review.id)).toBe(true);
+    });
+
     it("listCourts returns my added court", async () => {
       const all = await listCourts(carol.client);
       expect(all.some((c) => c.id === courtId)).toBe(true);

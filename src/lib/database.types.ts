@@ -527,13 +527,6 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "court_availability_reports_court_id_fkey"
-            columns: ["court_id"]
-            isOneToOne: false
-            referencedRelation: "courts"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "court_availability_reports_post_id_fkey"
             columns: ["post_id"]
             isOneToOne: false
@@ -610,13 +603,6 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
-          {
-            foreignKeyName: "court_reviews_court_id_fkey"
-            columns: ["court_id"]
-            isOneToOne: false
-            referencedRelation: "courts"
-            referencedColumns: ["id"]
-          },
           {
             foreignKeyName: "court_reviews_user_id_fkey"
             columns: ["user_id"]

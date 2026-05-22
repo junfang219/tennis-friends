@@ -888,9 +888,14 @@ create table public.booking_players (
 );
 create index booking_players_user_idx on public.booking_players (user_id);
 
+-- court_id is text (not uuid) and intentionally has no FK to courts(id):
+-- the app uses two ID namespaces — UUIDs for user-added courts and "tf-N"
+-- strings for the static catalog under data/tennis_courts.json. Both share
+-- this reviews table. Orphan cleanup on user-added court deletion is
+-- handled at the app layer.
 create table public.court_reviews (
   id          uuid primary key default gen_random_uuid(),
-  court_id    uuid not null references public.courts (id) on delete cascade,
+  court_id    text not null,
   user_id     uuid not null references public.profiles (id) on delete cascade,
   stars       integer not null check (stars between 1 and 5),
   content     text not null default '',
@@ -911,7 +916,8 @@ create index court_review_photos_review_idx on public.court_review_photos (revie
 
 create table public.court_availability_reports (
   id           uuid primary key default gen_random_uuid(),
-  court_id     uuid not null references public.courts (id) on delete cascade,
+  -- See note on court_reviews.court_id: mixed UUID + tf-N namespace, no FK.
+  court_id     text not null,
   user_id      uuid not null references public.profiles (id) on delete cascade,
   has_empty    boolean not null,
   post_id      uuid references public.posts (id) on delete set null,
