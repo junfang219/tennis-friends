@@ -9,6 +9,7 @@ import { EVENT_TYPE_META } from "@/lib/eventTypeMeta";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
   getEvent,
+  getGroup,
   listEventParticipants,
   listEventMatches,
   signupForEvent,
@@ -27,7 +28,6 @@ type Participant = {
   id: string;
   userId: string;
   status: "registered" | "waitlist" | "withdrawn";
-  registeredAt: string;
   checkedInAt: string | null;
   user: {
     id: string;
@@ -94,6 +94,7 @@ export default function EventDetailPage() {
     try {
       const supabase = createSupabaseBrowserClient();
       const id = String(params.id);
+      const myId = session?.user?.id ?? null;
       const [ev, participants, matches] = await Promise.all([
         getEvent(supabase, id),
         listEventParticipants(supabase, id),
@@ -104,6 +105,14 @@ export default function EventDetailPage() {
         setLoading(false);
         return;
       }
+      // Fetch host group label if this event is locked to one. Falls back
+      // to null on missing row / failed read — the host-group chip just
+      // renders without the link.
+      const hostGroup = ev.host_group_id
+        ? await getGroup(supabase, ev.host_group_id)
+            .then((g) => (g ? { id: g.id, name: g.name } : null))
+            .catch(() => null)
+        : null;
       // Adapt the snake_case Supabase shape to the page's camelCase types.
       const adapted = {
         id: ev.id,
@@ -131,16 +140,11 @@ export default function EventDetailPage() {
         coverImageUrl: ev.cover_image_url,
         seasonId: ev.season_id,
         owner: { id: ev.owner_id, name: "", profileImageUrl: "" },
-        participants: participants.map((p) => ({
+        participants: participants.map<Participant>((p) => ({
           id: p.id,
           userId: p.user_id,
-          status: p.status,
+          status: p.status as Participant["status"],
           checkedInAt: p.checked_in_at,
-          wins: p.wins,
-          losses: p.losses,
-          setsWon: p.sets_won,
-          setsLost: p.sets_lost,
-          points: p.points,
           user: {
             id: p.user.id,
             name: p.user.name,
@@ -163,9 +167,23 @@ export default function EventDetailPage() {
           winnerSide: m.winner_side,
           status: m.status,
         })),
+        hostGroup,
+        myStatus: ((): EventDetail["myStatus"] => {
+          if (!myId) return null;
+          const me = participants.find((p) => p.user_id === myId);
+          if (!me) return null;
+          const s = me.status;
+          if (s === "registered" || s === "waitlist" || s === "withdrawn") return s;
+          return null;
+        })(),
+        registeredCount: participants.filter((p) => p.status === "registered").length,
+        waitlistCount: participants.filter((p) => p.status === "waitlist").length,
+        matchCount: matches.length,
+        // Any match with a bracket slot assigned means the bracket has been
+        // generated — used by the signup-lock check for tournaments.
+        hasBracket: matches.some((m) => m.bracket_slot != null),
       };
-      // Cast to whatever the page's local Event type expects.
-      setEvent(adapted as unknown as typeof event);
+      setEvent(adapted);
       setLoading(false);
     } catch {
       setLoading(false);

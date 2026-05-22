@@ -16,10 +16,18 @@ function makeFakeClient(opts: { user: { id: string } | null }) {
   q.select = record("select");
   q.eq = record("eq");
   q.neq = record("neq");
+  q.not = record("not");
   q.gte = record("gte");
   q.lte = record("lte");
   q.limit = vi.fn(async (n: number) => {
     calls.push({ op: "limit", args: [n] });
+    return { data: [], error: null };
+  });
+  // .or() is the terminus for the friendships lookup searchProfiles now
+  // does to filter out accepted friends. Resolve to an empty list so the
+  // existing test assertions on the profile query are unaffected.
+  q.or = vi.fn(async (filter: string) => {
+    calls.push({ op: "or", args: [filter] });
     return { data: [], error: null };
   });
 

@@ -14,6 +14,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
   getChat,
   listChatMessages,
+  listChatParticipants,
   sendChatMessage,
   addReaction,
 } from "@/lib/supabase/queries";
@@ -140,25 +141,32 @@ export default function GroupChatThreadPage() {
     });
   };
 
-  // Load chat metadata
+  // Load chat metadata. Participants and the guest-names list both come
+  // from separate sources: chat_participants (real users) and the chat's
+  // own manual_player_names text column (comma-separated guest labels).
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
-    getChat(supabase, chatId)
-      .then((c) => {
+    Promise.all([getChat(supabase, chatId), listChatParticipants(supabase, chatId)])
+      .then(([c, participants]) => {
         if (!c) {
           setError("Chat not found.");
           return;
         }
-        setChatInfo({
+        const next: ChatInfo = {
           id: c.id,
           name: c.name,
           creatorId: c.creator_id,
-          postId: c.post_id,
-          friendGroupId: c.friend_group_id,
-          sessionEndAt: c.session_end_at,
-          manualPlayerNames: c.manual_player_names,
-          participants: [],
-        } as unknown as typeof chatInfo);
+          participants: participants.map((p) => ({
+            id: p.user.id,
+            name: p.user.name,
+            profileImageUrl: p.user.profile_image_url,
+          })),
+          guestNames: (c.manual_player_names || "")
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        };
+        setChatInfo(next);
       })
       .catch(() => setError("You are not a participant of this chat."));
   }, [chatId]);

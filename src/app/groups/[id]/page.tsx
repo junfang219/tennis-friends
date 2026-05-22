@@ -74,29 +74,28 @@ export default function GroupPage() {
         setError("Group not found or you're not a member.");
         return;
       }
-      // Fetch posts targeted at this group via post_targets join.
-      const { data: postLinks } = await supabase
-        .from("post_targets")
-        .select("post_id")
-        .eq("target_kind", "group")
-        .eq("group_id", id);
-      const postIds = (postLinks ?? []).map((r) => r.post_id);
       const groupCamel = toGroupCamel(g);
-      setGroup({
+      const adaptedMembers = members.map((m) => ({
+        id: m.id,
+        user: {
+          id: m.user.id,
+          name: m.user.name,
+          profileImageUrl: m.user.profile_image_url,
+          skillLevel: "",
+        },
+      }));
+      const next: GroupData = {
         ...groupCamel,
+        // toGroupCamel doesn't expose these — set defaults until the
+        // adapter covers them.
+        coverOffsetY: 50,
+        coverScale: 100,
         owner: { id: g.owner_id, name: "", profileImageUrl: "" },
-        members: members.map((m) => ({
-          id: m.id,
-          user: {
-            id: m.user.id,
-            name: m.user.name,
-            profileImageUrl: m.user.profile_image_url,
-            skillLevel: "",
-          },
-        })),
+        members: adaptedMembers,
+        _count: { members: adaptedMembers.length },
         posts: [],
-        postIds,
-      } as unknown as GroupData);
+      };
+      setGroup(next);
       // Also fetch full post rows separately if needed; we just expose IDs
       // for now and let post links resolve when clicked.
       void toGroupMemberCamel;

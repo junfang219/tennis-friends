@@ -109,7 +109,7 @@ export default function TeamCalendarPage() {
           .select(
             `id, name, practice_time, location, notes,
              team_practices ( id, practice_date,
-               availabilities ( user_id ) )`
+               availabilities ( user_id, status ) )`
           )
           .eq("group_id", groupId)
           .order("created_at", { ascending: false }),
@@ -129,7 +129,11 @@ export default function TeamCalendarPage() {
         practice_time: string;
         location: string;
         notes: string;
-        team_practices: { id: string; practice_date: string; availabilities: { user_id: string }[] }[];
+        team_practices: {
+          id: string;
+          practice_date: string;
+          availabilities: { user_id: string; status: string }[];
+        }[];
       };
 
       setMatches(
@@ -147,7 +151,7 @@ export default function TeamCalendarPage() {
       );
 
       setSeriesList(
-        ((seriesRows ?? []) as unknown as RawSeries[]).map((s) => ({
+        ((seriesRows ?? []) as unknown as RawSeries[]).map<PracticeSeries>((s) => ({
           id: s.id,
           name: s.name,
           practiceTime: s.practice_time,
@@ -156,9 +160,12 @@ export default function TeamCalendarPage() {
           practices: s.team_practices.map((p) => ({
             id: p.id,
             practiceDate: p.practice_date,
-            availabilities: p.availabilities.map((a) => ({ userId: a.user_id })),
+            availabilities: p.availabilities.map((a) => ({
+              userId: a.user_id,
+              status: a.status,
+            })),
           })),
-        })) as unknown as typeof seriesList
+        }))
       );
     } catch {
       setError("Something went wrong.");
