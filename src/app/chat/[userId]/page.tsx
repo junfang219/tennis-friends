@@ -31,7 +31,6 @@ type Message = {
   senderId: string;
   sharedPostId?: string | null;
   sharedPost?: SharedPost | null;
-  sender: { id: string; name: string; profileImageUrl: string };
   reactions?: MsgReaction[];
 };
 
@@ -143,16 +142,16 @@ export default function ChatPage() {
     const supabase = createSupabaseBrowserClient();
     listDirectMessages(supabase, userId).then((rows) => {
       setMessages(
-        rows.map((m) => ({
+        rows.map<Message>((m) => ({
           id: m.id,
           content: m.content,
           mediaUrl: m.media_url,
           mediaType: m.media_type,
           createdAt: m.created_at,
-          sender: { id: m.sender_id },
+          senderId: m.sender_id,
           sharedPost: null,
           reactions: [],
-        })) as unknown as Message[]
+        }))
       );
     });
   };
@@ -222,10 +221,10 @@ export default function ChatPage() {
         mediaUrl: row.media_url,
         mediaType: row.media_type,
         createdAt: row.created_at,
-        sender: { id: row.sender_id },
+        senderId: row.sender_id,
         sharedPost: null,
         reactions: [],
-      } as unknown as Message;
+      };
       success = true;
     } catch {
       // ignore
@@ -388,11 +387,13 @@ export default function ChatPage() {
                   key={msg.id}
                   className={`flex items-end gap-2 ${isMe ? "justify-end" : "justify-start"} ${sameSender ? "mt-0.5" : "mt-3"}`}
                 >
-                  {/* Other user avatar */}
+                  {/* Other user avatar — 1:1 chat, so the non-me sender is
+                      always chatUser. Sourcing from chatUser avoids fetching
+                      sender profile data per message. */}
                   {!isMe && (
                     <div className="w-7 shrink-0">
-                      {showAvatar && (
-                        <Avatar name={msg.sender.name} image={msg.sender.profileImageUrl} size="sm" />
+                      {showAvatar && chatUser && (
+                        <Avatar name={chatUser.name} image={chatUser.profileImageUrl} size="sm" />
                       )}
                     </div>
                   )}
