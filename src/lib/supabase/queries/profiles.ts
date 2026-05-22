@@ -96,11 +96,17 @@ export async function searchProfiles(
     limit?: number;
   } = {}
 ): Promise<Profile[]> {
+  // Exclude the signed-in user from "Discover players" results — seeing
+  // yourself in a list of partners to message isn't useful.
+  const { data: userData } = await supabase.auth.getUser();
+  const myId = userData.user?.id;
+
   let q = supabase
     .from("profiles")
     .select(PROFILE_COLUMNS)
     .eq("onboarding_complete", true)
     .neq("name", "");
+  if (myId) q = q.neq("id", myId);
   if (opts.ntrpMin !== undefined) q = q.gte("ntrp_rating", opts.ntrpMin);
   if (opts.ntrpMax !== undefined) q = q.lte("ntrp_rating", opts.ntrpMax);
   if (opts.gender) q = q.eq("gender", opts.gender);

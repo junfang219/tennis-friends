@@ -10,6 +10,7 @@ import {
 import { AddMissingCourtModal } from "@/components/courts/AddMissingCourtModal";
 import { filterFacilitiesByBbox, getFacilityByCourtId } from "@/lib/facilities";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 
 type ManagedByBucket = "city" | "club" | "school";
 
@@ -562,23 +563,29 @@ export default function CourtsPage() {
     return () => clearTimeout(t);
   }, [sidePanelOpen, mapReady]);
 
-  // Geolocation
+  // Geolocation via the cross-platform helper (Capacitor on native, browser
+  // API on web). Avoids WebKit's "insecure connection" block on physical
+  // iPhones loading dev server over LAN IP.
   useEffect(() => {
-    if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
-      setGeoError(true);
-      return;
-    }
-    const timer = setTimeout(() => setGeoError(true), 8000);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        clearTimeout(timer);
-        setMyLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (!cancelled) setGeoError(true);
+    }, 12_000);
+    (async () => {
+      const pos = await getCurrentPosition();
+      if (cancelled) return;
+      clearTimeout(timer);
+      if (isPositionError(pos)) {
+        setGeoError(true);
+      } else {
+        setMyLocation({ lat: pos.latitude, lng: pos.longitude });
         setGeoError(false);
-      },
-      () => { clearTimeout(timer); setGeoError(true); },
-      { enableHighAccuracy: false, timeout: 7000, maximumAge: 60_000 }
-    );
-    return () => clearTimeout(timer);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, []);
 
   // Recenter on user — but skip the pan when the user arrived via
@@ -816,11 +823,26 @@ export default function CourtsPage() {
     if (courts.length === 0) return;
     if (summaryDebounceRef.current) clearTimeout(summaryDebounceRef.current);
     summaryDebounceRef.current = setTimeout(async () => {
-      // Only fetch ids we don't already have a summary for
-      const ids = courts
+      // Only fetch ids we don't already have a summary for. court_reviews.
+      // court_id is a uuid, but the static-catalog facilities use string IDs
+      // like "tf-15" — including those would have PostgREST reject the whole
+      // .in() with a 400. The DB doesn't have reviews for those anyway.
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const allIds = courts
         .map((c) => c.id)
         .filter((id) => summaries[id] === undefined)
         .slice(0, 200);
+      const ids = allIds.filter((id) => UUID_RE.test(id));
+      // Mark every facility-id (non-UUID) as "no summary" so we don't keep
+      // re-querying them on each render.
+      const facilityIds = allIds.filter((id) => !UUID_RE.test(id));
+      if (facilityIds.length > 0) {
+        setSummaries((prev) => {
+          const next = { ...prev };
+          for (const id of facilityIds) next[id] = { avg: 0, count: 0, thumbs: [] };
+          return next;
+        });
+      }
       if (ids.length === 0) return;
       try {
         const supabase = createSupabaseBrowserClient();

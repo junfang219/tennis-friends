@@ -12,6 +12,7 @@ import { ReportIssueModal } from "@/components/courts/ReportIssueModal";
 import { getFacilityByCourtId, getSeattleParksDashboardUrl } from "@/lib/facilities";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listCourtReviews } from "@/lib/supabase/queries";
+import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 
 // Mirrors `Facility` in src/lib/facilities.ts plus the dashboard URL the
 // detail API attaches conditionally.
@@ -104,12 +105,15 @@ export default function CourtDetailPage() {
   // Silent on denial; the link still works (Google falls back to prompting).
   const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(null);
   useEffect(() => {
-    if (typeof navigator === "undefined" || !("geolocation" in navigator)) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setMyLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => {},
-      { enableHighAccuracy: false, timeout: 7000, maximumAge: 5 * 60_000 }
-    );
+    let cancelled = false;
+    (async () => {
+      const pos = await getCurrentPosition();
+      if (cancelled || isPositionError(pos)) return;
+      setMyLocation({ lat: pos.latitude, lng: pos.longitude });
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const [reviews, setReviews] = useState<ReviewsPayload | null>(null);

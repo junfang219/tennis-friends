@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listMyGroups, createEvent } from "@/lib/supabase/queries";
+import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 
 const TYPES = [
   { id: "tournament", label: "Tournament", emoji: "🏆", blurb: "Single-elimination bracket. Organizer seeds pairings." },
@@ -105,25 +106,21 @@ export default function NewEventPage() {
     return () => clearTimeout(handle);
   }, [venueAddress, visibility]);
 
-  function useCurrentLocation() {
-    if (!navigator.geolocation) {
-      setError("Your browser doesn't support location lookup. Type an address instead.");
+  async function useCurrentLocation() {
+    setLocatingMe(true);
+    const pos = await getCurrentPosition();
+    setLocatingMe(false);
+    if (isPositionError(pos)) {
+      setError(
+        pos.code === "unsupported"
+          ? "Your browser doesn't support location lookup. Type an address instead."
+          : "Couldn't read your location. Type an address instead."
+      );
       return;
     }
-    setLocatingMe(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setEventLat(pos.coords.latitude);
-        setEventLng(pos.coords.longitude);
-        setGeocodeState("ok");
-        setLocatingMe(false);
-      },
-      () => {
-        setLocatingMe(false);
-        setError("Couldn't read your location. Type an address instead.");
-      },
-      { enableHighAccuracy: false, maximumAge: 60_000, timeout: 10_000 }
-    );
+    setEventLat(pos.latitude);
+    setEventLng(pos.longitude);
+    setGeocodeState("ok");
   }
 
   const publicReady =

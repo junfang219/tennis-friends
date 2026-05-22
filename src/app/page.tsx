@@ -9,6 +9,7 @@ import PostCard from "@/components/PostCard";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listFeed, getMyProfile, updateMyProfile, type Post as FeedPost } from "@/lib/supabase/queries";
 import { pgToIso } from "@/lib/pgDate";
+import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 
 // Map a Supabase feed row (snake_case) into the legacy camelCase Post
 // shape this page (and PostCard) currently expects. Will go away once
@@ -250,36 +251,34 @@ export default function HomePage() {
     setLocationSaving(false);
   };
 
-  const useMyLocation = () => {
-    if (!navigator.geolocation) {
-      setLocationError("Your browser doesn't support geolocation.");
-      return;
-    }
+  const useMyLocation = async () => {
     setLocationError("");
     setLocationSaving(true);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          const supabase = createSupabaseBrowserClient();
-          await updateMyProfile(supabase, {
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-          });
-          setHasLocation(true);
-          const rows = await listFeed(supabase, { limit: 50 });
-          setPosts(rows.map(adaptFeedPost));
-        } catch {
-          setLocationError("Could not save location.");
-        }
-        setLocationSaving(false);
-      },
-      (err) => {
-        setLocationSaving(false);
-        if (err.code === err.PERMISSION_DENIED) setLocationError("Location permission denied.");
-        else setLocationError("Could not get your location.");
-      },
-      { timeout: 10000, maximumAge: 60_000 }
-    );
+    const pos = await getCurrentPosition();
+    if (isPositionError(pos)) {
+      setLocationSaving(false);
+      setLocationError(
+        pos.code === "permission_denied"
+          ? "Location permission denied."
+          : pos.code === "unsupported"
+            ? "Your browser doesn't support geolocation."
+            : "Could not get your location."
+      );
+      return;
+    }
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await updateMyProfile(supabase, {
+        latitude: pos.latitude,
+        longitude: pos.longitude,
+      });
+      setHasLocation(true);
+      const rows = await listFeed(supabase, { limit: 50 });
+      setPosts(rows.map(adaptFeedPost));
+    } catch {
+      setLocationError("Could not save location.");
+    }
+    setLocationSaving(false);
   };
 
   // Scroll to + highlight a post when linked via ?post=<id> (e.g. from calendar)

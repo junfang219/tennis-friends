@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { completeOnboarding } from "@/lib/supabase/queries";
+import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 
 type Gender = "male" | "female" | "non_binary" | "prefer_not_to_say";
 type AgeRange = "under_18" | "18_29" | "30_49" | "50_plus";
@@ -45,29 +46,23 @@ export default function OnboardingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  const captureLocation = () => {
-    if (!navigator.geolocation) {
-      setLocationError("Your browser doesn't support geolocation. You can add this later in your profile.");
-      return;
-    }
+  const captureLocation = async () => {
     setLocationError("");
     setLocationSaving(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLocationLat(pos.coords.latitude);
-        setLocationLng(pos.coords.longitude);
-        setLocationSaving(false);
-      },
-      (err) => {
-        setLocationSaving(false);
-        if (err.code === err.PERMISSION_DENIED) {
-          setLocationError("Permission denied. You can add this later in your profile.");
-        } else {
-          setLocationError("Could not get your location. You can add this later in your profile.");
-        }
-      },
-      { timeout: 10000, maximumAge: 60_000 }
-    );
+    const pos = await getCurrentPosition();
+    setLocationSaving(false);
+    if (isPositionError(pos)) {
+      if (pos.code === "permission_denied") {
+        setLocationError("Permission denied. You can add this later in your profile.");
+      } else if (pos.code === "unsupported") {
+        setLocationError("Your browser doesn't support geolocation. You can add this later in your profile.");
+      } else {
+        setLocationError("Could not get your location. You can add this later in your profile.");
+      }
+      return;
+    }
+    setLocationLat(pos.latitude);
+    setLocationLng(pos.longitude);
   };
 
   const ratingValid =

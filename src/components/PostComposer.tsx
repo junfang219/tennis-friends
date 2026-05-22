@@ -14,6 +14,7 @@ import {
   createPost,
 } from "@/lib/supabase/queries";
 import { buildObjectKey, type StorageBucket } from "@/lib/supabase/storage";
+import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 
 const PLACEHOLDERS = [
   "Just finished a great match...",
@@ -234,34 +235,27 @@ function ComposerModal({
       .catch(() => setHasLocation(false));
   }, [isBroadcast, hasLocation]);
 
-  const useMyLocation = () => {
-    if (!navigator.geolocation) {
-      setLocationError("Your browser doesn't support geolocation.");
-      return;
-    }
+  const useMyLocation = async () => {
     setLocationError("");
     setLocationSaving(true);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          const supabase = createSupabaseBrowserClient();
-          await updateMyProfile(supabase, {
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-          });
-          setHasLocation(true);
-        } catch {
-          setLocationError("Could not save location.");
-        }
-        setLocationSaving(false);
-      },
-      (err) => {
-        setLocationSaving(false);
-        if (err.code === err.PERMISSION_DENIED) setLocationError("Location permission denied.");
-        else setLocationError("Could not get your location.");
-      },
-      { timeout: 10000, maximumAge: 60_000 }
-    );
+    const pos = await getCurrentPosition();
+    if (isPositionError(pos)) {
+      setLocationSaving(false);
+      setLocationError(
+        pos.code === "permission_denied" ? "Location permission denied." :
+        pos.code === "unsupported" ? "Your browser doesn't support geolocation." :
+        "Could not get your location."
+      );
+      return;
+    }
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await updateMyProfile(supabase, { latitude: pos.latitude, longitude: pos.longitude });
+      setHasLocation(true);
+    } catch {
+      setLocationError("Could not save location.");
+    }
+    setLocationSaving(false);
   };
 
   // Propose Team fields

@@ -8,6 +8,7 @@ import { looksLikeEmail, looksLikePhone, normalizeE164 } from "@/lib/phone";
 import { AGE_LABELS, GENDER_LABELS, formatRating } from "@/lib/profileLabels";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getMyProfile, searchProfiles, updateMyProfile } from "@/lib/supabase/queries";
+import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 
 type Bucket = "beginner" | "intermediate" | "advanced" | "pro";
 type AgeKey = "under_18" | "18_29" | "30_49" | "50_plus";
@@ -156,40 +157,30 @@ export default function SearchPage() {
     return () => clearTimeout(timer);
   }, [query, search]);
 
-  const useMyLocation = () => {
-    if (!navigator.geolocation) {
-      setLocationError("Your browser doesn't support geolocation.");
-      return;
-    }
+  const useMyLocation = async () => {
     setLocationError("");
     setLocationSaving(true);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          const supabase = createSupabaseBrowserClient();
-          await updateMyProfile(supabase, {
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-          });
-          const res = { ok: true };
-          if (res.ok) {
-            setHasLocation(true);
-            setSort("distance");
-          } else {
-            setLocationError("Could not save location.");
-          }
-        } catch {
-          setLocationError("Could not save location.");
-        }
-        setLocationSaving(false);
-      },
-      (err) => {
-        setLocationSaving(false);
-        if (err.code === err.PERMISSION_DENIED) setLocationError("Location permission denied.");
-        else setLocationError("Could not get your location.");
-      },
-      { timeout: 10000, maximumAge: 60_000 }
-    );
+    const pos = await getCurrentPosition();
+    if (isPositionError(pos)) {
+      setLocationSaving(false);
+      setLocationError(
+        pos.code === "permission_denied"
+          ? "Location permission denied."
+          : pos.code === "unsupported"
+            ? "Your browser doesn't support geolocation."
+            : "Could not get your location."
+      );
+      return;
+    }
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await updateMyProfile(supabase, { latitude: pos.latitude, longitude: pos.longitude });
+      setHasLocation(true);
+      setSort("distance");
+    } catch {
+      setLocationError("Could not save location.");
+    }
+    setLocationSaving(false);
   };
 
   const toggle = <T,>(set: Set<T>, val: T): Set<T> => {

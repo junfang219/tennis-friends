@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 
 type Props = {
   /** Current user geolocation (from CourtsPage). Null = location unavailable. */
@@ -55,14 +56,13 @@ export function AddMissingCourtModal({ myLocation, onClose }: Props) {
     return () => clearTimeout(t);
   }, [done, onClose]);
 
-  function recapture() {
-    if (typeof navigator === "undefined" || !("geolocation" in navigator)) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) =>
-        setCapturedLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => setErrorMessage("Couldn't get your location. Try entering an address instead."),
-      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 }
-    );
+  async function recapture() {
+    const pos = await getCurrentPosition();
+    if (isPositionError(pos)) {
+      setErrorMessage("Couldn't get your location. Try entering an address instead.");
+      return;
+    }
+    setCapturedLocation({ lat: pos.latitude, lng: pos.longitude });
   }
 
   const trimmedName = name.trim();

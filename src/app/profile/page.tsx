@@ -4,6 +4,7 @@ import { useSession, signOut } from "@/lib/supabase/nextauth-compat";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getMyProfile, updateMyProfile, addHighlight, deleteHighlight } from "@/lib/supabase/queries";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
+import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
@@ -125,34 +126,27 @@ export default function ProfilePage() {
   const [locationError, setLocationError] = useState("");
   const [confirmingTurnOffLocation, setConfirmingTurnOffLocation] = useState(false);
 
-  const turnOnLocation = () => {
-    if (!navigator.geolocation) {
-      setLocationError("Your browser doesn't support geolocation.");
-      return;
-    }
+  const turnOnLocation = async () => {
     setLocationError("");
     setLocationSaving(true);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          const supabase = createSupabaseBrowserClient();
-          await updateMyProfile(supabase, {
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-          });
-          setProfile((p) => p ? { ...p, latitude: pos.coords.latitude, longitude: pos.coords.longitude } : p);
-        } catch {
-          setLocationError("Could not save location.");
-        }
-        setLocationSaving(false);
-      },
-      (err) => {
-        setLocationSaving(false);
-        if (err.code === err.PERMISSION_DENIED) setLocationError("Location permission denied.");
-        else setLocationError("Could not get your location.");
-      },
-      { timeout: 10000, maximumAge: 60_000 }
-    );
+    const pos = await getCurrentPosition();
+    if (isPositionError(pos)) {
+      setLocationSaving(false);
+      setLocationError(
+        pos.code === "permission_denied" ? "Location permission denied." :
+        pos.code === "unsupported" ? "Your browser doesn't support geolocation." :
+        "Could not get your location."
+      );
+      return;
+    }
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await updateMyProfile(supabase, { latitude: pos.latitude, longitude: pos.longitude });
+      setProfile((p) => p ? { ...p, latitude: pos.latitude, longitude: pos.longitude } : p);
+    } catch {
+      setLocationError("Could not save location.");
+    }
+    setLocationSaving(false);
   };
 
   const turnOffLocation = async () => {
