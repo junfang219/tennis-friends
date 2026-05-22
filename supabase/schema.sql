@@ -3945,3 +3945,61 @@ CREATE INDEX IF NOT EXISTS team_matches_season_id_idx ON team_matches (season_id
 -- team_listings created_by
 CREATE INDEX IF NOT EXISTS team_listings_created_by_id_idx ON team_listings (created_by_id);
 
+-- ============================================================
+-- TEST FIXTURE TEARDOWN HELPER
+-- ============================================================
+--
+-- auth.admin.deleteUser fails silently when the user owns rows behind a
+-- RESTRICT foreign key (groups.owner_id, events.owner_id, etc.). Without
+-- this helper, integration-test teardown leaves orphan fixtures (107 such
+-- profiles piled up during the Prisma->Supabase migration test runs).
+--
+-- Hard guard: refuses to run against any user whose email isn't on the
+-- @tennisfriend.test domain, so misuse can't wipe real accounts.
+
+CREATE OR REPLACE FUNCTION public.cleanup_user_for_test(uid uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM auth.users
+    WHERE id = uid AND email LIKE '%@tennisfriend.test'
+  ) THEN
+    RAISE EXCEPTION 'cleanup_user_for_test refuses non-test user %', uid;
+  END IF;
+
+  DELETE FROM public.album_items WHERE added_by_id = uid;
+  DELETE FROM public.albums WHERE created_by_id = uid;
+  DELETE FROM public.booking_players
+    WHERE booking_id IN (SELECT id FROM public.bookings WHERE organizer_id = uid);
+  DELETE FROM public.bookings WHERE organizer_id = uid;
+  DELETE FROM public.chat_messages
+    WHERE chat_id IN (SELECT id FROM public.chats WHERE creator_id = uid);
+  DELETE FROM public.chat_participants
+    WHERE chat_id IN (SELECT id FROM public.chats WHERE creator_id = uid);
+  DELETE FROM public.chats WHERE creator_id = uid;
+  DELETE FROM public.courts WHERE added_by_id = uid;
+  DELETE FROM public.event_matches
+    WHERE player1_id = uid OR player2_id = uid;
+  DELETE FROM public.event_participants
+    WHERE event_id IN (SELECT id FROM public.events WHERE owner_id = uid);
+  DELETE FROM public.events WHERE owner_id = uid;
+  DELETE FROM public.expense_shares
+    WHERE expense_id IN (SELECT id FROM public.expenses WHERE payer_id = uid);
+  DELETE FROM public.expenses WHERE payer_id = uid;
+  DELETE FROM public.group_files WHERE uploaded_by_id = uid;
+  DELETE FROM public.group_invites WHERE invited_by_id = uid;
+  DELETE FROM public.poll_votes
+    WHERE poll_id IN (SELECT id FROM public.polls WHERE created_by_id = uid);
+  DELETE FROM public.polls WHERE created_by_id = uid;
+  DELETE FROM public.team_listings WHERE created_by_id = uid;
+  DELETE FROM public.groups WHERE owner_id = uid;
+  DELETE FROM public.friend_groups WHERE owner_id = uid;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.cleanup_user_for_test(uuid) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.cleanup_user_for_test(uuid) FROM PUBLIC, anon, authenticated;

@@ -66,15 +66,32 @@ export async function makeTestUser(label: string): Promise<TestUser> {
   return { id: created.user.id, email, password: PASSWORD, client: userClient };
 }
 
-/** Tear down by deleting auth.users (cascades to profiles + downstream). */
+/**
+ * Tear down a set of test users by first clearing every RESTRICT-FK child
+ * row they own (via the cleanup_user_for_test SQL function), then deleting
+ * the auth.users row (which CASCADEs to profiles and the rest).
+ *
+ * The naive auth.admin.deleteUser-only approach silently fails on any user
+ * that owns a group, event, poll, etc. (RESTRICT FKs reject the delete) —
+ * the swallowed error is how 107 q-alice / sc-alice / ext-alice fixtures
+ * piled up before this teardown was hardened.
+ */
 export async function deleteTestUsers(users: TestUser[]): Promise<void> {
   const admin = adminClient();
   await Promise.all(
     users.map(async (u) => {
       try {
+        const { error: rpcErr } = await admin.rpc("cleanup_user_for_test", {
+          uid: u.id,
+        });
+        if (rpcErr) {
+          console.warn(`cleanup_user_for_test(${u.id}) failed: ${rpcErr.message}`);
+        }
         await admin.auth.admin.deleteUser(u.id);
-      } catch {
-        // best-effort
+      } catch (err) {
+        console.warn(
+          `deleteTestUsers leaked ${u.id}: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     })
   );

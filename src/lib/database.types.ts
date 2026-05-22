@@ -2850,6 +2850,7 @@ export type Database = {
         Args: { p: Database["public"]["Tables"]["posts"]["Row"] }
         Returns: boolean
       }
+      cleanup_user_for_test: { Args: { uid: string }; Returns: undefined }
       disablelongtransactions: { Args: never; Returns: string }
       dropgeometrycolumn:
         | {
