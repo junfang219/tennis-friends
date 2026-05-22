@@ -39,7 +39,9 @@ export default function SupabaseRegisterPage() {
       const { data, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { name } },
+        // Trim so the profile.name row doesn't end up with trailing whitespace
+        // (the handle_new_user trigger copies this verbatim into profiles).
+        options: { data: { name: name.trim() } },
       });
       if (signUpError) {
         setError(signUpError.message);

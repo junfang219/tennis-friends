@@ -147,12 +147,19 @@ security definer
 set search_path = public
 as $$
 begin
+  -- Trim so trailing/leading whitespace can't sneak into profile.name from
+  -- any path (UI signup, admin API, imports). Defense in depth alongside
+  -- the trim() already done in the register form.
   insert into public.profiles (id, email, phone, name)
   values (
     new.id,
     new.email,
     new.phone,
-    coalesce(new.raw_user_meta_data ->> 'name', split_part(coalesce(new.email, ''), '@', 1), '')
+    coalesce(
+      nullif(trim(new.raw_user_meta_data ->> 'name'), ''),
+      nullif(trim(split_part(coalesce(new.email, ''), '@', 1)), ''),
+      ''
+    )
   )
   on conflict (id) do nothing;
   return new;
