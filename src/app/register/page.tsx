@@ -98,6 +98,22 @@ export default function SupabaseRegisterPage() {
     }
   }
 
+  async function onOAuth(provider: "google") {
+    setError(null);
+    setBusy(true);
+    const supabase = createSupabaseBrowserClient();
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent("/onboarding")}`,
+      },
+    });
+    if (oauthError) {
+      setError(oauthError.message);
+      setBusy(false);
+    }
+  }
+
   if (step === "code") {
     return (
       <main className="mx-auto max-w-md p-6 pt-16">
@@ -194,6 +210,23 @@ export default function SupabaseRegisterPage() {
           {busy ? "Creating account…" : "Create account"}
         </button>
       </form>
+
+      <div className="mt-4 flex items-center gap-3 text-xs text-gray-500">
+        <div className="flex-1 h-px bg-gray-200" />
+        <span>or</span>
+        <div className="flex-1 h-px bg-gray-200" />
+      </div>
+
+      <div className="mt-4">
+        <button
+          type="button"
+          onClick={() => onOAuth("google")}
+          disabled={busy}
+          className="w-full px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+        >
+          Continue with Google
+        </button>
+      </div>
 
       <p className="mt-6 text-sm text-gray-600">
         Already have an account?{" "}

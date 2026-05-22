@@ -108,7 +108,7 @@ export default function SupabaseLoginPage() {
         <Link href="/auth/reset" className="text-green-700 hover:underline">
           Forgot password?
         </Link>
-        <Link href="/auth/register" className="text-green-700 hover:underline">
+        <Link href="/register" className="text-green-700 hover:underline">
           Create account
         </Link>
       </div>

@@ -150,7 +150,7 @@ begin
   -- Trim so trailing/leading whitespace can't sneak into profile.name from
   -- any path (UI signup, admin API, imports). Defense in depth alongside
   -- the trim() already done in the register form.
-  insert into public.profiles (id, email, phone, name)
+  insert into public.profiles (id, email, phone, name, profile_image_url)
   values (
     new.id,
     new.email,
@@ -158,6 +158,14 @@ begin
     coalesce(
       nullif(trim(new.raw_user_meta_data ->> 'name'), ''),
       nullif(trim(split_part(coalesce(new.email, ''), '@', 1)), ''),
+      ''
+    ),
+    -- OAuth providers populate one of these. Google sets both;
+    -- OpenID Connect spec uses 'picture'. Empty string falls through to
+    -- Avatar's initials rendering for password signups.
+    coalesce(
+      nullif(trim(new.raw_user_meta_data ->> 'avatar_url'), ''),
+      nullif(trim(new.raw_user_meta_data ->> 'picture'), ''),
       ''
     )
   )
