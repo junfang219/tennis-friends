@@ -4046,3 +4046,51 @@ CREATE TRIGGER friendships_notify_request
   AFTER INSERT ON public.friendships
   FOR EACH ROW
   EXECUTE FUNCTION public.notify_friend_request();
+
+-- When a pending friendship is cancelled (requester), rejected (addressee),
+-- or accepted (addressee), the matching notification becomes stale and is
+-- removed so the addressee's bell stays in sync with the actual state.
+
+CREATE OR REPLACE FUNCTION public.cleanup_friend_request_notification()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  target_user uuid;
+  target_actor uuid;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    target_user := OLD.addressee_id;
+    target_actor := OLD.requester_id;
+  ELSE
+    -- Only fire when transitioning away from pending.
+    IF OLD.status = 'pending' AND NEW.status <> 'pending' THEN
+      target_user := NEW.addressee_id;
+      target_actor := NEW.requester_id;
+    ELSE
+      RETURN NULL;
+    END IF;
+  END IF;
+
+  DELETE FROM public.notifications
+  WHERE user_id = target_user
+    AND actor_id = target_actor
+    AND type = 'friend_request';
+
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS friendships_cleanup_notification_delete ON public.friendships;
+CREATE TRIGGER friendships_cleanup_notification_delete
+  AFTER DELETE ON public.friendships
+  FOR EACH ROW
+  EXECUTE FUNCTION public.cleanup_friend_request_notification();
+
+DROP TRIGGER IF EXISTS friendships_cleanup_notification_update ON public.friendships;
+CREATE TRIGGER friendships_cleanup_notification_update
+  AFTER UPDATE OF status ON public.friendships
+  FOR EACH ROW
+  EXECUTE FUNCTION public.cleanup_friend_request_notification();

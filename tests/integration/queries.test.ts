@@ -229,6 +229,43 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       await removeFriend(carol.client, alice.id);
     });
 
+    // Regression: when the requester cancels (or the addressee rejects /
+    // accepts), the friend_request notification was left behind and the
+    // addressee saw a stale, unactionable request in their bell.
+    it("cancelling/rejecting/accepting a friend request removes the notification", async () => {
+      const helpers: Array<() => Promise<void>> = [
+        // Case 1: requester cancels (removeFriend deletes the row).
+        async () => {
+          await sendFriendRequest(alice.client, carol.id);
+          await removeFriend(alice.client, carol.id);
+        },
+        // Case 2: addressee rejects (delete of the row).
+        async () => {
+          const { friendshipId } = await sendFriendRequest(alice.client, carol.id);
+          await rejectFriendRequest(carol.client, friendshipId);
+        },
+        // Case 3: addressee accepts (status update pending → accepted).
+        async () => {
+          const { friendshipId } = await sendFriendRequest(alice.client, carol.id);
+          await acceptFriendRequest(carol.client, friendshipId);
+          // Tidy: now remove the accepted friendship.
+          await removeFriend(carol.client, alice.id);
+        },
+      ];
+
+      for (const run of helpers) {
+        await run();
+        const { data: notes, error } = await carol.client
+          .from("notifications")
+          .select("id")
+          .eq("user_id", carol.id)
+          .eq("type", "friend_request")
+          .eq("actor_id", alice.id);
+        expect(error).toBeNull();
+        expect(notes ?? []).toHaveLength(0);
+      }
+    });
+
     it("getFriendshipWith returns nulls when no relationship exists", async () => {
       const result = await getFriendshipWith(alice.client, carol.id);
       expect(result.friendshipId).toBeNull();
