@@ -133,6 +133,54 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       });
       expect(results.some((r) => r.id === alice.id)).toBe(true);
     });
+
+    it("searchProfiles hides accepted friends and annotates pending state", async () => {
+      // Three fresh users so we can exercise all three relationship states
+      // in isolation without disturbing the shared alice/bob/carol fixtures.
+      const [sp1, sp2, sp3, sp4] = await Promise.all([
+        makeTestUser("sp-viewer"),
+        makeTestUser("sp-friend"),
+        makeTestUser("sp-pending-out"),
+        makeTestUser("sp-pending-in"),
+      ]);
+      try {
+        // Make all four discoverable.
+        await Promise.all(
+          [sp1, sp2, sp3, sp4].map((u) =>
+            updateMyProfile(u.client, { onboarding_complete: true, name: u.id.slice(0, 8) })
+          )
+        );
+
+        // sp1 ↔ sp2: accepted friendship (should be hidden from Discover).
+        await befriend(sp1, sp2);
+        // sp1 → sp3: pending outgoing (should appear with isRequester=true).
+        await sendFriendRequest(sp1.client, sp3.id);
+        // sp4 → sp1: pending incoming (should appear with isRequester=false).
+        await sendFriendRequest(sp4.client, sp1.id);
+
+        const results = await searchProfiles(sp1.client, { limit: 200 });
+        const byId = new Map(results.map((r) => [r.id, r]));
+
+        // Accepted friend is filtered out entirely.
+        expect(byId.has(sp2.id)).toBe(false);
+
+        // Outgoing pending: present, status PENDING, isRequester true.
+        const out = byId.get(sp3.id);
+        expect(out).toBeDefined();
+        expect(out?.friendshipStatus).toBe("PENDING");
+        expect(out?.isRequester).toBe(true);
+        expect(out?.friendshipId).toBeTruthy();
+
+        // Incoming pending: present, status PENDING, isRequester false.
+        const incoming = byId.get(sp4.id);
+        expect(incoming).toBeDefined();
+        expect(incoming?.friendshipStatus).toBe("PENDING");
+        expect(incoming?.isRequester).toBe(false);
+        expect(incoming?.friendshipId).toBeTruthy();
+      } finally {
+        await deleteTestUsers([sp1, sp2, sp3, sp4]);
+      }
+    });
   });
 
   // ---------------------------------------------------------------------

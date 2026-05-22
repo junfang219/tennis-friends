@@ -132,6 +132,7 @@ export default function SearchPage() {
           profileImageUrl: p.profile_image_url,
           bio: p.bio,
           skillLevel: p.skill_level,
+          favoriteSurface: p.favorite_surface,
           gender: p.gender,
           ageRange: p.age_range,
           ratingSystem: p.rating_system,
@@ -140,7 +141,10 @@ export default function SearchPage() {
           customTags: p.custom_tags ? p.custom_tags.split(",").filter(Boolean) : [],
           handle: p.handle,
           distanceMiles: null,
-        })) as unknown as UserResult[]
+          friendshipId: p.friendshipId,
+          friendshipStatus: p.friendshipStatus,
+          isRequester: p.isRequester,
+        }))
       );
     } catch {
       setResults([]);
