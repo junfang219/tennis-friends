@@ -384,14 +384,25 @@ export default function NotificationBell() {
     }
   }, [open]);
 
-  // Position the portal-rendered dropdown relative to the bell button
+  // Position the portal-rendered dropdown relative to the bell button.
+  // The dropdown is w-80 (320px) but the bell sits near the right edge of
+  // the navbar, so a naive `right: innerWidth - rect.right` shoves the
+  // dropdown's left edge off-screen on narrow mobile viewports. Clamp the
+  // right anchor against the effective dropdown width — which itself caps
+  // at viewport-minus-margins via the max-w class — so the dropdown always
+  // stays inside the viewport with at least an 8px gutter on each side.
   useEffect(() => {
     if (!open || !buttonRef.current) return;
     const update = () => {
       const rect = buttonRef.current!.getBoundingClientRect();
+      const DROPDOWN_W = 320; // matches w-80
+      const MARGIN = 8;
+      const actualWidth = Math.min(DROPDOWN_W, window.innerWidth - 2 * MARGIN);
+      const maxRight = window.innerWidth - actualWidth - MARGIN;
+      const desiredRight = window.innerWidth - rect.right;
       setAnchorPos({
         top: rect.bottom + 8,
-        right: Math.max(8, window.innerWidth - rect.right),
+        right: Math.max(MARGIN, Math.min(desiredRight, maxRight)),
       });
     };
     update();
@@ -438,7 +449,7 @@ export default function NotificationBell() {
         <div
           ref={dropdownRef}
           style={{ position: "fixed", top: anchorPos.top, right: anchorPos.right, zIndex: 500 }}
-          className="w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden animate-fade-in-up"
+          className="w-80 max-w-[calc(100vw-16px)] bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden animate-fade-in-up"
         >
 
           {/* ── Friend Requests sub-view (Instagram-style) ── */}

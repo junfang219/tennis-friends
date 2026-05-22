@@ -170,14 +170,22 @@ export default function MessageBell() {
     }
   }, [open, closeDropdown]);
 
-  // Position the portal-rendered dropdown relative to the bell button
+  // Position the portal-rendered dropdown relative to the bell button.
+  // Clamp the right anchor against the effective dropdown width so the
+  // panel never overflows the left edge of a narrow viewport — same
+  // pattern as NotificationBell. See that file for the full rationale.
   useEffect(() => {
     if (!open || !buttonRef.current) return;
     const update = () => {
       const rect = buttonRef.current!.getBoundingClientRect();
+      const DROPDOWN_W = 320; // matches w-80
+      const MARGIN = 8;
+      const actualWidth = Math.min(DROPDOWN_W, window.innerWidth - 2 * MARGIN);
+      const maxRight = window.innerWidth - actualWidth - MARGIN;
+      const desiredRight = window.innerWidth - rect.right;
       setAnchorPos({
         top: rect.bottom + 8,
-        right: Math.max(8, window.innerWidth - rect.right),
+        right: Math.max(MARGIN, Math.min(desiredRight, maxRight)),
       });
     };
     update();
@@ -306,7 +314,7 @@ export default function MessageBell() {
         <div
           ref={dropdownRef}
           style={{ position: "fixed", top: anchorPos.top, right: anchorPos.right, zIndex: 500 }}
-          className="w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden animate-fade-in-up"
+          className="w-80 max-w-[calc(100vw-16px)] bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden animate-fade-in-up"
         >
           <div className="p-4 border-b border-gray-100 flex items-center justify-between">
             <h3 className="font-display text-lg font-bold text-gray-900">Messages</h3>
