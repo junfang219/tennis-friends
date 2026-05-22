@@ -516,6 +516,30 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       expect(reviews.some((r) => r.id === review.id)).toBe(true);
     });
 
+    // Regression: addCourtReview must upsert on (court_id, user_id) so a
+    // second save for the same court overwrites the existing row instead
+    // of failing with "duplicate key value violates unique constraint
+    // court_reviews_unique" — what real users hit when editing their
+    // review through the composer.
+    it("upserts on (court_id, user_id) — second save for same court updates, not duplicates", async () => {
+      const staticId = `tf-upsert-${Date.now()}`;
+      const first = await addCourtReview(alice.client, staticId, {
+        stars: 3,
+        content: "first take",
+      });
+      const second = await addCourtReview(alice.client, staticId, {
+        stars: 5,
+        content: "loved it on second visit",
+      });
+      // Same row id, updated content + stars.
+      expect(second.id).toBe(first.id);
+      expect(second.stars).toBe(5);
+      expect(second.content).toBe("loved it on second visit");
+
+      const reviews = await listCourtReviews(alice.client, staticId);
+      expect(reviews.filter((r) => r.user.id === alice.id)).toHaveLength(1);
+    });
+
     it("listCourts returns my added court", async () => {
       const all = await listCourts(carol.client);
       expect(all.some((c) => c.id === courtId)).toBe(true);

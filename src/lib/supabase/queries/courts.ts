@@ -98,18 +98,29 @@ export async function addCourtReview(
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("Not signed in");
 
+  // Upsert on (court_id, user_id) — the table has a unique constraint there,
+  // so writing a second review for the same court would otherwise hit
+  // "duplicate key value violates unique constraint court_reviews_unique".
+  // The ReviewComposer is used for both create and edit, so this lets the
+  // edit path overwrite the existing row instead of failing.
   const { data: review, error } = await supabase
     .from("court_reviews")
-    .insert({
-      court_id: courtId,
-      user_id: auth.user.id,
-      stars: input.stars,
-      content: input.content,
-    })
+    .upsert(
+      {
+        court_id: courtId,
+        user_id: auth.user.id,
+        stars: input.stars,
+        content: input.content,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "court_id,user_id" }
+    )
     .select("id")
     .single();
   if (error) throw error;
 
+  // Photos: replace the set every save so edits stay consistent with the UI.
+  await supabase.from("court_review_photos").delete().eq("review_id", review.id);
   if (input.photoUrls && input.photoUrls.length > 0) {
     const photos = input.photoUrls.map((url, i) => ({
       review_id: review.id,

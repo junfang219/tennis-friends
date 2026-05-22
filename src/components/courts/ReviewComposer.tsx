@@ -82,7 +82,15 @@ export function ReviewComposer({ courtId, courtName, initial, onClose, onSaved }
       await addCourtReview(supabase, courtId, { stars, content, photoUrls });
       onSaved();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save review");
+      // Supabase throws a PostgrestError, not an Error instance — checking
+      // instanceof first hides the real message. Probe the common shapes.
+      const msg =
+        e instanceof Error
+          ? e.message
+          : typeof e === "object" && e !== null && "message" in e
+            ? String((e as { message: unknown }).message)
+            : "Failed to save review";
+      setError(msg);
     } finally {
       setSubmitting(false);
     }
@@ -91,9 +99,18 @@ export function ReviewComposer({ courtId, courtName, initial, onClose, onSaved }
   const isEdit = !!initial;
 
   return (
-    <div className="fixed inset-0 z-[900] flex items-end sm:items-center justify-center">
+    // z-[10000] is the project convention for full-screen modals — keeps us
+    // above the BottomNav (zIndex 9999). On mobile, the card's max-height
+    // subtracts the BottomNav height (h-16 ≈ 4rem) plus the iPhone's safe
+    // area, and margin-bottom pushes it above the nav so the footer with
+    // the submit button is never hidden behind the tab bar.
+    <div className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative w-full sm:max-w-lg bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[92vh] flex flex-col">
+      <div
+        className="relative w-full sm:max-w-lg bg-white rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col
+                   max-h-[calc(100dvh-4rem-env(safe-area-inset-bottom))] sm:max-h-[92vh]
+                   mb-[calc(4rem+env(safe-area-inset-bottom))] sm:mb-0"
+      >
         {/* Header */}
         <div className="px-5 pt-4 pb-3 border-b border-gray-100 flex items-start justify-between gap-3">
           <div className="min-w-0">
