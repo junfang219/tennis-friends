@@ -17,7 +17,9 @@
 //   - signIn with credentials (use supabase.auth.signInWithPassword)
 //   - session.user.image renders the OAuth avatar from user_metadata; if a
 //     page needs the canonical avatar it should read profiles.profile_image_url
-//   - The update() callback is a no-op; Supabase refreshes via middleware.
+//   - update() re-fetches the auth user so callers that just mutated
+//     user_metadata (e.g. via updateMyProfile) see the new name + avatar
+//     immediately instead of waiting for the next page load.
 
 import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
@@ -85,7 +87,11 @@ export function useSession(): UseSessionReturn {
   return {
     data: toCompatSession(user),
     status,
-    update: async () => {},
+    update: async () => {
+      const supabase = createSupabaseBrowserClient();
+      const { data } = await supabase.auth.getUser();
+      setUser(data.user ?? null);
+    },
   };
 }
 

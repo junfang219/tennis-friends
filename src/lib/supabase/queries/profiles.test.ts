@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { searchProfiles } from "./profiles";
+import { searchProfiles, updateMyProfile } from "./profiles";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../types";
 
@@ -71,5 +71,79 @@ describe("searchProfiles", () => {
     // name != ""
     const neqName = calls.find((c) => c.op === "neq" && c.args[0] === "name");
     expect(neqName?.args[1]).toBe("");
+  });
+});
+
+// Mirror-to-auth contract for updateMyProfile. The useSession compat shim
+// reads name + avatar from auth.user_metadata, so updates to the profiles
+// row must also write the same keys to user_metadata. Otherwise the
+// navbar + composer keep rendering the signup-time initials/avatar after
+// the user edits their name or profile photo.
+function makeUpdateClient(opts: {
+  user: { id: string };
+  updatedRow: Record<string, unknown>;
+}) {
+  const updateUserSpy = vi.fn(async () => ({ data: { user: null }, error: null }));
+  const q: Record<string, unknown> = {};
+  const passthrough = () => q;
+  q.update = passthrough;
+  q.eq = passthrough;
+  q.select = passthrough;
+  q.single = vi.fn(async () => ({ data: opts.updatedRow, error: null }));
+  const client = {
+    from: vi.fn(() => q),
+    auth: {
+      getUser: vi.fn(async () => ({ data: { user: opts.user }, error: null })),
+      updateUser: updateUserSpy,
+    },
+  } as unknown as SupabaseClient<Database>;
+  return { client, updateUserSpy };
+}
+
+describe("updateMyProfile mirrors to auth.user_metadata", () => {
+  it("writes name to user_metadata.name when patch.name changes", async () => {
+    const { client, updateUserSpy } = makeUpdateClient({
+      user: { id: "u1" },
+      updatedRow: { id: "u1", name: "Mimi Fang" },
+    });
+    await updateMyProfile(client, { name: "Mimi Fang" });
+    expect(updateUserSpy).toHaveBeenCalledWith({
+      data: { name: "Mimi Fang" },
+    });
+  });
+
+  it("writes profile_image_url to user_metadata.avatar_url", async () => {
+    const { client, updateUserSpy } = makeUpdateClient({
+      user: { id: "u1" },
+      updatedRow: { id: "u1", profile_image_url: "https://x/y.png" },
+    });
+    await updateMyProfile(client, { profile_image_url: "https://x/y.png" });
+    expect(updateUserSpy).toHaveBeenCalledWith({
+      data: { avatar_url: "https://x/y.png" },
+    });
+  });
+
+  it("merges name + avatar in a single auth.updateUser call", async () => {
+    const { client, updateUserSpy } = makeUpdateClient({
+      user: { id: "u1" },
+      updatedRow: { id: "u1" },
+    });
+    await updateMyProfile(client, {
+      name: "Mimi Fang",
+      profile_image_url: "https://x/y.png",
+    });
+    expect(updateUserSpy).toHaveBeenCalledTimes(1);
+    expect(updateUserSpy).toHaveBeenCalledWith({
+      data: { name: "Mimi Fang", avatar_url: "https://x/y.png" },
+    });
+  });
+
+  it("skips the auth roundtrip when patch touches neither name nor avatar", async () => {
+    const { client, updateUserSpy } = makeUpdateClient({
+      user: { id: "u1" },
+      updatedRow: { id: "u1", latitude: 47.6, longitude: -122.3 },
+    });
+    await updateMyProfile(client, { latitude: 47.6, longitude: -122.3 });
+    expect(updateUserSpy).not.toHaveBeenCalled();
   });
 });

@@ -76,6 +76,21 @@ export async function updateMyProfile(
     .select(PROFILE_COLUMNS)
     .single();
   if (error) throw error;
+  // Mirror name + avatar into Supabase Auth user_metadata so the
+  // useSession compat shim (which reads from user_metadata, not the
+  // profiles table) reflects the change. Without this, the navbar +
+  // composer keep rendering the signup-time initials/avatar after the
+  // user edits their profile. Skip the auth roundtrip when the patch
+  // doesn't touch either field — most calls are location-only or tag
+  // updates.
+  const metadata: { name?: string; avatar_url?: string } = {};
+  if (patch.name !== undefined) metadata.name = patch.name ?? "";
+  if (patch.profile_image_url !== undefined) {
+    metadata.avatar_url = patch.profile_image_url ?? "";
+  }
+  if (Object.keys(metadata).length > 0) {
+    await supabase.auth.updateUser({ data: metadata });
+  }
   return data as Profile;
 }
 
