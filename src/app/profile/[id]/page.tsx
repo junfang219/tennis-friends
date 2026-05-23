@@ -6,7 +6,14 @@ import { useParams } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { getProfile, getFriendshipWith } from "@/lib/supabase/queries";
+import {
+  getProfile,
+  getFriendshipWith,
+  listPostsByAuthor,
+  listHighlights,
+  countUserFriends,
+} from "@/lib/supabase/queries";
+import { toPostCamel } from "@/lib/supabase/adapters";
 import Avatar from "@/components/Avatar";
 import FriendRequestButton from "@/components/FriendRequestButton";
 import PostCard from "@/components/PostCard";
@@ -93,7 +100,7 @@ export default function UserProfilePage() {
     Promise.all([
       getProfile(supabase, String(params.id)),
       getFriendshipWith(supabase, String(params.id)),
-    ]).then(([p, friendship]) => {
+    ]).then(async ([p, friendship]) => {
       if (!p) return;
       setUser({
         id: p.id,
@@ -120,10 +127,72 @@ export default function UserProfilePage() {
         handle: p.handle,
         highlights: [],
         posts: [],
+        friendCount: 0,
         friendshipId: friendship.friendshipId,
         friendshipStatus: friendship.friendshipStatus,
         isRequester: friendship.isRequester,
       } as unknown as UserProfile);
+
+      // Hydrate the fields the /api/profile -> getProfile migration
+      // (fed24d2) silently dropped: this user's posts, their highlights,
+      // and their accepted-friend count. Run all three in parallel and
+      // merge whichever succeed so a single failure doesn't blank the
+      // others.
+      const [postsRes, highlightsRes, friendCountRes] = await Promise.allSettled([
+        listPostsByAuthor(supabase, p.id),
+        listHighlights(supabase, p.id),
+        countUserFriends(supabase, p.id),
+      ]);
+      setUser((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        if (postsRes.status === "fulfilled") {
+          next.posts = postsRes.value.map((r): UserPost => {
+            const c = toPostCamel(r);
+            return {
+              id: c.id,
+              content: c.content,
+              mediaUrl: c.mediaUrl,
+              mediaType: c.mediaType,
+              photoUrls: c.photoUrls,
+              postType: c.postType,
+              playDate: c.playDate,
+              playTime: c.playTime,
+              playDuration: c.playDuration,
+              courtLocation: c.courtLocation,
+              gameType: c.gameType,
+              playersNeeded: c.playersNeeded,
+              playersConfirmed: c.playersConfirmed,
+              courtBooked: c.courtBooked,
+              isComplete: c.isComplete,
+              sessionChatId: null,
+              commentsDisabled: c.commentsDisabled,
+              createdAt: c.createdAt,
+              _count: {
+                likes: c.likeCount,
+                comments: c.commentCount,
+                playRequests: 0,
+              },
+              myPlayRequest: null,
+              groups: [],
+            };
+          });
+        }
+        if (highlightsRes.status === "fulfilled") {
+          next.highlights = highlightsRes.value.map((h) => ({
+            id: h.id,
+            userId: h.user_id,
+            mediaUrl: h.media_url,
+            mediaType: h.media_type,
+            caption: h.caption,
+            createdAt: h.created_at,
+          }));
+        }
+        if (friendCountRes.status === "fulfilled") {
+          next.friendCount = friendCountRes.value;
+        }
+        return next;
+      });
     });
   }, [params.id, session?.user?.id, router]);
 

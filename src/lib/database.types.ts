@@ -2837,6 +2837,7 @@ export type Database = {
         Returns: boolean
       }
       cleanup_user_for_test: { Args: { uid: string }; Returns: undefined }
+      count_user_friends: { Args: { user_id: string }; Returns: number }
       disablelongtransactions: { Args: never; Returns: string }
       dropgeometrycolumn:
         | {

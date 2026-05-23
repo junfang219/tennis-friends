@@ -30,6 +30,26 @@ export interface FriendProfile {
   longitude: number | null;
 }
 
+/**
+ * Accepted-friendship count for any user.
+ *
+ * Calls the SECURITY DEFINER `count_user_friends(uuid)` RPC because the
+ * `friendships` RLS policy only exposes rows where the signed-in user
+ * is a participant — a client-side `count(*)` on a stranger returns 0.
+ * The RPC returns only an integer, so this is the same information
+ * already shown on the public profile card.
+ */
+export async function countUserFriends(
+  supabase: SupabaseClient<Database>,
+  userId: string
+): Promise<number> {
+  const { data, error } = await supabase.rpc("count_user_friends", {
+    user_id: userId,
+  });
+  if (error) throw error;
+  return typeof data === "number" ? data : 0;
+}
+
 /** All accepted friends of the signed-in user. */
 export async function listFriends(
   supabase: SupabaseClient<Database>

@@ -4102,3 +4102,30 @@ CREATE TRIGGER friendships_cleanup_notification_update
   AFTER UPDATE OF status ON public.friendships
   FOR EACH ROW
   EXECUTE FUNCTION public.cleanup_friend_request_notification();
+
+-- ============================================================
+-- COUNT-USER-FRIENDS HELPER
+-- ============================================================
+--
+-- The friendships RLS policy (friendships_select_either) only exposes
+-- rows where the viewer is a participant, so a client-side `count(*)`
+-- on another user returns 0. The profile chip ("N friends") needs the
+-- target user's count regardless of viewer. SECURITY DEFINER bypasses
+-- the row filter but the function returns only an integer — no PII or
+-- friend identity escapes beyond what is already publicly shown on the
+-- profile card.
+
+CREATE OR REPLACE FUNCTION public.count_user_friends(user_id uuid)
+RETURNS integer
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT count(*)::int FROM public.friendships
+  WHERE status = 'accepted'
+    AND (requester_id = user_id OR addressee_id = user_id);
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.count_user_friends(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.count_user_friends(uuid) TO authenticated;

@@ -41,6 +41,7 @@ import {
   removeFriend,
   blockUser,
   unblockUser,
+  countUserFriends,
   // Messages
   listDirectMessages,
   sendDirectMessage,
@@ -347,6 +348,27 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       expect(carolBlocks.data?.length ?? 0).toBe(0);
 
       await unblockUser(alice.client, carol.id);
+    });
+
+    // The SECURITY DEFINER count_user_friends() RPC is the only way for a
+    // viewer to see another user's friend count, because friendships RLS
+    // hides rows where the viewer isn't a participant. The /profile/[id]
+    // friend-count chip depends on it.
+    it("countUserFriends returns the count even when the viewer can't see the rows", async () => {
+      await befriend(alice, bob);
+      await befriend(alice, carol);
+
+      // Self-count: alice can see her own two friendships directly via RLS.
+      expect(await countUserFriends(alice.client, alice.id)).toBe(2);
+
+      // Cross-user count: bob can SELECT only his own (alice↔bob) row, so a
+      // plain count(*) on carol would return 0. The RPC must bypass that.
+      // alice↔carol exists but is invisible to bob — the RPC still sees it.
+      expect(await countUserFriends(bob.client, carol.id)).toBe(1);
+      expect(await countUserFriends(bob.client, alice.id)).toBe(2);
+
+      await removeFriend(alice.client, bob.id);
+      await removeFriend(alice.client, carol.id);
     });
   });
 

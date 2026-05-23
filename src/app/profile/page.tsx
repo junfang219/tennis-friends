@@ -2,7 +2,16 @@
 
 import { useSession, signOut } from "@/lib/supabase/nextauth-compat";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { getMyProfile, updateMyProfile, addHighlight, deleteHighlight } from "@/lib/supabase/queries";
+import {
+  getMyProfile,
+  updateMyProfile,
+  addHighlight,
+  deleteHighlight,
+  listHighlights,
+  listPostsByAuthor,
+  countUserFriends,
+} from "@/lib/supabase/queries";
+import { toPostCamel } from "@/lib/supabase/adapters";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 import { useRouter } from "next/navigation";
@@ -71,7 +80,7 @@ type Profile = {
   longitude: number | null;
   createdAt: string;
   highlights: Highlight[];
-  _count: { sentRequests: number; receivedRequests: number };
+  friendCount: number;
   posts: Post[];
 };
 
@@ -188,15 +197,15 @@ export default function ProfilePage() {
 
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
-    getMyProfile(supabase).then((p) => {
+    getMyProfile(supabase).then(async (p) => {
       if (!p) {
         router.replace("/login");
         return;
       }
       // Adapt snake_case Supabase shape to the page's camelCase state. The
       // page predates the Supabase migration; full snake_case rewrite is
-      // future cleanup. customTags + highlights + posts are populated by
-      // separate fetches below.
+      // future cleanup. highlights / friendCount / posts hydrate via the
+      // parallel fetches below.
       setProfile({
         id: p.id,
         name: p.name,
@@ -219,7 +228,7 @@ export default function ProfilePage() {
         longitude: p.longitude,
         createdAt: p.created_at,
         highlights: [],
-        _count: { sentRequests: 0, receivedRequests: 0 },
+        friendCount: 0,
         posts: [],
       });
       setForm({
@@ -238,6 +247,37 @@ export default function ProfilePage() {
         cashappHandle: p.cashapp_handle ?? "",
         zelleHandle: p.zelle_handle ?? "",
         isPrivate: p.is_private,
+      });
+
+      // Hydrate the fields that the /api/profile -> getMyProfile migration
+      // (fed24d2) silently dropped: the user's own posts, their highlights,
+      // and their accepted-friend count. All three are independent reads, so
+      // run them in parallel and merge whichever land.
+      const [postsRes, highlightsRes, friendCountRes] = await Promise.allSettled([
+        listPostsByAuthor(supabase, p.id),
+        listHighlights(supabase, p.id),
+        countUserFriends(supabase, p.id),
+      ]);
+      setProfile((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        if (postsRes.status === "fulfilled") {
+          next.posts = postsRes.value.map((r) => toPostCamel(r) as unknown as Post);
+        }
+        if (highlightsRes.status === "fulfilled") {
+          next.highlights = highlightsRes.value.map((h) => ({
+            id: h.id,
+            userId: h.user_id,
+            mediaUrl: h.media_url,
+            mediaType: h.media_type,
+            caption: h.caption,
+            createdAt: h.created_at,
+          }));
+        }
+        if (friendCountRes.status === "fulfilled") {
+          next.friendCount = friendCountRes.value;
+        }
+        return next;
       });
     });
   }, [router]);
@@ -619,7 +659,7 @@ export default function ProfilePage() {
     );
   }
 
-  const friendCount = profile._count.sentRequests + profile._count.receivedRequests;
+  const friendCount = profile.friendCount;
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
