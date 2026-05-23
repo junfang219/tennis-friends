@@ -1,6 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   eslint: { ignoreDuringBuilds: true },
+  // Hide the floating Next.js dev-tools badge (the black "N" pill that
+  // mounts bottom-left in `next dev`). On the iPhone WebView it overlaps
+  // the NTRP Level row in the Create Post sheet; on desktop it's just
+  // unhelpful chrome that we have no use for here.
+  devIndicators: false,
   // Lift the 10 MB Route Handler body cap so /api/upload can accept videos
   // up to its own 100 MB limit. Both keys are set: serverActions.bodySizeLimit
   // covers Server Actions; middlewareClientMaxBodySize covers Route Handlers

@@ -18,6 +18,14 @@ const config: CapacitorConfig = {
   },
   ios: {
     contentInset: 'never',
+    // Pin the native WKWebView background to the app's surface color so
+    // the triangular gaps where the iOS keyboard's rounded corners meet
+    // the rectangular viewport (top-left / top-right where the keyboard
+    // joins the form, bottom-left / bottom-right at the home-indicator
+    // strip) stop rendering as the default black. Matches --color-surface
+    // in globals.css. Requires `npx cap sync ios` + app relaunch — the
+    // value is read once at WKWebView init, not on hot reload.
+    backgroundColor: '#F1F5EC',
   },
 };
 
