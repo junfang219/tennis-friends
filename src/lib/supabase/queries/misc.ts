@@ -276,6 +276,32 @@ export async function removeReaction(
   if (error) throw error;
 }
 
+export interface MessageReactionWithUser extends MessageReaction {
+  user: { id: string; name: string };
+}
+
+/** Batch-fetch reactions for a set of messages of one target_type.
+ *  RLS already scopes visibility (a DM reaction is only visible if the
+ *  viewer can see the parent message), so callers don't have to do their
+ *  own filtering. */
+export async function listReactionsForMessages(
+  supabase: SupabaseClient<Database>,
+  targetType: ReactionTarget,
+  targetIds: string[]
+): Promise<MessageReactionWithUser[]> {
+  if (targetIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("message_reactions")
+    .select(
+      `id, target_type, target_id, user_id, emoji, created_at,
+       user:profiles!message_reactions_user_id_fkey ( id, name )`
+    )
+    .eq("target_type", targetType)
+    .in("target_id", targetIds);
+  if (error) throw error;
+  return (data ?? []) as unknown as MessageReactionWithUser[];
+}
+
 // ---------------------------------------------------------------------
 // Highlights (story-style media on profile)
 // ---------------------------------------------------------------------

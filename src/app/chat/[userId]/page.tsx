@@ -20,6 +20,7 @@ import {
   deleteDirectMessage,
   addReaction,
   removeReaction,
+  listReactionsForMessages,
 } from "@/lib/supabase/queries";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 
@@ -138,23 +139,34 @@ export default function ChatPage() {
     });
   }, [userId]);
 
-  // Load messages
-  const loadMessages = () => {
+  // Load messages. Reactions live in a sibling table (message_reactions)
+  // so fetch them in parallel and zip them onto each row, keyed by message id.
+  // Without this the 3s poll would wipe any optimistic emoji because the
+  // page state would otherwise reset reactions to [] on every refresh.
+  const loadMessages = async () => {
     const supabase = createSupabaseBrowserClient();
-    listDirectMessages(supabase, userId).then((rows) => {
-      setMessages(
-        rows.map<Message>((m) => ({
-          id: m.id,
-          content: m.content,
-          mediaUrl: m.media_url,
-          mediaType: m.media_type,
-          createdAt: m.created_at,
-          senderId: m.sender_id,
-          sharedPost: null,
-          reactions: [],
-        }))
-      );
-    });
+    const rows = await listDirectMessages(supabase, userId);
+    const reactionRows = rows.length
+      ? await listReactionsForMessages(supabase, "dm", rows.map((m) => m.id)).catch(() => [])
+      : [];
+    const byMessage = new Map<string, MsgReaction[]>();
+    for (const r of reactionRows) {
+      const arr = byMessage.get(r.target_id) ?? [];
+      arr.push({ emoji: r.emoji, userId: r.user_id, userName: r.user.name });
+      byMessage.set(r.target_id, arr);
+    }
+    setMessages(
+      rows.map<Message>((m) => ({
+        id: m.id,
+        content: m.content,
+        mediaUrl: m.media_url,
+        mediaType: m.media_type,
+        createdAt: m.created_at,
+        senderId: m.sender_id,
+        sharedPost: null,
+        reactions: byMessage.get(m.id) ?? [],
+      }))
+    );
   };
 
   const markRead = () => {
@@ -272,6 +284,14 @@ export default function ChatPage() {
 
   const applyReaction = async (msgId: string, key: ReactionKey | null) => {
     if (!myId) return;
+    // Snapshot the user's existing reaction so we know what to delete on
+    // a swap or toggle-off. The bar only emits "switch" / "toggle off",
+    // never "same emoji again" (it toggles off in that case), so the
+    // delete-then-add ordering below covers every reachable transition.
+    const prevEmoji = messages
+      .find((m) => m.id === msgId)
+      ?.reactions?.find((r) => r.userId === myId)?.emoji as ReactionKey | undefined;
+
     setMessages((prev) =>
       prev.map((m) => {
         if (m.id !== msgId) return m;
@@ -280,17 +300,15 @@ export default function ChatPage() {
         return { ...m, reactions: next };
       }),
     );
+
     try {
       const supabase = createSupabaseBrowserClient();
-      if (key === null) {
-        // Remove all our reactions on this message. Simplest path: load
-        // all and delete each. For now, delete each emoji individually if
-        // known — fallback to leaving the row.
-        // We don't carry the previous emoji here; skip server delete.
-      } else {
+      if (prevEmoji && prevEmoji !== key) {
+        await removeReaction(supabase, "dm", msgId, prevEmoji);
+      }
+      if (key !== null && prevEmoji !== key) {
         await addReaction(supabase, "dm", msgId, key);
       }
-      void removeReaction; // legacy reference for follow-up wiring
     } catch {
       // Polling will reconcile.
     }

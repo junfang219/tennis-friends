@@ -46,6 +46,9 @@ import {
   sendDirectMessage,
   deleteDirectMessage,
   markDmRead,
+  addReaction,
+  removeReaction,
+  listReactionsForMessages,
   listDmThreads,
   // Notifications
   listNotifications,
@@ -478,6 +481,27 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       await deleteDirectMessage(alice.client, row.id);
       const thread = await listDirectMessages(alice.client, bob.id);
       expect(thread.some((m) => m.id === row.id)).toBe(true);
+    });
+
+    it("listReactionsForMessages returns reactions added by add/removeReaction", async () => {
+      const row = await sendDirectMessage(alice.client, bob.id, "react to me");
+
+      // Bob adds a reaction; both directions should be able to see it
+      // (RLS for message_reactions allows visibility when the parent
+      // message is visible to the viewer).
+      await addReaction(bob.client, "dm", row.id, "heart");
+      const seenByAlice = await listReactionsForMessages(alice.client, "dm", [row.id]);
+      expect(seenByAlice.some((r) => r.user_id === bob.id && r.emoji === "heart")).toBe(true);
+
+      // Bob removes it; the listing helper drops it.
+      await removeReaction(bob.client, "dm", row.id, "heart");
+      const afterRemoval = await listReactionsForMessages(alice.client, "dm", [row.id]);
+      expect(afterRemoval.some((r) => r.user_id === bob.id && r.emoji === "heart")).toBe(false);
+    });
+
+    it("listReactionsForMessages returns [] for an empty id list without hitting the DB", async () => {
+      const empty = await listReactionsForMessages(alice.client, "dm", []);
+      expect(empty).toEqual([]);
     });
   });
 
