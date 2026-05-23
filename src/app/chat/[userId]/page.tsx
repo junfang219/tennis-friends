@@ -17,6 +17,7 @@ import {
   listDirectMessages,
   markDmRead,
   sendDirectMessage,
+  deleteDirectMessage,
   addReaction,
   removeReaction,
 } from "@/lib/supabase/queries";
@@ -303,6 +304,21 @@ export default function ChatPage() {
 
   const popoverMsg = reactionPopover ? messages.find((m) => m.id === reactionPopover.msgId) : null;
   const popoverCurrent = (popoverMsg?.reactions || []).find((r) => r.userId === myId)?.emoji as ReactionKey | undefined;
+  const popoverIsMine = !!popoverMsg && popoverMsg.senderId === myId;
+
+  const deleteMessage = async (msgId: string) => {
+    const snapshot = messages;
+    // Optimistic remove; RLS blocks anyone but the sender so a failure
+    // here is a real error (network, deleted-twice race) rather than a
+    // permission issue we should silently absorb.
+    setMessages((prev) => prev.filter((m) => m.id !== msgId));
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await deleteDirectMessage(supabase, msgId);
+    } catch {
+      setMessages(snapshot);
+    }
+  };
 
   // Group messages by date
   const messagesByDate: { date: string; messages: Message[] }[] = [];
@@ -553,6 +569,15 @@ export default function ChatPage() {
           setReactionPopover(null);
         }}
         onClose={() => setReactionPopover(null)}
+        onDelete={
+          popoverIsMine && reactionPopover
+            ? () => {
+                const id = reactionPopover.msgId;
+                setReactionPopover(null);
+                void deleteMessage(id);
+              }
+            : undefined
+        }
       />
     </div>
   );

@@ -44,6 +44,7 @@ import {
   // Messages
   listDirectMessages,
   sendDirectMessage,
+  deleteDirectMessage,
   markDmRead,
   listDmThreads,
   // Notifications
@@ -460,6 +461,23 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       const t = threads.find((x) => x.other.id === bob.id);
       expect(t).toBeDefined();
       expect(t!.unread_count).toBeGreaterThanOrEqual(1);
+    });
+
+    it("deleteDirectMessage removes the sender's own message", async () => {
+      const row = await sendDirectMessage(alice.client, bob.id, "to be deleted");
+      await deleteDirectMessage(alice.client, row.id);
+      const thread = await listDirectMessages(alice.client, bob.id);
+      expect(thread.some((m) => m.id === row.id)).toBe(false);
+    });
+
+    it("deleteDirectMessage on a peer's message is a no-op (RLS blocks)", async () => {
+      // bob sends; alice tries to delete. RLS policy messages_delete_sender
+      // restricts deletes to sender_id = auth.uid(), so this is a silent
+      // no-op from the client's perspective — the row stays.
+      const row = await sendDirectMessage(bob.client, alice.id, "alice can't touch this");
+      await deleteDirectMessage(alice.client, row.id);
+      const thread = await listDirectMessages(alice.client, bob.id);
+      expect(thread.some((m) => m.id === row.id)).toBe(true);
     });
   });
 

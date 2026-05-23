@@ -72,6 +72,17 @@ export async function sendDirectMessage(
   return data as DirectMessage;
 }
 
+/** Delete a DM you sent. RLS policy `messages_delete_sender` enforces
+ *  sender-only deletion at the DB level — this helper just wraps the call
+ *  so consumers don't construct the query inline. */
+export async function deleteDirectMessage(
+  supabase: SupabaseClient<Database>,
+  id: string
+): Promise<void> {
+  const { error } = await supabase.from("messages").delete().eq("id", id);
+  if (error) throw error;
+}
+
 export async function markDmRead(
   supabase: SupabaseClient<Database>,
   otherId: string
