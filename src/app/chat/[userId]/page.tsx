@@ -155,18 +155,23 @@ export default function ChatPage() {
       arr.push({ emoji: r.emoji, userId: r.user_id, userName: r.user.name });
       byMessage.set(r.target_id, arr);
     }
-    setMessages(
-      rows.map<Message>((m) => ({
-        id: m.id,
-        content: m.content,
-        mediaUrl: m.media_url,
-        mediaType: m.media_type,
-        createdAt: m.created_at,
-        senderId: m.sender_id,
-        sharedPost: null,
-        reactions: byMessage.get(m.id) ?? [],
-      }))
-    );
+    const fresh: Message[] = rows.map((m) => ({
+      id: m.id,
+      content: m.content,
+      mediaUrl: m.media_url,
+      mediaType: m.media_type,
+      createdAt: m.created_at,
+      senderId: m.sender_id,
+      sharedPost: null,
+      reactions: byMessage.get(m.id) ?? [],
+    }));
+    // Preserve optimistic bubbles whose await sendDirectMessage hasn't
+    // resolved yet — without this the poll briefly flickers the just-sent
+    // message off-screen between the optimistic insert and the swap-in.
+    setMessages((prev) => {
+      const pending = prev.filter((m) => m.id.startsWith("temp-"));
+      return pending.length ? [...fresh, ...pending] : fresh;
+    });
   };
 
   const markRead = () => {
@@ -194,7 +199,10 @@ export default function ChatPage() {
   // to bottom as usual.
   useEffect(() => {
     if (focusTargetRef.current && !focusHandledRef.current) return;
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    // block:"end" pins the end-sentinel to the bottom of the viewport.
+    // The default ("start") aligns the element's top to the viewport top,
+    // which pushes the last actual bubble above the visible area.
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length]);
 
   // Deep-link: scroll to and briefly highlight the message referenced by ?msg=…
@@ -220,34 +228,57 @@ export default function ChatPage() {
     if ((!input.trim() && !pendingMedia) || sending || uploading) return;
     setSending(true);
 
-    let success = false;
-    let msg: Message | null = null;
+    // Optimistic: render the bubble + clear the input immediately so the
+    // UI doesn't wait on the Supabase round-trip (200–500ms on real
+    // hardware). On success, swap the temp row for the server's id and
+    // canonical timestamp. On failure, roll back and put the text back
+    // into the input so the user doesn't lose their message.
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const draftContent = input;
+    const draftMedia = pendingMedia;
+    const optimistic: Message = {
+      id: tempId,
+      content: draftContent,
+      mediaUrl: draftMedia?.url,
+      mediaType: draftMedia?.type,
+      createdAt: new Date().toISOString(),
+      senderId: myId,
+      sharedPost: null,
+      reactions: [],
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    setInput("");
+    setPendingMedia(null);
+    inputRef.current?.focus();
+
     try {
       const supabase = createSupabaseBrowserClient();
-      const row = await sendDirectMessage(supabase, userId, input, {
-        mediaUrl: pendingMedia?.url,
-        mediaType: pendingMedia?.type,
+      const row = await sendDirectMessage(supabase, userId, draftContent, {
+        mediaUrl: draftMedia?.url,
+        mediaType: draftMedia?.type,
       });
-      msg = {
-        id: row.id,
-        content: row.content,
-        mediaUrl: row.media_url,
-        mediaType: row.media_type,
-        createdAt: row.created_at,
-        senderId: row.sender_id,
-        sharedPost: null,
-        reactions: [],
-      };
-      success = true;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === tempId
+            ? {
+                id: row.id,
+                content: row.content,
+                mediaUrl: row.media_url,
+                mediaType: row.media_type,
+                createdAt: row.created_at,
+                senderId: row.sender_id,
+                sharedPost: null,
+                reactions: [],
+              }
+            : m,
+        ),
+      );
     } catch {
-      // ignore
-    }
-    const res = { ok: success };
-    if (res.ok && msg) {
-      setMessages((prev) => [...prev, msg!]);
-      setInput("");
-      setPendingMedia(null);
-      inputRef.current?.focus();
+      // Roll back the optimistic bubble + restore the draft so the user
+      // can retry. Don't restore pendingMedia — it's already uploaded and
+      // re-attaching it would re-upload on the next send.
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      setInput(draftContent);
     }
     setSending(false);
   };
@@ -351,7 +382,12 @@ export default function ChatPage() {
   });
 
   return (
-    <div className="max-w-2xl mx-auto flex flex-col" style={{ height: "calc(100vh - 4rem)" }}>
+    // 100dvh (dynamic viewport height) shrinks when the iOS keyboard
+    // opens; 100vh does not, which is what caused the just-sent bubble to
+    // float up to the status bar with empty space below — the messages
+    // region kept its tall height and content settled below the visible
+    // area. dvh is supported in iOS 15.4+ and the Capacitor WKWebView.
+    <div className="max-w-2xl mx-auto flex flex-col" style={{ height: "calc(100dvh - 4rem)" }}>
       {/* Chat header */}
       <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shrink-0">
         <Link
@@ -389,6 +425,12 @@ export default function ChatPage() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 bg-surface/50 net-texture">
+        {/* min-h-full + justify-end pins short threads to the bottom of the
+            scroll region so a just-sent bubble lands right above the input
+            instead of floating at the top with empty space below. When the
+            thread grows past the viewport the inner div outgrows min-h-full
+            and scrolls normally. */}
+        <div className="min-h-full flex flex-col justify-end">
         {messages.length === 0 && chatUser && (
           <div className="text-center py-16">
             <Avatar name={chatUser.name} image={chatUser.profileImageUrl} size="xl" />
@@ -498,6 +540,7 @@ export default function ChatPage() {
           </div>
         ))}
         <div ref={messagesEndRef} />
+        </div>
       </div>
 
       {/* Input */}

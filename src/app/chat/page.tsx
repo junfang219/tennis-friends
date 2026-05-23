@@ -59,6 +59,16 @@ export default function ChatPage() {
     }
   }, []);
 
+  // Warm the route cache for every thread visible in the inbox so tapping
+  // one navigates instantly instead of cold-downloading the page chunk.
+  // Required because rows use router.push() (not <Link>) for the swipe
+  // gesture — that path skips Next.js' automatic prefetch.
+  useEffect(() => {
+    for (const it of items) {
+      router.prefetch(it.href);
+    }
+  }, [items, router]);
+
   useEffect(() => {
     if (status !== "authenticated") return;
     loadInbox();

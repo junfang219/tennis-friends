@@ -3,6 +3,7 @@ import "./globals.css";
 import Navbar from "@/components/Navbar";
 import BottomNav from "@/components/BottomNav";
 import PushRegistrar from "@/components/PushRegistrar";
+import KeyboardInit from "@/components/KeyboardInit";
 
 // SessionProvider is gone: Supabase's auth state is hydrated per-component
 // via useSupabaseUser / the nextauth-compat shim. ArrivalDetector was
@@ -31,6 +32,7 @@ export default function RootLayout({
     <html lang="en" className="h-full">
       <body className="min-h-full flex flex-col bg-surface" suppressHydrationWarning>
         <PushRegistrar />
+        <KeyboardInit />
         <Navbar />
         <main className="flex-1">{children}</main>
         <BottomNav />

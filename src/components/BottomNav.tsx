@@ -66,15 +66,27 @@ export default function BottomNav() {
     return () => clearTimeout(t);
   }, [pathname, status, isNative]);
 
-  // Add bottom padding to body so content isn't hidden behind the nav
+  // Hide on individual chat threads (1:1 and group). The chat is a
+  // dedicated typing surface — the bottom tab strip squeezes the input
+  // away from the keyboard and adds a visible gap on iOS. The inbox at
+  // /chat itself keeps the nav so tab-switching still works there.
+  const isChatThread =
+    (pathname.startsWith("/chat/") && pathname !== "/chat") ||
+    pathname.startsWith("/chat/group/");
+
+  // Add bottom padding to body so content isn't hidden behind the nav —
+  // but only when the nav is actually rendered. On chat threads the nav
+  // is hidden and the extra padding would just open a dead gap under
+  // the chat container.
   useEffect(() => {
-    if (status !== "authenticated" || !isNative) return;
+    if (status !== "authenticated" || !isNative || isChatThread) return;
     document.body.style.paddingBottom = "5rem";
     return () => { document.body.style.paddingBottom = ""; };
-  }, [status, isNative]);
+  }, [status, isNative, isChatThread]);
 
   // All hooks above — safe to return early now
   if (status !== "authenticated" || !isNative) return null;
+  if (isChatThread) return null;
 
   const tabs = [
     {
