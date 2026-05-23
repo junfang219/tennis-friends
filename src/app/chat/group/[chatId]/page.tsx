@@ -18,15 +18,12 @@ import {
   sendChatMessage,
   addReaction,
 } from "@/lib/supabase/queries";
+import { toChatMessageCamel } from "@/lib/supabase/adapters";
 
-type Message = {
-  id: string;
-  content: string;
-  mediaUrl?: string;
-  mediaType?: string;
-  createdAt: string;
-  senderId: string;
-  sender: { id: string; name: string; profileImageUrl: string };
+// Page Message is the shared ChatMessageCamel adapter (which handles
+// snake→camel + pgToIso on createdAt) plus the per-message reaction list
+// the chat UI maintains in component state.
+type Message = ReturnType<typeof toChatMessageCamel> & {
   reactions?: MsgReaction[];
 };
 
@@ -177,20 +174,7 @@ export default function GroupChatThreadPage() {
     listChatMessages(supabase, chatId)
       .then((rows) =>
         setMessages(
-          rows.map((m) => ({
-            id: m.id,
-            content: m.content,
-            mediaUrl: m.media_url,
-            mediaType: m.media_type,
-            createdAt: m.created_at,
-            senderId: m.sender_id,
-            sender: {
-              id: m.sender.id,
-              name: m.sender.name,
-              profileImageUrl: m.sender.profile_image_url,
-            },
-            reactions: [],
-          })) as unknown as Message[]
+          rows.map((m) => ({ ...toChatMessageCamel(m), reactions: [] }))
         )
       )
       .catch(() => {});
@@ -217,20 +201,7 @@ export default function GroupChatThreadPage() {
         mediaUrl: pendingMedia?.url,
         mediaType: pendingMedia?.type,
       });
-      const msg = {
-        id: row.id,
-        content: row.content,
-        mediaUrl: row.media_url,
-        mediaType: row.media_type,
-        createdAt: row.created_at,
-        senderId: row.sender_id,
-        sender: {
-          id: row.sender.id,
-          name: row.sender.name,
-          profileImageUrl: row.sender.profile_image_url,
-        },
-        reactions: [],
-      } as unknown as Message;
+      const msg: Message = { ...toChatMessageCamel(row), reactions: [] };
       setMessages((prev) => [...prev, msg]);
       setInput("");
       setPendingMedia(null);

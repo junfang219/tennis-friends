@@ -23,15 +23,13 @@ import {
   listReactionsForMessages,
 } from "@/lib/supabase/queries";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
+import { toDirectMessageCamel } from "@/lib/supabase/adapters";
 
-type Message = {
-  id: string;
-  content: string;
-  mediaUrl?: string;
-  mediaType?: string;
-  createdAt: string;
-  senderId: string;
-  sharedPostId?: string | null;
+// Page Message is the shared DirectMessageCamel adapter (snake→camel +
+// pgToIso) plus the per-message reactions list and the resolved shared
+// post object. sharedPostId comes from the adapter; sharedPost is filled
+// in by the caller when it has the post body to embed.
+type Message = ReturnType<typeof toDirectMessageCamel> & {
   sharedPost?: SharedPost | null;
   reactions?: MsgReaction[];
 };
@@ -156,12 +154,7 @@ export default function ChatPage() {
       byMessage.set(r.target_id, arr);
     }
     const fresh: Message[] = rows.map((m) => ({
-      id: m.id,
-      content: m.content,
-      mediaUrl: m.media_url,
-      mediaType: m.media_type,
-      createdAt: m.created_at,
-      senderId: m.sender_id,
+      ...toDirectMessageCamel(m),
       sharedPost: null,
       reactions: byMessage.get(m.id) ?? [],
     }));
@@ -239,10 +232,12 @@ export default function ChatPage() {
     const optimistic: Message = {
       id: tempId,
       content: draftContent,
-      mediaUrl: draftMedia?.url,
-      mediaType: draftMedia?.type,
+      mediaUrl: draftMedia?.url ?? "",
+      mediaType: draftMedia?.type ?? "",
       createdAt: new Date().toISOString(),
       senderId: myId,
+      receiverId: userId,
+      sharedPostId: null,
       sharedPost: null,
       reactions: [],
     };
@@ -260,16 +255,7 @@ export default function ChatPage() {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === tempId
-            ? {
-                id: row.id,
-                content: row.content,
-                mediaUrl: row.media_url,
-                mediaType: row.media_type,
-                createdAt: row.created_at,
-                senderId: row.sender_id,
-                sharedPost: null,
-                reactions: [],
-              }
+            ? { ...toDirectMessageCamel(row), sharedPost: null, reactions: [] }
             : m,
         ),
       );

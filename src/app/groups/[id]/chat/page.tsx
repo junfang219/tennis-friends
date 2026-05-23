@@ -25,24 +25,16 @@ import {
   setPollClosed,
 } from "@/lib/supabase/queries";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
+import { toGroupMessageCamel } from "@/lib/supabase/adapters";
 
-type Message = {
-  id: string;
-  content: string;
-  mediaUrl?: string;
-  mediaType?: string;
-  createdAt: string;
-  senderId: string;
-  sharedPostId?: string | null;
+// Page Message is the shared GroupMessageCamel adapter (snake→camel +
+// pgToIso on createdAt and pinnedAt) plus the resolved shared-post body,
+// resolved poll body, and reactions list the chat UI maintains alongside.
+// kind in the adapter is "chat" | "announcement" — announcements render
+// highlighted with a captain-authored badge.
+type Message = ReturnType<typeof toGroupMessageCamel> & {
   sharedPost?: SharedPost | null;
-  // "chat" (default) or "announcement". Announcements render highlighted
-  // with a captain-authored badge.
-  kind?: "chat" | "announcement";
-  notifyEmail?: boolean;
-  pinnedAt?: string | null;
-  pollId?: string | null;
   poll?: PollData | null;
-  sender: { id: string; name: string; profileImageUrl: string };
   reactions?: MsgReaction[];
 };
 
@@ -180,24 +172,7 @@ export default function GroupChatPage() {
     listGroupMessages(supabase, groupId)
       .then((rows) =>
         setMessages(
-          rows.map((m) => ({
-            id: m.id,
-            content: m.content,
-            mediaUrl: m.media_url,
-            mediaType: m.media_type,
-            sharedPostId: m.shared_post_id,
-            kind: m.kind,
-            pinnedAt: m.pinned_at,
-            pollId: m.poll_id,
-            createdAt: m.created_at,
-            senderId: m.sender_id,
-            sender: {
-              id: m.sender.id,
-              name: m.sender.name,
-              profileImageUrl: m.sender.profile_image_url,
-            },
-            reactions: [],
-          })) as unknown as Message[]
+          rows.map((m) => ({ ...toGroupMessageCamel(m), reactions: [] }))
         )
       )
       .catch(() => {});
@@ -226,24 +201,7 @@ export default function GroupChatPage() {
         mediaType: pendingMedia?.type,
         kind: announcementMode ? "announcement" : "chat",
       });
-      const msg = {
-        id: row.id,
-        content: row.content,
-        mediaUrl: row.media_url,
-        mediaType: row.media_type,
-        sharedPostId: row.shared_post_id,
-        kind: row.kind,
-        pinnedAt: row.pinned_at,
-        pollId: row.poll_id,
-        createdAt: row.created_at,
-        senderId: row.sender_id,
-        sender: {
-          id: row.sender.id,
-          name: row.sender.name,
-          profileImageUrl: row.sender.profile_image_url,
-        },
-        reactions: [],
-      } as unknown as Message;
+      const msg: Message = { ...toGroupMessageCamel(row), reactions: [] };
       setMessages((prev) => [...prev, msg]);
       setInput("");
       setPendingMedia(null);

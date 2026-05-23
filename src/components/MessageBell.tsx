@@ -7,6 +7,7 @@ import { useSession } from "@/lib/supabase/nextauth-compat";
 import ConversationRow, { type InboxItem, type InboxAction } from "./ConversationRow";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listDmThreads, listMyChats, markDmRead, markChatRead } from "@/lib/supabase/queries";
+import { pgToIso } from "@/lib/pgDate";
 
 // Per-user localStorage key so dismissals are scoped to the signed-in user.
 const DISMISS_KEY = (userId: string) => `tf_msg_tray_dismissed_${userId}`;
@@ -69,7 +70,9 @@ export default function MessageBell() {
         },
         lastMessage: {
           content: t.last_message.content,
-          createdAt: t.last_message.created_at,
+          // pgToIso so iOS Safari's strict parser accepts the "+00" form
+          // (timeAgo / dismissed-comparison both run new Date(createdAt)).
+          createdAt: pgToIso(t.last_message.created_at),
           fromSelf: t.last_message.sender_id !== t.other.id,
         },
       }));

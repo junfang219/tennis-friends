@@ -15,7 +15,7 @@ import {
   listFriends,
   createPost,
 } from "@/lib/supabase/queries";
-import { toGroupCamel, toGroupMemberCamel } from "@/lib/supabase/adapters";
+import { toGroupCamel, toGroupMemberCamel, toPostCamel } from "@/lib/supabase/adapters";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 
 type Member = {
@@ -1263,7 +1263,7 @@ function GroupComposerModal({
       await supabase
         .from("post_targets")
         .insert({ post_id: newPost.id, target_kind: "group", group_id: groupId });
-      onPost(newPost as unknown as Record<string, unknown>);
+      onPost(toPostCamel(newPost) as unknown as Record<string, unknown>);
     } catch (err) {
       setPostError(err instanceof Error ? err.message : "Network error");
     } finally {

@@ -6,6 +6,7 @@ import { useSession } from "@/lib/supabase/nextauth-compat";
 import ConversationRow, { type InboxItem, type InboxAction } from "@/components/ConversationRow";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listDmThreads, listMyChats, markDmRead, markChatRead } from "@/lib/supabase/queries";
+import { pgToIso } from "@/lib/pgDate";
 
 export default function ChatPage() {
   const { status } = useSession();
@@ -36,7 +37,9 @@ export default function ChatPage() {
         },
         lastMessage: {
           content: t.last_message.content,
-          createdAt: t.last_message.created_at,
+          // Postgres "2026-05-21 18:23:35+00" → strict ISO so iOS Safari's
+          // Date parser doesn't NaN out and render "Invalid Date".
+          createdAt: pgToIso(t.last_message.created_at),
           fromSelf: t.last_message.sender_id !== t.other.id,
         },
       }));

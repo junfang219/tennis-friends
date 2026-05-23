@@ -14,6 +14,7 @@ import {
   createPost,
 } from "@/lib/supabase/queries";
 import { buildObjectKey, type StorageBucket } from "@/lib/supabase/storage";
+import { toPostCamel } from "@/lib/supabase/adapters";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 
 const PLACEHOLDERS = [
@@ -560,7 +561,11 @@ function ComposerModal({
           }))
         );
       }
-      onPost(newPost as unknown as Record<string, unknown>);
+      // Translate to camelCase before handing off — callers cast straight to
+      // their local Post type, so the snake_case row from createPost would
+      // arrive with every field undefined (postType, playDate, createdAt…),
+      // which renders find-player posts as plain text with "Invalid Date".
+      onPost(toPostCamel(newPost) as unknown as Record<string, unknown>);
     } catch (err) {
       setPostError(err instanceof Error ? err.message : "Network error");
     } finally {

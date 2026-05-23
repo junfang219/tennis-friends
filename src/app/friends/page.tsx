@@ -27,6 +27,7 @@ import {
   markDmRead,
   markChatRead,
 } from "@/lib/supabase/queries";
+import { pgToIso } from "@/lib/pgDate";
 
 type FriendUser = {
   id: string;
@@ -243,7 +244,8 @@ export default function FriendsPage() {
       },
       lastMessage: {
         content: t.last_message.content,
-        createdAt: t.last_message.created_at,
+        // pgToIso so iOS Safari's strict parser accepts the "+00" form.
+        createdAt: pgToIso(t.last_message.created_at),
         fromSelf: t.last_message.sender_id !== t.other.id,
       },
     }));
