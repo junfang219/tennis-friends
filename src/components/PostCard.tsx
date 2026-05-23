@@ -1163,11 +1163,11 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
-                      <input type="date" value={editPlayDate} onChange={(e) => setEditPlayDate(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
+                      <input type="date" value={editPlayDate} onChange={(e) => setEditPlayDate(e.target.value)} className="w-full min-h-[42px] px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-1">Time</label>
-                      <input type="time" lang="en-GB" value={editPlayTime} onChange={(e) => setEditPlayTime(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
+                      <input type="time" lang="en-GB" value={editPlayTime} onChange={(e) => setEditPlayTime(e.target.value)} className="w-full min-h-[42px] px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-1">Duration</label>

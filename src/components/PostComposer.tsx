@@ -760,7 +760,12 @@ function ComposerModal({
                     type="date"
                     value={playDate}
                     onChange={(e) => setPlayDate(e.target.value)}
-                    className="w-full min-w-0 max-w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white box-border"
+                    // min-h matches the Duration <select> below. iOS
+                    // WKWebView collapses empty date/time inputs to a
+                    // thinner row than a select holding rendered text,
+                    // so without this the three rows look misaligned
+                    // until the user picks a value.
+                    className="w-full min-w-0 max-w-full min-h-[42px] px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white box-border"
                   />
                 </div>
                 <div className="min-w-0">
@@ -770,7 +775,7 @@ function ComposerModal({
                     lang="en-GB"
                     value={playTime}
                     onChange={(e) => setPlayTime(e.target.value)}
-                    className="w-full min-w-0 max-w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white box-border"
+                    className="w-full min-w-0 max-w-full min-h-[42px] px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white box-border"
                   />
                 </div>
                 <div>
