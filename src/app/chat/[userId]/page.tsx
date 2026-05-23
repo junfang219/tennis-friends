@@ -383,11 +383,18 @@ export default function ChatPage() {
 
   return (
     // 100dvh (dynamic viewport height) shrinks when the iOS keyboard
-    // opens; 100vh does not, which is what caused the just-sent bubble to
-    // float up to the status bar with empty space below — the messages
-    // region kept its tall height and content settled below the visible
-    // area. dvh is supported in iOS 15.4+ and the Capacitor WKWebView.
-    <div className="max-w-2xl mx-auto flex flex-col" style={{ height: "calc(100dvh - 4rem)" }}>
+    // opens; 100vh does not. We also subtract:
+    //   - the navbar (4rem = h-16 in the global Navbar)
+    //   - the top safe-area inset (notch/dynamic island), which the
+    //     navbar adds as padding so total nav height is 4rem + that
+    //   - the bottom safe-area inset (home indicator gesture area)
+    // Without the safe-area subtractions the input row lands ~80px below
+    // the visible viewport on notched iPhones and the user has to scroll
+    // the page to find it.
+    <div
+      className="max-w-2xl mx-auto flex flex-col"
+      style={{ height: "calc(100dvh - 4rem - env(safe-area-inset-top) - env(safe-area-inset-bottom))" }}
+    >
       {/* Chat header */}
       <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shrink-0">
         <Link
