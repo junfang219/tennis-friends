@@ -49,6 +49,7 @@ function adaptFeedPost(p: FeedPost): Post {
       profileImageUrl: p.author.profile_image_url,
     },
     likeCount: p.like_count,
+    commentCount: p.comment_count,
     isLiked: p.is_liked,
     groups: [],
     friendGroups: [],
@@ -81,6 +82,7 @@ type Post = {
   createdAt: string;
   author: { id: string; name: string; profileImageUrl: string };
   likeCount: number;
+  commentCount?: number;
   isLiked: boolean;
   groups?: { id: string; name: string }[];
   friendGroups?: { id: string; name: string }[];

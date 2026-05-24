@@ -39,7 +39,17 @@ export function subscribeToTable<T extends PublicTable>(
   opts: SubscribeOptions<T>
 ): () => void {
   const supabase = createSupabaseBrowserClient();
-  const channelName = `tbl:${opts.table}:${opts.filter ?? "all"}`;
+  // Random suffix so each call gets a fresh channel — two components
+  // subscribing to the same (table, filter) pair (e.g. the same post
+  // showing in both the feed and the NotificationBell modal) would
+  // otherwise alias onto one channel, and supabase-js throws
+  // "cannot add postgres_changes callbacks after subscribe()" on the
+  // second .on(). Worth noting: the random key means we never get to
+  // dedupe identical subscriptions; if hot paths ever push the channel
+  // count too high, switch to a refcounted registry keyed on the
+  // deterministic name.
+  const suffix = Math.random().toString(36).slice(2, 10);
+  const channelName = `tbl:${opts.table}:${opts.filter ?? "all"}:${suffix}`;
   const channel = supabase.channel(channelName).on(
     "postgres_changes",
     {

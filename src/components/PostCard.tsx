@@ -8,6 +8,7 @@ import Link from "next/link";
 import Avatar from "./Avatar";
 import EmojiPicker from "./EmojiPicker";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useRealtimeTable } from "@/lib/supabase/realtime";
 import {
   likePost,
   unlikePost,
@@ -322,12 +323,36 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
     setComments(rows.map(toCommentCamel) as unknown as typeof comments);
     // Sync the badge with what we actually fetched. The post.commentCount
     // we initialized from is the count at the time the parent feed was
-    // loaded, which goes stale the moment anyone else comments — most
-    // visibly when the post author opens a "X commented on your post"
-    // notification and the badge still reads 0.
+    // loaded, which goes stale the moment anyone else comments.
     setCommentCount(rows.length);
     setCommentsLoaded(true);
   };
+
+  // Live-update the badge as other users comment on this post. Without
+  // this, the count is the parent feed's snapshot at load-time and only
+  // catches up when the viewer opens the comments tray (loadComments).
+  // The realtime publication carries comments rows; RLS gates delivery
+  // to viewers who can already see the post, so the filter is the only
+  // guard we need.
+  useRealtimeTable(
+    {
+      table: "comments",
+      event: "INSERT",
+      filter: `post_id=eq.${post.id}`,
+      onChange: (payload) => {
+        if (payload.eventType !== "INSERT") return;
+        const inserted = payload.new as { id: string; author_id: string };
+        // handleComment already bumped the count + appended the row
+        // optimistically for the viewer's own comment — skip the echo.
+        if (inserted.author_id === session?.user?.id) return;
+        setCommentCount((cc) => cc + 1);
+        // If the tray is open or has been opened, refresh so the new
+        // comment also shows in the list (needs the joined author).
+        if (commentsLoaded) loadComments();
+      },
+    },
+    [post.id, session?.user?.id, commentsLoaded]
+  );
 
   useEffect(() => {
     if (initialShowComments && !commentsLoaded) loadComments();
