@@ -34,7 +34,7 @@ function timeAgo(date: string) {
 function notificationText(n: { type: string; emoji?: string }) {
   switch (n.type) {
     case "comment": return "commented on your post";
-    case "reply": return "also commented on a post you commented on";
+    case "reply": return "replied to your comment";
     case "like": return "liked your post";
     case "join_request": return "wants to join your game";
     case "request_approved": return "approved your request to join";

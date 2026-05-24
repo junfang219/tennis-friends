@@ -56,6 +56,8 @@ export interface Comment {
   post_id: string;
   author_id: string;
   content: string;
+  // NULL for top-level comments; set to the parent comment id for replies.
+  parent_comment_id: string | null;
   created_at: string;
   author: { id: string; name: string; profile_image_url: string };
 }
@@ -252,7 +254,7 @@ export async function listComments(
   const { data, error } = await supabase
     .from("comments")
     .select(
-      `id, post_id, author_id, content, created_at,
+      `id, post_id, author_id, content, parent_comment_id, created_at,
        author:profiles!comments_author_id_fkey ( id, name, profile_image_url )`
     )
     .eq("post_id", postId)
@@ -264,15 +266,25 @@ export async function listComments(
 export async function addComment(
   supabase: SupabaseClient<Database>,
   postId: string,
-  content: string
+  content: string,
+  // Optional parent comment for threaded replies. Leave undefined / null
+  // for top-level comments. The DB trigger reads this to decide whether
+  // to notify the post author (top-level) or the parent comment's
+  // author (reply).
+  parentCommentId?: string | null
 ): Promise<Comment> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("Not signed in");
   const { data, error } = await supabase
     .from("comments")
-    .insert({ post_id: postId, author_id: auth.user.id, content })
+    .insert({
+      post_id: postId,
+      author_id: auth.user.id,
+      content,
+      parent_comment_id: parentCommentId ?? null,
+    })
     .select(
-      `id, post_id, author_id, content, created_at,
+      `id, post_id, author_id, content, parent_comment_id, created_at,
        author:profiles!comments_author_id_fkey ( id, name, profile_image_url )`
     )
     .single();

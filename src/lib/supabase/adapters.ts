@@ -186,6 +186,7 @@ export interface CommentCamel {
   postId: string;
   authorId: string;
   content: string;
+  parentCommentId: string | null;
   createdAt: string;
   author: { id: string; name: string; profileImageUrl: string };
 }
@@ -196,6 +197,7 @@ export function toCommentCamel(c: Comment): CommentCamel {
     postId: c.post_id,
     authorId: c.author_id,
     content: c.content,
+    parentCommentId: c.parent_comment_id,
     createdAt: pgToIso(c.created_at),
     author: {
       id: c.author.id,

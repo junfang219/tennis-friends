@@ -29,6 +29,7 @@ type PlayRequestInfo = { id: string; status: string; note: string } | null;
 type CommentData = {
   id: string;
   content: string;
+  parentCommentId: string | null;
   createdAt: string;
   author: { id: string; name: string; profileImageUrl: string };
 };
@@ -166,6 +167,9 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
   const [postingComment, setPostingComment] = useState(false);
   const [commentsLoaded, setCommentsLoaded] = useState(false);
   const [commentEmojiOpen, setCommentEmojiOpen] = useState(false);
+  // Currently replying to comment id (and its author name for the
+  // "Replying to @X" pill). null = top-level comment composer.
+  const [replyTo, setReplyTo] = useState<{ commentId: string; authorName: string } | null>(null);
   const commentInputRef = useRef<HTMLInputElement>(null);
 
   const insertCommentEmoji = (emoji: string) => {
@@ -364,14 +368,35 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
     setPostingComment(true);
     try {
       const supabase = createSupabaseBrowserClient();
-      const c = await addComment(supabase, post.id, commentInput);
+      const c = await addComment(
+        supabase,
+        post.id,
+        commentInput,
+        replyTo?.commentId ?? null
+      );
       setComments((prev) => [...prev, toCommentCamel(c) as unknown as typeof prev[number]]);
       setCommentCount((cc) => cc + 1);
       setCommentInput("");
+      setReplyTo(null);
     } catch {
       // ignore
     }
     setPostingComment(false);
+  };
+
+  // Tap the Reply button on a comment → focus the input and remember
+  // the parent. Replies to replies still parent to the top-level
+  // comment (one level of nesting) but get an "@<user> " prefix so the
+  // reader can tell who's being addressed.
+  const startReply = (target: CommentData) => {
+    const topLevelId = target.parentCommentId ?? target.id;
+    setReplyTo({ commentId: topLevelId, authorName: target.author.name });
+    if (target.parentCommentId) {
+      setCommentInput((prev) =>
+        prev.startsWith(`@${target.author.name} `) ? prev : `@${target.author.name} ${prev}`
+      );
+    }
+    setTimeout(() => commentInputRef.current?.focus(), 0);
   };
 
   const toggleComments = () => {
@@ -969,57 +994,132 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
         </div>
 
         {/* Comments section */}
-        {showComments && (
-          <div className="px-5 pb-4 border-t border-gray-100">
-            {/* Existing comments */}
-            {comments.length > 0 && (
-              <div className="pt-3 space-y-3 mb-3">
-                {comments.map((c) => (
-                  <div key={c.id} className="flex items-start gap-2.5">
-                    <Link href={`/profile/${c.author.id}`} className="shrink-0 mt-0.5">
-                      <Avatar name={c.author.name} image={c.author.profileImageUrl} size="sm" />
-                    </Link>
-                    <div className="flex-1 min-w-0">
-                      <div className="bg-surface/80 rounded-xl px-3.5 py-2.5">
-                        <Link href={`/profile/${c.author.id}`} className="text-xs font-bold text-gray-800 hover:text-court-green transition-colors">
-                          {c.author.name}
-                        </Link>
-                        <p className="text-sm text-gray-700 mt-0.5">{c.content}</p>
-                      </div>
-                      <p className="text-[10px] text-gray-400 mt-1 ml-1">{timeAgo(c.createdAt)}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+        {showComments && (() => {
+          // Group into top-level + replies. listComments returns rows
+          // ordered by created_at ASC, so iterating preserves chronology
+          // within each tier.
+          const topLevel = comments.filter((c) => !c.parentCommentId);
+          const repliesByParent = new Map<string, CommentData[]>();
+          for (const c of comments) {
+            if (c.parentCommentId) {
+              const arr = repliesByParent.get(c.parentCommentId) ?? [];
+              arr.push(c);
+              repliesByParent.set(c.parentCommentId, arr);
+            }
+          }
 
-            {/* Comment input */}
-            <div className="flex items-center gap-2 pt-2">
-              <Avatar name={session?.user?.name || ""} image={session?.user?.image} size="sm" />
-              <div className="flex-1 flex items-center gap-2">
-                <input
-                  ref={commentInputRef}
-                  type="text"
-                  value={commentInput}
-                  onChange={(e) => setCommentInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleComment(); } }}
-                  placeholder="Write a comment..."
-                  className="flex-1 px-3.5 py-2 border border-gray-200 rounded-full text-sm bg-surface/50 focus:bg-white transition-colors"
+          const renderComment = (c: CommentData, indented = false) => (
+            <div
+              key={c.id}
+              className={`flex items-start gap-2.5 ${indented ? "ml-9" : ""}`}
+            >
+              <Link href={`/profile/${c.author.id}`} className="shrink-0 mt-0.5">
+                <Avatar
+                  name={c.author.name}
+                  image={c.author.profileImageUrl}
+                  size="sm"
                 />
-                <EmojiPicker open={commentEmojiOpen} onOpenChange={setCommentEmojiOpen} onSelect={insertCommentEmoji} />
-                <button
-                  onClick={handleComment}
-                  disabled={!commentInput.trim() || postingComment}
-                  className="text-court-green disabled:text-gray-300 transition-colors shrink-0"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                    <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22,2 15,22 11,13 2,9" />
-                  </svg>
-                </button>
+              </Link>
+              <div className="flex-1 min-w-0">
+                <div className="bg-surface/80 rounded-xl px-3.5 py-2.5">
+                  <Link
+                    href={`/profile/${c.author.id}`}
+                    className="text-xs font-bold text-gray-800 hover:text-court-green transition-colors"
+                  >
+                    {c.author.name}
+                  </Link>
+                  <p className="text-sm text-gray-700 mt-0.5">{c.content}</p>
+                </div>
+                <div className="flex items-center gap-3 mt-1 ml-1">
+                  <p className="text-[10px] text-gray-400">{timeAgo(c.createdAt)}</p>
+                  <button
+                    onClick={() => startReply(c)}
+                    className="text-[10px] font-semibold text-gray-500 hover:text-court-green transition-colors"
+                  >
+                    Reply
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+
+          return (
+            <div className="px-5 pb-4 border-t border-gray-100">
+              {/* Existing comments — top-level with their threaded replies. */}
+              {topLevel.length > 0 && (
+                <div className="pt-3 space-y-3 mb-3">
+                  {topLevel.map((parent) => (
+                    <div key={parent.id} className="space-y-3">
+                      {renderComment(parent, false)}
+                      {(repliesByParent.get(parent.id) ?? []).map((reply) =>
+                        renderComment(reply, true)
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* "Replying to @X · cancel" pill — only when composing a reply. */}
+              {replyTo && (
+                <div className="flex items-center gap-2 pt-2 pb-1 text-xs text-gray-500">
+                  <span>
+                    Replying to{" "}
+                    <span className="font-semibold text-court-green">
+                      @{replyTo.authorName}
+                    </span>
+                  </span>
+                  <button
+                    onClick={() => setReplyTo(null)}
+                    className="text-gray-400 hover:text-gray-600 font-semibold"
+                    aria-label="Cancel reply"
+                  >
+                    × cancel
+                  </button>
+                </div>
+              )}
+
+              {/* Comment input */}
+              <div className="flex items-center gap-2 pt-2">
+                <Avatar
+                  name={session?.user?.name || ""}
+                  image={session?.user?.image}
+                  size="sm"
+                />
+                <div className="flex-1 flex items-center gap-2">
+                  <input
+                    ref={commentInputRef}
+                    type="text"
+                    value={commentInput}
+                    onChange={(e) => setCommentInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleComment();
+                      }
+                    }}
+                    placeholder={replyTo ? `Reply to ${replyTo.authorName}…` : "Write a comment..."}
+                    className="flex-1 px-3.5 py-2 border border-gray-200 rounded-full text-sm bg-surface/50 focus:bg-white transition-colors"
+                  />
+                  <EmojiPicker
+                    open={commentEmojiOpen}
+                    onOpenChange={setCommentEmojiOpen}
+                    onSelect={insertCommentEmoji}
+                  />
+                  <button
+                    onClick={handleComment}
+                    disabled={!commentInput.trim() || postingComment}
+                    className="text-court-green disabled:text-gray-300 transition-colors shrink-0"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <line x1="22" y1="2" x2="11" y2="13" />
+                      <polygon points="22,2 15,22 11,13 2,9" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Manage Requests Modal */}

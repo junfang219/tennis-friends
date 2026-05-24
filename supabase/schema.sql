@@ -4413,3 +4413,51 @@ DROP TRIGGER IF EXISTS event_participants_notify_signup ON public.event_particip
 CREATE TRIGGER event_participants_notify_signup
   AFTER INSERT ON public.event_participants
   FOR EACH ROW EXECUTE FUNCTION public.notify_on_event_signup();
+
+-- ============================================================
+-- THREADED COMMENT REPLIES
+-- ============================================================
+--
+-- Add a self-FK so a comment can be a reply to another comment on the
+-- same post. Top-level comments leave parent_comment_id NULL.
+-- ON DELETE CASCADE so deleting a parent comment removes its replies.
+ALTER TABLE public.comments
+  ADD COLUMN IF NOT EXISTS parent_comment_id uuid
+  REFERENCES public.comments(id) ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS comments_parent_idx
+  ON public.comments (parent_comment_id) WHERE parent_comment_id IS NOT NULL;
+
+-- Rewrite notify_on_comment to thread replies:
+--   * Top-level (parent_comment_id IS NULL) → notify post author with
+--     type='comment'. The previous broadcast-to-every-other-commenter
+--     "reply" notification is dropped — too noisy once threaded
+--     replies exist.
+--   * Reply (parent_comment_id IS NOT NULL) → notify the parent
+--     comment's author with type='reply'.
+-- Self-actions skipped at both layers.
+CREATE OR REPLACE FUNCTION public.notify_on_comment()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_post_author uuid;
+  v_parent_author uuid;
+BEGIN
+  IF NEW.parent_comment_id IS NULL THEN
+    SELECT author_id INTO v_post_author FROM posts WHERE id = NEW.post_id;
+    IF v_post_author IS NULL OR v_post_author = NEW.author_id THEN
+      RETURN NEW;
+    END IF;
+    INSERT INTO notifications (user_id, actor_id, type, post_id, comment_id)
+    VALUES (v_post_author, NEW.author_id, 'comment', NEW.post_id, NEW.id);
+  ELSE
+    SELECT author_id INTO v_parent_author FROM comments WHERE id = NEW.parent_comment_id;
+    IF v_parent_author IS NULL OR v_parent_author = NEW.author_id THEN
+      RETURN NEW;
+    END IF;
+    INSERT INTO notifications (user_id, actor_id, type, post_id, comment_id)
+    VALUES (v_parent_author, NEW.author_id, 'reply'::notification_type, NEW.post_id, NEW.id);
+  END IF;
+  RETURN NEW;
+END;
+$$;

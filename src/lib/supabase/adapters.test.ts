@@ -208,17 +208,30 @@ describe("snake_case → camelCase adapters", () => {
     expect(Number.isNaN(new Date(result.createdAt).getTime())).toBe(false);
   });
 
-  it("toCommentCamel flattens author", () => {
+  it("toCommentCamel flattens author and surfaces parentCommentId", () => {
     const c = toCommentCamel({
       id: "c1",
       post_id: "p1",
       author_id: "a1",
       content: "yo",
+      parent_comment_id: null,
       created_at: "t",
       author: { id: "a1", name: "Alice", profile_image_url: "x.png" },
     });
     expect(c.postId).toBe("p1");
     expect(c.author.profileImageUrl).toBe("x.png");
+    expect(c.parentCommentId).toBeNull();
+
+    const reply = toCommentCamel({
+      id: "c2",
+      post_id: "p1",
+      author_id: "a2",
+      content: "@Alice yo back",
+      parent_comment_id: "c1",
+      created_at: "t",
+      author: { id: "a2", name: "Bob", profile_image_url: "" },
+    });
+    expect(reply.parentCommentId).toBe("c1");
   });
 
   it("toEventCamel + toGroupCamel + toTeamListingCamel basic shape", () => {

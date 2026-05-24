@@ -467,6 +467,7 @@ export type Database = {
           content: string
           created_at: string
           id: string
+          parent_comment_id: string | null
           post_id: string
         }
         Insert: {
@@ -474,6 +475,7 @@ export type Database = {
           content: string
           created_at?: string
           id?: string
+          parent_comment_id?: string | null
           post_id: string
         }
         Update: {
@@ -481,6 +483,7 @@ export type Database = {
           content?: string
           created_at?: string
           id?: string
+          parent_comment_id?: string | null
           post_id?: string
         }
         Relationships: [
@@ -489,6 +492,13 @@ export type Database = {
             columns: ["author_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "comments_parent_comment_id_fkey"
+            columns: ["parent_comment_id"]
+            isOneToOne: false
+            referencedRelation: "comments"
             referencedColumns: ["id"]
           },
           {

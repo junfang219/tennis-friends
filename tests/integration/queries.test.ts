@@ -959,7 +959,7 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       await unlikePost(alice.client, postId);
     });
 
-    it("commenting notifies the author + every other unique commenter as 'reply'", async () => {
+    it("top-level comments notify only the post author (no broadcast fan-out)", async () => {
       const admin = adminClient();
       await admin
         .from("notifications")
@@ -967,7 +967,7 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         .in("type", ["comment", "reply"])
         .eq("post_id", postId);
 
-      // carol comments first → just notifies alice (the author).
+      // carol comments → notifies alice (the post author) with "comment".
       await addComment(carol.client, postId, "carol's first");
       const { data: aliceFirst } = await alice.client
         .from("notifications")
@@ -978,11 +978,10 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         .eq("actor_id", carol.id);
       expect((aliceFirst ?? []).length).toBe(1);
 
-      // bob comments → alice gets another "comment"; carol (the only other
-      // commenter) gets a single "reply" thanks to the DISTINCT dedupe.
+      // bob also comments at top level. alice gets another "comment".
+      // The old broadcast trigger would have fired a "reply" to carol
+      // too — confirm that no longer happens.
       await addComment(bob.client, postId, "bob's comment");
-      await addComment(bob.client, postId, "bob again");
-
       const { data: aliceAfterBob } = await alice.client
         .from("notifications")
         .select("id")
@@ -990,21 +989,20 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         .eq("type", "comment")
         .eq("post_id", postId)
         .eq("actor_id", bob.id);
-      // Two bob comments → two "comment" rows to alice (no dedupe for
-      // distinct insertions of the same kind, matches legacy behavior).
-      expect((aliceAfterBob ?? []).length).toBe(2);
+      expect((aliceAfterBob ?? []).length).toBe(1);
 
-      const { data: carolReplies } = await carol.client
+      const { data: carolBroadcast } = await carol.client
         .from("notifications")
-        .select("id, comment_id")
+        .select("id")
         .eq("user_id", carol.id)
         .eq("type", "reply")
         .eq("post_id", postId)
         .eq("actor_id", bob.id);
-      // Two distinct comments → two distinct reply notifications.
-      expect((carolReplies ?? []).length).toBe(2);
+      // Threaded-only semantics: no broadcast reply notification for
+      // top-level sibling comments.
+      expect((carolBroadcast ?? []).length).toBe(0);
 
-      // Self-comment by the post author shouldn't create a "comment" to herself.
+      // Self-comment by the post author shouldn't notify herself.
       await addComment(alice.client, postId, "author note");
       const { data: aliceSelf } = await alice.client
         .from("notifications")
@@ -1014,6 +1012,70 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         .eq("actor_id", alice.id)
         .eq("post_id", postId);
       expect((aliceSelf ?? []).length).toBe(0);
+    });
+
+    // Threaded replies: addComment now accepts a parent comment id.
+    // When set, the trigger fires "reply" to the parent comment's
+    // author rather than the broadcast variant.
+    it("replying to a comment notifies the parent comment's author", async () => {
+      const admin = adminClient();
+      await admin
+        .from("notifications")
+        .delete()
+        .in("type", ["comment", "reply"])
+        .eq("post_id", postId);
+
+      // carol leaves a top-level comment on alice's post.
+      const carolComment = await addComment(carol.client, postId, "interesting take");
+
+      // bob replies to carol → carol should get a "reply" notification
+      // (NOT a "comment" — that goes to the post author only when the
+      // parent is null).
+      const bobReply = await addComment(
+        bob.client,
+        postId,
+        "agreed, and also…",
+        carolComment.id
+      );
+      expect(bobReply.parent_comment_id).toBe(carolComment.id);
+
+      const { data: carolReply } = await carol.client
+        .from("notifications")
+        .select("type, actor_id, comment_id")
+        .eq("user_id", carol.id)
+        .eq("type", "reply")
+        .eq("actor_id", bob.id)
+        .eq("post_id", postId);
+      expect((carolReply ?? []).length).toBe(1);
+      expect(carolReply![0].comment_id).toBe(bobReply.id);
+
+      // alice (post author) should NOT get a "comment" for a reply —
+      // the trigger branches on parent_comment_id and only the parent's
+      // author is notified.
+      const { data: aliceForReply } = await alice.client
+        .from("notifications")
+        .select("id")
+        .eq("user_id", alice.id)
+        .eq("type", "comment")
+        .eq("post_id", postId)
+        .eq("actor_id", bob.id)
+        .eq("comment_id", bobReply.id);
+      expect((aliceForReply ?? []).length).toBe(0);
+
+      // Self-replies don't notify.
+      const carolSelfReply = await addComment(
+        carol.client,
+        postId,
+        "follow-up to myself",
+        carolComment.id
+      );
+      const { data: carolSelfNotif } = await carol.client
+        .from("notifications")
+        .select("id")
+        .eq("user_id", carol.id)
+        .eq("type", "reply")
+        .eq("comment_id", carolSelfReply.id);
+      expect((carolSelfNotif ?? []).length).toBe(0);
     });
 
     // play_requests need a find_players post — its own fixture so we
