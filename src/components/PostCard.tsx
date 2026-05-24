@@ -320,6 +320,12 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
     const supabase = createSupabaseBrowserClient();
     const rows = await listComments(supabase, post.id);
     setComments(rows.map(toCommentCamel) as unknown as typeof comments);
+    // Sync the badge with what we actually fetched. The post.commentCount
+    // we initialized from is the count at the time the parent feed was
+    // loaded, which goes stale the moment anyone else comments — most
+    // visibly when the post author opens a "X commented on your post"
+    // notification and the badge still reads 0.
+    setCommentCount(rows.length);
     setCommentsLoaded(true);
   };
 
