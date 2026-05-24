@@ -965,8 +965,11 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
       {/* Lightbox */}
       {imageExpanded && photos.length > 0 && (
         <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 cursor-pointer" onClick={() => setImageExpanded(false)}>
+          {/* Pin chrome below the iOS status bar so the X / pager don't
+              land on top of the time + battery indicator on native. */}
           <button
-            className="absolute top-4 right-4 z-10 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+            className="absolute right-4 z-10 w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+            style={{ top: "calc(env(safe-area-inset-top, 0px) + 1rem)" }}
             onClick={() => setImageExpanded(false)}
             aria-label="Close"
           >
@@ -994,7 +997,10 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
                   <polyline points="9 6 15 12 9 18" />
                 </svg>
               </button>
-              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-white/15 text-white text-xs font-semibold px-2.5 py-1 rounded-full">
+              <div
+                className="absolute left-1/2 -translate-x-1/2 z-10 bg-white/15 text-white text-xs font-semibold px-2.5 py-1 rounded-full"
+                style={{ top: "calc(env(safe-area-inset-top, 0px) + 1rem)" }}
+              >
                 {photoIndex + 1} / {photos.length}
               </div>
             </>
