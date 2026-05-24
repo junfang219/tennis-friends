@@ -4129,3 +4129,287 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION public.count_user_friends(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.count_user_friends(uuid) TO authenticated;
+
+-- ============================================================
+-- AUTO SESSION-CHAT ON POST COMPLETE
+-- ============================================================
+--
+-- Recreates the pre-Supabase behavior (commit 578a043): when a
+-- find_players post flips to is_complete = true, spin up a group chat
+-- with the author + every approved player, plus a templated "Game
+-- confirmed" message. The PostCard's collapsed/confirmed view depends
+-- on this chat existing — without it the "Open chat" CTA falls back
+-- to "Details" and the players have no way to coordinate.
+
+-- Belt-and-suspenders: at-most-one chat per post.
+CREATE UNIQUE INDEX IF NOT EXISTS chats_post_id_unique
+  ON public.chats (post_id) WHERE post_id IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION public.create_session_chat_on_complete()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_chat_id      uuid;
+  v_play_dt      timestamptz;
+  v_session_end  timestamptz;
+  v_chat_name    text;
+  v_players      text;
+  v_message      text;
+  v_duration     integer;
+  v_location     text;
+BEGIN
+  IF NEW.is_complete IS NOT TRUE OR NEW.post_type <> 'find_players' THEN
+    RETURN NEW;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM public.chats WHERE post_id = NEW.id) THEN
+    RETURN NEW;
+  END IF;
+
+  BEGIN
+    v_play_dt := (NEW.play_date || ' ' || NEW.play_time || ':00')::timestamptz;
+  EXCEPTION WHEN OTHERS THEN
+    v_play_dt := now() + interval '24 hours';
+  END;
+  v_duration := COALESCE(NULLIF(NEW.play_duration, 0), 90);
+  v_session_end := v_play_dt + (v_duration || ' minutes')::interval;
+  v_location := COALESCE(NULLIF(NEW.court_location, ''), 'TBD');
+
+  v_chat_name := trim(to_char(v_play_dt, 'Mon FMDD')) || ' · '
+              || v_location || ' · '
+              || trim(to_char(v_play_dt, 'FMHH12:MI AM'));
+
+  INSERT INTO public.chats (name, creator_id, post_id, session_end_at, manual_player_names)
+  VALUES (v_chat_name, NEW.author_id, NEW.id, v_session_end, COALESCE(NEW.manual_players, ''))
+  RETURNING id INTO v_chat_id;
+
+  INSERT INTO public.chat_participants (chat_id, user_id)
+  SELECT v_chat_id, NEW.author_id
+  UNION
+  SELECT v_chat_id, pr.user_id
+  FROM public.play_requests pr
+  WHERE pr.post_id = NEW.id AND pr.status = 'approved';
+
+  SELECT string_agg(name, ', ' ORDER BY ord) INTO v_players FROM (
+    SELECT p.name, 0 AS ord
+    FROM public.profiles p WHERE p.id = NEW.author_id
+    UNION ALL
+    SELECT p.name, ROW_NUMBER() OVER (ORDER BY pr.created_at) AS ord
+    FROM public.play_requests pr
+    JOIN public.profiles p ON p.id = pr.user_id
+    WHERE pr.post_id = NEW.id AND pr.status = 'approved'
+  ) s;
+
+  v_message := E'🎾 Game confirmed!\n'
+            || E'📅 ' || trim(to_char(v_play_dt, 'Mon FMDD at FMHH12:MI AM'))
+            || ' (' || v_duration || E' min)\n'
+            || E'📍 ' || v_location || E'\n'
+            || 'Players: ' || COALESCE(v_players, '') || E'\n\n'
+            || 'See you on court!';
+
+  INSERT INTO public.chat_messages (chat_id, sender_id, content)
+  VALUES (v_chat_id, NEW.author_id, v_message);
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS posts_create_session_chat ON public.posts;
+CREATE TRIGGER posts_create_session_chat
+  AFTER UPDATE OF is_complete ON public.posts
+  FOR EACH ROW
+  WHEN (NEW.is_complete = true)
+  EXECUTE FUNCTION public.create_session_chat_on_complete();
+
+DROP TRIGGER IF EXISTS posts_create_session_chat_insert ON public.posts;
+CREATE TRIGGER posts_create_session_chat_insert
+  AFTER INSERT ON public.posts
+  FOR EACH ROW
+  WHEN (NEW.is_complete = true)
+  EXECUTE FUNCTION public.create_session_chat_on_complete();
+
+-- ============================================================
+-- NOTIFICATION SIDE EFFECTS
+-- ============================================================
+--
+-- Recreates the per-action notification fan-out that
+-- /api/posts/like, /api/comments, /api/posts/join,
+-- /api/posts/join/respond, and /api/messages/reactions all did before
+-- they were deleted in the Prisma → Supabase burn-down (86f26a5).
+-- SECURITY DEFINER because notifications has no INSERT policy (only
+-- the recipient can SELECT/UPDATE/DELETE their own).
+
+ALTER TYPE public.notification_type ADD VALUE IF NOT EXISTS 'reply';
+ALTER TYPE public.notification_type ADD VALUE IF NOT EXISTS 'event_signup';
+
+-- ----- likes → "like" to post author --------------------------------
+CREATE OR REPLACE FUNCTION public.notify_on_like()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE v_author_id uuid;
+BEGIN
+  SELECT author_id INTO v_author_id FROM posts WHERE id = NEW.post_id;
+  IF v_author_id IS NULL OR v_author_id = NEW.user_id THEN RETURN NEW; END IF;
+  INSERT INTO notifications (user_id, actor_id, type, post_id)
+  VALUES (v_author_id, NEW.user_id, 'like', NEW.post_id);
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS likes_notify ON public.likes;
+CREATE TRIGGER likes_notify AFTER INSERT ON public.likes
+  FOR EACH ROW EXECUTE FUNCTION public.notify_on_like();
+
+-- ----- comments → "comment" to author + "reply" to other commenters --
+CREATE OR REPLACE FUNCTION public.notify_on_comment()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE v_author_id uuid;
+BEGIN
+  SELECT author_id INTO v_author_id FROM posts WHERE id = NEW.post_id;
+  IF v_author_id IS NULL THEN RETURN NEW; END IF;
+
+  IF v_author_id <> NEW.author_id THEN
+    INSERT INTO notifications (user_id, actor_id, type, post_id, comment_id)
+    VALUES (v_author_id, NEW.author_id, 'comment', NEW.post_id, NEW.id);
+  END IF;
+
+  -- Explicit ::notification_type cast: SELECT-INSERT doesn't implicit-
+  -- coerce text → enum the way VALUES does.
+  INSERT INTO notifications (user_id, actor_id, type, post_id, comment_id)
+  SELECT DISTINCT c.author_id, NEW.author_id, 'reply'::notification_type, NEW.post_id, NEW.id
+  FROM comments c
+  WHERE c.post_id = NEW.post_id
+    AND c.author_id <> NEW.author_id
+    AND c.author_id <> v_author_id
+    AND c.id <> NEW.id;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS comments_notify ON public.comments;
+CREATE TRIGGER comments_notify AFTER INSERT ON public.comments
+  FOR EACH ROW EXECUTE FUNCTION public.notify_on_comment();
+
+-- ----- play_requests INSERT → "join_request" to post author ----------
+CREATE OR REPLACE FUNCTION public.notify_on_join_request()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE v_author_id uuid;
+BEGIN
+  SELECT author_id INTO v_author_id FROM posts WHERE id = NEW.post_id;
+  IF v_author_id IS NULL OR v_author_id = NEW.user_id THEN RETURN NEW; END IF;
+  INSERT INTO notifications (user_id, actor_id, type, post_id)
+  VALUES (v_author_id, NEW.user_id, 'join_request', NEW.post_id);
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS play_requests_notify_insert ON public.play_requests;
+CREATE TRIGGER play_requests_notify_insert AFTER INSERT ON public.play_requests
+  FOR EACH ROW EXECUTE FUNCTION public.notify_on_join_request();
+
+-- ----- play_requests status flip → request_approved / request_rejected ----
+CREATE OR REPLACE FUNCTION public.notify_on_play_request_response()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_author_id uuid;
+  v_notif_type notification_type;
+BEGIN
+  IF OLD.status <> 'pending' THEN RETURN NEW; END IF;
+  IF NEW.status NOT IN ('approved', 'rejected') THEN RETURN NEW; END IF;
+  SELECT author_id INTO v_author_id FROM posts WHERE id = NEW.post_id;
+  IF v_author_id IS NULL OR v_author_id = NEW.user_id THEN RETURN NEW; END IF;
+  v_notif_type := CASE NEW.status WHEN 'approved' THEN 'request_approved'::notification_type
+                                  ELSE 'request_rejected'::notification_type END;
+  INSERT INTO notifications (user_id, actor_id, type, post_id)
+  VALUES (NEW.user_id, v_author_id, v_notif_type, NEW.post_id);
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS play_requests_notify_response ON public.play_requests;
+CREATE TRIGGER play_requests_notify_response
+  AFTER UPDATE OF status ON public.play_requests
+  FOR EACH ROW EXECUTE FUNCTION public.notify_on_play_request_response();
+
+-- ----- message_reactions → "message_reaction" to DM sender (only) ----
+CREATE OR REPLACE FUNCTION public.notify_on_message_reaction()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE v_sender_id uuid;
+BEGIN
+  IF NEW.target_type <> 'dm' THEN RETURN NEW; END IF;
+  SELECT sender_id INTO v_sender_id FROM messages WHERE id = NEW.target_id;
+  IF v_sender_id IS NULL OR v_sender_id = NEW.user_id THEN RETURN NEW; END IF;
+  INSERT INTO notifications (user_id, actor_id, type, message_id, emoji)
+  VALUES (v_sender_id, NEW.user_id, 'message_reaction', NEW.target_id, NEW.emoji);
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS message_reactions_notify ON public.message_reactions;
+CREATE TRIGGER message_reactions_notify AFTER INSERT ON public.message_reactions
+  FOR EACH ROW EXECUTE FUNCTION public.notify_on_message_reaction();
+
+-- ============================================================
+-- EVENT PARTICIPANT CAPACITY + WAITLIST + SIGNUP NOTIFICATION
+-- ============================================================
+--
+-- Recreates /api/events/[id]/signup's server-side orchestration
+-- (capacity check, waitlist promotion, owner notification).
+
+CREATE OR REPLACE FUNCTION public.enforce_event_capacity()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE v_max integer; v_count integer;
+BEGIN
+  IF NEW.status <> 'registered' THEN RETURN NEW; END IF;
+  SELECT max_participants INTO v_max FROM events WHERE id = NEW.event_id;
+  IF v_max IS NULL THEN RETURN NEW; END IF;
+  SELECT count(*) INTO v_count FROM event_participants
+  WHERE event_id = NEW.event_id AND status = 'registered';
+  IF v_count >= v_max THEN NEW.status := 'waitlist'; END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS event_participants_enforce_capacity ON public.event_participants;
+CREATE TRIGGER event_participants_enforce_capacity
+  BEFORE INSERT ON public.event_participants
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_event_capacity();
+
+CREATE OR REPLACE FUNCTION public.promote_event_waitlist()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE v_promoted_id uuid;
+BEGIN
+  IF OLD.status <> 'registered' OR NEW.status <> 'withdrawn' THEN RETURN NEW; END IF;
+  SELECT id INTO v_promoted_id FROM event_participants
+  WHERE event_id = NEW.event_id AND status = 'waitlist'
+  ORDER BY registered_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED;
+  IF v_promoted_id IS NOT NULL THEN
+    UPDATE event_participants SET status = 'registered' WHERE id = v_promoted_id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS event_participants_promote_waitlist ON public.event_participants;
+CREATE TRIGGER event_participants_promote_waitlist
+  AFTER UPDATE OF status ON public.event_participants
+  FOR EACH ROW EXECUTE FUNCTION public.promote_event_waitlist();
+
+CREATE OR REPLACE FUNCTION public.notify_on_event_signup()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE v_owner_id uuid;
+BEGIN
+  SELECT owner_id INTO v_owner_id FROM events WHERE id = NEW.event_id;
+  IF v_owner_id IS NULL OR v_owner_id = NEW.user_id THEN RETURN NEW; END IF;
+  INSERT INTO notifications (user_id, actor_id, type, event_id)
+  VALUES (v_owner_id, NEW.user_id, 'event_signup', NEW.event_id);
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS event_participants_notify_signup ON public.event_participants;
+CREATE TRIGGER event_participants_notify_signup
+  AFTER INSERT ON public.event_participants
+  FOR EACH ROW EXECUTE FUNCTION public.notify_on_event_signup();

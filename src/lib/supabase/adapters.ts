@@ -134,6 +134,10 @@ export interface PostCamel {
   likeCount: number;
   commentCount: number;
   isLiked: boolean;
+  // The auto-created session group chat for a completed find_players
+  // post (null until the post fills and the trigger fires). PostCard
+  // reads this to render the "Open chat" CTA on the collapsed card.
+  sessionChatId: string | null;
 }
 
 export function toPostCamel(p: Post): PostCamel {
@@ -173,6 +177,7 @@ export function toPostCamel(p: Post): PostCamel {
     likeCount: p.like_count,
     commentCount: p.comment_count,
     isLiked: p.is_liked,
+    sessionChatId: p.session_chat?.[0]?.id ?? null,
   };
 }
 

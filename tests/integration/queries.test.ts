@@ -456,6 +456,78 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       const p = await getPost(alice.client, postId);
       expect(p).toBeNull();
     });
+
+    // Regression: the pre-Supabase /api/posts/join/respond route auto-
+    // created a session group chat when a find-players post filled, and
+    // PostCard's collapsed "Open chat" CTA reads from it. The migration
+    // dropped that logic; commit (this one) restored it as a Postgres
+    // trigger so any code path that flips is_complete = true creates the
+    // chat, idempotently.
+    it("flipping a find_players post to is_complete auto-creates a session chat", async () => {
+      const post = await createPost(alice.client, {
+        content: "Looking for 1 player",
+        post_type: "find_players",
+        play_date: "2026-05-23",
+        play_time: "09:20",
+        play_duration: 90,
+        court_location: "Test Court",
+        game_type: "singles",
+        players_needed: 1,
+      });
+
+      // No chat yet — post starts with is_complete = false (default).
+      const before = await alice.client
+        .from("chats")
+        .select("id")
+        .eq("post_id", post.id);
+      expect(before.data ?? []).toHaveLength(0);
+
+      // Flip to complete. The AFTER UPDATE OF is_complete trigger should
+      // create the chat + author participant + welcome message.
+      const upd = await alice.client
+        .from("posts")
+        .update({ players_confirmed: 1, is_complete: true })
+        .eq("id", post.id);
+      expect(upd.error).toBeNull();
+
+      const after = await alice.client
+        .from("chats")
+        .select("id, post_id, name, session_end_at")
+        .eq("post_id", post.id);
+      expect(after.data ?? []).toHaveLength(1);
+      const chatId = after.data![0].id;
+
+      const participants = await alice.client
+        .from("chat_participants")
+        .select("user_id")
+        .eq("chat_id", chatId);
+      expect(participants.data?.map((p) => p.user_id)).toEqual([alice.id]);
+
+      const messages = await alice.client
+        .from("chat_messages")
+        .select("content, sender_id")
+        .eq("chat_id", chatId);
+      expect(messages.data ?? []).toHaveLength(1);
+      expect(messages.data![0].sender_id).toBe(alice.id);
+      expect(messages.data![0].content).toContain("Game confirmed");
+
+      // Idempotent: a second is_complete=true UPDATE must not create a
+      // second chat (the trigger's existence check + the unique partial
+      // index on chats.post_id together guarantee this).
+      await alice.client
+        .from("posts")
+        .update({ is_complete: true })
+        .eq("id", post.id);
+      const stillOne = await alice.client
+        .from("chats")
+        .select("id")
+        .eq("post_id", post.id);
+      expect(stillOne.data ?? []).toHaveLength(1);
+
+      // Cleanup so the test doesn't leak fixtures into later runs.
+      await alice.client.from("chats").delete().eq("id", chatId);
+      await deletePost(alice.client, post.id);
+    });
   });
 
   // ---------------------------------------------------------------------
@@ -686,6 +758,66 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       const me = participants.find((x) => x.user_id === bob.id);
       expect(me?.status).toBe("withdrawn");
     });
+
+    // Regression: /api/events/[id]/signup used to count current registered
+    // participants, flip status to 'waitlist' when at capacity, notify the
+    // event owner, and promote the next waitlister on withdraw. The
+    // migration replaced it with a bare client INSERT — capacity check,
+    // notification, and promotion were all gone. These three tests cover
+    // the trigger-based restoration.
+    it("event_participants capacity trigger flips overflow signups to waitlist", async () => {
+      // Fresh event with max=1 so the second signup must waitlist.
+      const e = await createEvent(alice.client, {
+        title: "Capped Mixer",
+        event_type: "mixer",
+        start_date: new Date(Date.now() + 86400_000).toISOString(),
+        end_date: new Date(Date.now() + 86400_000 * 2).toISOString(),
+        is_public_signup: true,
+        visibility: "public",
+        max_participants: 1,
+        event_lat: 47.6062,
+        event_lng: -122.3321,
+        radius_mi: 25,
+      });
+
+      // bob fills the only seat → registered.
+      const p1 = await signupForEvent(bob.client, e.id);
+      expect(p1.status).toBe("registered");
+
+      // carol is over capacity → trigger flips to waitlist before insert.
+      await carol.client
+        .from("profiles")
+        .update({ latitude: 47.6062, longitude: -122.3321 })
+        .eq("id", carol.id);
+      const p2 = await signupForEvent(carol.client, e.id);
+      expect(p2.status).toBe("waitlist");
+
+      // Withdraw the registered participant → promotion trigger should
+      // pull the oldest waitlister back to 'registered'.
+      await withdrawFromEvent(bob.client, e.id);
+      const participants = await listEventParticipants(alice.client, e.id);
+      const carolRow = participants.find((x) => x.user_id === carol.id);
+      expect(carolRow?.status).toBe("registered");
+
+      // Cleanup.
+      const admin = adminClient();
+      await admin.from("events").delete().eq("id", e.id);
+    });
+
+    it("event_participants signup fires an event_signup notification to the owner", async () => {
+      // alice (owner) should have a fresh event_signup notification from
+      // bob's earlier signup. The previous event-suite tests created
+      // bob's participant row, which is enough; just assert the row.
+      const { data: notes, error } = await alice.client
+        .from("notifications")
+        .select("type, actor_id, event_id")
+        .eq("user_id", alice.id)
+        .eq("type", "event_signup")
+        .eq("actor_id", bob.id)
+        .eq("event_id", eventId);
+      expect(error).toBeNull();
+      expect((notes ?? []).length).toBeGreaterThan(0);
+    });
   });
 
   // ---------------------------------------------------------------------
@@ -762,6 +894,229 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
     it("listCourts returns my added court", async () => {
       const all = await listCourts(carol.client);
       expect(all.some((c) => c.id === courtId)).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // Notification side-effect triggers (likes / comments / play_requests /
+  // message_reactions). Recreates the fan-out the legacy /api/* route
+  // handlers used to do before commit 86f26a5 deleted them. Without these
+  // triggers all of these notifications would silently never fire.
+  // ---------------------------------------------------------------------
+
+  describe("notification side-effect triggers", () => {
+    let postId: string;
+
+    beforeAll(async () => {
+      // RLS on likes / comments / play_requests gates on can_see_post,
+      // which requires friendship for untargeted posts. Earlier describe
+      // blocks (friends, events, ...) churn alice/bob's relationship, so
+      // re-establish it here before exercising the triggers.
+      try { await befriend(alice, bob); } catch { /* already friends */ }
+      try { await befriend(alice, carol); } catch { /* already friends */ }
+
+      const p = await createPost(alice.client, {
+        content: "Trigger fixtures",
+        post_type: "regular",
+      });
+      postId = p.id;
+    });
+
+    afterAll(async () => {
+      await deletePost(alice.client, postId).catch(() => {});
+    });
+
+    it("liking a post notifies the post author (skips self-likes)", async () => {
+      const admin = adminClient();
+      await admin
+        .from("notifications")
+        .delete()
+        .eq("user_id", alice.id)
+        .eq("type", "like")
+        .eq("post_id", postId);
+
+      await likePost(bob.client, postId);
+      const { data: notes } = await alice.client
+        .from("notifications")
+        .select("type, actor_id, post_id")
+        .eq("user_id", alice.id)
+        .eq("type", "like")
+        .eq("actor_id", bob.id)
+        .eq("post_id", postId);
+      expect((notes ?? []).length).toBe(1);
+
+      // Self-like by the author must NOT create another row.
+      await likePost(alice.client, postId);
+      const { data: afterSelf } = await alice.client
+        .from("notifications")
+        .select("id")
+        .eq("user_id", alice.id)
+        .eq("type", "like")
+        .eq("post_id", postId);
+      expect((afterSelf ?? []).length).toBe(1);
+
+      await unlikePost(bob.client, postId);
+      await unlikePost(alice.client, postId);
+    });
+
+    it("commenting notifies the author + every other unique commenter as 'reply'", async () => {
+      const admin = adminClient();
+      await admin
+        .from("notifications")
+        .delete()
+        .in("type", ["comment", "reply"])
+        .eq("post_id", postId);
+
+      // carol comments first → just notifies alice (the author).
+      await addComment(carol.client, postId, "carol's first");
+      const { data: aliceFirst } = await alice.client
+        .from("notifications")
+        .select("type, actor_id")
+        .eq("user_id", alice.id)
+        .eq("type", "comment")
+        .eq("post_id", postId)
+        .eq("actor_id", carol.id);
+      expect((aliceFirst ?? []).length).toBe(1);
+
+      // bob comments → alice gets another "comment"; carol (the only other
+      // commenter) gets a single "reply" thanks to the DISTINCT dedupe.
+      await addComment(bob.client, postId, "bob's comment");
+      await addComment(bob.client, postId, "bob again");
+
+      const { data: aliceAfterBob } = await alice.client
+        .from("notifications")
+        .select("id")
+        .eq("user_id", alice.id)
+        .eq("type", "comment")
+        .eq("post_id", postId)
+        .eq("actor_id", bob.id);
+      // Two bob comments → two "comment" rows to alice (no dedupe for
+      // distinct insertions of the same kind, matches legacy behavior).
+      expect((aliceAfterBob ?? []).length).toBe(2);
+
+      const { data: carolReplies } = await carol.client
+        .from("notifications")
+        .select("id, comment_id")
+        .eq("user_id", carol.id)
+        .eq("type", "reply")
+        .eq("post_id", postId)
+        .eq("actor_id", bob.id);
+      // Two distinct comments → two distinct reply notifications.
+      expect((carolReplies ?? []).length).toBe(2);
+
+      // Self-comment by the post author shouldn't create a "comment" to herself.
+      await addComment(alice.client, postId, "author note");
+      const { data: aliceSelf } = await alice.client
+        .from("notifications")
+        .select("id")
+        .eq("user_id", alice.id)
+        .eq("type", "comment")
+        .eq("actor_id", alice.id)
+        .eq("post_id", postId);
+      expect((aliceSelf ?? []).length).toBe(0);
+    });
+
+    // play_requests need a find_players post — its own fixture so we
+    // can flip status without polluting the rest of the trigger suite.
+    it("play_requests INSERT and status flip both fire notifications", async () => {
+      const fp = await createPost(alice.client, {
+        content: "Looking for trigger-test players",
+        post_type: "find_players",
+        play_date: "2026-06-01",
+        play_time: "10:00",
+        play_duration: 90,
+        court_location: "Trigger Court",
+        game_type: "singles",
+        players_needed: 1,
+      });
+
+      // bob requests to join → alice gets "join_request".
+      await bob.client
+        .from("play_requests")
+        .insert({ post_id: fp.id, user_id: bob.id, status: "pending" });
+
+      const { data: joinNote } = await alice.client
+        .from("notifications")
+        .select("id")
+        .eq("user_id", alice.id)
+        .eq("type", "join_request")
+        .eq("actor_id", bob.id)
+        .eq("post_id", fp.id);
+      expect((joinNote ?? []).length).toBe(1);
+
+      // alice approves → bob gets "request_approved".
+      await alice.client
+        .from("play_requests")
+        .update({ status: "approved" })
+        .eq("post_id", fp.id)
+        .eq("user_id", bob.id);
+
+      const { data: approvedNote } = await bob.client
+        .from("notifications")
+        .select("id")
+        .eq("user_id", bob.id)
+        .eq("type", "request_approved")
+        .eq("post_id", fp.id);
+      expect((approvedNote ?? []).length).toBe(1);
+
+      // Round 2: carol requests, alice rejects → "request_rejected".
+      await carol.client
+        .from("play_requests")
+        .insert({ post_id: fp.id, user_id: carol.id, status: "pending" });
+      await alice.client
+        .from("play_requests")
+        .update({ status: "rejected" })
+        .eq("post_id", fp.id)
+        .eq("user_id", carol.id);
+
+      const { data: rejectedNote } = await carol.client
+        .from("notifications")
+        .select("id")
+        .eq("user_id", carol.id)
+        .eq("type", "request_rejected")
+        .eq("post_id", fp.id);
+      expect((rejectedNote ?? []).length).toBe(1);
+
+      // Cleanup the fixture so deletePost in afterAll doesn't trip on FKs.
+      await alice.client.from("posts").delete().eq("id", fp.id);
+    });
+
+    it("reacting to a DM notifies the sender; group/chat reactions don't", async () => {
+      const admin = adminClient();
+      const dm = await sendDirectMessage(alice.client, bob.id, "react test");
+
+      // Clear any stale state.
+      await admin
+        .from("notifications")
+        .delete()
+        .eq("user_id", alice.id)
+        .eq("type", "message_reaction");
+
+      await addReaction(bob.client, "dm", dm.id, "fire");
+
+      const { data: dmNote } = await alice.client
+        .from("notifications")
+        .select("emoji")
+        .eq("user_id", alice.id)
+        .eq("type", "message_reaction")
+        .eq("actor_id", bob.id)
+        .eq("message_id", dm.id);
+      expect((dmNote ?? []).length).toBe(1);
+      expect(dmNote![0].emoji).toBe("fire");
+
+      // Self-reaction shouldn't notify.
+      await admin
+        .from("notifications")
+        .delete()
+        .eq("user_id", alice.id)
+        .eq("type", "message_reaction");
+      await addReaction(alice.client, "dm", dm.id, "thumbs_up");
+      const { data: selfNote } = await alice.client
+        .from("notifications")
+        .select("id")
+        .eq("user_id", alice.id)
+        .eq("type", "message_reaction");
+      expect((selfNote ?? []).length).toBe(0);
     });
   });
 });

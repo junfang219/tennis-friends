@@ -166,7 +166,7 @@ export default function UserProfilePage() {
               playersConfirmed: c.playersConfirmed,
               courtBooked: c.courtBooked,
               isComplete: c.isComplete,
-              sessionChatId: null,
+              sessionChatId: c.sessionChatId,
               commentsDisabled: c.commentsDisabled,
               createdAt: c.createdAt,
               _count: {

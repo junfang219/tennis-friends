@@ -1757,6 +1757,21 @@ function ManageRequestsModal({
     setDropdownValue(totalConfirmed);
   }, [totalConfirmed]);
 
+  // The auto-create-session-chat trigger fires inside the AFTER UPDATE
+  // of posts.is_complete. The trigger has committed by the time the
+  // supabase-js update() resolves, so this select races nothing.
+  const fetchSessionChatId = async (
+    supabase: ReturnType<typeof createSupabaseBrowserClient>,
+    postIdToCheck: string
+  ): Promise<string | null> => {
+    const { data } = await supabase
+      .from("chats")
+      .select("id")
+      .eq("post_id", postIdToCheck)
+      .maybeSingle();
+    return data?.id ?? null;
+  };
+
   const handleRespond = async (requestId: string, action: "approve" | "reject", note?: string) => {
     setRespondingTo(requestId);
     try {
@@ -1771,8 +1786,18 @@ function ManageRequestsModal({
         if (action === "approve") {
           const nextConfirmed = approvedCount + 1 + manualCount;
           const isComplete = nextConfirmed >= playersNeeded;
-          onUpdate(nextConfirmed, isComplete, null, null);
-          if (isComplete) onClose();
+          // Persist the count + completion flag so the auto-chat trigger
+          // can fire. The legacy /api/posts/join/respond route did this
+          // server-side; the migration dropped it.
+          const { error: postErr } = await supabase
+            .from("posts")
+            .update({ players_confirmed: nextConfirmed, is_complete: isComplete })
+            .eq("id", postId);
+          if (!postErr) {
+            const chatId = isComplete ? await fetchSessionChatId(supabase, postId) : null;
+            onUpdate(nextConfirmed, isComplete, chatId, null);
+            if (isComplete) onClose();
+          }
         }
       }
     } catch {
@@ -1829,7 +1854,10 @@ function ManageRequestsModal({
                       .update({ players_confirmed: dropdownValue, is_complete: isNowComplete })
                       .eq("id", postId);
                     if (!upErr) {
-                      onUpdate(dropdownValue, isNowComplete);
+                      const chatId = isNowComplete
+                        ? await fetchSessionChatId(supabase, postId)
+                        : null;
+                      onUpdate(dropdownValue, isNowComplete, chatId, null);
                       setCurrentConfirmedCount(dropdownValue);
                       setIsMarkedFull(isNowComplete);
                     }
@@ -1858,10 +1886,8 @@ function ManageRequestsModal({
                           .update({ players_confirmed: playersNeeded, is_complete: true })
                           .eq("id", postId);
                         if (!upErr) {
-                          // sessionChatId / teamGroupId were created by the
-                          // old route handler. A Postgres trigger should
-                          // recreate that logic before launch.
-                          onUpdate(playersNeeded, true, null, null);
+                          const chatId = await fetchSessionChatId(supabase, postId);
+                          onUpdate(playersNeeded, true, chatId, null);
                           setCurrentConfirmedCount(playersNeeded);
                           setDropdownValue(playersNeeded);
                           setIsMarkedFull(true);
@@ -1983,7 +2009,8 @@ function ManageRequestsModal({
                       })
                       .eq("id", postId);
                     if (!upErr) {
-                      onUpdate(playersNeeded, true, null, null);
+                      const chatId = await fetchSessionChatId(supabase, postId);
+                      onUpdate(playersNeeded, true, chatId, null);
                       setCurrentConfirmedCount(playersNeeded);
                       setDropdownValue(playersNeeded);
                       setIsMarkedFull(true);

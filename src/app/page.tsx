@@ -38,6 +38,7 @@ function adaptFeedPost(p: FeedPost): Post {
     distanceMiles: null,
     pendingRequestCount: 0,
     myPlayRequest: null,
+    sessionChatId: p.session_chat?.[0]?.id ?? null,
     // PostgREST emits "2026-05-21 18:23:35.123+00"; iOS Safari's strict
     // Date parser rejects the space + bare-offset form. Normalize once
     // here so every consumer (timeAgo, toLocaleDateString) sees ISO.
@@ -76,6 +77,7 @@ type Post = {
   distanceMiles?: number | null;
   pendingRequestCount?: number;
   myPlayRequest?: { id: string; status: string; note: string } | null;
+  sessionChatId?: string | null;
   createdAt: string;
   author: { id: string; name: string; profileImageUrl: string };
   likeCount: number;

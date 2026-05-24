@@ -3641,6 +3641,8 @@ export type Database = {
         | "event_invite"
         | "friend_request"
         | "group_invite_accepted"
+        | "reply"
+        | "event_signup"
       play_request_status: "pending" | "approved" | "rejected"
       post_target_kind: "group" | "friend_group"
       post_type: "regular" | "find_players" | "propose_team" | "event"
@@ -3811,6 +3813,8 @@ export const Constants = {
         "event_invite",
         "friend_request",
         "group_invite_accepted",
+        "reply",
+        "event_signup",
       ],
       play_request_status: ["pending", "approved", "rejected"],
       post_target_kind: ["group", "friend_group"],

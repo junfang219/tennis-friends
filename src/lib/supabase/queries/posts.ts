@@ -35,6 +35,12 @@ export interface PostRow {
   created_at: string;
   author: { id: string; name: string; profile_image_url: string };
   photos: { id: string; url: string; order: number }[];
+  // Reverse-FK from chats.post_id. Populated when the auto-create-chat
+  // trigger has fired (find_players post flipped to is_complete = true).
+  // Embedded as an array because PostgREST doesn't know the chats.post_id
+  // unique partial index makes this 0-or-1; we collapse to a scalar in
+  // toPostCamel.
+  session_chat: { id: string }[];
 }
 
 export type Post = PostRow & {
@@ -62,7 +68,8 @@ const POST_COLUMNS = `
   is_broadcast, broadcast_radius_mi, broadcast_lat, broadcast_lng,
   event_id, pinned_at, created_at,
   author:profiles!posts_author_id_fkey ( id, name, profile_image_url ),
-  photos ( id, url, "order" )
+  photos ( id, url, "order" ),
+  session_chat:chats!chats_post_id_fkey ( id )
 `;
 
 /**

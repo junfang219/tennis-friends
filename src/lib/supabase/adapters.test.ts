@@ -101,6 +101,7 @@ describe("snake_case → camelCase adapters", () => {
       created_at: "t",
       author: { id: "a1", name: "Alice", profile_image_url: "x.png" },
       photos: [{ id: "ph1", url: "u.jpg", order: 0 }],
+      session_chat: [],
       like_count: 3,
       comment_count: 1,
       is_liked: true,
@@ -109,6 +110,46 @@ describe("snake_case → camelCase adapters", () => {
     expect(result.likeCount).toBe(3);
     expect(result.isLiked).toBe(true);
     expect(result.photos.length).toBe(1);
+    expect(result.sessionChatId).toBeNull();
+  });
+
+  it("toPostCamel surfaces session_chat[0].id as sessionChatId", () => {
+    const result = toPostCamel({
+      id: "post-complete",
+      author_id: "a1",
+      content: "",
+      media_url: "",
+      media_type: "",
+      post_type: "find_players",
+      play_date: "2026-05-23",
+      play_time: "09:20",
+      play_duration: 90,
+      court_location: "Lower Woodland",
+      game_type: "singles",
+      players_needed: 1,
+      players_confirmed: 1,
+      skill_min: null,
+      skill_max: null,
+      court_booked: true,
+      is_complete: true,
+      comments_disabled: false,
+      manual_players: "",
+      team_group_id: "",
+      is_broadcast: false,
+      broadcast_radius_mi: 0,
+      broadcast_lat: null,
+      broadcast_lng: null,
+      event_id: null,
+      pinned_at: null,
+      created_at: "2026-05-22 03:50:35+00",
+      author: { id: "a1", name: "Mimi", profile_image_url: "" },
+      photos: [],
+      session_chat: [{ id: "chat-123" }],
+      like_count: 0,
+      comment_count: 0,
+      is_liked: false,
+    });
+    expect(result.sessionChatId).toBe("chat-123");
   });
 
   // Regression: when PostComposer hands a fresh post off to its onPost
@@ -148,6 +189,7 @@ describe("snake_case → camelCase adapters", () => {
       created_at: "2026-05-22 03:50:35.739572+00",
       author: { id: "a1", name: "Mimi Fang", profile_image_url: "" },
       photos: [],
+      session_chat: [],
       like_count: 0,
       comment_count: 0,
       is_liked: false,

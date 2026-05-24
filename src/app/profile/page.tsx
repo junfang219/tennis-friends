@@ -39,6 +39,7 @@ type Post = {
   courtBooked?: boolean;
   isComplete?: boolean;
   commentsDisabled?: boolean;
+  sessionChatId?: string | null;
   pendingRequestCount?: number;
   myPlayRequest?: { id: string; status: string; note: string } | null;
   commentCount?: number;
