@@ -14,6 +14,7 @@ import {
   countUserFriends,
 } from "@/lib/supabase/queries";
 import { toPostCamel } from "@/lib/supabase/adapters";
+import { categorizePosts } from "@/lib/postCategorize";
 import Avatar from "@/components/Avatar";
 import FriendRequestButton from "@/components/FriendRequestButton";
 import PostCard from "@/components/PostCard";
@@ -333,13 +334,8 @@ export default function UserProfilePage() {
 
         {/* Tabs + per-tab layouts (mirrors /profile) */}
         {(() => {
-          const isGamePost = (p: { postType?: string }) =>
-            p.postType === "find_players" || p.postType === "propose_team";
-          const findPlayersPosts = user.posts.filter((p) =>
-            isGamePost(p) || (!p.mediaUrl && p.mediaType !== "image" && p.mediaType !== "video")
-          );
-          const photoPosts = user.posts.filter((p) => p.mediaType === "image" && !isGamePost(p));
-          const videoPosts = user.posts.filter((p) => p.mediaType === "video" && !isGamePost(p));
+          const { findPlayers: findPlayersPosts, photos: photoPosts, videos: videoPosts } =
+            categorizePosts(user.posts);
           const filtered =
             tab === "find_players" ? findPlayersPosts :
             tab === "posts" ? photoPosts :

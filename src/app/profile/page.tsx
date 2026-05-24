@@ -12,6 +12,7 @@ import {
   countUserFriends,
 } from "@/lib/supabase/queries";
 import { toPostCamel } from "@/lib/supabase/adapters";
+import { categorizePosts } from "@/lib/postCategorize";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 import { useRouter } from "next/navigation";
@@ -1123,17 +1124,8 @@ export default function ProfilePage() {
 
         {/* Posts section with tabs */}
         {!editing && profile.posts && (() => {
-          // Find Players tab: every game-related post (find_players or
-          // propose_team — regardless of media or completion state), plus any
-          // text-only general post. Photos / Videos tabs are visual-content
-          // only — game posts never appear there even if they carry an image.
-          const isGamePost = (p: { postType?: string }) =>
-            p.postType === "find_players" || p.postType === "propose_team";
-          const findPlayersPosts = profile.posts.filter((p) =>
-            isGamePost(p) || (!p.mediaUrl && p.mediaType !== "image" && p.mediaType !== "video")
-          );
-          const photoPosts = profile.posts.filter((p) => p.mediaType === "image" && !isGamePost(p));
-          const videoPosts = profile.posts.filter((p) => p.mediaType === "video" && !isGamePost(p));
+          const { findPlayers: findPlayersPosts, photos: photoPosts, videos: videoPosts } =
+            categorizePosts(profile.posts);
 
           const filtered =
             tab === "find_players" ? findPlayersPosts :
