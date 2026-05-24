@@ -4,12 +4,11 @@ import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useRouter, usePathname } from "next/navigation";
 import Avatar from "./Avatar";
-import PostCard from "./PostCard";
+import PostDetailModal from "./PostDetailModal";
 import { emojiFor } from "@/lib/reactions";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
-  getPost,
   listPendingRequests,
   acceptFriendRequest as sbAcceptFriendRequest,
   rejectFriendRequest as sbRejectFriendRequest,
@@ -17,7 +16,7 @@ import {
   markAllNotificationsRead,
   unreadNotificationCount,
 } from "@/lib/supabase/queries";
-import { toPostCamel, toNotificationCamel } from "@/lib/supabase/adapters";
+import { toNotificationCamel } from "@/lib/supabase/adapters";
 
 type Notification = {
   id: string;
@@ -198,8 +197,9 @@ export default function NotificationBell() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [pendingFriendRequests, setPendingFriendRequests] = useState(0);
   const [open, setOpen] = useState(false);
-  const [openPost, setOpenPost] = useState<Record<string, unknown> | null>(null);
-  const [loadingPost, setLoadingPost] = useState(false);
+  // Notification → post-detail flow. PostDetailModal owns the fetch +
+  // loading skeleton internally; we just track which post is open.
+  const [openPostId, setOpenPostId] = useState<string | null>(null);
   const [openWithComments, setOpenWithComments] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -212,20 +212,11 @@ export default function NotificationBell() {
   const [friendReqLoading, setFriendReqLoading] = useState(false);
   const [friendReqAction, setFriendReqAction] = useState("");
 
-  const openPostModal = async (postId: string, withComments = false) => {
+  const openPostModal = (postId: string, withComments = false) => {
     if (!postId) return;
     setOpen(false);
     setOpenWithComments(withComments);
-    setOpenPost({}); // Show modal immediately
-    setLoadingPost(true);
-    try {
-      const supabase = createSupabaseBrowserClient();
-      const p = await getPost(supabase, postId);
-      setOpenPost(p ? (toPostCamel(p) as unknown as Record<string, unknown>) : null);
-    } catch {
-      setOpenPost(null);
-    }
-    setLoadingPost(false);
+    setOpenPostId(postId);
   };
 
   const handleNotificationClick = (n: Notification) => {
@@ -363,7 +354,7 @@ export default function NotificationBell() {
   // The bell sits in the persistent layout so its state would otherwise
   // survive navigation and leave stale overlays on top of the new page.
   useEffect(() => {
-    setOpenPost(null);
+    setOpenPostId(null);
     setOpen(false);
     setShowFriendRequests(false);
   }, [pathname]);
@@ -593,42 +584,11 @@ export default function NotificationBell() {
         document.body
       )}
 
-      {/* Post detail modal */}
-      {openPost !== null && createPortal(
-        <div
-          className="fixed inset-0 z-[999] bg-black/50 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
-          onClick={() => setOpenPost(null)}
-        >
-          <div className="w-full sm:max-w-lg sm:my-8" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-end mb-2 px-2 sm:px-0">
-              <button
-                onClick={() => setOpenPost(null)}
-                className="w-9 h-9 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center transition-colors"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-            {loadingPost || !openPost.id ? (
-              <div className="bg-white rounded-2xl p-8 text-center">
-                <svg className="animate-spin w-6 h-6 text-court-green mx-auto" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
-                  <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                </svg>
-              </div>
-            ) : (
-              <PostCard
-                post={openPost as Parameters<typeof PostCard>[0]["post"]}
-                initialExpanded={openWithComments}
-                initialShowComments={openWithComments}
-                onOpenChat={() => setOpenPost(null)}
-              />
-            )}
-          </div>
-        </div>,
-        document.body
-      )}
+      <PostDetailModal
+        postId={openPostId}
+        withComments={openWithComments}
+        onClose={() => setOpenPostId(null)}
+      />
     </div>
   );
 }

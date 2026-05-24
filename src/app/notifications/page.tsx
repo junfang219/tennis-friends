@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Avatar from "@/components/Avatar";
+import PostDetailModal from "@/components/PostDetailModal";
 import { emojiFor } from "@/lib/reactions";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listNotifications, markAllNotificationsRead } from "@/lib/supabase/queries";
@@ -146,6 +147,12 @@ export default function NotificationsPage() {
   const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
+  // Post-detail modal: comment/reply notifications open with comments
+  // expanded; like notifications open the post without expansion. This
+  // matches the in-app NotificationBell so the two surfaces feel the
+  // same — important for iOS where /notifications is the primary path.
+  const [openPostId, setOpenPostId] = useState<string | null>(null);
+  const [openWithComments, setOpenWithComments] = useState(false);
 
   useEffect(() => {
     if (status !== "authenticated") return;
@@ -223,7 +230,11 @@ export default function NotificationsPage() {
       return;
     }
     if (n.postId) {
-      router.push(`/?post=${n.postId}`);
+      // Open the post in a modal with comments expanded for
+      // comment/reply notifications. Likes (and anything else
+      // post-related) open without expansion. Matches NotificationBell.
+      setOpenWithComments(n.type === "comment" || n.type === "reply");
+      setOpenPostId(n.postId);
     }
   };
 
@@ -272,6 +283,12 @@ export default function NotificationsPage() {
           ))}
         </div>
       )}
+
+      <PostDetailModal
+        postId={openPostId}
+        withComments={openWithComments}
+        onClose={() => setOpenPostId(null)}
+      />
     </div>
   );
 }
