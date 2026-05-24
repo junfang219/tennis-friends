@@ -135,7 +135,6 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
   const [liked, setLiked] = useState(post.isLiked);
   const [likeCount, setLikeCount] = useState(post.likeCount);
   const [animating, setAnimating] = useState(false);
-  const [imageExpanded, setImageExpanded] = useState(false);
   // Index of the photo currently in view (carousel + lightbox).
   const [photoIndex, setPhotoIndex] = useState(0);
   const photoStripRef = useRef<HTMLDivElement>(null);
@@ -824,11 +823,10 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
           )}
         </div>
 
-        {/* Media */}
+        {/* Media — photos display only, no tap-to-expand. Multi-photo
+            posts still swipe horizontally via the snap carousel. */}
         {photos.length === 1 && (
-          <div className="cursor-pointer" onClick={() => { setPhotoIndex(0); setImageExpanded(true); }}>
-            <img src={photos[0]} alt="Post image" className="w-full max-h-[500px] object-cover hover:opacity-95 transition-opacity" />
-          </div>
+          <img src={photos[0]} alt="Post image" className="w-full max-h-[500px] object-cover" />
         )}
         {photos.length > 1 && (
           <div className="relative">
@@ -839,7 +837,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
                 const idx = Math.round(el.scrollLeft / el.clientWidth);
                 if (idx !== photoIndex) setPhotoIndex(idx);
               }}
-              className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide cursor-pointer"
+              className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide"
               style={{ scrollbarWidth: "none" }}
             >
               {photos.map((url, i) => (
@@ -847,8 +845,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
                   key={i}
                   src={url}
                   alt={`Photo ${i + 1}`}
-                  onClick={() => { setPhotoIndex(i); setImageExpanded(true); }}
-                  className="snap-center min-w-full max-h-[500px] object-cover hover:opacity-95 transition-opacity"
+                  className="snap-center min-w-full max-h-[500px] object-cover"
                 />
               ))}
             </div>
@@ -961,59 +958,6 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
           </div>
         )}
       </div>
-
-      {/* Lightbox */}
-      {imageExpanded && photos.length > 0 && (
-        <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 cursor-pointer" onClick={() => setImageExpanded(false)}>
-          {/* Pin chrome below the iOS status bar so the X / pager don't
-              land on top of the time + battery indicator on native. */}
-          <button
-            className="absolute right-4 z-10 w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
-            style={{ top: "calc(env(safe-area-inset-top, 0px) + 1rem)" }}
-            onClick={() => setImageExpanded(false)}
-            aria-label="Close"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-          </button>
-
-          {photos.length > 1 && (
-            <>
-              <button
-                onClick={(e) => { e.stopPropagation(); setPhotoIndex((i) => (i - 1 + photos.length) % photos.length); }}
-                disabled={photos.length <= 1}
-                className="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
-                aria-label="Previous photo"
-              >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="15 18 9 12 15 6" />
-                </svg>
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); setPhotoIndex((i) => (i + 1) % photos.length); }}
-                className="absolute right-3 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
-                aria-label="Next photo"
-              >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="9 6 15 12 9 18" />
-                </svg>
-              </button>
-              <div
-                className="absolute left-1/2 -translate-x-1/2 z-10 bg-white/15 text-white text-xs font-semibold px-2.5 py-1 rounded-full"
-                style={{ top: "calc(env(safe-area-inset-top, 0px) + 1rem)" }}
-              >
-                {photoIndex + 1} / {photos.length}
-              </div>
-            </>
-          )}
-
-          <img
-            src={photos[photoIndex]}
-            alt={`Photo ${photoIndex + 1}`}
-            className="max-w-full max-h-[90vh] object-contain rounded-lg"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
-      )}
 
       {/* Manage Requests Modal */}
       {showRequests && createPortal(
