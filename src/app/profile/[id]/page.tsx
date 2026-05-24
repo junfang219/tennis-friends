@@ -519,10 +519,10 @@ export default function UserProfilePage() {
           if (!post) return null;
           return createPortal(
             <div
-              className="fixed inset-0 z-[100] bg-black/60 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
+              className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-4 overflow-y-auto"
               onClick={() => setSelectedPostId(null)}
             >
-              <div className="w-full sm:max-w-lg sm:my-8" onClick={(e) => e.stopPropagation()}>
+              <div className="w-full sm:max-w-lg my-auto" onClick={(e) => e.stopPropagation()}>
                 <div className="flex justify-end mb-2 px-2 sm:px-0">
                   <button
                     onClick={() => setSelectedPostId(null)}
