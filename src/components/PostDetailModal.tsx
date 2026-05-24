@@ -60,33 +60,48 @@ export default function PostDetailModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[999] bg-black/50 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
+      className="fixed inset-0 z-[999] bg-black/50 overflow-y-auto"
       onClick={onClose}
+      style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
     >
-      <div className="w-full sm:max-w-lg sm:my-8" onClick={(e) => e.stopPropagation()}>
-        <div
-          className="flex justify-end mb-2 px-2 sm:px-0"
-          style={{ paddingTop: "calc(env(safe-area-inset-top, 0px))" }}
-        >
-          <button
-            onClick={onClose}
-            className="w-9 h-9 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center transition-colors"
-            aria-label="Close"
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
+      <div
+        className="w-full sm:max-w-lg sm:my-8 my-2 sm:mx-auto"
+        // Reserve room below the card so the comment input clears the
+        // iOS BottomNav (which lives at z-9999, above this modal). The
+        // body already gets a 5rem padding via BottomNav, but that's
+        // applied to <body> and doesn't affect this fixed overlay.
+        style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 5rem)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Sticky close X — anchored at the top-right of the card column.
+            Stays visible for the entire scroll range (long posts with
+            comments + replies would otherwise scroll past the in-card
+            chrome and leave the user stranded with no close affordance).
+            h-0 + overflow-visible so the row doesn't push the card
+            down; the button overlaps the card's top-right corner. */}
+        <div className="sticky top-2 z-20 h-0 overflow-visible pointer-events-none">
+          <div className="flex justify-end pr-2">
+            <button
+              onClick={onClose}
+              className="pointer-events-auto w-9 h-9 rounded-full bg-white shadow-md text-gray-600 hover:text-gray-900 flex items-center justify-center transition-colors"
+              aria-label="Close"
             >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              >
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
         </div>
+
         {loading || !post ? (
           <div className="bg-white rounded-2xl p-8 text-center">
             <svg
@@ -99,10 +114,15 @@ export default function PostDetailModal({
             </svg>
           </div>
         ) : (
+          // PostCard's in-card "hide from feed" X is suppressed in modal
+          // mode (onClose set) — the sticky button above is the sole
+          // close affordance. onOpenChat still closes the modal so
+          // tapping a session chat link doesn't leave a stale overlay.
           <PostCard
             post={post}
             initialExpanded={withComments}
             initialShowComments={withComments}
+            onClose={onClose}
             onOpenChat={onClose}
           />
         )}

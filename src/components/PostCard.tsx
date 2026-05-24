@@ -127,7 +127,7 @@ function timeAgo(date: string) {
   return new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initialExpanded = false, initialShowComments = false }: { post: Post; onDelete?: (id: string) => void; onUpdate?: (id: string, updates: Partial<Post>) => void; onOpenChat?: () => void; initialExpanded?: boolean; initialShowComments?: boolean }) {
+export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose, initialExpanded = false, initialShowComments = false }: { post: Post; onDelete?: (id: string) => void; onUpdate?: (id: string, updates: Partial<Post>) => void; onOpenChat?: () => void; onClose?: () => void; initialExpanded?: boolean; initialShowComments?: boolean }) {
   const { data: session } = useSession();
   const isAuthor = session?.user?.id === post.author.id;
   const isFindPlayers = post.postType === "find_players";
@@ -616,8 +616,13 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" /></svg>
                 </button>
               )}
-              {/* X button — hide others' posts from feed */}
-              {!isAuthor && (
+              {/* Hide-from-feed X for non-author viewers in feed
+                  context. Suppressed when the card is shown inside a
+                  modal (onClose set) — the modal renders its own
+                  sticky close button that stays visible through long
+                  scroll, and the hide-from-feed semantic doesn't fit
+                  a notification-triggered popup anyway. */}
+              {!onClose && !isAuthor && (
                 <button
                   onClick={() => {
                     const supabase = createSupabaseBrowserClient();
