@@ -8,6 +8,8 @@ xcuserdata
 # Cordova plugins for Capacitor
 capacitor-cordova-ios-plugins
 
-# Generated Config files
-App/App/capacitor.config.json
-App/App/config.xml
+# Generated Config files. The `*` catches Finder/Xcode numbered duplicates
+# (config 2.xml, config 3.xml, capacitor.config 2.json, …) that accumulate
+# when a regenerate fires while the file is open elsewhere.
+App/App/capacitor.config*.json
+App/App/config*.xml
