@@ -87,7 +87,6 @@ export default function UserProfilePage() {
   const router = useRouter();
   const [user, setUser] = useState<UserProfile | null>(null);
   const [tab, setTab] = useState<"find_players" | "posts" | "videos">("posts");
-  const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [viewingHighlightIdx, setViewingHighlightIdx] = useState<number | null>(null);
 
   useEffect(() => {
@@ -454,7 +453,7 @@ export default function UserProfilePage() {
                     return (
                       <button
                         key={post.id}
-                        onClick={() => setSelectedPostId(post.id)}
+                        onClick={() => router.push(`/profile/${user.id}/posts?focus=${post.id}`)}
                         className="relative aspect-square overflow-hidden bg-gray-100 group"
                         aria-label={urls.length > 1 ? `Open photo set (${urls.length})` : "Open photo"}
                       >
@@ -484,7 +483,7 @@ export default function UserProfilePage() {
                     return (
                       <button
                         key={post.id}
-                        onClick={() => setSelectedPostId(post.id)}
+                        onClick={() => router.push(`/profile/${user.id}/posts?focus=${post.id}`)}
                         className="relative aspect-square overflow-hidden bg-black group"
                         aria-label="Open video"
                       >
@@ -513,45 +512,6 @@ export default function UserProfilePage() {
           );
         })()}
 
-        {/* Photo / Video modal — opens on grid tap */}
-        {selectedPostId && (() => {
-          const post = user.posts.find((p) => p.id === selectedPostId);
-          if (!post) return null;
-          return createPortal(
-            <div
-              className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-4 overflow-y-auto"
-              onClick={() => setSelectedPostId(null)}
-            >
-              <div className="w-full sm:max-w-lg my-auto" onClick={(e) => e.stopPropagation()}>
-                <div className="flex justify-end mb-2 px-2 sm:px-0">
-                  <button
-                    onClick={() => setSelectedPostId(null)}
-                    className="w-9 h-9 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center transition-colors"
-                    aria-label="Close"
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                  </button>
-                </div>
-                <PostCard
-                  post={{
-                    ...post,
-                    author: { id: user.id, name: user.name, profileImageUrl: user.profileImageUrl },
-                    likeCount: post._count.likes,
-                    commentCount: post._count.comments,
-                    pendingRequestCount: post._count.playRequests,
-                    isLiked: false,
-                    myPlayRequest: post.myPlayRequest,
-                    groups: post.groups,
-                  }}
-                />
-              </div>
-            </div>,
-            document.body
-          );
-        })()}
 
         {/* Highlights viewer — read-only, no Delete */}
         {viewingHighlightIdx !== null && user.highlights && user.highlights[viewingHighlightIdx] && createPortal(

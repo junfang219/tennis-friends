@@ -92,7 +92,6 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [editing, setEditing] = useState(false);
   const [tab, setTab] = useState<"find_players" | "posts" | "videos">("find_players");
-  const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: "",
     handle: "",
@@ -1217,7 +1216,7 @@ export default function ProfilePage() {
                     return (
                       <button
                         key={post.id}
-                        onClick={() => setSelectedPostId(post.id)}
+                        onClick={() => router.push(`/profile/${profile.id}/posts?focus=${post.id}`)}
                         className="relative aspect-square overflow-hidden bg-gray-100 group"
                         aria-label={urls.length > 1 ? `Open photo set (${urls.length})` : "Open photo"}
                       >
@@ -1247,7 +1246,7 @@ export default function ProfilePage() {
                     return (
                       <button
                         key={post.id}
-                        onClick={() => setSelectedPostId(post.id)}
+                        onClick={() => router.push(`/profile/${profile.id}/posts?focus=${post.id}`)}
                         className="relative aspect-square overflow-hidden bg-black group"
                         aria-label="Open video"
                       >
@@ -1276,32 +1275,6 @@ export default function ProfilePage() {
           );
         })()}
 
-        {selectedPostId && (() => {
-          const post = profile.posts.find((p) => p.id === selectedPostId);
-          if (!post) return null;
-          return (
-            <div
-              className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-4 overflow-y-auto"
-              onClick={() => setSelectedPostId(null)}
-            >
-              <div className="w-full sm:max-w-lg my-auto" onClick={(e) => e.stopPropagation()}>
-                <div className="flex justify-end mb-2 px-2 sm:px-0">
-                  <button
-                    onClick={() => setSelectedPostId(null)}
-                    className="w-9 h-9 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center transition-colors"
-                    aria-label="Close"
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                  </button>
-                </div>
-                <PostCard post={post} />
-              </div>
-            </div>
-          );
-        })()}
       </div>
     </div>
   );
