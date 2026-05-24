@@ -852,6 +852,38 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, initial
             <div className="absolute top-3 right-3 bg-black/60 text-white text-[11px] font-semibold px-2 py-1 rounded-full pointer-events-none">
               {photoIndex + 1} / {photos.length}
             </div>
+            {/* Prev / next chevrons. Desktop has no swipe gesture so the
+                arrows are the only way to advance the carousel; on
+                touch devices they're still usable but the snap-x scroll
+                handles swipes natively. */}
+            {photoIndex > 0 && (
+              <button
+                onClick={() => {
+                  const el = photoStripRef.current;
+                  if (el) el.scrollTo({ left: (photoIndex - 1) * el.clientWidth, behavior: "smooth" });
+                }}
+                className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/90 hover:bg-white shadow-md text-gray-900 flex items-center justify-center transition-colors"
+                aria-label="Previous photo"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+              </button>
+            )}
+            {photoIndex < photos.length - 1 && (
+              <button
+                onClick={() => {
+                  const el = photoStripRef.current;
+                  if (el) el.scrollTo({ left: (photoIndex + 1) * el.clientWidth, behavior: "smooth" });
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/90 hover:bg-white shadow-md text-gray-900 flex items-center justify-center transition-colors"
+                aria-label="Next photo"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="9 6 15 12 9 18" />
+                </svg>
+              </button>
+            )}
             <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 pointer-events-none">
               {photos.map((_, i) => (
                 <span
