@@ -4461,3 +4461,40 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+-- ============================================================
+-- COMMENT EDIT (author-only UPDATE + updated_at indicator)
+-- ============================================================
+--
+-- The original `comments_delete_self` policy lets authors remove their
+-- own comments. Mirror that with an UPDATE policy so authors can edit
+-- the content too. WITH CHECK locks author_id so editing can't be
+-- used to transfer ownership.
+CREATE POLICY comments_update_self ON public.comments
+  FOR UPDATE TO authenticated
+  USING (author_id = (SELECT auth.uid()))
+  WITH CHECK (author_id = (SELECT auth.uid()));
+
+-- updated_at: NULL = never edited; the bell-bubble UI shows "(edited)"
+-- when it's set. A BEFORE UPDATE trigger only bumps it when the
+-- content actually changed, so other flags (read, notification
+-- dedup, etc.) don't falsely advertise an edit.
+ALTER TABLE public.comments
+  ADD COLUMN IF NOT EXISTS updated_at timestamptz;
+
+CREATE OR REPLACE FUNCTION public.bump_comment_updated_at()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.content IS DISTINCT FROM OLD.content THEN
+    NEW.updated_at := now();
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS comments_bump_updated_at ON public.comments;
+CREATE TRIGGER comments_bump_updated_at
+  BEFORE UPDATE ON public.comments
+  FOR EACH ROW EXECUTE FUNCTION public.bump_comment_updated_at();

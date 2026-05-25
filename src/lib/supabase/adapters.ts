@@ -188,6 +188,8 @@ export interface CommentCamel {
   content: string;
   parentCommentId: string | null;
   createdAt: string;
+  // NULL until an edit lands. UI shows "(edited)" when populated.
+  updatedAt: string | null;
   author: { id: string; name: string; profileImageUrl: string };
 }
 
@@ -199,6 +201,7 @@ export function toCommentCamel(c: Comment): CommentCamel {
     content: c.content,
     parentCommentId: c.parent_comment_id,
     createdAt: pgToIso(c.created_at),
+    updatedAt: c.updated_at ? pgToIso(c.updated_at) : null,
     author: {
       id: c.author.id,
       name: c.author.name,

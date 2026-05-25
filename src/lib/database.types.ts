@@ -469,6 +469,7 @@ export type Database = {
           id: string
           parent_comment_id: string | null
           post_id: string
+          updated_at: string | null
         }
         Insert: {
           author_id: string
@@ -477,6 +478,7 @@ export type Database = {
           id?: string
           parent_comment_id?: string | null
           post_id: string
+          updated_at?: string | null
         }
         Update: {
           author_id?: string
@@ -485,6 +487,7 @@ export type Database = {
           id?: string
           parent_comment_id?: string | null
           post_id?: string
+          updated_at?: string | null
         }
         Relationships: [
           {

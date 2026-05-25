@@ -59,6 +59,9 @@ export interface Comment {
   // NULL for top-level comments; set to the parent comment id for replies.
   parent_comment_id: string | null;
   created_at: string;
+  // NULL until the author edits the comment. Set by a BEFORE UPDATE
+  // trigger when content actually changes.
+  updated_at: string | null;
   author: { id: string; name: string; profile_image_url: string };
 }
 
@@ -254,7 +257,7 @@ export async function listComments(
   const { data, error } = await supabase
     .from("comments")
     .select(
-      `id, post_id, author_id, content, parent_comment_id, created_at,
+      `id, post_id, author_id, content, parent_comment_id, created_at, updated_at,
        author:profiles!comments_author_id_fkey ( id, name, profile_image_url )`
     )
     .eq("post_id", postId)
@@ -284,10 +287,48 @@ export async function addComment(
       parent_comment_id: parentCommentId ?? null,
     })
     .select(
-      `id, post_id, author_id, content, parent_comment_id, created_at,
+      `id, post_id, author_id, content, parent_comment_id, created_at, updated_at,
        author:profiles!comments_author_id_fkey ( id, name, profile_image_url )`
     )
     .single();
   if (error) throw error;
   return data as Comment;
+}
+
+/**
+ * Edit the content of an existing comment. RLS (comments_update_self)
+ * restricts this to the author. The BEFORE UPDATE trigger bumps
+ * updated_at when content actually changes, so the returned row has
+ * the new timestamp and the UI can show "(edited)".
+ */
+export async function updateComment(
+  supabase: SupabaseClient<Database>,
+  commentId: string,
+  content: string
+): Promise<Comment> {
+  const { data, error } = await supabase
+    .from("comments")
+    .update({ content })
+    .eq("id", commentId)
+    .select(
+      `id, post_id, author_id, content, parent_comment_id, created_at, updated_at,
+       author:profiles!comments_author_id_fkey ( id, name, profile_image_url )`
+    )
+    .single();
+  if (error) throw error;
+  return data as Comment;
+}
+
+/**
+ * Delete a comment. RLS restricts to the author. ON DELETE CASCADE on
+ * the self-FK (comments.parent_comment_id) removes child replies, and
+ * the FK from notifications.comment_id removes any notifications
+ * still pointing at the row — both happen at the DB layer.
+ */
+export async function deleteComment(
+  supabase: SupabaseClient<Database>,
+  commentId: string
+): Promise<void> {
+  const { error } = await supabase.from("comments").delete().eq("id", commentId);
+  if (error) throw error;
 }

@@ -31,6 +31,8 @@ import {
   hidePost,
   listComments,
   addComment,
+  updateComment,
+  deleteComment,
   // Friends
   listFriends,
   listPendingRequests,
@@ -1138,6 +1140,127 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         .eq("type", "reply")
         .eq("comment_id", carolReplyToReply.id);
       expect((carolSelfNotif ?? []).length).toBe(0);
+    });
+
+    // Comment edit / delete coverage. RLS gates edit/delete to the
+    // author; bump_comment_updated_at sets updated_at only on real
+    // content changes; ON DELETE CASCADE removes children + the
+    // notifications that point at the deleted comment.
+    it("updateComment round-trip: author edits, updated_at bumps, peers read new content", async () => {
+      const c = await addComment(bob.client, postId, "original text");
+      expect(c.updated_at).toBeNull();
+
+      const edited = await updateComment(bob.client, c.id, "edited text");
+      expect(edited.content).toBe("edited text");
+      expect(edited.updated_at).not.toBeNull();
+
+      // Peer (post author) sees the new content + updated_at via listComments.
+      const all = await listComments(alice.client, postId);
+      const target = all.find((row) => row.id === c.id);
+      expect(target?.content).toBe("edited text");
+      expect(target?.updated_at).not.toBeNull();
+
+      // Cleanup so later trigger tests start from a clean comment slate.
+      await deleteComment(bob.client, c.id);
+    });
+
+    it("RLS blocks updating someone else's comment", async () => {
+      const c = await addComment(bob.client, postId, "bob's words");
+
+      // carol tries to rewrite bob's comment. RLS USING clause yields
+      // zero matching rows, so .single() must error and the row stays
+      // intact.
+      const attempt = await carol.client
+        .from("comments")
+        .update({ content: "hijacked" })
+        .eq("id", c.id)
+        .select("id, content");
+      // Either an explicit RLS error OR a silent zero-row update —
+      // both are acceptable; what matters is the row didn't change.
+      const stillBobs = await listComments(alice.client, postId);
+      const target = stillBobs.find((row) => row.id === c.id);
+      expect(target?.content).toBe("bob's words");
+      expect(attempt.data ?? []).toHaveLength(0);
+
+      await deleteComment(bob.client, c.id);
+    });
+
+    it("editing a comment does NOT create a new notification", async () => {
+      const admin = adminClient();
+      // Start clean so we can count the comment-trigger's INSERT.
+      await admin
+        .from("notifications")
+        .delete()
+        .in("type", ["comment", "reply"])
+        .eq("post_id", postId);
+
+      const c = await addComment(bob.client, postId, "first draft");
+      const { data: afterInsert } = await alice.client
+        .from("notifications")
+        .select("id")
+        .eq("user_id", alice.id)
+        .eq("type", "comment")
+        .eq("post_id", postId)
+        .eq("actor_id", bob.id);
+      expect((afterInsert ?? []).length).toBe(1);
+
+      // Editing must not fire notify_on_comment again (the trigger
+      // is INSERT-only, by design — peers got pinged once; rewording
+      // shouldn't re-ping).
+      await updateComment(bob.client, c.id, "polished draft");
+      const { data: afterEdit } = await alice.client
+        .from("notifications")
+        .select("id")
+        .eq("user_id", alice.id)
+        .eq("type", "comment")
+        .eq("post_id", postId)
+        .eq("actor_id", bob.id);
+      expect((afterEdit ?? []).length).toBe(1);
+
+      await deleteComment(bob.client, c.id);
+    });
+
+    it("deleting a parent comment cascades to replies and to its notifications", async () => {
+      const admin = adminClient();
+      await admin
+        .from("notifications")
+        .delete()
+        .in("type", ["comment", "reply"])
+        .eq("post_id", postId);
+
+      const parent = await addComment(bob.client, postId, "parent thread");
+      const child = await addComment(carol.client, postId, "child reply", parent.id);
+      const grandchild = await addComment(
+        bob.client,
+        postId,
+        "grandchild reply",
+        child.id
+      );
+
+      // Pre-check: the reply trigger created a "reply" notification
+      // pointing at the child comment (for bob, the parent's author).
+      const { data: replyNotifBefore } = await admin
+        .from("notifications")
+        .select("id")
+        .eq("comment_id", child.id);
+      expect((replyNotifBefore ?? []).length).toBeGreaterThan(0);
+
+      // Author of the parent deletes it. CASCADE on parent_comment_id
+      // should remove both child + grandchild; CASCADE on
+      // notifications.comment_id should remove the reply notif.
+      await deleteComment(bob.client, parent.id);
+
+      const remaining = await listComments(alice.client, postId);
+      const survivingIds = new Set(remaining.map((r) => r.id));
+      expect(survivingIds.has(parent.id)).toBe(false);
+      expect(survivingIds.has(child.id)).toBe(false);
+      expect(survivingIds.has(grandchild.id)).toBe(false);
+
+      const { data: replyNotifAfter } = await admin
+        .from("notifications")
+        .select("id")
+        .in("comment_id", [parent.id, child.id, grandchild.id]);
+      expect((replyNotifAfter ?? []).length).toBe(0);
     });
 
     // play_requests need a find_players post — its own fixture so we

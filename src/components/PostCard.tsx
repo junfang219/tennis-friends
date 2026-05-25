@@ -16,6 +16,8 @@ import {
   deletePost,
   listComments,
   addComment,
+  updateComment,
+  deleteComment,
   requestToJoin,
   cancelPlayRequest,
   listMyGroups,
@@ -31,6 +33,7 @@ type CommentData = {
   content: string;
   parentCommentId: string | null;
   createdAt: string;
+  updatedAt: string | null;
   author: { id: string; name: string; profileImageUrl: string };
 };
 
@@ -171,6 +174,18 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
   // "Replying to @X" pill). null = top-level comment composer.
   const [replyTo, setReplyTo] = useState<{ commentId: string; authorName: string } | null>(null);
   const commentInputRef = useRef<HTMLInputElement>(null);
+
+  // Comment edit / delete UI state. editingCommentId scopes the inline
+  // textarea to a single row; menuForCommentId controls the kebab
+  // action sheet; deleteConfirmCommentId gates the destructive confirm.
+  // (The post-level edit modal uses its own `savingEdit` further down,
+  // so these are prefixed with `comment` to avoid the collision.)
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editCommentDraft, setEditCommentDraft] = useState("");
+  const [savingCommentEdit, setSavingCommentEdit] = useState(false);
+  const [menuForCommentId, setMenuForCommentId] = useState<string | null>(null);
+  const [deleteConfirmCommentId, setDeleteConfirmCommentId] = useState<string | null>(null);
+  const [deletingComment, setDeletingComment] = useState(false);
 
   const insertCommentEmoji = (emoji: string) => {
     const el = commentInputRef.current;
@@ -332,27 +347,59 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
     setCommentsLoaded(true);
   };
 
-  // Live-update the badge as other users comment on this post. Without
-  // this, the count is the parent feed's snapshot at load-time and only
-  // catches up when the viewer opens the comments tray (loadComments).
-  // The realtime publication carries comments rows; RLS gates delivery
-  // to viewers who can already see the post, so the filter is the only
+  // Live-update the comments list + badge as other users INSERT / UPDATE
+  // (edit) / DELETE comments on this post. RLS gates delivery to viewers
+  // who can already see the post, so the post_id filter is the only
   // guard we need.
   useRealtimeTable(
     {
       table: "comments",
-      event: "INSERT",
+      event: "*",
       filter: `post_id=eq.${post.id}`,
       onChange: (payload) => {
-        if (payload.eventType !== "INSERT") return;
-        const inserted = payload.new as { id: string; author_id: string };
-        // handleComment already bumped the count + appended the row
-        // optimistically for the viewer's own comment — skip the echo.
-        if (inserted.author_id === session?.user?.id) return;
-        setCommentCount((cc) => cc + 1);
-        // If the tray is open or has been opened, refresh so the new
-        // comment also shows in the list (needs the joined author).
-        if (commentsLoaded) loadComments();
+        const me = session?.user?.id;
+        if (payload.eventType === "INSERT") {
+          const inserted = payload.new as { id: string; author_id: string };
+          // handleComment already bumped the count + appended for the
+          // viewer's own comment — skip the echo.
+          if (inserted.author_id === me) return;
+          setCommentCount((cc) => cc + 1);
+          // The payload doesn't include the joined author; refetch so
+          // the row renders with the right profile.
+          if (commentsLoaded) loadComments();
+        } else if (payload.eventType === "UPDATE") {
+          const updated = payload.new as {
+            id: string;
+            content: string;
+            updated_at: string | null;
+          };
+          // Patch content + updatedAt for the matching local row.
+          // saveCommentEdit already handled the viewer's own edit
+          // optimistically; this catches peer edits.
+          setComments((prev) =>
+            prev.map((c) =>
+              c.id === updated.id
+                ? { ...c, content: updated.content, updatedAt: updated.updated_at }
+                : c
+            )
+          );
+        } else if (payload.eventType === "DELETE") {
+          const deleted = payload.old as { id: string };
+          // CASCADE removes children server-side; mirror that locally.
+          setComments((prev) => {
+            const ids = new Set<string>();
+            const collect = (rootId: string) => {
+              ids.add(rootId);
+              for (const c of prev) {
+                if (c.parentCommentId === rootId) collect(c.id);
+              }
+            };
+            collect(deleted.id);
+            if (ids.size === 0) return prev;
+            setCommentCount((cc) => Math.max(0, cc - ids.size));
+            return prev.filter((c) => !ids.has(c.id));
+          });
+        }
       },
     },
     [post.id, session?.user?.id, commentsLoaded]
@@ -427,6 +474,62 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
       );
     }
     setTimeout(() => commentInputRef.current?.focus(), 0);
+  };
+
+  // Open the inline-edit textarea for a comment. Closes any open menu.
+  const startEditComment = (c: CommentData) => {
+    setEditingCommentId(c.id);
+    setEditCommentDraft(c.content);
+    setMenuForCommentId(null);
+  };
+
+  // Persist the edit. RLS will reject if the author check fails.
+  const saveCommentEdit = async () => {
+    if (!editingCommentId) return;
+    const trimmed = editCommentDraft.trim();
+    if (!trimmed) return;
+    setSavingCommentEdit(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const updated = await updateComment(supabase, editingCommentId, trimmed);
+      const adapted = toCommentCamel(updated) as unknown as CommentData;
+      setComments((prev) => prev.map((c) => (c.id === adapted.id ? adapted : c)));
+      setEditingCommentId(null);
+      setEditCommentDraft("");
+    } catch {
+      // Leave the textarea open so the user can retry / cancel.
+    }
+    setSavingCommentEdit(false);
+  };
+
+  // Confirmed delete. Realtime DELETE event will also propagate to peers.
+  const confirmDeleteComment = async () => {
+    if (!deleteConfirmCommentId) return;
+    setDeletingComment(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await deleteComment(supabase, deleteConfirmCommentId);
+      // CASCADE on parent_comment_id removes children at the DB; mirror
+      // that locally so the optimistic view matches.
+      setComments((prev) => {
+        const ids = new Set<string>();
+        const collect = (rootId: string) => {
+          ids.add(rootId);
+          for (const c of prev) {
+            if (c.parentCommentId === rootId) collect(c.id);
+          }
+        };
+        collect(deleteConfirmCommentId);
+        return prev.filter((c) => !ids.has(c.id));
+      });
+      // Approximate count update; the realtime DELETE handler will
+      // converge for any miscounts.
+      setCommentCount((cc) => Math.max(0, cc - 1));
+      setDeleteConfirmCommentId(null);
+    } catch {
+      // ignore
+    }
+    setDeletingComment(false);
   };
 
   const toggleComments = () => {
@@ -1079,40 +1182,106 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
             return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
           };
 
-          const renderComment = (c: CommentData, indented = false) => (
-            <div
-              key={c.id}
-              className={`flex items-start gap-2.5 ${indented ? "ml-9" : ""}`}
-            >
-              <Link href={`/profile/${c.author.id}`} className="shrink-0 mt-0.5">
-                <Avatar
-                  name={c.author.name}
-                  image={c.author.profileImageUrl}
-                  size="sm"
-                />
-              </Link>
-              <div className="flex-1 min-w-0">
-                <div className="bg-surface/80 rounded-xl px-3.5 py-2.5">
-                  <Link
-                    href={`/profile/${c.author.id}`}
-                    className="text-xs font-bold text-gray-800 hover:text-court-green transition-colors"
-                  >
-                    {c.author.name}
-                  </Link>
-                  <p className="text-sm text-gray-700 mt-0.5">{c.content}</p>
-                </div>
-                <div className="flex items-center gap-3 mt-1 ml-1">
-                  <p className="text-[10px] text-gray-400">{timeAgo(c.createdAt)}</p>
-                  <button
-                    onClick={() => startReply(c)}
-                    className="text-[10px] font-semibold text-gray-500 hover:text-court-green transition-colors"
-                  >
-                    Reply
-                  </button>
+          const renderComment = (c: CommentData, indented = false) => {
+            const isAuthor = session?.user?.id === c.author.id;
+            const isEditing = editingCommentId === c.id;
+            return (
+              <div
+                key={c.id}
+                className={`flex items-start gap-2.5 ${indented ? "ml-9" : ""}`}
+              >
+                <Link href={`/profile/${c.author.id}`} className="shrink-0 mt-0.5">
+                  <Avatar
+                    name={c.author.name}
+                    image={c.author.profileImageUrl}
+                    size="sm"
+                  />
+                </Link>
+                <div className="flex-1 min-w-0">
+                  {isEditing ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={editCommentDraft}
+                        onChange={(e) => setEditCommentDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            saveCommentEdit();
+                          }
+                          if (e.key === "Escape") {
+                            setEditingCommentId(null);
+                            setEditCommentDraft("");
+                          }
+                        }}
+                        autoFocus
+                        rows={Math.max(1, Math.min(6, editCommentDraft.split("\n").length))}
+                        className="w-full bg-surface/80 rounded-xl px-3.5 py-2.5 text-sm text-gray-700 border border-court-green/30 focus:outline-none focus:border-court-green resize-none"
+                      />
+                      <div className="flex items-center gap-3 text-[11px]">
+                        <button
+                          onClick={saveCommentEdit}
+                          disabled={savingEdit || !editCommentDraft.trim()}
+                          className="font-semibold text-court-green disabled:text-gray-300 transition-colors"
+                        >
+                          {savingEdit ? "Saving…" : "Save"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingCommentId(null);
+                            setEditCommentDraft("");
+                          }}
+                          className="font-semibold text-gray-500 hover:text-gray-700 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="bg-surface/80 rounded-xl px-3.5 py-2.5">
+                        <Link
+                          href={`/profile/${c.author.id}`}
+                          className="text-xs font-bold text-gray-800 hover:text-court-green transition-colors"
+                        >
+                          {c.author.name}
+                        </Link>
+                        <p className="text-sm text-gray-700 mt-0.5 whitespace-pre-wrap break-words">
+                          {c.content}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3 mt-1 ml-1">
+                        <p className="text-[10px] text-gray-400">
+                          {timeAgo(c.createdAt)}
+                          {c.updatedAt && (
+                            <span className="ml-1 italic">· edited</span>
+                          )}
+                        </p>
+                        <button
+                          onClick={() => startReply(c)}
+                          className="text-[10px] font-semibold text-gray-500 hover:text-court-green transition-colors"
+                        >
+                          Reply
+                        </button>
+                        {isAuthor && (
+                          <button
+                            onClick={() => setMenuForCommentId(c.id)}
+                            className="ml-auto text-gray-400 hover:text-gray-600 transition-colors"
+                            aria-label="Comment options"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                              <circle cx="5" cy="12" r="1.5" />
+                              <circle cx="12" cy="12" r="1.5" />
+                              <circle cx="19" cy="12" r="1.5" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
-            </div>
-          );
+            );
+          };
 
           return (
             <>
@@ -1228,6 +1397,104 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
           );
         })()}
       </div>
+
+      {/* Per-comment kebab action sheet (Edit / Delete). Portal so the
+          backdrop covers the whole viewport regardless of where the
+          card is rendered (feed / profile / PostDetailModal). */}
+      {menuForCommentId && createPortal(
+        // z-[10000] lifts above BottomNav (z-9999). The bottom padding
+        // pushes the sheet above the iOS tab bar + home indicator so
+        // none of the action rows get hidden.
+        <div
+          className="fixed inset-0 z-[10000] bg-black/40 flex items-end sm:items-center justify-center p-4"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 4.5rem)" }}
+          onClick={() => setMenuForCommentId(null)}
+        >
+          <div
+            className="bg-white rounded-2xl w-full max-w-sm overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => {
+                const target = comments.find((c) => c.id === menuForCommentId);
+                if (target) startEditComment(target);
+              }}
+              className="w-full px-5 py-4 text-left text-sm font-medium text-gray-800 hover:bg-gray-50 transition-colors flex items-center gap-3 border-b border-gray-100"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+              Edit
+            </button>
+            <button
+              onClick={() => {
+                setDeleteConfirmCommentId(menuForCommentId);
+                setMenuForCommentId(null);
+              }}
+              className="w-full px-5 py-4 text-left text-sm font-medium text-red-600 hover:bg-red-50 transition-colors flex items-center gap-3 border-b border-gray-100"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+                <path d="M10 11v6" />
+                <path d="M14 11v6" />
+              </svg>
+              Delete
+            </button>
+            <button
+              onClick={() => setMenuForCommentId(null)}
+              className="w-full py-3 text-sm font-semibold text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Delete-comment confirm. Two-step so a mis-tap doesn't lose
+          content; the destructive button is red. */}
+      {deleteConfirmCommentId && createPortal(
+        // z-[10000] mirrors the action sheet so the confirm sits above
+        // the iOS tab bar (BottomNav is z-9999).
+        <div
+          className="fixed inset-0 z-[10000] bg-black/40 flex items-center justify-center p-4"
+          onClick={() => !deletingComment && setDeleteConfirmCommentId(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 pt-6 pb-4">
+              <h3 className="font-display text-lg font-bold text-gray-800 mb-1">
+                Delete this comment?
+              </h3>
+              <p className="text-sm text-gray-500">
+                This can&rsquo;t be undone. Replies underneath this
+                comment will be removed too.
+              </p>
+            </div>
+            <div className="px-6 pb-6 flex flex-col gap-2">
+              <button
+                onClick={confirmDeleteComment}
+                disabled={deletingComment}
+                className="w-full py-2.5 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-60 rounded-xl transition-colors"
+              >
+                {deletingComment ? "Deleting…" : "Delete"}
+              </button>
+              <button
+                onClick={() => setDeleteConfirmCommentId(null)}
+                disabled={deletingComment}
+                className="w-full py-2.5 text-sm font-semibold text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* Manage Requests Modal */}
       {showRequests && createPortal(

@@ -208,7 +208,7 @@ describe("snake_case → camelCase adapters", () => {
     expect(Number.isNaN(new Date(result.createdAt).getTime())).toBe(false);
   });
 
-  it("toCommentCamel flattens author and surfaces parentCommentId", () => {
+  it("toCommentCamel flattens author and surfaces parentCommentId + updatedAt", () => {
     const c = toCommentCamel({
       id: "c1",
       post_id: "p1",
@@ -216,22 +216,26 @@ describe("snake_case → camelCase adapters", () => {
       content: "yo",
       parent_comment_id: null,
       created_at: "t",
+      updated_at: null,
       author: { id: "a1", name: "Alice", profile_image_url: "x.png" },
     });
     expect(c.postId).toBe("p1");
     expect(c.author.profileImageUrl).toBe("x.png");
     expect(c.parentCommentId).toBeNull();
+    expect(c.updatedAt).toBeNull();
 
-    const reply = toCommentCamel({
+    const edited = toCommentCamel({
       id: "c2",
       post_id: "p1",
       author_id: "a2",
       content: "@Alice yo back",
       parent_comment_id: "c1",
-      created_at: "t",
+      created_at: "2026-05-23 03:50:35+00",
+      updated_at: "2026-05-24 04:11:00+00",
       author: { id: "a2", name: "Bob", profile_image_url: "" },
     });
-    expect(reply.parentCommentId).toBe("c1");
+    expect(edited.parentCommentId).toBe("c1");
+    expect(edited.updatedAt).toBe("2026-05-24T04:11:00+00:00");
   });
 
   it("toEventCamel + toGroupCamel + toTeamListingCamel basic shape", () => {
