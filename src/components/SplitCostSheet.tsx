@@ -10,7 +10,7 @@ import {
 } from "@/lib/payment";
 import { openPayment } from "@/lib/openPayment";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { getMyProfile, updateMyProfile } from "@/lib/supabase/queries";
+import { getMyProfile, updateMyProfile, sendChatMessage } from "@/lib/supabase/queries";
 
 type Participant = { id: string; name: string; profileImageUrl: string };
 
@@ -325,18 +325,48 @@ export default function SplitCostSheet({
         return;
       }
       // Split the bill: equal share per participant + per guest.
+      // Floor-divide then distribute the rounding remainder one cent at
+      // a time to the first `remainder` slots so the shares sum to the
+      // full amount (e.g. $10.00 / 3 → 3.34, 3.33, 3.33).
       const totalSlots = participants.length + guestNames.length;
-      const perCents = Math.floor(cents / totalSlots);
-      const shareRows: Array<{ expense_id: string; user_id?: string; guest_name?: string; amount_cents: number }> = [];
-      for (const p of participants) {
-        shareRows.push({ expense_id: exp.id, user_id: p.id, amount_cents: perCents });
-      }
-      for (const gname of guestNames) {
-        shareRows.push({ expense_id: exp.id, guest_name: gname, amount_cents: perCents });
-      }
+      const baseCents = Math.floor(cents / totalSlots);
+      const remainder = cents - baseCents * totalSlots;
+      const slots: Array<{ user_id?: string; guest_name?: string }> = [
+        ...participants.map((p) => ({ user_id: p.id })),
+        ...guestNames.map((g) => ({ guest_name: g })),
+      ];
+      const shareRows = slots.map((slot, i) => ({
+        expense_id: exp.id,
+        ...slot,
+        amount_cents: baseCents + (i < remainder ? 1 : 0),
+      }));
       if (shareRows.length > 0) {
         await supabase.from("expense_shares").insert(shareRows);
       }
+
+      // Announce the expense in the chat so other members see it without
+      // having to open the Split sheet. Sent as a normal message under
+      // the payer's identity. Best-effort: the expense is already saved,
+      // so a failed notification shouldn't roll anything back.
+      const splitParts = [
+        `${participants.length} ${participants.length === 1 ? "player" : "players"}`,
+        ...(guestNames.length > 0
+          ? [`${guestNames.length} guest${guestNames.length === 1 ? "" : "s"}`]
+          : []),
+      ];
+      const msgLines = [
+        `💵 Expense added`,
+        `💰 $${dollarsString(cents)}`,
+        ...(description.trim() ? [`📝 ${description.trim()}`] : []),
+        `👥 ~$${dollarsString(baseCents)} each (${splitParts.join(" + ")})`,
+      ];
+      try {
+        await sendChatMessage(supabase, chatId, msgLines.join("\n"));
+      } catch {
+        // Realtime won't fire; the expense is still in the DB and will
+        // appear under Balances. User can re-share manually if needed.
+      }
+
       setAmount("");
       setDescription("");
       await load();
