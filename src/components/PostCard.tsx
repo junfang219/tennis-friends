@@ -2296,7 +2296,7 @@ function ManageRequestsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[999] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[10001] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-fade-in-up" onClick={(e) => e.stopPropagation()}>
         <div className="p-4 border-b border-gray-100 flex items-center justify-between">
           <div>
