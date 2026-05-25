@@ -189,7 +189,6 @@ export default function GroupChatThreadPage() {
   };
 
   useEffect(() => {
-    loadMessages();
     pollRef.current = setInterval(loadMessages, 3000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
