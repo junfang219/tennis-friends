@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useLayoutEffect, useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Avatar from "@/components/Avatar";
@@ -9,11 +10,12 @@ import SplitCostSheet from "@/components/SplitCostSheet";
 import MessageReactionBar from "@/components/MessageReactionBar";
 import MessageReactions, { type MessageReaction as MsgReaction } from "@/components/MessageReactions";
 import { useLongPress } from "@/hooks/useLongPress";
+import { useKeyboardHeight } from "@/hooks/useKeyboardHeight";
 import type { ReactionKey } from "@/lib/reactions";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useRealtimeTable } from "@/lib/supabase/realtime";
 import {
   getChatBundle,
-  listChatMessages,
   sendChatMessage,
   addReaction,
 } from "@/lib/supabase/queries";
@@ -70,9 +72,62 @@ export default function GroupChatThreadPage() {
   const [uploadError, setUploadError] = useState("");
   const [reactionPopover, setReactionPopover] = useState<{ msgId: string; rect: DOMRect } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const inputBarRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Keyboard height in px (0 when closed). On native (Capacitor) the
+  // hook subscribes to @capacitor/keyboard's keyboardWillShow/Hide; on
+  // web it reads window.visualViewport. Native trusts the plugin only
+  // (no VisualViewport merge) — see useKeyboardHeight for why.
+  const keyboardHeight = useKeyboardHeight();
+
+  // Lock body scroll while the chat thread is mounted so iOS bounce /
+  // pull-to-refresh doesn't drag the page around behind the fixed chat
+  // surface. Restored on unmount so other routes still scroll normally.
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    const prevOverscroll = document.body.style.overscrollBehavior;
+    document.body.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.body.style.overscrollBehavior = prevOverscroll;
+    };
+  }, []);
+
+  // `mounted` gates the createPortal call so the server render produces
+  // nothing for this branch (createPortal can't run during SSR — there's
+  // no document). On the client the first effect tick flips it true and
+  // the portal mounts on the same paint. The setState-in-effect lint
+  // warning is the standard SSR-mount pattern for portals, not a real
+  // perf concern (a single one-time flip).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMounted(true);
+  }, []);
+
+  // Live-measure the input bar so the messages scroller can reserve
+  // exactly enough padding-bottom — the bar grows when a media preview
+  // is attached, when an upload error wraps, etc. ResizeObserver covers
+  // both the initial mount and any post-mount size change.
+  const [inputBarHeight, setInputBarHeight] = useState(72);
+  useLayoutEffect(() => {
+    const el = inputBarRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const h = e.borderBoxSize?.[0]?.blockSize ?? e.contentRect.height;
+        if (h > 0) setInputBarHeight(h);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -143,8 +198,8 @@ export default function GroupChatThreadPage() {
   // listChatMessages) and the header (chat name + member avatars)
   // blocked on the slowest of the first two — noticeable on a phone
   // hitting the LAN dev server, where each request adds connection +
-  // RLS-check overhead. The 3s poll below uses the slimmer
-  // listChatMessages because it only needs to refresh messages.
+  // RLS-check overhead. After this initial fetch, new messages stream
+  // in via the realtime subscription below — no polling.
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
     getChatBundle(supabase, chatId)
@@ -175,29 +230,160 @@ export default function GroupChatThreadPage() {
       .catch(() => setError("You are not a participant of this chat."));
   }, [chatId]);
 
-  // Incremental refresh — only re-pulls messages, never re-fetches the
-  // chat header or member list.
-  const loadMessages = () => {
-    const supabase = createSupabaseBrowserClient();
-    listChatMessages(supabase, chatId)
-      .then((rows) =>
-        setMessages(
-          rows.map((m) => ({ ...toChatMessageCamel(m), reactions: [] }))
-        )
-      )
-      .catch(() => {});
-  };
+  // Live-append incoming messages via Postgres CDC instead of polling.
+  // The previous 3-second poll re-fetched all 100 messages and replaced
+  // the React state array, which re-rendered every bubble (avatar +
+  // long-press handler + reactions + media) every poll — heavy enough
+  // on iOS WKWebView to feel "stuck" and drop taps on Send. Realtime
+  // only fires for actually-new rows and appends one at a time.
+  //
+  // Sender details aren't part of the realtime payload (PostgREST joins
+  // don't apply to CDC), but RLS guarantees the sender is a chat
+  // participant — so chatInfo.participants always has them. If that
+  // lookup misses (e.g., a brand-new participant joined after we loaded
+  // chatInfo), the bubble renders with a "…" placeholder name until the
+  // user reopens the thread. The next round of work can re-fetch
+  // participants on chat_participants INSERTs if that becomes noisy.
+  useRealtimeTable(
+    {
+      table: "chat_messages",
+      event: "INSERT",
+      filter: `chat_id=eq.${chatId}`,
+      onChange: (payload) => {
+        const row = payload.new as {
+          id: string;
+          chat_id: string;
+          sender_id: string;
+          content: string | null;
+          media_url: string | null;
+          media_type: string | null;
+          created_at: string;
+        };
+        setMessages((prev) => {
+          // Dedupe against the optimistic add in handleSend.
+          if (prev.some((m) => m.id === row.id)) return prev;
+          const sender = chatInfo?.participants.find((p) => p.id === row.sender_id);
+          const msg: Message = {
+            id: row.id,
+            chatId: row.chat_id,
+            senderId: row.sender_id,
+            content: row.content || "",
+            mediaUrl: row.media_url || "",
+            mediaType: row.media_type || "",
+            createdAt: new Date(row.created_at).toISOString(),
+            sender: sender
+              ? {
+                  id: sender.id,
+                  name: sender.name,
+                  profileImageUrl: sender.profileImageUrl,
+                }
+              : { id: row.sender_id, name: "…", profileImageUrl: "" },
+            reactions: [],
+          };
+          return [...prev, msg];
+        });
+      },
+    },
+    [chatId, chatInfo]
+  );
 
+  // Auto-pin to the bottom of the messages scroller.
+  //
+  // Split into two effects because the trigger matters:
+  //
+  // (1) Keyboard / input-bar size change — ALWAYS pin, no guard.
+  //     When the keyboard opens, our padding-bottom on the scroller
+  //     grows by keyboardHeight (so the last bubble has room to clear
+  //     the input). scrollTop doesn't follow that growth, so the user
+  //     who *was* at the bottom is suddenly keyboardHeight away from
+  //     the new bottom — a "near bottom" guard would bail here and
+  //     leave the latest message sitting in the freshly-revealed area
+  //     under the input bar. Diagnosed by the device logs (May 2026):
+  //     scrollTop=1031, scrollHeight jumped 1764 → 2099 on keyboard
+  //     open, guard read distanceFromBottom=335 and returned early.
+  //     The keyboard is opened by the user *because* they want the
+  //     bottom of the thread; always pin.
+  //
+  // (2) New message — KEEP the 80px guard. The intent is to preserve
+  //     scroll position when an incoming bubble would otherwise yank
+  //     a user reading older messages.
+  //
+  // Both use scrollTop = scrollHeight directly on the right ref (not
+  // scrollIntoView on a sentinel — iOS WKWebView has been observed
+  // scrolling the document instead of this container). Double rAF
+  // waits for the post-state-change layout to settle before measuring
+  // scrollHeight. isInitialPinRef bypasses the message-effect guard
+  // on first mount (scrollTop is 0 by definition there).
+  const isInitialPinRef = useRef(true);
   useEffect(() => {
-    pollRef.current = setInterval(loadMessages, 3000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    isInitialPinRef.current = true;
   }, [chatId]);
 
-  // Scroll to bottom
+  // (1) Keyboard / input-bar change — always pin.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    const raf1 = requestAnimationFrame(() => {
+      const raf2 = requestAnimationFrame(() => {
+        const sc = messagesScrollRef.current;
+        if (sc) sc.scrollTop = sc.scrollHeight;
+      });
+      (el as HTMLDivElement & { _raf2?: number })._raf2 = raf2;
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      const stashed = (el as HTMLDivElement & { _raf2?: number })._raf2;
+      if (stashed !== undefined) cancelAnimationFrame(stashed);
+    };
+  }, [keyboardHeight, inputBarHeight, chatId]);
+
+  // (2) Messages change — pin only if user was near the bottom.
+  useEffect(() => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    const initial = isInitialPinRef.current;
+    if (!initial) {
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distanceFromBottom > 80 && messages.length > 0) return;
+    }
+    const raf1 = requestAnimationFrame(() => {
+      const raf2 = requestAnimationFrame(() => {
+        const sc = messagesScrollRef.current;
+        if (!sc) return;
+        sc.scrollTop = sc.scrollHeight;
+        if (sc.clientHeight > 0 && sc.scrollHeight > 0) {
+          isInitialPinRef.current = false;
+        }
+      });
+      (el as HTMLDivElement & { _raf2?: number })._raf2 = raf2;
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      const stashed = (el as HTMLDivElement & { _raf2?: number })._raf2;
+      if (stashed !== undefined) cancelAnimationFrame(stashed);
+    };
   }, [messages.length]);
+
+  // ResizeObserver catch-all: pins to bottom the first time the
+  // messages scroller goes from 0 height to a real height. The Suspense
+  // boundary / portal mount can leave the element measuring 0×0 for a
+  // tick or two on iOS WKWebView; the effect above runs once but the
+  // scrollTop = scrollHeight is a no-op on a 0-height container, so
+  // without this we'd start scrolled to the top.
+  useEffect(() => {
+    const el = messagesScrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let firedOnce = false;
+    const ro = new ResizeObserver(() => {
+      if (firedOnce) return;
+      if (el.clientHeight > 0 && el.scrollHeight > 0) {
+        firedOnce = true;
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [chatId]);
 
   const handleSend = async () => {
     if ((!input.trim() && !pendingMedia) || sending || uploading) return;
@@ -212,7 +398,12 @@ export default function GroupChatThreadPage() {
       setMessages((prev) => [...prev, msg]);
       setInput("");
       setPendingMedia(null);
-      inputRef.current?.focus();
+      // Do NOT call inputRef.current?.focus() — the input is already
+      // focused (Send was tapped or Enter was pressed). Calling focus()
+      // on an already-focused input in iOS WKWebView triggers a brief
+      // resign/become-first-responder cycle, which dismisses and
+      // re-presents the keyboard ("bounce"). iMessage/WhatsApp keep
+      // the keyboard up by leaving focus alone.
     } catch {
       // ignore
     }
@@ -263,8 +454,10 @@ export default function GroupChatThreadPage() {
       .eq("chat_id", chatId)
       .eq("user_id", auth.user.id);
     if (!cErr) {
+      // Clear locally; future messages stream in via the realtime
+      // subscription. Older messages stay hidden until the page is
+      // reopened (matches the "clear is per-user view-only" semantics).
       setMessages([]);
-      loadMessages();
     }
   };
 
@@ -333,10 +526,30 @@ export default function GroupChatThreadPage() {
     }
   });
 
-  return (
-    <div className="max-w-2xl mx-auto flex flex-col" style={{ height: "calc(100dvh - 4rem - env(safe-area-inset-top) - env(safe-area-inset-bottom))" }}>
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shrink-0">
+  if (!mounted) return null;
+
+  // Fixed full-viewport chat surface, rendered via createPortal directly
+  // into <body>. The portal is the load-bearing piece: it bypasses every
+  // possible ancestor-induced containing block (a transform / filter /
+  // contain on any wrapper would otherwise re-anchor `position: fixed`
+  // to that ancestor instead of the viewport — the symptom is the input
+  // bar floating mid-screen with messages visible above AND below it).
+  // Rendering under <body> makes the chat surface immune to current and
+  // future ancestor layout changes.
+  //
+  // We deliberately avoid 100dvh / 100svh inside — both lie on iOS
+  // Safari while the keyboard is open. The whole surface is anchored
+  // to the viewport corners (`fixed inset-0`) and the messages scroller
+  // + input bar follow the keyboardHeight from useKeyboardHeight
+  // (Capacitor events on native, VisualViewport on web).
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex flex-col bg-surface">
+      {/* Header. paddingTop pulls in the iOS top safe area
+          (notch / dynamic island). */}
+      <div
+        className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shrink-0"
+        style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
+      >
         <button
           onClick={() => router.push("/friends")}
           className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
@@ -418,8 +631,27 @@ export default function GroupChatThreadPage() {
         )}
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 bg-surface/50 net-texture">
+      {/*
+        Messages — the only scrolling region. min-h-0 lets flex shrink
+        it below its content height so the parent's height (not its
+        own) wins. paddingBottom reserves space for the absolutely-
+        positioned input bar + the OSK + the home indicator, so a
+        scroll-to-bottom lands the last bubble flush above the input
+        rather than behind it.
+      */}
+      <div
+        ref={messagesScrollRef}
+        className="flex-1 overflow-y-auto min-h-0 px-4 py-4 bg-surface/50 net-texture"
+        style={{
+          paddingBottom: `calc(${inputBarHeight}px + max(${keyboardHeight}px, env(safe-area-inset-bottom)) + 0.5rem)`,
+        }}
+      >
+        {/* min-h-full + justify-end gives iMessage-style bottom
+            alignment: when there are only a couple of bubbles, they
+            sit just above the input bar instead of stacking under the
+            header. Long threads overflow normally because the inner
+            div grows past min-h-full. */}
+        <div className="min-h-full flex flex-col justify-end">
         {messages.length === 0 && chatInfo && (
           <div className="text-center py-16">
             <div className="flex -space-x-3 justify-center">
@@ -524,10 +756,25 @@ export default function GroupChatThreadPage() {
           </div>
         ))}
         <div ref={messagesEndRef} />
+        </div>
       </div>
 
-      {/* Input */}
-      <div className="bg-white border-t border-gray-200 px-4 py-3 shrink-0">
+      {/*
+        Input bar — absolutely positioned so it sits ON TOP of the
+        messages scroller and follows the OSK. bottom = max(keyboard,
+        safe-area-bottom): when the keyboard is up the home indicator
+        is hidden under it, so adding the inset would just open a
+        cosmetic gap between the input bar and the keyboard (verified
+        by device logs — 34px gap, May 2026). When the keyboard is
+        closed, max() falls back to the safe-area inset so the bar
+        sits above the home indicator. The messages scroller's
+        padding-bottom mirrors the same math so nothing is clipped.
+      */}
+      <div
+        ref={inputBarRef}
+        className="absolute left-0 right-0 bg-white border-t border-gray-200 px-4 py-3"
+        style={{ bottom: `max(${keyboardHeight}px, env(safe-area-inset-bottom))` }}
+      >
         {pendingMedia && (
           <div className="mb-2 inline-flex items-start gap-2 bg-gray-100 rounded-xl p-2">
             {pendingMedia.type === "image" ? (
@@ -585,6 +832,14 @@ export default function GroupChatThreadPage() {
           />
           <EmojiPicker open={emojiOpen} onOpenChange={setEmojiOpen} onSelect={insertEmoji} />
           <button
+            // Preemptive fix (BUG B): on iOS WKWebView, tapping a
+            // <button> shifts focus from the active input to the
+            // button — which dismisses the OSK. preventDefault on the
+            // pointerdown phase keeps the input as the first
+            // responder so the keyboard stays up. This is the standard
+            // chat-UI pattern (used by WhatsApp web, Slack, etc.).
+            onMouseDown={(e) => e.preventDefault()}
+            onTouchStart={(e) => e.preventDefault()}
             onClick={handleSend}
             disabled={(!input.trim() && !pendingMedia) || sending || uploading}
             className="w-10 h-10 rounded-full bg-court-green text-white flex items-center justify-center hover:bg-court-green-light transition-colors disabled:opacity-40 disabled:hover:bg-court-green shrink-0"
@@ -696,7 +951,10 @@ export default function GroupChatThreadPage() {
           guestNames={chatInfo.guestNames}
           myId={myId}
           onClose={() => setShowSplit(false)}
-          onExpenseCreated={loadMessages}
+          // The expense flow inserts a chat_messages row server-side;
+          // the realtime subscription above will pick it up — no need
+          // for a manual refresh here.
+          onExpenseCreated={() => {}}
         />
       )}
 
@@ -709,6 +967,7 @@ export default function GroupChatThreadPage() {
         }}
         onClose={() => setReactionPopover(null)}
       />
-    </div>
+    </div>,
+    document.body
   );
 }

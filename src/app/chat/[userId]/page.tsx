@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useLayoutEffect, useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useParams, useSearchParams } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
@@ -10,6 +11,7 @@ import SharedPostCard, { type SharedPost } from "@/components/SharedPostCard";
 import MessageReactionBar from "@/components/MessageReactionBar";
 import MessageReactions, { type MessageReaction as MsgReaction } from "@/components/MessageReactions";
 import { useLongPress } from "@/hooks/useLongPress";
+import { useKeyboardHeight } from "@/hooks/useKeyboardHeight";
 import type { ReactionKey } from "@/lib/reactions";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
@@ -80,9 +82,48 @@ export default function ChatPage() {
   // bottom-scroll effect — that race was scrolling us past the centered bubble.
   const focusHandledRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const inputBarRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Keyboard height in px (0 when closed). Capacitor events on native,
+  // visualViewport on web. See chat/group/[chatId]/page.tsx + the
+  // useKeyboardHeight hook for the full design rationale.
+  const keyboardHeight = useKeyboardHeight();
+
+  const [inputBarHeight, setInputBarHeight] = useState(72);
+  useLayoutEffect(() => {
+    const el = inputBarRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const h = e.borderBoxSize?.[0]?.blockSize ?? e.contentRect.height;
+        if (h > 0) setInputBarHeight(h);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Lock body scroll while the chat thread is mounted so iOS bounce /
+  // pull-to-refresh doesn't drag the page around behind the fixed surface.
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    const prevOverscroll = document.body.style.overscrollBehavior;
+    document.body.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.body.style.overscrollBehavior = prevOverscroll;
+    };
+  }, []);
+
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -190,13 +231,78 @@ export default function ChatPage() {
   // deep-link target is set, so we land in the middle of the thread instead
   // of bouncing past it. After the target is centered, future arrivals scroll
   // to bottom as usual.
+  // Split scroll-to-bottom into two effects so the keyboard trigger
+  // doesn't get incorrectly suppressed by the "near bottom" guard.
+  // See chat/group/[chatId]/page.tsx for the full rationale.
+  const isInitialPinRef = useRef(true);
+  useEffect(() => {
+    isInitialPinRef.current = true;
+  }, [userId]);
+
+  // (1) Keyboard / input-bar change — always pin.
   useEffect(() => {
     if (focusTargetRef.current && !focusHandledRef.current) return;
-    // block:"end" pins the end-sentinel to the bottom of the viewport.
-    // The default ("start") aligns the element's top to the viewport top,
-    // which pushes the last actual bubble above the visible area.
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    const raf1 = requestAnimationFrame(() => {
+      const raf2 = requestAnimationFrame(() => {
+        const sc = messagesScrollRef.current;
+        if (sc) sc.scrollTop = sc.scrollHeight;
+      });
+      (el as HTMLDivElement & { _raf2?: number })._raf2 = raf2;
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      const stashed = (el as HTMLDivElement & { _raf2?: number })._raf2;
+      if (stashed !== undefined) cancelAnimationFrame(stashed);
+    };
+  }, [keyboardHeight, inputBarHeight, userId]);
+
+  // (2) Messages change — pin only if user was near the bottom (80px).
+  useEffect(() => {
+    if (focusTargetRef.current && !focusHandledRef.current) return;
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    const initial = isInitialPinRef.current;
+    if (!initial) {
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distanceFromBottom > 80 && messages.length > 0) return;
+    }
+    const raf1 = requestAnimationFrame(() => {
+      const raf2 = requestAnimationFrame(() => {
+        const sc = messagesScrollRef.current;
+        if (!sc) return;
+        sc.scrollTop = sc.scrollHeight;
+        if (sc.clientHeight > 0 && sc.scrollHeight > 0) {
+          isInitialPinRef.current = false;
+        }
+      });
+      (el as HTMLDivElement & { _raf2?: number })._raf2 = raf2;
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      const stashed = (el as HTMLDivElement & { _raf2?: number })._raf2;
+      if (stashed !== undefined) cancelAnimationFrame(stashed);
+    };
   }, [messages.length]);
+
+  // Pin to bottom the first time the scroll container actually gets a
+  // real height — catches the case where the initial effect ran while
+  // clientHeight was still 0 (Suspense boundary / portal mount race).
+  useEffect(() => {
+    const el = messagesScrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let firedOnce = false;
+    const ro = new ResizeObserver(() => {
+      if (firedOnce) return;
+      if (el.clientHeight > 0 && el.scrollHeight > 0) {
+        firedOnce = true;
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [userId]);
 
   // Deep-link: scroll to and briefly highlight the message referenced by ?msg=…
   useEffect(() => {
@@ -242,9 +348,21 @@ export default function ChatPage() {
       reactions: [],
     };
     setMessages((prev) => [...prev, optimistic]);
-    setInput("");
-    setPendingMedia(null);
-    inputRef.current?.focus();
+    // Defer the input clear by one microtask. Inside the synchronous
+    // click/keydown handler, changing the focused input's value can
+    // make iOS WKWebView briefly dismiss and re-present the keyboard
+    // (the "bounce") even when focus is retained. The group-chat
+    // handleSend doesn't hit this because its setInput runs *after*
+    // an await (already in a microtask); the 1:1 handler clears
+    // synchronously for optimistic UX, so we push the clear out by
+    // one microtask ourselves. <1ms delay — imperceptible to the user.
+    queueMicrotask(() => {
+      setInput("");
+      setPendingMedia(null);
+    });
+    // Intentionally NOT calling inputRef.current?.focus() — see
+    // chat/group/[chatId]/page.tsx for full rationale. Calling focus()
+    // on an already-focused input on iOS WKWebView bounces the keyboard.
 
     try {
       const supabase = createSupabaseBrowserClient();
@@ -367,22 +485,19 @@ export default function ChatPage() {
     }
   });
 
-  return (
-    // 100dvh (dynamic viewport height) shrinks when the iOS keyboard
-    // opens; 100vh does not. We also subtract:
-    //   - the navbar (4rem = h-16 in the global Navbar)
-    //   - the top safe-area inset (notch/dynamic island), which the
-    //     navbar adds as padding so total nav height is 4rem + that
-    //   - the bottom safe-area inset (home indicator gesture area)
-    // Without the safe-area subtractions the input row lands ~80px below
-    // the visible viewport on notched iPhones and the user has to scroll
-    // the page to find it.
-    <div
-      className="max-w-2xl mx-auto flex flex-col"
-      style={{ height: "calc(100dvh - 4rem - env(safe-area-inset-top) - env(safe-area-inset-bottom))" }}
-    >
+  if (!mounted) return null;
+
+  // Portaled fixed full-viewport chat surface — see
+  // chat/group/[chatId]/page.tsx for full rationale. The portal under
+  // <body> bypasses any ancestor that might create a containing block
+  // (transform / filter / contain) and break `position: fixed`.
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex flex-col bg-surface">
       {/* Chat header */}
-      <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shrink-0">
+      <div
+        className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shrink-0"
+        style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
+      >
         <Link
           href="/friends"
           className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
@@ -416,13 +531,23 @@ export default function ChatPage() {
         )}
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 bg-surface/50 net-texture">
-        {/* min-h-full + justify-end pins short threads to the bottom of the
-            scroll region so a just-sent bubble lands right above the input
-            instead of floating at the top with empty space below. When the
-            thread grows past the viewport the inner div outgrows min-h-full
-            and scrolls normally. */}
+      {/*
+        Messages — the only scrolling region. min-h-0 lets flex shrink
+        it below content height. paddingBottom reserves room for the
+        absolutely-positioned input bar plus the keyboard plus the
+        home indicator inset.
+      */}
+      <div
+        ref={messagesScrollRef}
+        className="flex-1 overflow-y-auto min-h-0 px-4 py-4 bg-surface/50 net-texture"
+        style={{
+          paddingBottom: `calc(${inputBarHeight}px + max(${keyboardHeight}px, env(safe-area-inset-bottom)) + 0.5rem)`,
+        }}
+      >
+        {/* min-h-full + justify-end pins short threads to the bottom of
+            the scroll region so a just-sent bubble lands right above
+            the input bar instead of floating at the top. Long threads
+            outgrow min-h-full and scroll normally. */}
         <div className="min-h-full flex flex-col justify-end">
         {messages.length === 0 && chatUser && (
           <div className="text-center py-16">
@@ -536,8 +661,17 @@ export default function ChatPage() {
         </div>
       </div>
 
-      {/* Input */}
-      <div className="bg-white border-t border-gray-200 px-4 py-3 shrink-0">
+      {/*
+        Input bar — absolutely positioned so it sits on top of the
+        messages scroller and follows the iOS keyboard. The messages
+        scroller's padding-bottom mirrors these offsets so nothing is
+        clipped underneath.
+      */}
+      <div
+        ref={inputBarRef}
+        className="absolute left-0 right-0 bg-white border-t border-gray-200 px-4 py-3"
+        style={{ bottom: `max(${keyboardHeight}px, env(safe-area-inset-bottom))` }}
+      >
         {/* Pending media preview */}
         {pendingMedia && (
           <div className="mb-2 inline-flex items-start gap-2 bg-gray-100 rounded-xl p-2">
@@ -596,6 +730,12 @@ export default function ChatPage() {
           />
           <EmojiPicker open={emojiOpen} onOpenChange={setEmojiOpen} onSelect={insertEmoji} />
           <button
+            // Keep the OSK up on send — see chat/group/[chatId]/page.tsx
+            // for the full rationale. Tapping a <button> on iOS WKWebView
+            // would otherwise shift focus from the input to the button
+            // and dismiss the keyboard.
+            onMouseDown={(e) => e.preventDefault()}
+            onTouchStart={(e) => e.preventDefault()}
             onClick={handleSend}
             disabled={(!input.trim() && !pendingMedia) || sending || uploading}
             className="w-10 h-10 rounded-full bg-court-green text-white flex items-center justify-center hover:bg-court-green-light transition-colors disabled:opacity-40 disabled:hover:bg-court-green shrink-0"
@@ -633,7 +773,8 @@ export default function ChatPage() {
             : undefined
         }
       />
-    </div>
+    </div>,
+    document.body
   );
 }
 

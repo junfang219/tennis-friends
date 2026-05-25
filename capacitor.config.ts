@@ -1,9 +1,25 @@
 import type { CapacitorConfig } from '@capacitor/cli';
+import { KeyboardResize } from '@capacitor/keyboard';
 
 const config: CapacitorConfig = {
   appId: 'com.tennisfriend.app',
   appName: 'TennisFriend',
   webDir: 'out',
+  plugins: {
+    Keyboard: {
+      // None: don't touch the WebView when the keyboard opens. We do
+      // all the keyboard-aware layout ourselves via useKeyboardHeight
+      // (Capacitor keyboardWillShow on native, VisualViewport on web)
+      // and offset the input bar in JS. The default (Native) would
+      // shrink the WebView itself, which (a) makes window.innerHeight
+      // and visualViewport.height shrink in lockstep so the web hook
+      // sees keyboardHeight=0 even though the keyboard is open, and
+      // (b) double-counts the keyboard if the JS layout still adds the
+      // height on top. KeyboardInit also calls setResizeMode at runtime
+      // so this takes effect without a `cap sync`.
+      resize: KeyboardResize.None,
+    },
+  },
   server: {
     // Currently pointed at the Mac's LAN IP so a physical iPhone on the
     // same Wi-Fi can reach the Next.js dev server. Switch back to

@@ -16,6 +16,13 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
+  // interactive-widget=resizes-content tells Chromium browsers to
+  // shrink the layout viewport when the on-screen keyboard opens, so
+  // 100dvh + body height naturally reclaim space above the keyboard.
+  // Safari ignores this token; we handle Safari (web + Capacitor) via
+  // useKeyboardHeight, which merges @capacitor/keyboard events with
+  // the VisualViewport API.
+  interactiveWidget: "resizes-content",
 };
 
 export const metadata: Metadata = {
