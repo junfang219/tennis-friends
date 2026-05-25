@@ -653,8 +653,11 @@ function BalancesView({
     );
   }
 
-  const owed = balances.filter((b) => b.netCents > 0).reduce((s, b) => s + b.netCents, 0);
-  const owing = balances.filter((b) => b.netCents < 0).reduce((s, b) => s - b.netCents, 0);
+  // Sign convention from the balance accumulator above:
+  //   netCents < 0  →  the other person owes me  (I'm owed)
+  //   netCents > 0  →  I owe the other person   (I'm owing)
+  const owed = balances.filter((b) => b.netCents < 0).reduce((s, b) => s - b.netCents, 0);
+  const owing = balances.filter((b) => b.netCents > 0).reduce((s, b) => s + b.netCents, 0);
 
   return (
     <div className="space-y-4 relative">
@@ -707,7 +710,7 @@ function BalancesView({
       ) : (
         <div className="space-y-2">
           {balances.map((b) => {
-            const youOwe = b.netCents < 0;
+            const youOwe = b.netCents > 0;
             const cents = Math.abs(b.netCents);
             const availableMethods: PaymentMethod[] = youOwe
               ? (["venmo", "paypal", "cashapp", "zelle"] as PaymentMethod[]).filter(
@@ -829,7 +832,9 @@ function BalancesView({
                 </div>
               </div>
               <div className="space-y-1">
-                {e.shares.map((s) => {
+                {/* Skip the payer's own share — they paid the whole bill,
+                    so saying "Payer owes their share" double-counts. */}
+                {e.shares.filter((s) => s.userId !== e.payer.id).map((s) => {
                   const isMine = s.userId === myId;
                   const settled = !!s.settledAt;
                   return (
