@@ -66,6 +66,7 @@ export default function GroupChatThreadPage() {
   const [renameValue, setRenameValue] = useState("");
   const [showMembers, setShowMembers] = useState(false);
   const [showSplit, setShowSplit] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<{ url: string; type: string } | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -586,41 +587,30 @@ export default function GroupChatThreadPage() {
                 </div>
               ) : (
                 <button
-                  onClick={() => { setRenameValue(chatInfo.name); setShowRename(true); }}
+                  onClick={() => setShowMembers(true)}
                   className="text-left w-full"
+                  title="View members"
                 >
                   <p className="text-sm font-semibold text-gray-900 truncate">{title}</p>
-                  <p className="text-xs text-gray-400">{chatInfo.participants.length} members · tap to rename</p>
+                  <p className="text-xs text-gray-400">{chatInfo.participants.length} members</p>
                 </button>
               )}
             </div>
-            {/* Split / Clear / Leave hide while the rename input is up.
-                On a narrow iPhone the input + Save/Cancel + these three
-                buttons would all share the same flex row and collide. */}
+            {/* Overflow menu hides while the rename input is up so the
+                input + Save/Cancel don't collide with it. */}
             {!showRename && (
-              <>
-                <button
-                  onClick={() => setShowSplit(true)}
-                  className="text-xs font-medium text-court-green hover:text-court-green-light px-2 py-1"
-                  title="Split a cost"
-                >
-                  💵 Split
-                </button>
-                <button
-                  onClick={clearHistory}
-                  className="text-xs font-medium text-gray-500 hover:text-gray-700 px-2 py-1"
-                  title="Clear chat history (your view only)"
-                >
-                  Clear
-                </button>
-                <button
-                  onClick={leaveChat}
-                  className="text-xs font-medium text-red-500 hover:text-red-700 px-2 py-1"
-                  title="Leave chat"
-                >
-                  Leave
-                </button>
-              </>
+              <button
+                onClick={() => setShowMenu(true)}
+                className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500 shrink-0"
+                title="More actions"
+                aria-label="More actions"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="5" r="1.75" />
+                  <circle cx="12" cy="12" r="1.75" />
+                  <circle cx="12" cy="19" r="1.75" />
+                </svg>
+              </button>
             )}
           </div>
         ) : (
@@ -949,12 +939,68 @@ export default function GroupChatThreadPage() {
           </div>
         </div>
       )}
+      {showMenu && chatInfo && (
+        <div
+          className="fixed inset-0 z-[999] bg-black/30 flex justify-end items-start pr-3"
+          style={{ paddingTop: "calc(3.75rem + env(safe-area-inset-top))" }}
+          onClick={() => setShowMenu(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-56 overflow-hidden animate-fade-in-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => {
+                setShowMenu(false);
+                setShowSplit(true);
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left text-sm text-gray-700"
+            >
+              <span className="text-base">💵</span>
+              <span>Split a cost</span>
+            </button>
+            <button
+              onClick={() => {
+                setShowMenu(false);
+                setRenameValue(chatInfo.name);
+                setShowRename(true);
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left text-sm text-gray-700"
+            >
+              <span className="text-base">✏️</span>
+              <span>Rename chat</span>
+            </button>
+            <button
+              onClick={() => {
+                setShowMenu(false);
+                clearHistory();
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left text-sm text-gray-700"
+            >
+              <span className="text-base">🧹</span>
+              <span>Clear chat history</span>
+            </button>
+            <div className="border-t border-gray-100" />
+            <button
+              onClick={() => {
+                setShowMenu(false);
+                leaveChat();
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-50 text-left text-sm text-red-600"
+            >
+              <span className="text-base">🚪</span>
+              <span>Leave chat</span>
+            </button>
+          </div>
+        </div>
+      )}
       {showSplit && chatInfo && (
         <SplitCostSheet
           chatId={chatId}
           participants={chatInfo.participants}
           guestNames={chatInfo.guestNames}
           myId={myId}
+          keyboardHeight={keyboardHeight}
           onClose={() => setShowSplit(false)}
           // The expense flow inserts a chat_messages row server-side;
           // the realtime subscription above will pick it up — no need

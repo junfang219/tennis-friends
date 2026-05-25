@@ -71,6 +71,7 @@ export default function SplitCostSheet({
   participants,
   guestNames,
   myId,
+  keyboardHeight,
   onClose,
   onExpenseCreated,
 }: {
@@ -78,6 +79,13 @@ export default function SplitCostSheet({
   participants: Participant[];
   guestNames: string[];
   myId: string;
+  // Passed in from the parent (chat page) instead of read via useKeyboardHeight
+  // here. The parent's hook is already subscribed to Capacitor's keyboard
+  // events by the time the user opens this sheet, so the very first
+  // keyboardWillShow after the user taps an input is reliably observed.
+  // A local useKeyboardHeight would miss it because the hook's async
+  // addListener can resolve after the keyboard event has already fired.
+  keyboardHeight: number;
   onClose: () => void;
   onExpenseCreated: () => void;
 }) {
@@ -98,6 +106,15 @@ export default function SplitCostSheet({
   }>({ venmoHandle: null, paypalHandle: null, cashappHandle: null, zelleHandle: null });
   const [loadingData, setLoadingData] = useState(false);
   const [settling, setSettling] = useState<string | null>(null);
+
+  // Sticky lift: once the keyboard has raised the sheet, keep it there
+  // even after the keyboard hides (e.g. when the user switches to the
+  // Balances tab, which has no inputs). Without this, the sheet would
+  // visibly drop back to the bottom of the screen on tab switch.
+  const [liftPx, setLiftPx] = useState(0);
+  useEffect(() => {
+    if (keyboardHeight > liftPx) setLiftPx(keyboardHeight);
+  }, [keyboardHeight, liftPx]);
 
   const load = useCallback(async () => {
     setLoadingData(true);
@@ -363,12 +380,22 @@ export default function SplitCostSheet({
 
   return (
     <div
-      className="fixed inset-0 z-[10000] bg-black/50 flex items-end sm:items-center justify-center"
+      className="fixed inset-0 z-[10000] bg-black/50"
       onClick={onClose}
     >
+      {/* Sheet uses absolute positioning so the bottom edge tracks the
+          keyboard. On iOS, `fixed`/flex layouts compute against the
+          layout viewport (full screen even with the keyboard open), so
+          margin-on-flex-item tricks don't lift reliably. Anchoring with
+          `bottom: keyboardHeight` is the same pattern the chat input
+          bar uses and is the proven approach in this codebase. */}
       <div
-        className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl shadow-2xl flex flex-col max-h-[90vh]"
+        className="absolute left-0 right-0 sm:left-1/2 sm:-translate-x-1/2 sm:max-w-md w-full bg-white sm:rounded-2xl rounded-t-2xl shadow-2xl flex flex-col"
         onClick={(e) => e.stopPropagation()}
+        style={{
+          bottom: liftPx,
+          maxHeight: `calc(90vh - ${liftPx}px)`,
+        }}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <h2 className="font-display text-lg font-bold text-gray-900">Split a cost</h2>
