@@ -381,27 +381,34 @@ export default function GroupChatThreadPage() {
                 </button>
               )}
             </div>
-            <button
-              onClick={() => setShowSplit(true)}
-              className="text-xs font-medium text-court-green hover:text-court-green-light px-2 py-1"
-              title="Split a cost"
-            >
-              💵 Split
-            </button>
-            <button
-              onClick={clearHistory}
-              className="text-xs font-medium text-gray-500 hover:text-gray-700 px-2 py-1"
-              title="Clear chat history (your view only)"
-            >
-              Clear
-            </button>
-            <button
-              onClick={leaveChat}
-              className="text-xs font-medium text-red-500 hover:text-red-700 px-2 py-1"
-              title="Leave chat"
-            >
-              Leave
-            </button>
+            {/* Split / Clear / Leave hide while the rename input is up.
+                On a narrow iPhone the input + Save/Cancel + these three
+                buttons would all share the same flex row and collide. */}
+            {!showRename && (
+              <>
+                <button
+                  onClick={() => setShowSplit(true)}
+                  className="text-xs font-medium text-court-green hover:text-court-green-light px-2 py-1"
+                  title="Split a cost"
+                >
+                  💵 Split
+                </button>
+                <button
+                  onClick={clearHistory}
+                  className="text-xs font-medium text-gray-500 hover:text-gray-700 px-2 py-1"
+                  title="Clear chat history (your view only)"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={leaveChat}
+                  className="text-xs font-medium text-red-500 hover:text-red-700 px-2 py-1"
+                  title="Leave chat"
+                >
+                  Leave
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <div className="flex items-center gap-3 flex-1">
