@@ -51,6 +51,23 @@ export async function listNotifications(
   return (data ?? []) as unknown as Notification[];
 }
 
+// Fetch a single notification by id with the actor profile joined.
+// Used by the realtime subscription to hydrate the row from a
+// postgres_changes payload (which only carries the bare row columns)
+// without re-running the full listNotifications query.
+export async function getNotification(
+  supabase: SupabaseClient<Database>,
+  id: string
+): Promise<Notification | null> {
+  const { data, error } = await supabase
+    .from("notifications")
+    .select(NOTIF_COLUMNS)
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as unknown as Notification | null) ?? null;
+}
+
 export async function unreadNotificationCount(
   supabase: SupabaseClient<Database>
 ): Promise<number> {

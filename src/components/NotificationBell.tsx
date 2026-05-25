@@ -12,6 +12,7 @@ import {
   listPendingRequests,
   acceptFriendRequest as sbAcceptFriendRequest,
   rejectFriendRequest as sbRejectFriendRequest,
+  getNotification,
   listNotifications,
   markAllNotificationsRead,
   unreadNotificationCount,
@@ -326,8 +327,15 @@ export default function NotificationBell() {
     };
   }, []);
 
-  // Subscribe to notification INSERTs and refresh the dropdown when a new
-  // one lands. RLS scopes the stream to rows for this user.
+  // Subscribe to notification INSERTs/UPDATEs and update state
+  // incrementally. RLS scopes the stream to rows for this user.
+  //
+  // Previously we called the full loadNotifications() (three queries in
+  // parallel: list + unread count + pending friend requests) on every
+  // realtime event — that added 200–500ms of network round-trip on top
+  // of Supabase Realtime's own latency, so a new comment took noticeably
+  // long to surface in the bell. Now we hydrate just the single new
+  // row and patch state.
   useEffect(() => {
     if (!userId) return;
     const supabase = createSupabaseBrowserClient();
@@ -336,12 +344,50 @@ export default function NotificationBell() {
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
-        () => loadNotifications()
+        async (payload) => {
+          const id = (payload.new as { id?: string }).id;
+          if (!id) {
+            loadNotifications();
+            return;
+          }
+          try {
+            const row = await getNotification(supabase, id);
+            if (!row) return;
+            const adapted = toNotificationCamel(row) as unknown as Notification;
+            setNotifications((prev) =>
+              prev.some((n) => n.id === adapted.id) ? prev : [adapted, ...prev]
+            );
+            // The new row is always unread (the trigger inserts with the
+            // table default `false`).
+            setUnreadCount((c) => c + 1);
+            // Friend-request notifications also feed the side-panel
+            // pending list. The notifications stream doesn't carry
+            // friendship rows so we still need that single re-fetch.
+            if (row.type === "friend_request") {
+              const pending = await listPendingRequests(supabase);
+              setPendingFriendRequests(pending.filter((r) => r.direction === "incoming").length);
+            }
+          } catch {
+            // Fallback to the full refresh if the targeted fetch fails.
+            loadNotifications();
+          }
+        }
       )
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
-        () => loadNotifications()
+        (payload) => {
+          const next = payload.new as { id?: string; read?: boolean };
+          const prev = payload.old as { read?: boolean };
+          if (!next.id) return;
+          setNotifications((list) =>
+            list.map((n) => (n.id === next.id ? { ...n, read: !!next.read } : n))
+          );
+          // Most UPDATEs flip read false→true. Decrement once.
+          if (prev?.read === false && next.read === true) {
+            setUnreadCount((c) => Math.max(0, c - 1));
+          }
+        }
       )
       .subscribe();
     return () => {
