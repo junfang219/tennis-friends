@@ -111,35 +111,42 @@ export default function PostDetailModal({
       onClick={onClose}
       style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
     >
-      <div
-        className="w-full sm:max-w-lg sm:my-8 my-2 sm:mx-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {loading || !post ? (
-          <div className="bg-white rounded-2xl p-8 text-center">
-            <svg
-              className="animate-spin w-6 h-6 text-court-green mx-auto"
-              viewBox="0 0 24 24"
-              fill="none"
-            >
-              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
-              <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-            </svg>
-          </div>
-        ) : (
-          // PostCard's author header becomes sticky when onClose is set,
-          // keeping the close X reachable for the entire scroll range
-          // (long posts with comments / replies would otherwise scroll
-          // it off-screen). The hide-from-feed X is suppressed in
-          // modal mode.
-          <PostCard
-            post={post}
-            initialExpanded={withComments}
-            initialShowComments={withComments}
-            onClose={onClose}
-            onOpenChat={onClose}
-          />
-        )}
+      {/* `min-h-full flex items-center` centres short cards (the
+          collapsed "Game confirmed" state is only ~70px tall and would
+          otherwise hug the very top of the screen) while still letting
+          tall posts overflow and scroll naturally — the parent owns
+          overflow-y-auto so the flex child can grow past viewport. */}
+      <div className="min-h-full flex items-center justify-center p-2 sm:p-4">
+        <div
+          className="w-full sm:max-w-lg"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {loading || !post ? (
+            <div className="bg-white rounded-2xl p-8 text-center">
+              <svg
+                className="animate-spin w-6 h-6 text-court-green mx-auto"
+                viewBox="0 0 24 24"
+                fill="none"
+              >
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
+                <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+              </svg>
+            </div>
+          ) : (
+            // PostCard's author header becomes sticky when onClose is set,
+            // keeping the close X reachable for the entire scroll range
+            // (long posts with comments / replies would otherwise scroll
+            // it off-screen). The hide-from-feed X is suppressed in
+            // modal mode.
+            <PostCard
+              post={post}
+              initialExpanded={withComments}
+              initialShowComments={withComments}
+              onClose={onClose}
+              onOpenChat={onClose}
+            />
+          )}
+        </div>
       </div>
     </div>,
     document.body
