@@ -1078,6 +1078,68 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       expect((carolSelfNotif ?? []).length).toBe(0);
     });
 
+    // Regression: when Mimi replied to Jun's reply (3-deep chain), the
+    // UI used to collapse the parent back to the top-level comment so
+    // the trigger saw Mimi as parent → self-author skip → Jun got no
+    // notification. The fix passes the direct parent's id; this test
+    // pins the data model so the trigger fires correctly through any
+    // depth.
+    it("reply-to-a-reply notifies the direct parent's author (deep chain)", async () => {
+      const admin = adminClient();
+      await admin
+        .from("notifications")
+        .delete()
+        .in("type", ["comment", "reply"])
+        .eq("post_id", postId);
+
+      // carol writes a top-level comment.
+      const topLevel = await addComment(carol.client, postId, "anyone want to play?");
+      expect(topLevel.parent_comment_id).toBeNull();
+
+      // bob replies to carol's top-level. Carol gets a "reply" notif.
+      const bobReply = await addComment(
+        bob.client,
+        postId,
+        "I'm in",
+        topLevel.id
+      );
+      expect(bobReply.parent_comment_id).toBe(topLevel.id);
+
+      // carol now replies to bob's reply. The reply's parent must be
+      // bob's comment (not the top-level), so the trigger notifies bob.
+      const carolReplyToReply = await addComment(
+        carol.client,
+        postId,
+        "@bob sounds good",
+        bobReply.id
+      );
+      expect(carolReplyToReply.parent_comment_id).toBe(bobReply.id);
+
+      const { data: bobNotif } = await bob.client
+        .from("notifications")
+        .select("id, comment_id")
+        .eq("user_id", bob.id)
+        .eq("type", "reply")
+        .eq("actor_id", carol.id)
+        .eq("post_id", postId);
+      // bob should have exactly one reply notif — for carol's
+      // reply-to-reply ("@bob sounds good"). His earlier
+      // request_approved-style fixtures don't apply here.
+      expect((bobNotif ?? []).some((n) => n.comment_id === carolReplyToReply.id)).toBe(true);
+
+      // Carol (top-level author + the new replier) should NOT get a
+      // "reply" notif for her own message. This is what was broken
+      // before the fix — the trigger was being asked to notify carol
+      // (because the UI sent the top-level id), then self-skipped.
+      const { data: carolSelfNotif } = await carol.client
+        .from("notifications")
+        .select("id")
+        .eq("user_id", carol.id)
+        .eq("type", "reply")
+        .eq("comment_id", carolReplyToReply.id);
+      expect((carolSelfNotif ?? []).length).toBe(0);
+    });
+
     // play_requests need a find_players post — its own fixture so we
     // can flip status without polluting the rest of the trigger suite.
     it("play_requests INSERT and status flip both fire notifications", async () => {

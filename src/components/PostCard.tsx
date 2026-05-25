@@ -409,13 +409,19 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
   };
 
   // Tap the Reply button on a comment → focus the input and remember
-  // the parent. Replies to replies still parent to the top-level
-  // comment (one level of nesting) but get an "@<user> " prefix so the
-  // reader can tell who's being addressed.
+  // the direct parent. Always use the tapped comment's id as the
+  // parent (regardless of depth) so the notification trigger fires
+  // for the actual addressee — previously we collapsed reply-to-reply
+  // back to the top-level comment, which made Mimi's reply to Jun's
+  // reply parent to Mimi's own comment and the self-author check
+  // silently dropped the notification. The renderer flattens deeper
+  // chains under the top-level ancestor so the UI still looks like a
+  // single thread.
   const startReply = (target: CommentData) => {
-    const topLevelId = target.parentCommentId ?? target.id;
-    setReplyTo({ commentId: topLevelId, authorName: target.author.name });
+    setReplyTo({ commentId: target.id, authorName: target.author.name });
     if (target.parentCommentId) {
+      // Replying to a reply — prefill the @mention so readers see who's
+      // being addressed in the flat-rendered thread.
       setCommentInput((prev) =>
         prev.startsWith(`@${target.author.name} `) ? prev : `@${target.author.name} ${prev}`
       );
@@ -1043,18 +1049,35 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
 
         {/* Comments section */}
         {showComments && (() => {
-          // Group into top-level + replies. listComments returns rows
-          // ordered by created_at ASC, so iterating preserves chronology
-          // within each tier.
+          // Top-level comments are the roots. Everything else is a
+          // descendant — possibly a reply-to-a-reply at arbitrary depth.
+          // The UI flattens the conversation under each top-level
+          // ancestor (Twitter-style), but the data model preserves the
+          // real parent so the notification trigger fires for the
+          // direct addressee.
           const topLevel = comments.filter((c) => !c.parentCommentId);
-          const repliesByParent = new Map<string, CommentData[]>();
+          const childrenByParent = new Map<string, CommentData[]>();
           for (const c of comments) {
             if (c.parentCommentId) {
-              const arr = repliesByParent.get(c.parentCommentId) ?? [];
+              const arr = childrenByParent.get(c.parentCommentId) ?? [];
               arr.push(c);
-              repliesByParent.set(c.parentCommentId, arr);
+              childrenByParent.set(c.parentCommentId, arr);
             }
           }
+          // Walk every descendant of a top-level ancestor (any depth)
+          // and order them by created_at so the conversation reads
+          // chronologically even when chains branch.
+          const collectDescendants = (rootId: string): CommentData[] => {
+            const out: CommentData[] = [];
+            const visit = (parentId: string) => {
+              for (const child of childrenByParent.get(parentId) ?? []) {
+                out.push(child);
+                visit(child.id);
+              }
+            };
+            visit(rootId);
+            return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+          };
 
           const renderComment = (c: CommentData, indented = false) => (
             <div
@@ -1100,8 +1123,8 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                     {topLevel.map((parent) => (
                       <div key={parent.id} className="space-y-3">
                         {renderComment(parent, false)}
-                        {(repliesByParent.get(parent.id) ?? []).map((reply) =>
-                          renderComment(reply, true)
+                        {collectDescendants(parent.id).map((descendant) =>
+                          renderComment(descendant, true)
                         )}
                       </div>
                     ))}
