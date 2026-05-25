@@ -21,9 +21,9 @@
 //     user_metadata (e.g. via updateMyProfile) see the new name + avatar
 //     immediately instead of waiting for the next page load.
 
-import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { createSupabaseBrowserClient } from "./browser";
+import { refreshAuthSnapshot, useAuthSnapshot } from "./auth-store";
 
 interface CompatSession {
   user: {
@@ -60,25 +60,9 @@ function toCompatSession(user: User | null): CompatSession | null {
 }
 
 export function useSession(): UseSessionReturn {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { user, loaded } = useAuthSnapshot();
 
-  useEffect(() => {
-    const supabase = createSupabaseBrowserClient();
-    supabase.auth.getUser().then(({ data }) => {
-      setUser(data.user ?? null);
-      setLoading(false);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
-    return () => {
-      sub.subscription.unsubscribe();
-    };
-  }, []);
-
-  const status: Status = loading
+  const status: Status = !loaded
     ? "loading"
     : user
       ? "authenticated"
@@ -87,11 +71,7 @@ export function useSession(): UseSessionReturn {
   return {
     data: toCompatSession(user),
     status,
-    update: async () => {
-      const supabase = createSupabaseBrowserClient();
-      const { data } = await supabase.auth.getUser();
-      setUser(data.user ?? null);
-    },
+    update: refreshAuthSnapshot,
   };
 }
 

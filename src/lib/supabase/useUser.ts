@@ -1,8 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { User } from "@supabase/supabase-js";
-import { createSupabaseBrowserClient } from "./browser";
+import { useAuthSnapshot } from "./auth-store";
 
 /**
  * Client-side hook for the current Supabase user. Replaces the NextAuth
@@ -14,26 +12,11 @@ import { createSupabaseBrowserClient } from "./browser";
  *   if (!user) return <SignInPrompt />;
  *   return <Feed userId={user.id} />;
  *
- * Subscribes to auth state changes so the UI updates when the user signs
- * in or out without a full page reload.
+ * Backed by a shared module-level auth snapshot so every consumer in the
+ * tree sees the same loading→loaded transition exactly once per page load —
+ * not once per component.
  */
 export function useSupabaseUser() {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const supabase = createSupabaseBrowserClient();
-    supabase.auth.getUser().then(({ data }) => {
-      setUser(data.user ?? null);
-      setLoading(false);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-    return () => {
-      sub.subscription.unsubscribe();
-    };
-  }, []);
-
-  return { user, loading };
+  const { user, loaded } = useAuthSnapshot();
+  return { user, loading: !loaded };
 }
