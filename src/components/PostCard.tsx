@@ -363,6 +363,30 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // When the comments tray opens (or grows), scroll the modal's
+  // scroll container to its end so the user lands on
+  // `…last comment | input` instead of `photo | input` (with the
+  // sticky-bottom input bar visually covering the comments). Walks
+  // up the DOM to find the overflow-auto ancestor — that's the
+  // PostDetailModal wrapper. scrollIntoView on the sticky input bar
+  // itself is a no-op on iOS Safari (the browser sees the sticky
+  // element as already in view) so we manually set scrollTop.
+  useEffect(() => {
+    if (!showComments) return;
+    const t = setTimeout(() => {
+      let el: HTMLElement | null = commentInputRef.current;
+      while (el && el !== document.body) {
+        const overflowY = getComputedStyle(el).overflowY;
+        if (overflowY === "auto" || overflowY === "scroll") {
+          el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+          return;
+        }
+        el = el.parentElement;
+      }
+    }, 100);
+    return () => clearTimeout(t);
+  }, [showComments, commentsLoaded, comments.length]);
+
   const handleComment = async () => {
     if (!commentInput.trim() || postingComment) return;
     setPostingComment(true);
@@ -1068,80 +1092,116 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
           );
 
           return (
-            <div className="px-5 pb-4 border-t border-gray-100">
-              {/* Existing comments — top-level with their threaded replies. */}
-              {topLevel.length > 0 && (
-                <div className="pt-3 space-y-3 mb-3">
-                  {topLevel.map((parent) => (
-                    <div key={parent.id} className="space-y-3">
-                      {renderComment(parent, false)}
-                      {(repliesByParent.get(parent.id) ?? []).map((reply) =>
-                        renderComment(reply, true)
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+            <>
+              <div className="px-5 pb-3 border-t border-gray-100">
+                {/* Existing comments — top-level with their threaded replies. */}
+                {topLevel.length > 0 && (
+                  <div className="pt-3 space-y-3 mb-3">
+                    {topLevel.map((parent) => (
+                      <div key={parent.id} className="space-y-3">
+                        {renderComment(parent, false)}
+                        {(repliesByParent.get(parent.id) ?? []).map((reply) =>
+                          renderComment(reply, true)
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
-              {/* "Replying to @X · cancel" pill — only when composing a reply. */}
-              {replyTo && (
-                <div className="flex items-center gap-2 pt-2 pb-1 text-xs text-gray-500">
-                  <span>
-                    Replying to{" "}
-                    <span className="font-semibold text-court-green">
-                      @{replyTo.authorName}
+              {/* Composer bar. Plain in-flow positioning so it never
+                  visually covers earlier comments. The PostDetailModal
+                  manually scrolls the modal to `scrollHeight` after
+                  keyboardDidShow, putting this bar at the viewport
+                  bottom with the latest comments visible just above it.
+                  safe-area-inset-bottom only matters in modal mode
+                  (where it clears the iPhone home-indicator strip). */}
+              <div
+                className="px-5 py-3 bg-white border-t border-gray-100"
+                style={
+                  onClose
+                    ? { paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.75rem)" }
+                    : undefined
+                }
+              >
+                {/* "Replying to @X · cancel" pill */}
+                {replyTo && (
+                  <div className="flex items-center gap-2 pb-2 text-xs text-gray-500">
+                    <span>
+                      Replying to{" "}
+                      <span className="font-semibold text-court-green">
+                        @{replyTo.authorName}
+                      </span>
                     </span>
-                  </span>
-                  <button
-                    onClick={() => setReplyTo(null)}
-                    className="text-gray-400 hover:text-gray-600 font-semibold"
-                    aria-label="Cancel reply"
-                  >
-                    × cancel
-                  </button>
-                </div>
-              )}
+                    <button
+                      onClick={() => setReplyTo(null)}
+                      className="text-gray-400 hover:text-gray-600 font-semibold"
+                      aria-label="Cancel reply"
+                    >
+                      × cancel
+                    </button>
+                  </div>
+                )}
 
-              {/* Comment input */}
-              <div className="flex items-center gap-2 pt-2">
-                <Avatar
-                  name={session?.user?.name || ""}
-                  image={session?.user?.image}
-                  size="sm"
-                />
-                <div className="flex-1 flex items-center gap-2">
-                  <input
-                    ref={commentInputRef}
-                    type="text"
-                    value={commentInput}
-                    onChange={(e) => setCommentInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        handleComment();
-                      }
-                    }}
-                    placeholder={replyTo ? `Reply to ${replyTo.authorName}…` : "Write a comment..."}
-                    className="flex-1 px-3.5 py-2 border border-gray-200 rounded-full text-sm bg-surface/50 focus:bg-white transition-colors"
+                <div className="flex items-center gap-2">
+                  <Avatar
+                    name={session?.user?.name || ""}
+                    image={session?.user?.image}
+                    size="sm"
                   />
-                  <EmojiPicker
-                    open={commentEmojiOpen}
-                    onOpenChange={setCommentEmojiOpen}
-                    onSelect={insertCommentEmoji}
-                  />
-                  <button
-                    onClick={handleComment}
-                    disabled={!commentInput.trim() || postingComment}
-                    className="text-court-green disabled:text-gray-300 transition-colors shrink-0"
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                      <line x1="22" y1="2" x2="11" y2="13" />
-                      <polygon points="22,2 15,22 11,13 2,9" />
-                    </svg>
-                  </button>
+                  <div className="flex-1 flex items-center gap-2">
+                    <input
+                      ref={commentInputRef}
+                      type="text"
+                      value={commentInput}
+                      onChange={(e) => setCommentInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          handleComment();
+                        }
+                      }}
+                      onFocus={() => {
+                        // After iOS finishes the keyboard animation
+                        // (~300ms), pin the modal's scrollTop to its
+                        // end. Same DOM-walk-to-overflow-ancestor
+                        // pattern as the showComments effect — manual
+                        // scroll because scrollIntoView on the sticky
+                        // input bar is a no-op on iOS Safari.
+                        setTimeout(() => {
+                          let el: HTMLElement | null = commentInputRef.current;
+                          while (el && el !== document.body) {
+                            const overflowY = getComputedStyle(el).overflowY;
+                            if (overflowY === "auto" || overflowY === "scroll") {
+                              el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+                              return;
+                            }
+                            el = el.parentElement;
+                          }
+                        }, 300);
+                      }}
+                      placeholder={replyTo ? `Reply to ${replyTo.authorName}…` : "Write a comment..."}
+                      className="flex-1 px-3.5 py-2 border border-gray-200 rounded-full text-sm bg-surface/50 focus:bg-white transition-colors"
+                    />
+                    <EmojiPicker
+                      open={commentEmojiOpen}
+                      onOpenChange={setCommentEmojiOpen}
+                      onSelect={insertCommentEmoji}
+                    />
+                    <button
+                      onClick={handleComment}
+                      disabled={!commentInput.trim() || postingComment}
+                      className="text-court-green disabled:text-gray-300 transition-colors shrink-0"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                        <line x1="22" y1="2" x2="11" y2="13" />
+                        <polygon points="22,2 15,22 11,13 2,9" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
+            </>
           );
         })()}
       </div>

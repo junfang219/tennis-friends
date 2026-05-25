@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import PostCard from "./PostCard";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -30,6 +30,7 @@ export default function PostDetailModal({
 }: PostDetailModalProps) {
   const [post, setPost] = useState<PostShape | null>(null);
   const [loading, setLoading] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!postId) {
@@ -56,21 +57,62 @@ export default function PostDetailModal({
     };
   }, [postId]);
 
+  // iOS only: disable WKWebView's auto-scroll-to-focused-input and
+  // listen for keyboardDidShow to pin the modal to its bottom AFTER
+  // the keyboard animation finishes. Without `setScroll({ disabled })`
+  // iOS tries to centre the input in the visualViewport and undoes
+  // our scroll; without `keyboardDidShow` our scrollTo runs against
+  // the pre-resize layout and undershoots. Fires multiple times because
+  // the WebView resize on iOS is a stepped animation — content height
+  // recomputes a few frames after the event fires, and a single scroll
+  // can land at the pre-resize maximum rather than the post-resize one.
+  useEffect(() => {
+    if (!postId) return;
+    let cleanup: (() => void) | undefined;
+    const pinToBottom = () => {
+      const sc = scrollRef.current;
+      if (sc) sc.scrollTo({ top: sc.scrollHeight });
+    };
+    (async () => {
+      try {
+        const core = await import("@capacitor/core");
+        if (!core.Capacitor.isNativePlatform()) return;
+        const { Keyboard } = await import("@capacitor/keyboard");
+        await Keyboard.setScroll({ isDisabled: true });
+        const handle = await Keyboard.addListener("keyboardDidShow", () => {
+          pinToBottom();
+          requestAnimationFrame(pinToBottom);
+          setTimeout(pinToBottom, 100);
+          setTimeout(pinToBottom, 300);
+        });
+        cleanup = () => {
+          handle.remove();
+          Keyboard.setScroll({ isDisabled: false }).catch(() => {});
+        };
+      } catch {
+        // Capacitor / @capacitor/keyboard not in this build — web no-op.
+      }
+    })();
+    return () => {
+      cleanup?.();
+    };
+  }, [postId]);
+
   if (!postId) return null;
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[999] bg-black/50 overflow-y-auto"
+      ref={scrollRef}
+      // z-[10000] sits above the BottomNav (z-9999) so the sticky
+      // comment input at the bottom of the post card isn't covered by
+      // it. The modal already eats the whole screen anyway, so nav-tab
+      // visibility while open isn't useful.
+      className="fixed inset-0 z-[10000] bg-black/50 overflow-y-auto"
       onClick={onClose}
       style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
     >
       <div
         className="w-full sm:max-w-lg sm:my-8 my-2 sm:mx-auto"
-        // Reserve room below the card so the comment input clears the
-        // iOS BottomNav (which lives at z-9999, above this modal). The
-        // body already gets a 5rem padding via BottomNav, but that's
-        // applied to <body> and doesn't affect this fixed overlay.
-        style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 5rem)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {loading || !post ? (
