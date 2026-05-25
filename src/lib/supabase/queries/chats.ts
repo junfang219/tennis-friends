@@ -75,6 +75,57 @@ export async function getChat(
   return (data as Chat | null) ?? null;
 }
 
+/**
+ * One-shot fetch for the chat thread page. Replaces three separate round
+ * trips (getChat + listChatParticipants + listChatMessages) with a single
+ * nested PostgREST select, so the thread can paint the header + first
+ * page of messages without waiting on 2× extra RTT. Messages come back
+ * newest-first from PostgREST and are reversed here to match
+ * listChatMessages (ascending = oldest-first for rendering top→bottom).
+ */
+export interface ChatBundle {
+  chat: Chat;
+  participants: ChatParticipant[];
+  messages: ChatMessage[];
+}
+
+export async function getChatBundle(
+  supabase: SupabaseClient<Database>,
+  chatId: string,
+  opts: { messageLimit?: number } = {}
+): Promise<ChatBundle | null> {
+  const messageLimit = opts.messageLimit ?? 100;
+  const { data, error } = await supabase
+    .from("chats")
+    .select(
+      `${CHAT_COLS},
+       participants:chat_participants!chat_participants_chat_id_fkey (
+         id, chat_id, user_id, joined_at, last_read_at, muted, pinned_at, hidden_at, cleared_at,
+         user:profiles!chat_participants_user_id_fkey ( id, name, profile_image_url )
+       ),
+       messages:chat_messages!chat_messages_chat_id_fkey (
+         id, chat_id, sender_id, content, media_url, media_type, created_at,
+         sender:profiles!chat_messages_sender_id_fkey ( id, name, profile_image_url )
+       )`
+    )
+    .eq("id", chatId)
+    .order("created_at", { referencedTable: "messages", ascending: false })
+    .limit(messageLimit, { referencedTable: "messages" })
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const row = data as unknown as Chat & {
+    participants: ChatParticipant[];
+    messages: ChatMessage[];
+  };
+  const { participants, messages, ...chatFields } = row;
+  return {
+    chat: chatFields as Chat,
+    participants: participants ?? [],
+    messages: (messages ?? []).slice().reverse(),
+  };
+}
+
 export async function listChatMessages(
   supabase: SupabaseClient<Database>,
   chatId: string,

@@ -12,9 +12,8 @@ import { useLongPress } from "@/hooks/useLongPress";
 import type { ReactionKey } from "@/lib/reactions";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
-  getChat,
+  getChatBundle,
   listChatMessages,
-  listChatParticipants,
   sendChatMessage,
   addReaction,
 } from "@/lib/supabase/queries";
@@ -138,18 +137,24 @@ export default function GroupChatThreadPage() {
     });
   };
 
-  // Load chat metadata. Participants and the guest-names list both come
-  // from separate sources: chat_participants (real users) and the chat's
-  // own manual_player_names text column (comma-separated guest labels).
+  // Initial paint: pull chat + participants + first page of messages in
+  // a single nested PostgREST round trip. The previous version issued
+  // three parallel queries (getChat / listChatParticipants /
+  // listChatMessages) and the header (chat name + member avatars)
+  // blocked on the slowest of the first two — noticeable on a phone
+  // hitting the LAN dev server, where each request adds connection +
+  // RLS-check overhead. The 3s poll below uses the slimmer
+  // listChatMessages because it only needs to refresh messages.
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
-    Promise.all([getChat(supabase, chatId), listChatParticipants(supabase, chatId)])
-      .then(([c, participants]) => {
-        if (!c) {
+    getChatBundle(supabase, chatId)
+      .then((bundle) => {
+        if (!bundle) {
           setError("Chat not found.");
           return;
         }
-        const next: ChatInfo = {
+        const { chat: c, participants, messages: msgs } = bundle;
+        setChatInfo({
           id: c.id,
           name: c.name,
           creatorId: c.creator_id,
@@ -162,13 +167,16 @@ export default function GroupChatThreadPage() {
             .split(",")
             .map((s) => s.trim())
             .filter(Boolean),
-        };
-        setChatInfo(next);
+        });
+        setMessages(
+          msgs.map((m) => ({ ...toChatMessageCamel(m), reactions: [] }))
+        );
       })
       .catch(() => setError("You are not a participant of this chat."));
   }, [chatId]);
 
-  // Load messages
+  // Incremental refresh — only re-pulls messages, never re-fetches the
+  // chat header or member list.
   const loadMessages = () => {
     const supabase = createSupabaseBrowserClient();
     listChatMessages(supabase, chatId)
