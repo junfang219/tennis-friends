@@ -568,9 +568,12 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
           </button>
         )}
 
-        {/* Author header */}
-        <div className="p-5 pb-0">
-          <div className="flex items-center gap-3 mb-3">
+        {/* Author header. Scrolls with the rest of the post in modal
+            mode — making it sticky covered content underneath as the
+            user scrolled. To dismiss the modal when scrolled deep,
+            scroll back up or tap the backdrop on the sides. */}
+        <div className="px-5 pt-5 pb-3">
+          <div className="flex items-center gap-3">
             <Link href={`/profile/${post.author.id}`}>
               <Avatar name={post.author.name} image={post.author.profileImageUrl} size="md" />
             </Link>
@@ -616,12 +619,23 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" /></svg>
                 </button>
               )}
+              {/* Close X for modal mode — lives inside the sticky
+                  header above so it stays reachable through the entire
+                  scroll range. */}
+              {onClose && (
+                <button
+                  onClick={onClose}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors"
+                  aria-label="Close"
+                  title="Close"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              )}
               {/* Hide-from-feed X for non-author viewers in feed
-                  context. Suppressed when the card is shown inside a
-                  modal (onClose set) — the modal renders its own
-                  sticky close button that stays visible through long
-                  scroll, and the hide-from-feed semantic doesn't fit
-                  a notification-triggered popup anyway. */}
+                  context (no modal). */}
               {!onClose && !isAuthor && (
                 <button
                   onClick={() => {
@@ -644,7 +658,12 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
               )}
             </div>
           </div>
+        </div>
 
+        {/* Rest of the card (find_players badge, content, game card).
+            Outside the sticky author header so only the avatar+name+X
+            row sticks at the top while these scroll away normally. */}
+        <div className="px-5 pb-0">
           {/* Find Players badge */}
           {isFindPlayers && (
             <div className="mb-3 flex items-center gap-2 flex-wrap">

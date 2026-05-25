@@ -73,35 +73,6 @@ export default function PostDetailModal({
         style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 5rem)" }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Sticky close X — anchored at the top-right of the card column.
-            Stays visible for the entire scroll range (long posts with
-            comments + replies would otherwise scroll past the in-card
-            chrome and leave the user stranded with no close affordance).
-            h-0 + overflow-visible so the row doesn't push the card
-            down; the button overlaps the card's top-right corner. */}
-        <div className="sticky top-2 z-20 h-0 overflow-visible pointer-events-none">
-          <div className="flex justify-end pr-2">
-            <button
-              onClick={onClose}
-              className="pointer-events-auto w-9 h-9 rounded-full bg-white shadow-md text-gray-600 hover:text-gray-900 flex items-center justify-center transition-colors"
-              aria-label="Close"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-              >
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
-        </div>
-
         {loading || !post ? (
           <div className="bg-white rounded-2xl p-8 text-center">
             <svg
@@ -114,10 +85,11 @@ export default function PostDetailModal({
             </svg>
           </div>
         ) : (
-          // PostCard's in-card "hide from feed" X is suppressed in modal
-          // mode (onClose set) — the sticky button above is the sole
-          // close affordance. onOpenChat still closes the modal so
-          // tapping a session chat link doesn't leave a stale overlay.
+          // PostCard's author header becomes sticky when onClose is set,
+          // keeping the close X reachable for the entire scroll range
+          // (long posts with comments / replies would otherwise scroll
+          // it off-screen). The hide-from-feed X is suppressed in
+          // modal mode.
           <PostCard
             post={post}
             initialExpanded={withComments}
