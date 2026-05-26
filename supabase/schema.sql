@@ -4214,6 +4214,12 @@ BEGIN
     WHERE pr.post_id = NEW.id AND pr.status = 'approved'
   ) s;
 
+  v_players := concat_ws(
+    ', ',
+    NULLIF(v_players, ''),
+    NULLIF(NEW.manual_players, '')
+  );
+
   v_message := E'🎾 Game confirmed!\n'
             || E'📅 ' || trim(to_char(v_play_dt, 'Mon FMDD at FMHH12:MI AM'))
             || ' (' || v_duration || E' min)\n'

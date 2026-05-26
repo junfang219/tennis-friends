@@ -42,6 +42,24 @@ export type ProfileUpdate = Updates<"profiles">;
 const PROFILE_COLUMNS =
   "id, email, phone, name, bio, skill_level, favorite_surface, profile_image_url, cover_image_url, cover_offset_y, cover_scale, custom_tags, latitude, longitude, gender, age_range, rating_system, ntrp_rating, utr_rating, handle, venmo_handle, paypal_handle, cashapp_handle, zelle_handle, onboarding_complete, is_private, created_at, updated_at";
 
+// Shared column subset for any join that displays a profile alongside
+// their payment handles. Any creditor/debtor view (SplitCostSheet today;
+// future league fees, court bookings, etc.) should use this so both
+// sides of the join carry the same handle data — preventing a recurrence
+// of the bug where one side had handles and the other had hardcoded nulls.
+export const PAYMENT_PROFILE_COLUMNS =
+  "id, name, profile_image_url, venmo_handle, paypal_handle, cashapp_handle, zelle_handle";
+
+export interface PaymentProfile {
+  id: string;
+  name: string;
+  profile_image_url: string;
+  venmo_handle: string | null;
+  paypal_handle: string | null;
+  cashapp_handle: string | null;
+  zelle_handle: string | null;
+}
+
 export async function getProfile(
   supabase: SupabaseClient<Database>,
   id: string

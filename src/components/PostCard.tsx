@@ -2482,7 +2482,7 @@ function ManageRequestsModal({
                   const guestSlots = Math.max(playersNeeded - approvedCount, manualNames.length);
                   const filled = Array.from({ length: guestSlots }, (_, i) => {
                     const typed = (manualNames[i] || "").trim();
-                    return typed.length > 0 ? typed : `Guest ${i + 1}`;
+                    return typed.length > 0 ? typed : "guest player";
                   });
                   const names = filled.join(", ");
                   try {

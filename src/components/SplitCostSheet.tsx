@@ -10,7 +10,14 @@ import {
 } from "@/lib/payment";
 import { openPayment } from "@/lib/openPayment";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { getMyProfile, updateMyProfile, sendChatMessage, updateExpenseChatMessage } from "@/lib/supabase/queries";
+import {
+  getMyProfile,
+  updateMyProfile,
+  sendChatMessage,
+  updateExpenseChatMessage,
+  PAYMENT_PROFILE_COLUMNS,
+  type PaymentProfile,
+} from "@/lib/supabase/queries";
 
 type Participant = { id: string; name: string; profileImageUrl: string };
 
@@ -61,7 +68,15 @@ type Expense = {
   amountCents: number;
   description: string;
   createdAt: string;
-  payer: { id: string; name: string; profileImageUrl: string };
+  payer: {
+    id: string;
+    name: string;
+    profileImageUrl: string;
+    venmoHandle: string | null;
+    paypalHandle: string | null;
+    cashappHandle: string | null;
+    zelleHandle: string | null;
+  };
   shares: ExpenseShare[];
   guestShares: GuestShare[];
 };
@@ -151,10 +166,10 @@ export default function SplitCostSheet({
           .from("expenses")
           .select(
             `id, amount_cents, description, created_at,
-             payer:profiles!expenses_payer_id_fkey ( id, name, profile_image_url ),
+             payer:profiles!expenses_payer_id_fkey ( ${PAYMENT_PROFILE_COLUMNS} ),
              shares:expense_shares (
                id, user_id, guest_name, amount_cents, settled_at,
-               user:profiles ( id, name, profile_image_url, venmo_handle, paypal_handle, cashapp_handle, zelle_handle )
+               user:profiles ( ${PAYMENT_PROFILE_COLUMNS} )
              )`
           )
           .eq("chat_id", chatId)
@@ -168,22 +183,14 @@ export default function SplitCostSheet({
         guest_name: string | null;
         amount_cents: number;
         settled_at: string | null;
-        user: {
-          id: string;
-          name: string;
-          profile_image_url: string;
-          venmo_handle: string | null;
-          paypal_handle: string | null;
-          cashapp_handle: string | null;
-          zelle_handle: string | null;
-        } | null;
+        user: PaymentProfile | null;
       };
       type RawExpense = {
         id: string;
         amount_cents: number;
         description: string;
         created_at: string;
-        payer: { id: string; name: string; profile_image_url: string };
+        payer: PaymentProfile;
         shares: RawShare[];
       };
 
@@ -196,6 +203,10 @@ export default function SplitCostSheet({
           id: e.payer.id,
           name: e.payer.name,
           profileImageUrl: e.payer.profile_image_url,
+          venmoHandle: e.payer.venmo_handle,
+          paypalHandle: e.payer.paypal_handle,
+          cashappHandle: e.payer.cashapp_handle,
+          zelleHandle: e.payer.zelle_handle,
         },
         shares: e.shares
           .filter((s) => s.user_id !== null && s.user !== null)
@@ -256,10 +267,10 @@ export default function SplitCostSheet({
               image: e.payer.profileImageUrl,
               net: 0,
               handles: {
-                venmoHandle: null,
-                paypalHandle: null,
-                cashappHandle: null,
-                zelleHandle: null,
+                venmoHandle: e.payer.venmoHandle,
+                paypalHandle: e.payer.paypalHandle,
+                cashappHandle: e.payer.cashappHandle,
+                zelleHandle: e.payer.zelleHandle,
               },
             };
             cur.net += s.amountCents;
