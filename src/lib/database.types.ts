@@ -312,6 +312,7 @@ export type Database = {
           chat_id: string
           content: string
           created_at: string
+          expense_id: string | null
           id: string
           media_type: string
           media_url: string
@@ -321,6 +322,7 @@ export type Database = {
           chat_id: string
           content: string
           created_at?: string
+          expense_id?: string | null
           id?: string
           media_type?: string
           media_url?: string
@@ -330,6 +332,7 @@ export type Database = {
           chat_id?: string
           content?: string
           created_at?: string
+          expense_id?: string | null
           id?: string
           media_type?: string
           media_url?: string
@@ -348,6 +351,13 @@ export type Database = {
             columns: ["sender_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_expense_id_fkey"
+            columns: ["expense_id"]
+            isOneToOne: false
+            referencedRelation: "expenses"
             referencedColumns: ["id"]
           },
         ]

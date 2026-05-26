@@ -148,7 +148,7 @@ export async function sendChatMessage(
   supabase: SupabaseClient<Database>,
   chatId: string,
   content: string,
-  opts: { mediaUrl?: string; mediaType?: string } = {}
+  opts: { mediaUrl?: string; mediaType?: string; expenseId?: string } = {}
 ): Promise<ChatMessage> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("Not signed in");
@@ -160,6 +160,7 @@ export async function sendChatMessage(
       content,
       media_url: opts.mediaUrl ?? "",
       media_type: opts.mediaType ?? "",
+      expense_id: opts.expenseId ?? null,
     })
     .select(
       `id, chat_id, sender_id, content, media_url, media_type, created_at,
@@ -168,6 +169,22 @@ export async function sendChatMessage(
     .single();
   if (error) throw error;
   return data as unknown as ChatMessage;
+}
+
+/**
+ * Rewrite the content of the chat message that was originally posted
+ * when an expense was added. No-op if no companion message exists
+ * (e.g. the original send failed). RLS: only the sender can update.
+ */
+export async function updateExpenseChatMessage(
+  supabase: SupabaseClient<Database>,
+  expenseId: string,
+  content: string
+): Promise<void> {
+  await supabase
+    .from("chat_messages")
+    .update({ content })
+    .eq("expense_id", expenseId);
 }
 
 export async function listChatParticipants(

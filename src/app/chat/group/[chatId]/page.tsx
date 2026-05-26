@@ -248,41 +248,64 @@ export default function GroupChatThreadPage() {
   useRealtimeTable(
     {
       table: "chat_messages",
-      event: "INSERT",
+      // Subscribe to all events: INSERT (new messages), UPDATE (expense
+      // announcement rewritten when the payer edits an expense), DELETE
+      // (cascade from an expense delete).
+      event: "*",
       filter: `chat_id=eq.${chatId}`,
       onChange: (payload) => {
-        const row = payload.new as {
-          id: string;
-          chat_id: string;
-          sender_id: string;
-          content: string | null;
-          media_url: string | null;
-          media_type: string | null;
-          created_at: string;
-        };
-        setMessages((prev) => {
-          // Dedupe against the optimistic add in handleSend.
-          if (prev.some((m) => m.id === row.id)) return prev;
-          const sender = chatInfo?.participants.find((p) => p.id === row.sender_id);
-          const msg: Message = {
-            id: row.id,
-            chatId: row.chat_id,
-            senderId: row.sender_id,
-            content: row.content || "",
-            mediaUrl: row.media_url || "",
-            mediaType: row.media_type || "",
-            createdAt: new Date(row.created_at).toISOString(),
-            sender: sender
-              ? {
-                  id: sender.id,
-                  name: sender.name,
-                  profileImageUrl: sender.profileImageUrl,
-                }
-              : { id: row.sender_id, name: "…", profileImageUrl: "" },
-            reactions: [],
+        if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
+          const row = payload.new as {
+            id: string;
+            chat_id: string;
+            sender_id: string;
+            content: string | null;
+            media_url: string | null;
+            media_type: string | null;
+            created_at: string;
           };
-          return [...prev, msg];
-        });
+          setMessages((prev) => {
+            const existingIdx = prev.findIndex((m) => m.id === row.id);
+            if (existingIdx >= 0) {
+              // UPDATE — replace content in place. Also covers the
+              // dedupe case where INSERT arrives after the optimistic
+              // add in handleSend.
+              const next = [...prev];
+              next[existingIdx] = {
+                ...next[existingIdx],
+                content: row.content || "",
+                mediaUrl: row.media_url || "",
+                mediaType: row.media_type || "",
+              };
+              return next;
+            }
+            const sender = chatInfo?.participants.find((p) => p.id === row.sender_id);
+            const msg: Message = {
+              id: row.id,
+              chatId: row.chat_id,
+              senderId: row.sender_id,
+              content: row.content || "",
+              mediaUrl: row.media_url || "",
+              mediaType: row.media_type || "",
+              createdAt: new Date(row.created_at).toISOString(),
+              sender: sender
+                ? {
+                    id: sender.id,
+                    name: sender.name,
+                    profileImageUrl: sender.profileImageUrl,
+                  }
+                : { id: row.sender_id, name: "…", profileImageUrl: "" },
+              reactions: [],
+            };
+            return [...prev, msg];
+          });
+        } else if (payload.eventType === "DELETE") {
+          // DELETE payload only carries the primary key by default
+          // (REPLICA IDENTITY DEFAULT). Removing by id is sufficient.
+          const oldRow = payload.old as { id?: string };
+          if (!oldRow.id) return;
+          setMessages((prev) => prev.filter((m) => m.id !== oldRow.id));
+        }
       },
     },
     [chatId, chatInfo]

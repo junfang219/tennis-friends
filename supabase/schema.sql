@@ -658,10 +658,16 @@ create table public.chat_messages (
   content     text not null,
   media_url   text not null default '',
   media_type  text not null default '',
+  -- Optional link back to the expense this message announces. ON DELETE
+  -- CASCADE: deleting an expense erases its companion announcement so
+  -- the chat doesn't retain stale numbers. Nullable because most
+  -- messages aren't expense announcements.
+  expense_id  uuid references public.expenses (id) on delete cascade,
   created_at  timestamptz not null default now()
 );
 create index chat_messages_chat_created_idx on public.chat_messages (chat_id, created_at desc);
 create index chat_messages_sender_idx       on public.chat_messages (sender_id);
+create index chat_messages_expense_idx      on public.chat_messages (expense_id) where expense_id is not null;
 
 create table public.group_messages (
   id              uuid primary key default gen_random_uuid(),
@@ -1917,6 +1923,11 @@ create policy chat_messages_insert_member on public.chat_messages
 
 create policy chat_messages_delete_sender on public.chat_messages
   for delete to authenticated using (sender_id = auth.uid());
+
+create policy chat_messages_update_sender on public.chat_messages
+  for update to authenticated
+  using (sender_id = auth.uid())
+  with check (sender_id = auth.uid());
 
 alter table public.group_messages enable row level security;
 
@@ -4498,3 +4509,21 @@ DROP TRIGGER IF EXISTS comments_bump_updated_at ON public.comments;
 CREATE TRIGGER comments_bump_updated_at
   BEFORE UPDATE ON public.comments
   FOR EACH ROW EXECUTE FUNCTION public.bump_comment_updated_at();
+
+-- Migration: link chat_messages back to the expense it announces, so the
+-- companion message can be updated when the payer edits the expense and
+-- removed when they delete it. ON DELETE CASCADE: deleting an expense
+-- erases its announcement so the chat doesn't retain stale numbers.
+ALTER TABLE public.chat_messages
+  ADD COLUMN expense_id uuid REFERENCES public.expenses (id) ON DELETE CASCADE;
+CREATE INDEX chat_messages_expense_idx
+  ON public.chat_messages (expense_id)
+  WHERE expense_id IS NOT NULL;
+
+-- Allow senders to update their own chat message (needed by the
+-- expense-edit → announcement-rewrite flow). Previously chat_messages
+-- only had select/insert/delete policies.
+CREATE POLICY chat_messages_update_sender ON public.chat_messages
+  FOR UPDATE TO authenticated
+  USING (sender_id = (SELECT auth.uid()))
+  WITH CHECK (sender_id = (SELECT auth.uid()));

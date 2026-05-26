@@ -10,7 +10,7 @@ import {
 } from "@/lib/payment";
 import { openPayment } from "@/lib/openPayment";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { getMyProfile, updateMyProfile, sendChatMessage } from "@/lib/supabase/queries";
+import { getMyProfile, updateMyProfile, sendChatMessage, updateExpenseChatMessage } from "@/lib/supabase/queries";
 
 type Participant = { id: string; name: string; profileImageUrl: string };
 
@@ -66,6 +66,33 @@ type Expense = {
   guestShares: GuestShare[];
 };
 
+// Single source of truth for the expense announcement message format,
+// used by both the create flow (handleSubmit) and the edit flow (saveEdit).
+// Both must produce identical text for the same numbers so an edit
+// looks like a clean rewrite of the original message.
+function formatExpenseAnnouncement(opts: {
+  amountCents: number;
+  description: string;
+  baseCents: number;
+  playerCount: number;
+  guestCount: number;
+  edited?: boolean;
+}): string {
+  const splitParts = [
+    `${opts.playerCount} ${opts.playerCount === 1 ? "player" : "players"}`,
+    ...(opts.guestCount > 0
+      ? [`${opts.guestCount} guest${opts.guestCount === 1 ? "" : "s"}`]
+      : []),
+  ];
+  const lines = [
+    opts.edited ? `💵 Expense updated` : `💵 Expense added`,
+    `💰 $${dollarsString(opts.amountCents)}`,
+    ...(opts.description.trim() ? [`📝 ${opts.description.trim()}`] : []),
+    `👥 ~$${dollarsString(opts.baseCents)} each (${splitParts.join(" + ")})`,
+  ];
+  return lines.join("\n");
+}
+
 export default function SplitCostSheet({
   chatId,
   participants,
@@ -105,7 +132,6 @@ export default function SplitCostSheet({
     zelleHandle: string | null;
   }>({ venmoHandle: null, paypalHandle: null, cashappHandle: null, zelleHandle: null });
   const [loadingData, setLoadingData] = useState(false);
-  const [settling, setSettling] = useState<string | null>(null);
 
   // Sticky lift: once the keyboard has raised the sheet, keep it there
   // even after the keyboard hides (e.g. when the user switches to the
@@ -346,22 +372,18 @@ export default function SplitCostSheet({
 
       // Announce the expense in the chat so other members see it without
       // having to open the Split sheet. Sent as a normal message under
-      // the payer's identity. Best-effort: the expense is already saved,
+      // the payer's identity, with expense_id set so a later edit can
+      // rewrite this message. Best-effort: the expense is already saved,
       // so a failed notification shouldn't roll anything back.
-      const splitParts = [
-        `${participants.length} ${participants.length === 1 ? "player" : "players"}`,
-        ...(guestNames.length > 0
-          ? [`${guestNames.length} guest${guestNames.length === 1 ? "" : "s"}`]
-          : []),
-      ];
-      const msgLines = [
-        `💵 Expense added`,
-        `💰 $${dollarsString(cents)}`,
-        ...(description.trim() ? [`📝 ${description.trim()}`] : []),
-        `👥 ~$${dollarsString(baseCents)} each (${splitParts.join(" + ")})`,
-      ];
+      const announcement = formatExpenseAnnouncement({
+        amountCents: cents,
+        description,
+        baseCents,
+        playerCount: participants.length,
+        guestCount: guestNames.length,
+      });
       try {
-        await sendChatMessage(supabase, chatId, msgLines.join("\n"));
+        await sendChatMessage(supabase, chatId, announcement, { expenseId: exp.id });
       } catch {
         // Realtime won't fire; the expense is still in the DB and will
         // appear under Balances. User can re-share manually if needed.
@@ -376,19 +398,6 @@ export default function SplitCostSheet({
       setError(err instanceof Error ? err.message : "Network error. Try again.");
     }
     setSubmitting(false);
-  };
-
-  const toggleSettled = async (share: ExpenseShare, settled: boolean) => {
-    setSettling(share.id);
-    try {
-      const supabase = createSupabaseBrowserClient();
-      await supabase
-        .from("expense_shares")
-        .update({ settled_at: settled ? new Date().toISOString() : null })
-        .eq("id", share.id);
-      await load();
-    } catch {}
-    setSettling(null);
   };
 
   const N = participants.length + guestNames.length;
@@ -528,9 +537,7 @@ export default function SplitCostSheet({
               chatId={chatId}
               myId={myId}
               myHandles={myHandles}
-              onSettle={toggleSettled}
               onHandlesSaved={load}
-              settlingId={settling}
               reload={load}
             />
           )}
@@ -548,9 +555,7 @@ function BalancesView({
   chatId,
   myId,
   myHandles,
-  onSettle,
   onHandlesSaved,
-  settlingId,
   reload,
 }: {
   loading: boolean;
@@ -565,21 +570,9 @@ function BalancesView({
     cashappHandle: string | null;
     zelleHandle: string | null;
   };
-  onSettle: (share: ExpenseShare, settled: boolean) => void;
   onHandlesSaved: () => void;
-  settlingId: string | null;
   reload: () => void;
 }) {
-  type PendingPay = {
-    shareIds: string[];
-    payeeName: string;
-    payeeId: string;
-    amountCents: number;
-    method: PaymentMethod;
-  };
-  const [pendingPay, setPendingPay] = useState<PendingPay | null>(null);
-  const [showReturnPrompt, setShowReturnPrompt] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -588,19 +581,9 @@ function BalancesView({
     return () => clearTimeout(t);
   }, [toast]);
 
-  useEffect(() => {
-    if (!pendingPay) return;
-    const onVisible = () => {
-      if (document.visibilityState === "visible") setShowReturnPrompt(true);
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("focus", onVisible);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("focus", onVisible);
-    };
-  }, [pendingPay]);
-
+  // Launch the user's payment app of choice. The debtor can no longer
+  // mark themselves settled — only the creditor can (see settleBalance).
+  // So this is purely a convenience launcher; we don't track the return.
   const handlePayClick = async (b: Balance, method: PaymentMethod) => {
     const handleField = `${method}Handle` as const;
     const rawHandle = b.paymentHandles[handleField];
@@ -608,24 +591,22 @@ function BalancesView({
     const note = "Tennis Friends — court costs";
     const cents = Math.abs(b.netCents);
     const intent = buildPayIntent(method, rawHandle.trim(), cents, note);
-
-    const shareIds = expenses
-      .filter((e) => e.payer.id === b.otherId)
-      .flatMap((e) => e.shares)
-      .filter((s) => s.userId === myId && !s.settledAt)
-      .map((s) => s.id);
-
     const result = await openPayment(intent);
-
     if (result.kind === "copied") {
       setToast(`Copied: ${result.text}. Open your bank's Zelle to send.`);
-      setPendingPay({ shareIds, payeeName: b.otherName, payeeId: b.otherId, amountCents: cents, method });
-    } else if (result.kind === "launched_app" || result.kind === "opened_web") {
-      setPendingPay({ shareIds, payeeName: b.otherName, payeeId: b.otherId, amountCents: cents, method });
     }
   };
 
   const [guestSettling, setGuestSettling] = useState<string | null>(null);
+  // Per-balance in-flight flag for the Mark-as-settled button. Keyed by
+  // the other user's id so only one row's button shows a spinner state.
+  const [settlingBalanceId, setSettlingBalanceId] = useState<string | null>(null);
+  // Inline edit state for a History row. Only the payer can edit/delete.
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editError, setEditError] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
 
   const settleGuest = async (g: GuestBalance) => {
     setGuestSettling(g.guestName);
@@ -635,38 +616,171 @@ function BalancesView({
         .from("expense_shares")
         .update({ settled_at: new Date().toISOString() })
         .in("id", g.openShareIds);
+      // Announce in chat so the group has a record of the guest paying.
+      try {
+        await sendChatMessage(
+          supabase,
+          chatId,
+          `✅ Marked $${dollarsString(g.amountCents)} from ${g.guestName} (guest) as paid`,
+        );
+      } catch {
+        // Settlement persisted; missing announcement isn't fatal.
+      }
       reload();
     } catch {}
     setGuestSettling(null);
   };
 
-  const unsettleGuestShare = async (shareId: string) => {
-    setGuestSettling(shareId);
-    try {
-      const supabase = createSupabaseBrowserClient();
-      await supabase
-        .from("expense_shares")
-        .update({ settled_at: null })
-        .eq("id", shareId);
-      reload();
-    } catch {}
-    setGuestSettling(null);
-  };
-
-  const handleConfirmPaid = async () => {
-    if (!pendingPay) return;
-    setConfirming(true);
+  // Settle ALL unsettled shares between me and `b.otherId` in both
+  // directions (shares I owe them + shares they owe me). Only the
+  // creditor sees the button that invokes this — the debtor can't
+  // unilaterally declare themselves paid.
+  // RLS allows both updates via expense_shares_update_self_or_payer:
+  // I own my shares (user_id = me) and I'm payer on theirs (payer_id = me).
+  const settleBalance = async (b: Balance) => {
+    if (!confirm(`Mark all unsettled expenses with ${b.otherName} as settled?`)) return;
+    const shareIds = expenses
+      .flatMap((e) => {
+        if (e.payer.id !== myId && e.payer.id !== b.otherId) return [];
+        return e.shares.filter(
+          (s) =>
+            !s.settledAt &&
+            ((e.payer.id === b.otherId && s.userId === myId) ||
+              (e.payer.id === myId && s.userId === b.otherId)),
+        );
+      })
+      .map((s) => s.id);
+    if (shareIds.length === 0) return;
+    setSettlingBalanceId(b.otherId);
     try {
       const supabase = createSupabaseBrowserClient();
       await supabase
         .from("expense_shares")
         .update({ settled_at: new Date().toISOString() })
-        .in("id", pendingPay.shareIds);
-      setShowReturnPrompt(false);
-      setPendingPay(null);
+        .in("id", shareIds);
+      // Announce in chat so both parties have a record of the settlement.
+      try {
+        await sendChatMessage(
+          supabase,
+          chatId,
+          `✅ Marked $${dollarsString(Math.abs(b.netCents))} from ${b.otherName} as paid`,
+        );
+      } catch {
+        // Settlement persisted; missing announcement isn't fatal.
+      }
       reload();
     } catch {}
-    setConfirming(false);
+    setSettlingBalanceId(null);
+  };
+
+  const startEdit = (e: Expense) => {
+    setEditingExpenseId(e.id);
+    setEditAmount((e.amountCents / 100).toFixed(2));
+    setEditDescription(e.description);
+    setEditError("");
+  };
+
+  const cancelEdit = () => {
+    setEditingExpenseId(null);
+    setEditAmount("");
+    setEditDescription("");
+    setEditError("");
+  };
+
+  // Save an edited expense: update the amount/description and rewrite
+  // every share's amount using the same floor + remainder distribution
+  // used at create time. Resets settled_at on every share — once the
+  // total changes, any "paid" status from the old amount is stale.
+  const saveEdit = async (e: Expense) => {
+    setEditError("");
+    const dollars = Number(editAmount);
+    if (!Number.isFinite(dollars) || dollars <= 0) {
+      setEditError("Enter a positive amount.");
+      return;
+    }
+    const cents = Math.round(dollars * 100);
+    if (cents < 1) {
+      setEditError("Amount too small.");
+      return;
+    }
+    const slots: { id: string }[] = [
+      ...e.shares.map((s) => ({ id: s.id })),
+      ...e.guestShares.map((g) => ({ id: g.id })),
+    ];
+    if (slots.length === 0) {
+      setEditError("No shares to update.");
+      return;
+    }
+    const baseCents = Math.floor(cents / slots.length);
+    const remainder = cents - baseCents * slots.length;
+
+    setEditBusy(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { error: upErr } = await supabase
+        .from("expenses")
+        .update({ amount_cents: cents, description: editDescription.trim() })
+        .eq("id", e.id);
+      if (upErr) {
+        setEditError(upErr.message);
+        setEditBusy(false);
+        return;
+      }
+      // Per-share updates in parallel — RLS allows the payer to update
+      // any share whose parent expense they own.
+      await Promise.all(
+        slots.map((slot, i) =>
+          supabase
+            .from("expense_shares")
+            .update({
+              amount_cents: baseCents + (i < remainder ? 1 : 0),
+              settled_at: null,
+            })
+            .eq("id", slot.id),
+        ),
+      );
+
+      // Rewrite the companion chat_message (matched via expense_id) so
+      // the announcement reflects the new numbers. Player + guest counts
+      // are taken from the existing shares, not the parent component's
+      // current chat membership, so a roster change doesn't retro-edit
+      // an old expense's wording. Best-effort: if no companion message
+      // exists (e.g. the original send failed) this is a no-op.
+      const playerCount = e.shares.length;
+      const guestCount = e.guestShares.length;
+      const newContent = formatExpenseAnnouncement({
+        amountCents: cents,
+        description: editDescription,
+        baseCents,
+        playerCount,
+        guestCount,
+        edited: true,
+      });
+      try {
+        await updateExpenseChatMessage(supabase, e.id, newContent);
+      } catch {
+        // Leave the original message intact if rewrite fails; the
+        // expense data itself is the source of truth.
+      }
+
+      cancelEdit();
+      reload();
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Network error.");
+    }
+    setEditBusy(false);
+  };
+
+  const deleteExpense = async (e: Expense) => {
+    if (!confirm(`Delete this expense ($${dollarsString(e.amountCents)}${e.description ? " — " + e.description : ""})? This can't be undone.`)) return;
+    setEditBusy(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      // expense_shares cascade-deletes via the FK.
+      await supabase.from("expenses").delete().eq("id", e.id);
+      reload();
+    } catch {}
+    setEditBusy(false);
   };
 
   if (loading) {
@@ -691,29 +805,6 @@ function BalancesView({
 
   return (
     <div className="space-y-4 relative">
-      {showReturnPrompt && pendingPay && (
-        <div className="rounded-xl border border-court-green bg-court-green/10 p-3">
-          <p className="text-sm font-semibold text-court-green">
-            Did you finish paying ${dollarsString(pendingPay.amountCents)} to {pendingPay.payeeName} on {PAYMENT_LABELS[pendingPay.method]}?
-          </p>
-          <div className="mt-2 flex items-center gap-2">
-            <button
-              onClick={handleConfirmPaid}
-              disabled={confirming}
-              className="bg-court-green text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-court-green-light disabled:opacity-50"
-            >
-              {confirming ? "Marking..." : "Yes, mark paid"}
-            </button>
-            <button
-              onClick={() => { setShowReturnPrompt(false); setPendingPay(null); }}
-              className="text-xs font-semibold text-gray-600 hover:text-gray-800 px-2 py-1.5"
-            >
-              Not yet
-            </button>
-          </div>
-        </div>
-      )}
-
       {toast && (
         <div className="fixed left-1/2 -translate-x-1/2 bottom-6 z-[10001] bg-gray-900 text-white text-xs font-medium px-3 py-2 rounded-lg shadow-lg">
           {toast}
@@ -763,6 +854,15 @@ function BalancesView({
                       <span className="font-bold">${dollarsString(cents)}</span>
                     </p>
                   </div>
+                  {!youOwe && (
+                    <button
+                      onClick={() => settleBalance(b)}
+                      disabled={settlingBalanceId === b.otherId}
+                      className="bg-court-green text-white text-[11px] font-bold px-3 py-1.5 rounded-lg hover:bg-court-green-light disabled:opacity-50 shrink-0"
+                    >
+                      {settlingBalanceId === b.otherId ? "..." : "Mark as settled"}
+                    </button>
+                  )}
                 </div>
                 {youOwe && (
                   <div className="mt-2 space-y-1.5">
@@ -788,12 +888,12 @@ function BalancesView({
                           ))}
                         </div>
                         <p className="text-[10px] text-gray-500">
-                          Tap a method to launch it; come back to confirm.
+                          {b.otherName} will mark this settled when they receive payment.
                         </p>
                       </>
                     ) : (
                       <span className="text-xs text-gray-500 italic">
-                        {b.otherName} hasn&apos;t added a payment handle.
+                        {b.otherName} hasn&apos;t added a payment handle. Pay them in person; they&apos;ll mark it settled.
                       </span>
                     )}
                   </div>
@@ -848,24 +948,109 @@ function BalancesView({
           History ({expenses.length} {expenses.length === 1 ? "expense" : "expenses"})
         </summary>
         <div className="mt-2 space-y-2">
-          {expenses.map((e) => (
+          {expenses.map((e) => {
+            const iAmPayer = e.payer.id === myId;
+            const isEditing = editingExpenseId === e.id;
+            return (
             <div key={e.id} className="border border-gray-100 rounded-xl p-3 bg-white">
-              <div className="flex items-center gap-2 mb-2">
-                <Avatar name={e.payer.name} image={e.payer.profileImageUrl} size="sm" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-gray-900 truncate">
-                    {e.payer.name} paid ${dollarsString(e.amountCents)}
-                  </p>
-                  {e.description && (
-                    <p className="text-xs text-gray-500 truncate">{e.description}</p>
+              {isEditing ? (
+                <div className="mb-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-500">$</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      min="0.01"
+                      value={editAmount}
+                      onChange={(ev) => setEditAmount(ev.target.value)}
+                      placeholder="0.00"
+                      className="w-24 px-2 py-1 border border-gray-200 rounded-lg text-sm"
+                      autoFocus
+                    />
+                    <input
+                      type="text"
+                      value={editDescription}
+                      onChange={(ev) => setEditDescription(ev.target.value)}
+                      placeholder="Description"
+                      maxLength={200}
+                      className="flex-1 min-w-0 px-2 py-1 border border-gray-200 rounded-lg text-sm"
+                    />
+                  </div>
+                  {editError && (
+                    <p className="text-[11px] text-red-600">{editError}</p>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] text-gray-400">
+                      Editing resets any &quot;paid&quot; status on this expense.
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={cancelEdit}
+                        disabled={editBusy}
+                        className="text-xs text-gray-500 hover:text-gray-700 disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => saveEdit(e)}
+                        disabled={editBusy || !editAmount}
+                        className="text-xs font-semibold text-court-green hover:text-court-green-light disabled:opacity-50"
+                      >
+                        {editBusy ? "Saving..." : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 mb-2">
+                  <Avatar name={e.payer.name} image={e.payer.profileImageUrl} size="sm" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-900 truncate">
+                      {e.payer.name} paid ${dollarsString(e.amountCents)}
+                    </p>
+                    {e.description && (
+                      <p className="text-xs text-gray-500 truncate">{e.description}</p>
+                    )}
+                  </div>
+                  {iAmPayer && (
+                    <>
+                      <button
+                        onClick={() => startEdit(e)}
+                        disabled={editBusy}
+                        title="Edit"
+                        aria-label="Edit expense"
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => deleteExpense(e)}
+                        disabled={editBusy}
+                        title="Delete"
+                        aria-label="Delete expense"
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-50"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                          <path d="M10 11v6" />
+                          <path d="M14 11v6" />
+                        </svg>
+                      </button>
+                    </>
                   )}
                 </div>
-              </div>
+              )}
               <div className="space-y-1">
                 {/* Skip the payer's own share — they paid the whole bill,
-                    so saying "Payer owes their share" double-counts. */}
+                    so saying "Payer owes their share" double-counts.
+                    History is informational only; settlement happens at
+                    the Balance-row level (Mark as settled), not per-share. */}
                 {e.shares.filter((s) => s.userId !== e.payer.id).map((s) => {
-                  const isMine = s.userId === myId;
                   const settled = !!s.settledAt;
                   return (
                     <div
@@ -875,27 +1060,16 @@ function BalancesView({
                       <span className={settled ? "text-gray-400 line-through" : "text-gray-700"}>
                         {s.user.name} owes ${dollarsString(s.amountCents)}
                       </span>
-                      {isMine ? (
-                        <button
-                          onClick={() => onSettle(s, !settled)}
-                          disabled={settlingId === s.id}
-                          className={`text-[11px] font-semibold px-2 py-0.5 rounded-md transition-colors disabled:opacity-50 ${
-                            settled
-                              ? "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                              : "bg-court-green text-white hover:bg-court-green-light"
-                          }`}
-                        >
-                          {settled ? "Undo" : "Mark paid"}
-                        </button>
-                      ) : settled ? (
-                        <span className="text-[11px] font-semibold text-green-600">Paid</span>
-                      ) : null}
+                      {settled && (
+                        <span className="text-[10px] font-bold text-green-700 bg-green-50 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                          Paid
+                        </span>
+                      )}
                     </div>
                   );
                 })}
                 {e.guestShares.map((g) => {
                   const settled = !!g.settledAt;
-                  const iAmPayer = e.payer.id === myId;
                   return (
                     <div
                       key={g.id}
@@ -904,27 +1078,18 @@ function BalancesView({
                       <span className={settled ? "text-gray-400 line-through" : "text-gray-700"}>
                         {g.guestName} <span className="text-[10px] text-gray-400">(guest)</span> owes ${dollarsString(g.amountCents)}
                       </span>
-                      {iAmPayer ? (
-                        <button
-                          onClick={() => settled ? unsettleGuestShare(g.id) : settleGuest({ guestName: g.guestName, amountCents: g.amountCents, openShareIds: [g.id] })}
-                          disabled={guestSettling === g.guestName || guestSettling === g.id}
-                          className={`text-[11px] font-semibold px-2 py-0.5 rounded-md transition-colors disabled:opacity-50 ${
-                            settled
-                              ? "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                              : "bg-court-green text-white hover:bg-court-green-light"
-                          }`}
-                        >
-                          {settled ? "Undo" : "Mark paid"}
-                        </button>
-                      ) : settled ? (
-                        <span className="text-[11px] font-semibold text-green-600">Paid</span>
-                      ) : null}
+                      {settled && (
+                        <span className="text-[10px] font-bold text-green-700 bg-green-50 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                          Paid
+                        </span>
+                      )}
                     </div>
                   );
                 })}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </details>
     </div>
