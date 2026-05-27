@@ -982,7 +982,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                               setCancelling(true);
                               try {
                                 const supabase = createSupabaseBrowserClient();
-                                await cancelPlayRequest(supabase, post.id);
+                                await cancelPlayRequest(supabase, post.id, withdrawNote);
                                 setMyRequest({ id: myRequest.id, status: "WITHDRAWN", note: withdrawNote });
                                 const newConfirmed = Math.max(0, confirmed - 1);
                                 setConfirmed(newConfirmed);
@@ -2179,6 +2179,7 @@ function ManageRequestsModal({
   const [requests, setRequests] = useState<PlayRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [respondingTo, setRespondingTo] = useState<string | null>(null);
+  const [respondError, setRespondError] = useState<string>("");
   const [rejectNoteFor, setRejectNoteFor] = useState<string | null>(null);
   const [rejectNote, setRejectNote] = useState("");
   const [savingManual, setSavingManual] = useState(false);
@@ -2207,7 +2208,7 @@ function ManageRequestsModal({
         ((data ?? []) as unknown as Array<{
           id: string;
           user_id: string;
-          status: "pending" | "approved" | "rejected";
+          status: "pending" | "approved" | "rejected" | "withdrawn" | "removed";
           note: string;
           created_at: string;
           user: { id: string; name: string; profile_image_url: string };
@@ -2244,23 +2245,28 @@ function ManageRequestsModal({
     setDropdownValue(totalConfirmed);
   }, [totalConfirmed]);
 
-  // The auto-create-session-chat trigger fires inside the AFTER UPDATE
-  // of posts.is_complete. The trigger has committed by the time the
-  // supabase-js update() resolves, so this select races nothing.
-  const fetchSessionChatId = async (
+  // The auto-create-session-chat (find_players) and create-team-group
+  // (propose_team) triggers both fire inside the AFTER UPDATE of
+  // posts.is_complete. Both have committed by the time the supabase-js
+  // update() resolves, so these selects race nothing. Run in parallel —
+  // for any given post only one of the two will be populated.
+  const fetchCompletionIds = async (
     supabase: ReturnType<typeof createSupabaseBrowserClient>,
     postIdToCheck: string
-  ): Promise<string | null> => {
-    const { data } = await supabase
-      .from("chats")
-      .select("id")
-      .eq("post_id", postIdToCheck)
-      .maybeSingle();
-    return data?.id ?? null;
+  ): Promise<{ chatId: string | null; teamGroupId: string | null }> => {
+    const [chatRes, postRes] = await Promise.all([
+      supabase.from("chats").select("id").eq("post_id", postIdToCheck).maybeSingle(),
+      supabase.from("posts").select("team_group_id").eq("id", postIdToCheck).maybeSingle(),
+    ]);
+    return {
+      chatId: chatRes.data?.id ?? null,
+      teamGroupId: postRes.data?.team_group_id ? postRes.data.team_group_id : null,
+    };
   };
 
   const handleRespond = async (requestId: string, action: "approve" | "reject", note?: string) => {
     setRespondingTo(requestId);
+    setRespondError("");
     try {
       const supabase = createSupabaseBrowserClient();
       const status = action === "approve" ? "approved" : "rejected";
@@ -2268,27 +2274,29 @@ function ManageRequestsModal({
         .from("play_requests")
         .update({ status, note: note || "" })
         .eq("id", requestId);
-      if (!upErr) {
-        loadRequests();
-        if (action === "approve") {
-          const nextConfirmed = approvedCount + 1 + manualCount;
-          const isComplete = nextConfirmed >= playersNeeded;
-          // Persist the count + completion flag so the auto-chat trigger
-          // can fire. The legacy /api/posts/join/respond route did this
-          // server-side; the migration dropped it.
-          const { error: postErr } = await supabase
-            .from("posts")
-            .update({ players_confirmed: nextConfirmed, is_complete: isComplete })
-            .eq("id", postId);
-          if (!postErr) {
-            const chatId = isComplete ? await fetchSessionChatId(supabase, postId) : null;
-            onUpdate(nextConfirmed, isComplete, chatId, null);
-            if (isComplete) onClose();
-          }
-        }
+      if (upErr) throw new Error(upErr.message);
+      loadRequests();
+      if (action === "approve") {
+        const nextConfirmed = approvedCount + 1 + manualCount;
+        const isComplete = nextConfirmed >= playersNeeded;
+        // Persist the count + completion flag so the
+        // create_session_chat_on_complete trigger can spin up the
+        // session group chat.
+        const { error: postErr } = await supabase
+          .from("posts")
+          .update({ players_confirmed: nextConfirmed, is_complete: isComplete })
+          .eq("id", postId);
+        if (postErr) throw new Error(postErr.message);
+        const { chatId, teamGroupId } = isComplete
+          ? await fetchCompletionIds(supabase, postId)
+          : { chatId: null, teamGroupId: null };
+        onUpdate(nextConfirmed, isComplete, chatId, teamGroupId);
+        if (isComplete) onClose();
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      setRespondError(
+        err instanceof Error ? err.message : "Couldn't update the request."
+      );
     }
     setRespondingTo(null);
     setRejectNoteFor(null);
@@ -2307,6 +2315,11 @@ function ManageRequestsModal({
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
+        {respondError && (
+          <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+            {respondError}
+          </div>
+        )}
         <div className="px-4 pt-3">
           <div className="w-full bg-gray-100 rounded-full h-2">
             <div className="bg-court-green h-2 rounded-full transition-all" style={{ width: `${Math.min(100, (dropdownValue / playersNeeded) * 100)}%` }} />
@@ -2341,10 +2354,10 @@ function ManageRequestsModal({
                       .update({ players_confirmed: dropdownValue, is_complete: isNowComplete })
                       .eq("id", postId);
                     if (!upErr) {
-                      const chatId = isNowComplete
-                        ? await fetchSessionChatId(supabase, postId)
-                        : null;
-                      onUpdate(dropdownValue, isNowComplete, chatId, null);
+                      const { chatId, teamGroupId } = isNowComplete
+                        ? await fetchCompletionIds(supabase, postId)
+                        : { chatId: null, teamGroupId: null };
+                      onUpdate(dropdownValue, isNowComplete, chatId, teamGroupId);
                       setCurrentConfirmedCount(dropdownValue);
                       setIsMarkedFull(isNowComplete);
                     }
@@ -2373,8 +2386,8 @@ function ManageRequestsModal({
                           .update({ players_confirmed: playersNeeded, is_complete: true })
                           .eq("id", postId);
                         if (!upErr) {
-                          const chatId = await fetchSessionChatId(supabase, postId);
-                          onUpdate(playersNeeded, true, chatId, null);
+                          const { chatId, teamGroupId } = await fetchCompletionIds(supabase, postId);
+                          onUpdate(playersNeeded, true, chatId, teamGroupId);
                           setCurrentConfirmedCount(playersNeeded);
                           setDropdownValue(playersNeeded);
                           setIsMarkedFull(true);
@@ -2496,8 +2509,8 @@ function ManageRequestsModal({
                       })
                       .eq("id", postId);
                     if (!upErr) {
-                      const chatId = await fetchSessionChatId(supabase, postId);
-                      onUpdate(playersNeeded, true, chatId, null);
+                      const { chatId, teamGroupId } = await fetchCompletionIds(supabase, postId);
+                      onUpdate(playersNeeded, true, chatId, teamGroupId);
                       setCurrentConfirmedCount(playersNeeded);
                       setDropdownValue(playersNeeded);
                       setIsMarkedFull(true);
@@ -2596,7 +2609,7 @@ function ManageRequestsModal({
                             const supabase = createSupabaseBrowserClient();
                             const { error: upErr } = await supabase
                               .from("play_requests")
-                              .update({ status: "rejected", note: removeNote })
+                              .update({ status: "removed", note: removeNote })
                               .eq("id", req.id);
                             if (!upErr) {
                               const next = Math.max(0, approvedCount - 1);

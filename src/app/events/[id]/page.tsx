@@ -694,26 +694,20 @@ function InviteFriendsModal({
     setError("");
     try {
       const supabase = createSupabaseBrowserClient();
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) {
-        setError("Not signed in.");
+      // notifications has no INSERT RLS for authenticated — the original
+      // /api/events/[id]/invite ran organizer / friend / participant /
+      // dedupe checks server-side. Restored as a SECURITY DEFINER RPC.
+      const { data, error: rpcErr } = await supabase.rpc("invite_to_event", {
+        p_event_id: eventId,
+        p_user_ids: Array.from(selectedIds),
+      });
+      if (rpcErr) {
+        setError(rpcErr.message);
         setSending(false);
         return;
       }
-      // Invites = notifications of type "event_invite" pointing at the event.
-      const rows = Array.from(selectedIds).map((uid) => ({
-        user_id: uid,
-        actor_id: auth.user!.id,
-        type: "event_invite" as const,
-        event_id: eventId,
-      }));
-      const { error: insErr } = await supabase.from("notifications").insert(rows);
-      if (insErr) {
-        setError(insErr.message);
-        setSending(false);
-        return;
-      }
-      onSent(selectedIds.size);
+      const invited = (data as { invited?: number } | null)?.invited ?? 0;
+      onSent(invited);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error. Try again.");
       setSending(false);

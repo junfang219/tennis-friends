@@ -4,11 +4,13 @@ import Navbar from "@/components/Navbar";
 import BottomNav from "@/components/BottomNav";
 import PushRegistrar from "@/components/PushRegistrar";
 import KeyboardInit from "@/components/KeyboardInit";
+import ArrivalDetector from "@/components/ArrivalDetector";
 
 // SessionProvider is gone: Supabase's auth state is hydrated per-component
-// via useSupabaseUser / the nextauth-compat shim. ArrivalDetector was
-// deleted along with its useArrivalDetection hook — port it to a Supabase
-// Realtime presence channel when the feature is rebuilt.
+// via useSupabaseUser / the nextauth-compat shim. ArrivalDetector is
+// re-mounted here against the new useArrivalDetection hook (which
+// reads find_players games via listUpcomingFindPlayersGames instead of
+// the deleted /api/games/upcoming route).
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -38,6 +40,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-surface" suppressHydrationWarning>
         <PushRegistrar />
         <KeyboardInit />
+        <ArrivalDetector />
         <Navbar />
         <main className="flex-1">{children}</main>
         <BottomNav />

@@ -117,10 +117,7 @@ describe.skipIf(!integrationEnvReady)("extended query helpers (live Supabase)", 
         .single();
       if (error) throw error;
       groupId = group.id;
-      const admin = adminClient();
-      await admin
-        .from("group_members")
-        .insert({ group_id: groupId, user_id: alice.id, role: "owner" });
+      // groups_auto_add_owner trigger handles the owner row.
     });
 
     it("createTeamListing + listTeamListings round-trip", async () => {
@@ -232,14 +229,24 @@ describe.skipIf(!integrationEnvReady)("extended query helpers (live Supabase)", 
         .eq("id", req.id)
         .single();
       expect(data?.status).toBe("approved");
-      // Bob cancels (deletes their own row).
-      await cancelPlayRequest(bob.client, postId);
+      // Bob withdraws from an APPROVED request: the row persists as
+      // 'withdrawn' so the trigger can DM the author + free the slot.
+      await cancelPlayRequest(bob.client, postId, "schedule clash");
       const { data: after } = await alice.client
         .from("play_requests")
-        .select("id")
+        .select("status, note")
+        .eq("post_id", postId)
+        .eq("user_id", bob.id)
+        .single();
+      expect(after?.status).toBe("withdrawn");
+      expect(after?.note).toBe("schedule clash");
+      // Cleanup the row so the find-players trigger doesn't re-fire on
+      // the next describe block's fixture create.
+      await adminClient()
+        .from("play_requests")
+        .delete()
         .eq("post_id", postId)
         .eq("user_id", bob.id);
-      expect(after?.length).toBe(0);
     });
   });
 
@@ -285,9 +292,9 @@ describe.skipIf(!integrationEnvReady)("extended query helpers (live Supabase)", 
         .select("id")
         .single();
       groupId = g!.id;
+      // owner row auto-added by groups_auto_add_owner.
       const admin = adminClient();
       await admin.from("group_members").insert([
-        { group_id: groupId, user_id: alice.id, role: "owner" },
         { group_id: groupId, user_id: bob.id, role: "member" },
       ]);
       const { data: m } = await alice.client

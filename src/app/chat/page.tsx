@@ -5,17 +5,20 @@ import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import ConversationRow, { type InboxItem, type InboxAction } from "@/components/ConversationRow";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useRealtimeTable } from "@/lib/supabase/realtime";
 import { listDmThreads, listMyChats, markDmRead, markChatRead } from "@/lib/supabase/queries";
 import { pgToIso } from "@/lib/pgDate";
 
 export default function ChatPage() {
-  const { status } = useSession();
+  const { status, data: session } = useSession();
   const router = useRouter();
   const [items, setItems] = useState<InboxItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [openRowKey, setOpenRowKey] = useState<string | null>(null);
 
   const loadInbox = useCallback(async () => {
+    setLoadError("");
     try {
       const supabase = createSupabaseBrowserClient();
       const [dms, chats] = await Promise.all([
@@ -57,7 +60,8 @@ export default function ChatPage() {
       }));
       setItems([...dmItems, ...chatItems]);
       setLoading(false);
-    } catch {
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Couldn't load messages.");
       setLoading(false);
     }
   }, []);
@@ -76,6 +80,40 @@ export default function ChatPage() {
     if (status !== "authenticated") return;
     loadInbox();
   }, [status, loadInbox]);
+
+  // Realtime: refresh the inbox when an incoming DM, session chat, or
+  // group chat message arrives. The polling fallback the SSE stream
+  // used to drive is gone; without these subscriptions unread badges
+  // would stay stale until manual reload. Each table gets its own
+  // channel because the postgres_changes filter syntax doesn't OR
+  // across tables. listDmThreads / listMyChats are cheap enough that
+  // re-running both on any signal isn't expensive.
+  const me = session?.user?.id;
+  useRealtimeTable(
+    {
+      table: "messages",
+      event: "INSERT",
+      filter: me ? `receiver_id=eq.${me}` : undefined,
+      onChange: () => { void loadInbox(); },
+    },
+    [me, loadInbox]
+  );
+  // chat_messages (session chats) has no single-column "messages I can
+  // see" filter; RLS does the heavy lifting (Realtime applies SELECT
+  // policies before delivery) so subscribing without a filter is safe.
+  // Skip self-sent messages — they wouldn't change the unread badge.
+  useRealtimeTable(
+    {
+      table: "chat_messages",
+      event: "INSERT",
+      onChange: (payload) => {
+        const senderId = (payload.new as { sender_id?: string } | null)?.sender_id;
+        if (senderId && senderId === me) return;
+        void loadInbox();
+      },
+    },
+    [me, loadInbox]
+  );
 
   // Escape closes any open swipe row
   useEffect(() => {
@@ -158,6 +196,18 @@ export default function ChatPage() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
       <h1 className="font-display text-2xl font-bold text-court-green mb-4">Messages</h1>
+
+      {loadError && (
+        <div className="mb-4 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+          {loadError}{" "}
+          <button
+            onClick={() => { setLoading(true); void loadInbox(); }}
+            className="underline font-semibold ml-1"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {items.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">

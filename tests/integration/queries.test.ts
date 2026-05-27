@@ -77,6 +77,8 @@ import {
   addCourt,
   listCourtReviews,
   addCourtReview,
+  // Upcoming games (arrival hook)
+  listUpcomingFindPlayersGames,
 } from "../../src/lib/supabase/queries";
 
 describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
@@ -530,6 +532,88 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       await alice.client.from("chats").delete().eq("id", chatId);
       await deletePost(alice.client, post.id);
     });
+
+    // Regression: propose_team posts used to auto-create a Group when
+    // they filled (via the deleted src/lib/teamGroup.ts), which made the
+    // "Team formed → Open team" CTA work and surfaced the new team on
+    // /groups ("Your Teams"). The Prisma → Supabase burn-down dropped
+    // that logic; this commit restores it as the
+    // create_team_group_on_complete trigger.
+    it("flipping a propose_team post to is_complete auto-creates a Group", async () => {
+      const post = await createPost(alice.client, {
+        content: "Recruiting for a Wednesday-night doubles team",
+        post_type: "propose_team",
+        // court_location doubles as the team name on propose_team posts.
+        court_location: "Wednesday Wolves",
+        players_needed: 1,
+      });
+
+      // No team yet — posts.team_group_id starts at the '' default.
+      const before = await alice.client
+        .from("posts")
+        .select("team_group_id")
+        .eq("id", post.id)
+        .single();
+      expect(before.data?.team_group_id).toBe("");
+
+      // Flip to complete. The AFTER UPDATE OF is_complete trigger should
+      // create the group, add the author as owner, post a welcome
+      // group_message, and set posts.team_group_id.
+      const upd = await alice.client
+        .from("posts")
+        .update({ players_confirmed: 1, is_complete: true })
+        .eq("id", post.id);
+      expect(upd.error).toBeNull();
+
+      const after = await alice.client
+        .from("posts")
+        .select("team_group_id")
+        .eq("id", post.id)
+        .single();
+      const teamGroupId = after.data?.team_group_id;
+      expect(teamGroupId).toBeTruthy();
+      expect(teamGroupId).not.toBe("");
+
+      const group = await alice.client
+        .from("groups")
+        .select("id, name, owner_id")
+        .eq("id", teamGroupId!)
+        .single();
+      expect(group.data?.name).toBe("Wednesday Wolves");
+      expect(group.data?.owner_id).toBe(alice.id);
+
+      const members = await alice.client
+        .from("group_members")
+        .select("user_id, role")
+        .eq("group_id", teamGroupId!);
+      expect(members.data?.map((m) => m.user_id)).toEqual([alice.id]);
+      expect(members.data?.[0].role).toBe("owner");
+
+      const messages = await alice.client
+        .from("group_messages")
+        .select("content, sender_id")
+        .eq("group_id", teamGroupId!);
+      expect(messages.data ?? []).toHaveLength(1);
+      expect(messages.data![0].sender_id).toBe(alice.id);
+      expect(messages.data![0].content).toContain("Team formed");
+
+      // Idempotent: a second is_complete=true UPDATE must not create a
+      // second group — the trigger's team_group_id guard short-circuits.
+      await alice.client
+        .from("posts")
+        .update({ is_complete: true })
+        .eq("id", post.id);
+      const stillOne = await alice.client
+        .from("groups")
+        .select("id")
+        .eq("owner_id", alice.id)
+        .eq("id", teamGroupId!);
+      expect(stillOne.data ?? []).toHaveLength(1);
+
+      // Cleanup. group_members + group_messages cascade from groups.
+      await alice.client.from("groups").delete().eq("id", teamGroupId!);
+      await deletePost(alice.client, post.id);
+    });
   });
 
   // ---------------------------------------------------------------------
@@ -673,10 +757,10 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       if (error) throw error;
       groupId = data.id;
       // Add alice as owner-member (her insert doesn't auto-create this).
-      // Use admin to bypass policy bootstrap.
+      // The groups_auto_add_owner trigger writes alice's owner row;
+      // only add the extra member here.
       const admin = adminClient();
       await admin.from("group_members").insert([
-        { group_id: groupId, user_id: alice.id, role: "owner" },
         { group_id: groupId, user_id: bob.id, role: "member" },
       ]);
     });
@@ -1364,6 +1448,1343 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         .eq("user_id", alice.id)
         .eq("type", "message_reaction");
       expect((selfNote ?? []).length).toBe(0);
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // Migration regression coverage: triggers + RPCs restored after the
+  // Prisma → Supabase burn-down (86f26a5) dropped server-side
+  // orchestration. Each test mirrors a deleted route handler so a
+  // future migration can't silently regress the same behavior again.
+  // -------------------------------------------------------------------
+  describe("restored side-effects (burn-down regression coverage)", () => {
+    beforeAll(async () => {
+      try { await befriend(alice, bob); } catch { /* already friends */ }
+      try { await befriend(alice, carol); } catch { /* already friends */ }
+    });
+
+    // G1 — approved play_request -> 'withdrawn' frees the slot AND DMs
+    // the post author with the withdraw note, linked via shared_post_id.
+    it("withdrawing an approved play_request DMs the author and frees the slot", async () => {
+      const post = await createPost(alice.client, {
+        content: "Looking for 1 player",
+        post_type: "find_players",
+        play_date: "2026-05-26",
+        play_time: "14:00",
+        play_duration: 90,
+        court_location: "Test Court",
+        game_type: "singles",
+        players_needed: 1,
+      });
+
+      const { data: req } = await bob.client
+        .from("play_requests")
+        .insert({ post_id: post.id, user_id: bob.id, status: "approved" })
+        .select("id")
+        .single();
+      await alice.client
+        .from("posts")
+        .update({ players_confirmed: 1 })
+        .eq("id", post.id);
+
+      const { error: wErr } = await bob.client
+        .from("play_requests")
+        .update({ status: "withdrawn", note: "schedule clash" })
+        .eq("id", req!.id);
+      expect(wErr).toBeNull();
+
+      const after = await alice.client
+        .from("posts")
+        .select("players_confirmed, is_complete")
+        .eq("id", post.id)
+        .single();
+      expect(after.data?.players_confirmed).toBe(0);
+      expect(after.data?.is_complete).toBe(false);
+
+      const { data: dm } = await alice.client
+        .from("messages")
+        .select("sender_id, content, shared_post_id")
+        .eq("receiver_id", alice.id)
+        .eq("sender_id", bob.id)
+        .eq("shared_post_id", post.id);
+      expect((dm ?? []).length).toBe(1);
+      expect(dm![0].content).toContain("withdrew");
+      expect(dm![0].content).toContain("schedule clash");
+
+      await alice.client.from("messages").delete().eq("shared_post_id", post.id);
+      await deletePost(alice.client, post.id);
+    });
+
+    // G2 — author removing an approved player DMs the kicked player and
+    // frees the slot. play_request status persists as 'removed'.
+    it("removing an approved player DMs them and frees the slot", async () => {
+      const post = await createPost(alice.client, {
+        content: "Looking for 1 player",
+        post_type: "find_players",
+        play_date: "2026-05-26",
+        play_time: "14:00",
+        play_duration: 90,
+        court_location: "Test Court",
+        game_type: "singles",
+        players_needed: 1,
+      });
+      const { data: req } = await bob.client
+        .from("play_requests")
+        .insert({ post_id: post.id, user_id: bob.id, status: "approved" })
+        .select("id")
+        .single();
+      await alice.client
+        .from("posts")
+        .update({ players_confirmed: 1 })
+        .eq("id", post.id);
+
+      const { error: rmErr } = await alice.client
+        .from("play_requests")
+        .update({ status: "removed", note: "ratings mismatch" })
+        .eq("id", req!.id);
+      expect(rmErr).toBeNull();
+
+      const after = await alice.client
+        .from("posts")
+        .select("players_confirmed, is_complete")
+        .eq("id", post.id)
+        .single();
+      expect(after.data?.players_confirmed).toBe(0);
+      expect(after.data?.is_complete).toBe(false);
+
+      const { data: dm } = await bob.client
+        .from("messages")
+        .select("sender_id, content, shared_post_id")
+        .eq("receiver_id", bob.id)
+        .eq("sender_id", alice.id)
+        .eq("shared_post_id", post.id);
+      expect((dm ?? []).length).toBe(1);
+      expect(dm![0].content).toContain("removed you");
+      expect(dm![0].content).toContain("ratings mismatch");
+
+      await alice.client.from("messages").delete().eq("shared_post_id", post.id);
+      await deletePost(alice.client, post.id);
+    });
+
+    // G4 — tournament with at least one event_matches row rejects new
+    // event_participants inserts with the "Bracket is live" message.
+    it("tournament signup is locked once the bracket is seeded", async () => {
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Bracket Lock Test",
+          event_type: "tournament",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+
+      // Seed a single match row to simulate a live bracket. RLS lets the
+      // organizer insert event_matches (insert policy is owner-only).
+      const { error: matchErr } = await alice.client
+        .from("event_matches")
+        .insert({
+          event_id: eventId,
+          player1_id: alice.id,
+          player2_id: bob.id,
+          status: "scheduled",
+          bracket_slot: "R1-1",
+          round: 1,
+        });
+      expect(matchErr).toBeNull();
+
+      const { error: signupErr } = await carol.client
+        .from("event_participants")
+        .insert({ event_id: eventId, user_id: carol.id, status: "registered" });
+      expect(signupErr?.message).toContain("Bracket is live");
+
+      await alice.client.from("events").delete().eq("id", eventId);
+    });
+
+    // G5 — event with an NTRP band rejects signups outside the band.
+    it("event NTRP gate rejects out-of-band signups", async () => {
+      await carol.client.from("profiles").update({ ntrp_rating: 3.0 }).eq("id", carol.id);
+
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "NTRP Gate Test",
+          event_type: "mixer",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+          ntrp_min: 4.0,
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+      // Public events without lat/lng/radius aren't visible via the
+      // distance branch of can_see_event — grant carol visibility via
+      // the invite path so RLS lets her INSERT.
+      const admin = adminClient();
+      await admin.from("notifications").insert({
+        user_id: carol.id,
+        actor_id: alice.id,
+        type: "event_invite",
+        event_id: eventId,
+      });
+
+      const { error: lowErr } = await carol.client
+        .from("event_participants")
+        .insert({ event_id: eventId, user_id: carol.id, status: "registered" });
+      expect(lowErr?.message).toContain("NTRP");
+
+      await carol.client.from("profiles").update({ ntrp_rating: 4.5 }).eq("id", carol.id);
+      const { error: okErr } = await carol.client
+        .from("event_participants")
+        .insert({ event_id: eventId, user_id: carol.id, status: "registered" });
+      expect(okErr).toBeNull();
+
+      await alice.client.from("events").delete().eq("id", eventId);
+    });
+
+    // G6/G7/G8 — match status fan-out. Bare event (no backing group_id)
+    // so we cover the notification-only branch. Both alice and bob are
+    // registered participants so they pass can_see_event for the match
+    // row — RLS on event_matches inherits SELECT visibility from
+    // can_see_event, so players must also be registered to UPDATE their
+    // own match (this mirrors real usage).
+    it("event match report/confirm/dispute fans out notifications", async () => {
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Match FanOut",
+          event_type: "round_robin",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+      // Both players need to be registered so can_see_event returns true
+      // and SELECT RLS lets them see the match row.
+      const adminPre = adminClient();
+      await adminPre.from("event_participants").insert([
+        { event_id: eventId, user_id: alice.id, status: "registered" },
+        { event_id: eventId, user_id: bob.id, status: "registered" },
+      ]);
+      const { data: m } = await alice.client
+        .from("event_matches")
+        .insert({
+          event_id: eventId,
+          player1_id: alice.id,
+          player2_id: bob.id,
+          status: "scheduled",
+        })
+        .select("id")
+        .single();
+      const matchId = m!.id;
+
+      // alice reports -> bob notified
+      await alice.client
+        .from("event_matches")
+        .update({ score: "6-4,6-3", winner_side: 1, reported_by: alice.id, status: "in_progress" })
+        .eq("id", matchId);
+      const { data: reportNote } = await bob.client
+        .from("notifications")
+        .select("type, actor_id, match_id")
+        .eq("user_id", bob.id)
+        .eq("type", "event_match_report")
+        .eq("match_id", matchId);
+      expect((reportNote ?? []).length).toBe(1);
+      expect(reportNote![0].actor_id).toBe(alice.id);
+
+      // bob confirms -> alice (reporter) notified
+      const bobUpd = await bob.client
+        .from("event_matches")
+        .update({ confirmed_by: bob.id, status: "completed" })
+        .eq("id", matchId);
+      expect(bobUpd.error).toBeNull();
+      const { data: confirmNote } = await alice.client
+        .from("notifications")
+        .select("type, actor_id, match_id")
+        .eq("user_id", alice.id)
+        .eq("type", "event_match_confirmed")
+        .eq("match_id", matchId);
+      expect((confirmNote ?? []).length).toBe(1);
+      expect(confirmNote![0].actor_id).toBe(bob.id);
+
+      // Dispute path: rewind to in_progress with alice as reporter, then
+      // bob disputes by writing disputed_at + reverting to scheduled.
+      await alice.client
+        .from("event_matches")
+        .update({ score: "7-5,6-4", winner_side: 1, reported_by: alice.id, status: "in_progress" })
+        .eq("id", matchId);
+      // Clear the prior dispute notification so we can assert the new one.
+      const admin = adminClient();
+      await admin.from("notifications").delete().eq("match_id", matchId).eq("type", "event_match_disputed");
+      await bob.client
+        .from("event_matches")
+        .update({
+          score: "",
+          winner_side: null,
+          reported_by: null,
+          confirmed_by: null,
+          disputed_at: new Date().toISOString(),
+          status: "scheduled",
+        })
+        .eq("id", matchId);
+      const { data: disputeNote } = await alice.client
+        .from("notifications")
+        .select("type, actor_id, match_id")
+        .eq("user_id", alice.id)
+        .eq("type", "event_match_disputed")
+        .eq("match_id", matchId);
+      expect((disputeNote ?? []).length).toBe(1);
+      expect(disputeNote![0].actor_id).toBe(bob.id);
+
+      await alice.client.from("events").delete().eq("id", eventId);
+    });
+
+    // G11 — invite_to_event RPC: organizer-only, friends-only,
+    // skip-already-participating, skip-already-invited.
+    it("invite_to_event RPC enforces organizer + friends + dedupe", async () => {
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Invite RPC Test",
+          event_type: "mixer",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+
+      // Non-organizer can't invite.
+      const denied = await bob.client.rpc("invite_to_event", {
+        p_event_id: eventId,
+        p_user_ids: [carol.id],
+      });
+      expect(denied.error?.message).toContain("organizer");
+
+      // Organizer invites two friends. carol is a friend; a stranger UUID
+      // is filtered out by the friends-only gate.
+      const strangerId = "00000000-0000-0000-0000-000000000000";
+      const ok = await alice.client.rpc("invite_to_event", {
+        p_event_id: eventId,
+        p_user_ids: [carol.id, strangerId],
+      });
+      expect(ok.error).toBeNull();
+      expect((ok.data as { invited: number } | null)?.invited).toBe(1);
+
+      // Idempotent: re-inviting carol skips her.
+      const second = await alice.client.rpc("invite_to_event", {
+        p_event_id: eventId,
+        p_user_ids: [carol.id],
+      });
+      expect((second.data as { invited: number } | null)?.invited).toBe(0);
+
+      // If carol already signed up, she's skipped too.
+      await carol.client
+        .from("event_participants")
+        .insert({ event_id: eventId, user_id: carol.id, status: "registered" });
+      await adminClient()
+        .from("notifications")
+        .delete()
+        .eq("event_id", eventId)
+        .eq("type", "event_invite");
+      const third = await alice.client.rpc("invite_to_event", {
+        p_event_id: eventId,
+        p_user_ids: [carol.id],
+      });
+      expect((third.data as { invited: number } | null)?.invited).toBe(0);
+
+      await alice.client.from("events").delete().eq("id", eventId);
+    });
+
+    // U5 — every new event auto-creates a backing group, adds the
+    // owner as group owner, and posts a typed welcome message. The
+    // event row gets group_id populated. Membership stays in sync as
+    // event_participants flip between registered and other statuses.
+    it("event create auto-spins a backing group + welcome message", async () => {
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Backing Group Test",
+          event_type: "mixer",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      // RETURNING is computed BEFORE the AFTER-INSERT trigger sets
+      // group_id, so re-fetch to see the linked group.
+      const { data: hydrated } = await alice.client
+        .from("events")
+        .select("id, group_id")
+        .eq("id", ev!.id)
+        .single();
+      expect(hydrated?.group_id).toBeTruthy();
+      const groupId = hydrated!.group_id!;
+
+      const { data: ownerMember } = await alice.client
+        .from("group_members")
+        .select("role")
+        .eq("group_id", groupId)
+        .eq("user_id", alice.id)
+        .single();
+      expect(ownerMember?.role).toBe("owner");
+
+      const { data: welcome } = await alice.client
+        .from("group_messages")
+        .select("content, sender_id")
+        .eq("group_id", groupId);
+      expect((welcome ?? []).length).toBe(1);
+      expect(welcome![0].content).toContain("mixer");
+      expect(welcome![0].sender_id).toBe(alice.id);
+
+      await alice.client.from("events").delete().eq("id", ev!.id);
+    });
+
+    it("event_participants membership stays in sync with the backing group", async () => {
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Sync Members Test",
+          event_type: "round_robin",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      const { data: hydrated } = await alice.client
+        .from("events")
+        .select("group_id")
+        .eq("id", ev!.id)
+        .single();
+      const groupId = hydrated!.group_id!;
+
+      // bob registers via admin so we sidestep can_see_event for the test.
+      const admin = adminClient();
+      const { data: bobPart } = await admin
+        .from("event_participants")
+        .insert({ event_id: ev!.id, user_id: bob.id, status: "registered" })
+        .select("id")
+        .single();
+      const { data: bobMember } = await admin
+        .from("group_members")
+        .select("role")
+        .eq("group_id", groupId)
+        .eq("user_id", bob.id)
+        .single();
+      expect(bobMember?.role).toBe("member");
+
+      // Withdraw -> bob removed from chat (owner row stays untouched).
+      await admin
+        .from("event_participants")
+        .update({ status: "withdrawn" })
+        .eq("id", bobPart!.id);
+      const { data: bobAfter } = await admin
+        .from("group_members")
+        .select("id")
+        .eq("group_id", groupId)
+        .eq("user_id", bob.id);
+      expect((bobAfter ?? []).length).toBe(0);
+      const { data: ownerStill } = await admin
+        .from("group_members")
+        .select("id")
+        .eq("group_id", groupId)
+        .eq("user_id", alice.id);
+      expect((ownerStill ?? []).length).toBe(1);
+
+      await alice.client.from("events").delete().eq("id", ev!.id);
+    });
+
+    // U1 — only the event organizer can write checked_in_at. Players
+    // can still update their own status / registered_at.
+    it("checked_in_at is gated to the event organizer", async () => {
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Checkin Gate Test",
+          event_type: "mixer",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+
+      const admin = adminClient();
+      const { data: bobPart } = await admin
+        .from("event_participants")
+        .insert({ event_id: eventId, user_id: bob.id, status: "registered" })
+        .select("id")
+        .single();
+
+      // bob tries to self-check-in -> rejected.
+      const selfCheckin = await bob.client
+        .from("event_participants")
+        .update({ checked_in_at: new Date().toISOString() })
+        .eq("id", bobPart!.id);
+      expect(selfCheckin.error?.message).toContain("organizer");
+
+      // alice (organizer) checks bob in -> OK.
+      const aliceCheckin = await alice.client
+        .from("event_participants")
+        .update({ checked_in_at: new Date().toISOString() })
+        .eq("id", bobPart!.id);
+      expect(aliceCheckin.error).toBeNull();
+
+      await alice.client.from("events").delete().eq("id", eventId);
+    });
+
+    // G12 — DM, session-chat, team-chat and reaction inserts all
+    // dispatch a push-fanout call. The actual APN delivery lives in
+    // the edge function (and no-ops without APNS_* secrets); we verify
+    // the dispatch path via edge_function_dispatch_log so the test
+    // doesn't depend on real device tokens.
+    it("DM insert dispatches push-fanout with the right body", async () => {
+      const admin = adminClient();
+      // Cull stale rows so the assertion below only sees this DM.
+      await admin
+        .from("edge_function_dispatch_log")
+        .delete()
+        .eq("fn_name", "push-fanout");
+
+      await sendDirectMessage(alice.client, bob.id, "ping over realtime!");
+
+      const { data: log } = await admin
+        .from("edge_function_dispatch_log")
+        .select("fn_name, body")
+        .eq("fn_name", "push-fanout")
+        .order("created_at", { ascending: false })
+        .limit(5);
+      const match = (log ?? []).find((r) => {
+        const body = r.body as { data?: { kind?: string } } | null;
+        return body?.data?.kind === "dm";
+      });
+      expect(match).toBeDefined();
+      const body = match!.body as Record<string, unknown>;
+      expect(body.user_ids).toEqual([bob.id]);
+      expect(body.body).toContain("ping over realtime!");
+      expect((body.data as Record<string, string>).sender_id).toBe(alice.id);
+      await admin
+        .from("edge_function_dispatch_log")
+        .delete()
+        .eq("fn_name", "push-fanout");
+    });
+
+    it("group message insert dispatches push-fanout to every member except sender", async () => {
+      const admin = adminClient();
+      const { data: grp } = await admin
+        .from("groups")
+        .insert({ name: "Push Group Test", owner_id: alice.id })
+        .select("id")
+        .single();
+      const groupId = grp!.id;
+      // alice (owner) is added by the groups_auto_add_owner trigger.
+      await admin.from("group_members").insert([
+        { group_id: groupId, user_id: bob.id, role: "member" as const },
+        { group_id: groupId, user_id: carol.id, role: "member" as const },
+      ]);
+      await admin
+        .from("edge_function_dispatch_log")
+        .delete()
+        .eq("fn_name", "push-fanout");
+
+      await admin.from("group_messages").insert({
+        group_id: groupId,
+        sender_id: alice.id,
+        content: "team meeting at 6pm",
+      });
+
+      const { data: log } = await admin
+        .from("edge_function_dispatch_log")
+        .select("body")
+        .eq("fn_name", "push-fanout")
+        .order("created_at", { ascending: false });
+      const match = (log ?? []).find((r) => {
+        const body = r.body as { data?: { kind?: string; group_id?: string } } | null;
+        return body?.data?.kind === "group" && body.data.group_id === groupId;
+      });
+      expect(match).toBeDefined();
+      const recipients = (match!.body as { user_ids: string[] }).user_ids;
+      expect(recipients).toEqual(expect.arrayContaining([bob.id, carol.id]));
+      expect(recipients).not.toContain(alice.id);
+
+      await admin.from("groups").delete().eq("id", groupId);
+      await admin
+        .from("edge_function_dispatch_log")
+        .delete()
+        .eq("fn_name", "push-fanout");
+    });
+
+    // G13 — group_invites INSERT calls public.invoke_edge_function,
+    // which logs the dispatch in edge_function_dispatch_log. The
+    // pg_net side is async/fire-and-forget; we verify the dispatch
+    // attempt via the log table so the test doesn't race the worker.
+    it("group_invites insert dispatches the group-invite-email function", async () => {
+      const admin = adminClient();
+      const { data: grp } = await admin
+        .from("groups")
+        .insert({ name: "Email Trigger Test", owner_id: alice.id })
+        .select("id")
+        .single();
+      const groupId = grp!.id;
+      // owner row is auto-inserted by groups_auto_add_owner.
+
+      const token =
+        "test-token-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+      const { error: inviteErr } = await admin.from("group_invites").insert({
+        group_id: groupId,
+        email: "invitee@tennisfriend.test",
+        invited_by_id: alice.id,
+        token,
+        expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+      });
+      expect(inviteErr).toBeNull();
+
+      const { data: log } = await admin
+        .from("edge_function_dispatch_log")
+        .select("fn_name, body")
+        .eq("fn_name", "group-invite-email")
+        .order("created_at", { ascending: false })
+        .limit(5);
+      const match = (log ?? []).find(
+        (r) => (r.body as { token?: string } | null)?.token === token
+      );
+      expect(match).toBeDefined();
+      const body = match!.body as Record<string, unknown>;
+      expect(body.to).toBe("invitee@tennisfriend.test");
+      expect(body.team_name).toBe("Email Trigger Test");
+      expect(body.inviter_name).toBeTruthy();
+
+      await admin.from("groups").delete().eq("id", groupId);
+      await admin
+        .from("edge_function_dispatch_log")
+        .delete()
+        .eq("fn_name", "group-invite-email")
+        .gte("created_at", new Date(Date.now() - 60_000).toISOString());
+    });
+
+    // L1 — requestToJoin upserts: a user whose prior request was
+    // rejected/withdrawn/removed can re-apply without hitting the
+    // play_requests_unique 23505.
+    it("requestToJoin upserts a prior rejected/withdrawn request back to pending", async () => {
+      const admin = adminClient();
+      const post = await createPost(alice.client, {
+        content: "Need 1 more",
+        post_type: "find_players",
+        play_date: "2026-06-30",
+        play_time: "14:00",
+        play_duration: 90,
+        court_location: "Lower Woodland",
+        game_type: "singles",
+        players_needed: 1,
+      });
+      await admin.from("play_requests").insert({
+        post_id: post.id,
+        user_id: bob.id,
+        status: "rejected",
+        note: "wrong skill",
+      });
+      const { requestToJoin } = await import("../../src/lib/supabase/queries");
+      const req = await requestToJoin(bob.client, post.id, "give me another shot");
+      expect(req.status).toBe("pending");
+      expect(req.note).toBe("give me another shot");
+      const { data: rows } = await admin
+        .from("play_requests")
+        .select("id")
+        .eq("post_id", post.id)
+        .eq("user_id", bob.id);
+      expect((rows ?? []).length).toBe(1);
+      await deletePost(alice.client, post.id);
+    });
+
+    // L4 — chats.session_end_at follows post timing edits. The trigger
+    // recomputes the timestamp when play_date / play_time / duration
+    // change.
+    it("editing a find_players post's timing updates chats.session_end_at", async () => {
+      const admin = adminClient();
+      const post = await createPost(alice.client, {
+        content: "Need 1 more",
+        post_type: "find_players",
+        play_date: "2026-07-15",
+        play_time: "10:00",
+        play_duration: 60,
+        court_location: "Lower Woodland",
+        game_type: "singles",
+        players_needed: 1,
+      });
+      // Flip is_complete to spin up the chat.
+      await alice.client
+        .from("posts")
+        .update({ players_confirmed: 1, is_complete: true })
+        .eq("id", post.id);
+      const { data: chat } = await admin
+        .from("chats")
+        .select("id, session_end_at")
+        .eq("post_id", post.id)
+        .single();
+      const originalEnd = new Date(chat!.session_end_at!).getTime();
+      expect(Number.isFinite(originalEnd)).toBe(true);
+
+      // Edit timing — shift to next day, longer duration.
+      await alice.client
+        .from("posts")
+        .update({ play_date: "2026-07-16", play_duration: 120 })
+        .eq("id", post.id);
+      const { data: refreshed } = await admin
+        .from("chats")
+        .select("session_end_at")
+        .eq("id", chat!.id)
+        .single();
+      const newEnd = new Date(refreshed!.session_end_at!).getTime();
+      // Must advance — at least 24h later (different day) + extra duration.
+      expect(newEnd - originalEnd).toBeGreaterThanOrEqual(24 * 60 * 60 * 1000);
+
+      await admin.from("chats").delete().eq("id", chat!.id);
+      await deletePost(alice.client, post.id);
+    });
+
+    // C1 — invite redemption RPCs. Validates by token regardless of
+    // group_invites RLS, accepts only when the caller's email matches.
+    it("accept_group_invite enforces email match + flips status + adds member", async () => {
+      const admin = adminClient();
+      const { data: grp } = await alice.client
+        .from("groups")
+        .insert({ name: "Invite Token RPC Test", owner_id: alice.id })
+        .select("id")
+        .single();
+      const groupId = grp!.id;
+
+      // Look up bob's auth email (makeTestUser uses a generated address).
+      const { data: bobAuth } = await admin.auth.admin.getUserById(bob.id);
+      const bobEmail = bobAuth.user!.email!;
+
+      const token =
+        "invite-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+      await admin.from("group_invites").insert({
+        group_id: groupId,
+        email: bobEmail,
+        invited_by_id: alice.id,
+        token,
+        expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+      });
+
+      // Token lookup goes through the SECURITY DEFINER RPC, so the
+      // invitee (not yet a manager) can read the row.
+      const lookup = await bob.client.rpc("get_invite_by_token", {
+        p_token: token,
+      });
+      expect(lookup.error).toBeNull();
+      expect((lookup.data as { id?: string } | null)?.id).toBeTruthy();
+
+      // Carol can't accept bob's invite (email mismatch).
+      const denied = await carol.client.rpc("accept_group_invite", {
+        p_token: token,
+      });
+      expect(denied.error?.message).toContain("different email");
+
+      // Bob can.
+      const ok = await bob.client.rpc("accept_group_invite", {
+        p_token: token,
+      });
+      expect(ok.error).toBeNull();
+      expect((ok.data as { ok?: boolean; group_id?: string } | null)?.ok).toBe(true);
+
+      // Membership row landed.
+      const { data: member } = await admin
+        .from("group_members")
+        .select("role")
+        .eq("group_id", groupId)
+        .eq("user_id", bob.id)
+        .single();
+      expect(member?.role).toBeTruthy();
+
+      // Invite row flipped to accepted with accepted_by_id set.
+      const { data: inv } = await admin
+        .from("group_invites")
+        .select("status, accepted_by_id")
+        .eq("token", token)
+        .single();
+      expect(inv?.status).toBe("accepted");
+      expect(inv?.accepted_by_id).toBe(bob.id);
+
+      // Idempotent: re-accepting returns already_accepted.
+      const dup = await bob.client.rpc("accept_group_invite", {
+        p_token: token,
+      });
+      expect((dup.data as { already_accepted?: boolean } | null)?.already_accepted).toBe(
+        true
+      );
+
+      await admin.from("groups").delete().eq("id", groupId);
+    });
+
+    // Bootstrap chicken-and-egg fix — a brand-new group owner used to
+    // get rejected when they tried to self-add to group_members
+    // (group_members_insert_manager requires has_group_role, which has
+    // no row to read yet). The auto_add_group_owner_member trigger now
+    // writes the owner row when the groups row lands; the same user
+    // can then add additional members under the same RLS.
+    it("creating a group auto-adds the owner as group_member", async () => {
+      const { data: grp, error } = await alice.client
+        .from("groups")
+        .insert({ name: "Self-Bootstrap Test", owner_id: alice.id })
+        .select("id")
+        .single();
+      expect(error).toBeNull();
+      const groupId = grp!.id;
+
+      const { data: ownerRow } = await alice.client
+        .from("group_members")
+        .select("role")
+        .eq("group_id", groupId)
+        .eq("user_id", alice.id)
+        .single();
+      expect(ownerRow?.role).toBe("owner");
+
+      // The new owner can now add a friend without RLS rejection.
+      const { error: addErr } = await alice.client
+        .from("group_members")
+        .insert({ group_id: groupId, user_id: bob.id, role: "member" });
+      expect(addErr).toBeNull();
+
+      const { data: members } = await alice.client
+        .from("group_members")
+        .select("user_id, role")
+        .eq("group_id", groupId);
+      expect(
+        new Set((members ?? []).map((m) => `${m.user_id}:${m.role}`))
+      ).toEqual(
+        new Set([`${alice.id}:owner`, `${bob.id}:member`])
+      );
+
+      await alice.client.from("groups").delete().eq("id", groupId);
+    });
+
+    // Tournament — seed_event_bracket RPC inserts round-1 matches and
+    // is organizer-only + idempotent.
+    it("seed_event_bracket inserts round-1 matches; non-organizer rejected", async () => {
+      const admin = adminClient();
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Bracket Seed Test",
+          event_type: "tournament",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+      // Both players need to be registered.
+      await admin.from("event_participants").insert([
+        { event_id: eventId, user_id: alice.id, status: "registered" },
+        { event_id: eventId, user_id: bob.id, status: "registered" },
+      ]);
+
+      const denied = await bob.client.rpc("seed_event_bracket", {
+        p_event_id: eventId,
+        p_pairs: [[alice.id, bob.id]],
+      });
+      expect(denied.error?.message).toContain("organizer");
+
+      const ok = await alice.client.rpc("seed_event_bracket", {
+        p_event_id: eventId,
+        p_pairs: [[alice.id, bob.id]],
+      });
+      expect(ok.error).toBeNull();
+      expect((ok.data as { seeded?: number } | null)?.seeded).toBe(1);
+
+      const { data: matches } = await admin
+        .from("event_matches")
+        .select("bracket_slot, status, player1_id, player2_id, round")
+        .eq("event_id", eventId);
+      expect((matches ?? []).length).toBe(1);
+      expect(matches![0].bracket_slot).toBe("R1-1");
+      expect(matches![0].round).toBe(1);
+      expect(matches![0].status).toBe("scheduled");
+
+      // Idempotency.
+      const second = await alice.client.rpc("seed_event_bracket", {
+        p_event_id: eventId,
+        p_pairs: [[alice.id, bob.id]],
+      });
+      expect(second.error?.message).toContain("already seeded");
+
+      await admin.from("events").delete().eq("id", eventId);
+    });
+
+    // H1 — bye matches auto-advance. The seed_event_bracket call
+    // inserts a bye as status='completed' with winner_side=1; the
+    // AFTER UPDATE advance trigger doesn't fire on INSERT, so the
+    // function calls advance_event_match_to_next_round inline.
+    it("seed_event_bracket auto-advances a bye into the next round", async () => {
+      const admin = adminClient();
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Bye Cascade Test",
+          event_type: "tournament",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+      // Three players → bracket size 4; #1 seed gets a bye.
+      await admin.from("event_participants").insert([
+        { event_id: eventId, user_id: alice.id, status: "registered" },
+        { event_id: eventId, user_id: bob.id, status: "registered" },
+        { event_id: eventId, user_id: carol.id, status: "registered" },
+      ]);
+
+      const ok = await alice.client.rpc("seed_event_bracket", {
+        p_event_id: eventId,
+        // Pairs from seedBracket(['alice','bob','carol']):
+        // [[alice, null], [bob, carol]] (alice gets the bye)
+        p_pairs: [[alice.id, null], [bob.id, carol.id]],
+      });
+      expect(ok.error).toBeNull();
+      expect((ok.data as { seeded?: number } | null)?.seeded).toBe(2);
+
+      // After seeding: alice should be promoted to R2-1 as player1.
+      const { data: r2 } = await admin
+        .from("event_matches")
+        .select("player1_id, player2_id, bracket_slot, round, status")
+        .eq("event_id", eventId)
+        .eq("bracket_slot", "R2-1")
+        .maybeSingle();
+      expect(r2).toBeTruthy();
+      expect(r2!.player1_id).toBe(alice.id);
+      expect(r2!.round).toBe(2);
+
+      await admin.from("events").delete().eq("id", eventId);
+    });
+
+    // Tournament — advance_tournament_winner pulls the winner of a
+    // round-1 match into the next round's slot when the sibling
+    // hasn't completed yet, and posts a champion message on the final.
+    it("advance_tournament_winner promotes winners + announces champion", async () => {
+      const admin = adminClient();
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Bracket Advance Test",
+          event_type: "tournament",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+      const { data: hydrated } = await alice.client
+        .from("events")
+        .select("group_id")
+        .eq("id", eventId)
+        .single();
+      const groupId = hydrated!.group_id!;
+
+      await admin.from("event_participants").insert([
+        { event_id: eventId, user_id: alice.id, status: "registered" },
+        { event_id: eventId, user_id: bob.id, status: "registered" },
+      ]);
+
+      // Two-player tournament: seed one round-1 match. Completing it is
+      // the final — champion announcement should fire.
+      const seeded = await alice.client.rpc("seed_event_bracket", {
+        p_event_id: eventId,
+        p_pairs: [[alice.id, bob.id]],
+      });
+      expect(seeded.error).toBeNull();
+      const { data: matchRow } = await admin
+        .from("event_matches")
+        .select("id")
+        .eq("event_id", eventId)
+        .eq("bracket_slot", "R1-1")
+        .single();
+      const matchId = matchRow!.id;
+
+      // alice reports + bob confirms (the existing flow).
+      await alice.client
+        .from("event_matches")
+        .update({
+          score: "6-4,6-3",
+          winner_side: 1,
+          reported_by: alice.id,
+          status: "in_progress",
+        })
+        .eq("id", matchId);
+      await bob.client
+        .from("event_matches")
+        .update({ confirmed_by: bob.id, status: "completed" })
+        .eq("id", matchId);
+
+      // Final completed -> "🏆 Champion" announcement in the backing
+      // group chat.
+      const { data: msgs } = await admin
+        .from("group_messages")
+        .select("content")
+        .eq("group_id", groupId)
+        .order("created_at", { ascending: false })
+        .limit(5);
+      const champion = (msgs ?? []).find((m) => m.content.includes("Champion"));
+      expect(champion).toBeDefined();
+
+      await admin.from("events").delete().eq("id", eventId);
+    });
+
+    // Ladder — propose_ladder_challenge enforces rank-gap + dedupe.
+    it("propose_ladder_challenge respects rank-gap + dedupe", async () => {
+      const admin = adminClient();
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Ladder Test",
+          event_type: "ladder",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+          config: { ladderMaxGap: 1 },
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+
+      // Three registered: alice, bob, carol. With no completed matches,
+      // ranks tie on points → tie-break falls to user_id.localeCompare.
+      // Seed an alice-vs-carol completed match so alice has a clear
+      // #1 rank and bob is below her.
+      await admin.from("event_participants").insert([
+        { event_id: eventId, user_id: alice.id, status: "registered" },
+        { event_id: eventId, user_id: bob.id, status: "registered" },
+        { event_id: eventId, user_id: carol.id, status: "registered" },
+      ]);
+      await admin.from("event_matches").insert({
+        event_id: eventId,
+        player1_id: alice.id,
+        player2_id: carol.id,
+        status: "completed",
+        score: "6-0,6-0",
+        winner_side: 1,
+      });
+      // recompute_event_standings_trigger fires on that INSERT.
+
+      // alice is #1 (3 pts). bob has 0 pts, carol has 0 pts. tiebreak by user_id.
+      // Lower-ranked challenging higher-ranked: bob -> alice. With ladderMaxGap=1,
+      // bob's rank - alice's rank = 1 → permitted only if bob is exactly 1 below.
+      // Find bob's actual rank.
+      const { data: parts } = await admin
+        .from("event_participants")
+        .select("user_id, points, losses, sets_won, sets_lost")
+        .eq("event_id", eventId);
+      const sorted = (parts ?? [])
+        .map((p) => ({ ...p }))
+        .sort((a, b) => {
+          if (b.points !== a.points) return b.points - a.points;
+          const setDiffA = a.sets_won - a.sets_lost;
+          const setDiffB = b.sets_won - b.sets_lost;
+          if (setDiffB !== setDiffA) return setDiffB - setDiffA;
+          if (a.losses !== b.losses) return a.losses - b.losses;
+          return a.user_id.localeCompare(b.user_id);
+        });
+      const bobRank = sorted.findIndex((p) => p.user_id === bob.id) + 1;
+      const aliceRank = sorted.findIndex((p) => p.user_id === alice.id) + 1;
+      const carolRank = sorted.findIndex((p) => p.user_id === carol.id) + 1;
+
+      // Same-rank challenge -> rejected.
+      const same = await bob.client.rpc("propose_ladder_challenge", {
+        p_event_id: eventId,
+        p_opponent_id: bobRank === carolRank ? carol.id : bob.id,
+      });
+      // Either same-rank ("only challenge above") or self ("valid opponent");
+      // both rejections are valid here.
+      expect(same.error).not.toBeNull();
+
+      // Bob challenges alice. Allowed only if alice is exactly within 1 rank.
+      // If alice is ranked > 1 ahead of bob, expect a rank-gap error.
+      const aliceChallenge = await bob.client.rpc("propose_ladder_challenge", {
+        p_event_id: eventId,
+        p_opponent_id: alice.id,
+      });
+      if (bobRank - aliceRank > 1) {
+        expect(aliceChallenge.error?.message).toContain("Challenge limited");
+      } else if (bobRank > aliceRank) {
+        expect(aliceChallenge.error).toBeNull();
+      }
+
+      // Dedupe: lowest-ranked player picks the next-higher player and
+      // challenges twice; second call must reject with "open match".
+      const lowest = sorted[sorted.length - 1];
+      const nextUp = sorted[sorted.length - 2];
+      const lowestClient =
+        lowest.user_id === alice.id ? alice.client :
+        lowest.user_id === bob.id ? bob.client : carol.client;
+      const first = await lowestClient.rpc("propose_ladder_challenge", {
+        p_event_id: eventId,
+        p_opponent_id: nextUp.user_id,
+      });
+      if (!first.error) {
+        const dup = await lowestClient.rpc("propose_ladder_challenge", {
+          p_event_id: eventId,
+          p_opponent_id: nextUp.user_id,
+        });
+        expect(dup.error?.message).toContain("open match");
+      }
+
+      await admin.from("events").delete().eq("id", eventId);
+    });
+
+    // recompute_event_standings — completed match updates the
+    // event_participants aggregate columns the StandingsTable reads.
+    it("recompute_event_standings updates wins/losses/points", async () => {
+      const admin = adminClient();
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Standings Recompute",
+          event_type: "round_robin",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+      await admin.from("event_participants").insert([
+        { event_id: eventId, user_id: alice.id, status: "registered" },
+        { event_id: eventId, user_id: bob.id, status: "registered" },
+      ]);
+
+      await admin.from("event_matches").insert({
+        event_id: eventId,
+        player1_id: alice.id,
+        player2_id: bob.id,
+        status: "completed",
+        score: "6-4,6-3",
+        winner_side: 1,
+      });
+
+      const { data: aliceRow } = await admin
+        .from("event_participants")
+        .select("wins, losses, points, sets_won, sets_lost")
+        .eq("event_id", eventId)
+        .eq("user_id", alice.id)
+        .single();
+      const { data: bobRow } = await admin
+        .from("event_participants")
+        .select("wins, losses, points, sets_won, sets_lost")
+        .eq("event_id", eventId)
+        .eq("user_id", bob.id)
+        .single();
+      expect(aliceRow?.wins).toBe(1);
+      expect(aliceRow?.points).toBe(3);
+      expect(aliceRow?.sets_won).toBe(2);
+      expect(aliceRow?.sets_lost).toBe(0);
+      expect(bobRow?.losses).toBe(1);
+      expect(bobRow?.points).toBe(0);
+      expect(bobRow?.sets_won).toBe(0);
+      expect(bobRow?.sets_lost).toBe(2);
+
+      await admin.from("events").delete().eq("id", eventId);
+    });
+
+    // G15 — listUpcomingFindPlayersGames surfaces every open
+    // find_players post the caller authors OR is APPROVED on, drops
+    // anything whose end-time has already passed, and de-dupes.
+    //
+    // PostComposer stores play_date / play_time as local-zone
+    // "YYYY-MM-DD" / "HH:mm" strings; the query reconstructs the
+    // local-zone Date the same way (no Z suffix). The test builds
+    // those strings via the same local-zone math.
+    function localParts(d: Date): { date: string; time: string } {
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return {
+        date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+        time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+      };
+    }
+
+    it("listUpcomingFindPlayersGames returns games the caller is in", async () => {
+      const admin = adminClient();
+      const inFuture = new Date(Date.now() + 30 * 60_000);
+      const fut = localParts(inFuture);
+
+      const authored = await createPost(alice.client, {
+        content: "Need 1 more",
+        post_type: "find_players",
+        play_date: fut.date,
+        play_time: fut.time,
+        play_duration: 90,
+        court_location: "Lower Woodland",
+        game_type: "singles",
+        players_needed: 1,
+      });
+      const otherPost = await createPost(bob.client, {
+        content: "Need 1 more",
+        post_type: "find_players",
+        play_date: fut.date,
+        play_time: fut.time,
+        play_duration: 90,
+        court_location: "Lower Woodland",
+        game_type: "singles",
+        players_needed: 1,
+      });
+      // Approve alice into bob's game so it should also show up.
+      await admin.from("play_requests").insert({
+        post_id: otherPost.id,
+        user_id: alice.id,
+        status: "approved",
+      });
+
+      const games = await listUpcomingFindPlayersGames(alice.client);
+      const ids = games.map((g) => g.postId);
+      expect(ids).toEqual(expect.arrayContaining([authored.id, otherPost.id]));
+
+      // A find_players post that has already ended must be dropped.
+      const past = new Date(Date.now() - 3 * 60 * 60 * 1000);
+      const pp = localParts(past);
+      const expired = await createPost(alice.client, {
+        content: "Yesterday",
+        post_type: "find_players",
+        play_date: pp.date,
+        play_time: pp.time,
+        play_duration: 60,
+        court_location: "Lower Woodland",
+        game_type: "singles",
+        players_needed: 1,
+      });
+      const after = await listUpcomingFindPlayersGames(alice.client);
+      expect(after.map((g) => g.postId)).not.toContain(expired.id);
+
+      await deletePost(alice.client, authored.id);
+      await deletePost(bob.client, otherPost.id);
+      await deletePost(alice.client, expired.id);
+    });
+
+    // U6 — creating a practice_series row posts an announcement into
+    // the group chat attributed to the creator.
+    it("practice series creation announces in the group chat", async () => {
+      // groups_auto_add_owner adds alice's owner row automatically;
+      // we can create the group as alice directly.
+      const { data: grp } = await alice.client
+        .from("groups")
+        .insert({ name: "Practice Announce Test", owner_id: alice.id })
+        .select("id")
+        .single();
+      const groupId = grp!.id;
+
+      const { data: series } = await alice.client
+        .from("practice_series")
+        .insert({
+          group_id: groupId,
+          name: "Sunday Drills",
+          location: "Lower Woodland",
+          practice_time: "Sun 9am",
+        })
+        .select("id")
+        .single();
+      expect(series?.id).toBeTruthy();
+
+      const { data: msgs } = await alice.client
+        .from("group_messages")
+        .select("content, sender_id")
+        .eq("group_id", groupId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      expect((msgs ?? []).length).toBe(1);
+      expect(msgs![0].content).toContain("New practice series");
+      expect(msgs![0].content).toContain("Sunday Drills");
+      expect(msgs![0].content).toContain("Lower Woodland");
+      expect(msgs![0].sender_id).toBe(alice.id);
+
+      await alice.client.from("groups").delete().eq("id", groupId);
+    });
+
+    // G16 — report_court_availability RPC: participant gate, window
+    // check, per-user dedupe.
+    it("report_court_availability RPC enforces participant + window + dedupe", async () => {
+      // Game starts now -> within the 30 min before / end window.
+      const today = new Date();
+      const playDate = today.toISOString().slice(0, 10);
+      const playTime = today.toISOString().slice(11, 16);
+
+      const post = await createPost(alice.client, {
+        content: "Going to play",
+        post_type: "find_players",
+        play_date: playDate,
+        play_time: playTime,
+        play_duration: 90,
+        court_location: "Test Court",
+        game_type: "singles",
+        players_needed: 1,
+      });
+      const courtId = `tf-test-${post.id.slice(0, 8)}`;
+
+      // bob isn't a participant -> denied.
+      const denied = await bob.client.rpc("report_court_availability", {
+        p_court_id: courtId,
+        p_has_empty: true,
+        p_post_id: post.id,
+      });
+      expect(denied.error?.message).toContain("Not a participant");
+
+      // alice is the author -> accepted.
+      const ok = await alice.client.rpc("report_court_availability", {
+        p_court_id: courtId,
+        p_has_empty: true,
+        p_post_id: post.id,
+      });
+      expect(ok.error).toBeNull();
+      expect((ok.data as { ok: boolean; deduped?: boolean }).deduped).toBeFalsy();
+
+      // Same court same user within 30 min -> deduped.
+      const dup = await alice.client.rpc("report_court_availability", {
+        p_court_id: courtId,
+        p_has_empty: false,
+        p_post_id: post.id,
+      });
+      expect((dup.data as { deduped?: boolean }).deduped).toBe(true);
+
+      await adminClient()
+        .from("court_availability_reports")
+        .delete()
+        .eq("court_id", courtId);
+      await deletePost(alice.client, post.id);
     });
   });
 });

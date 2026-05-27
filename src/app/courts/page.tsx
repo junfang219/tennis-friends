@@ -8,7 +8,13 @@ import {
   type CourtSummary,
 } from "@/components/courts/CourtSummaryCard";
 import { AddMissingCourtModal } from "@/components/courts/AddMissingCourtModal";
-import { filterFacilitiesByBbox, getFacilityByCourtId } from "@/lib/facilities";
+import {
+  filterFacilitiesByBbox,
+  getFacilityByCourtId,
+  searchFacilitiesByName,
+  descriptionPreview,
+  type Facility,
+} from "@/lib/facilities";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 
@@ -94,9 +100,11 @@ type GeocodeResult = {
   boundingBox?: [number, number, number, number];
 };
 
-// Tennis-court match from /api/courts/search. Shape mirrors a subset of
-// what facilityToResult returns (id, lat, lng, bucket, etc.), so we can
-// pre-populate courtsMapRef with consistent data when the user picks one.
+// Tennis-court match from the static facility-catalog search (see
+// searchFacilitiesByName + the courtsPromise block below). Shape
+// mirrors the subset of Facility fields the map row needs so we can
+// pre-populate courtsMapRef with consistent data when the user picks
+// one.
 type CourtSearchResult = {
   courtId: string;
   name: string;
@@ -192,8 +200,9 @@ export default function CourtsPage() {
   // "Brooklyn" and pan the map there instead of dragging to find it.
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<GeocodeResult[]>([]);
-  // Court-name matches from /api/courts/search, shown above places in the
-  // dropdown. Empty array = no court matches for current query.
+  // Court-name matches from the static facility catalog, shown above
+  // places in the dropdown. Empty array = no court matches for the
+  // current query.
   const [courtResults, setCourtResults] = useState<CourtSearchResult[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -240,7 +249,7 @@ export default function CourtsPage() {
   const courtsMapRef = useRef<Map<string, CourtData>>(new Map());
 
   // Aggregate review summaries (avg / count / thumbs) keyed by court id.
-  // Populated by /api/courts/reviews/summary after each viewport fetch.
+  // Populated via court_reviews after each viewport fetch.
   const [summaries, setSummaries] = useState<Record<string, CourtSummary>>({});
 
   // Which court (if any) the user tapped — drives the slide-up card.
@@ -382,16 +391,31 @@ export default function CourtsPage() {
       // independent — a Nominatim outage doesn't block court matches and
       // vice versa.
       const courtsPromise = (async (): Promise<CourtSearchResult[]> => {
-        try {
-          const res = await fetch(
-            `/api/courts/search?q=${encodeURIComponent(q)}`,
-            { signal: controller.signal }
-          );
-          if (!res.ok) return [];
-          return (await res.json()) as CourtSearchResult[];
-        } catch {
-          return [];
-        }
+        // The legacy /api/courts/search route was deleted in the
+        // Prisma→Supabase burn-down; the search now runs against the
+        // static facility catalog (src/lib/facilities) bundled with
+        // the client. Same scoring as resolveFacilityByName so the
+        // picker and search rank identically.
+        const facilities: Facility[] = searchFacilitiesByName(q, 8);
+        return facilities.map((f) => ({
+          courtId: f.courtId,
+          name: f.name,
+          address: f.address,
+          city: f.city,
+          lat: f.latitude as number,
+          lng: f.longitude as number,
+          bucket:
+            f.category === "school" || f.category === "college" || f.managedBy === "School"
+              ? "school"
+              : f.category === "private_club" || f.category === "hoa_community"
+              ? "club"
+              : "city",
+          category: f.category,
+          bookable: f.bookable,
+          bookingUrl: f.bookingUrl,
+          courts: f.courtCount,
+          descriptionPreview: descriptionPreview(f.description),
+        }));
       })();
       const placesPromise = (async (): Promise<GeocodeResult[]> => {
         try {

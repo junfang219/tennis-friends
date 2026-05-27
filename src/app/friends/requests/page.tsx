@@ -44,6 +44,8 @@ export default function FriendRequestsPage() {
   const [requests, setRequests] = useState<FriendRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string>("");
+  const [actionError, setActionError] = useState("");
+  const [loadError, setLoadError] = useState("");
 
   const fetchRequests = useCallback(async () => {
     try {
@@ -63,8 +65,8 @@ export default function FriendRequestsPage() {
             },
           }))
       );
-    } catch {
-      // Silently fail — empty list
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Couldn't load requests.");
     } finally {
       setLoading(false);
     }
@@ -76,12 +78,15 @@ export default function FriendRequestsPage() {
 
   const acceptRequest = async (friendshipId: string) => {
     setActionLoading(friendshipId);
+    setActionError("");
     try {
       const supabase = createSupabaseBrowserClient();
       await acceptFriendRequest(supabase, friendshipId);
       setRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId));
-    } catch {
-      // ignore
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "Couldn't accept the request."
+      );
     } finally {
       setActionLoading("");
     }
@@ -89,12 +94,15 @@ export default function FriendRequestsPage() {
 
   const rejectRequest = async (friendshipId: string) => {
     setActionLoading(friendshipId);
+    setActionError("");
     try {
       const supabase = createSupabaseBrowserClient();
       await rejectFriendRequest(supabase, friendshipId);
       setRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId));
-    } catch {
-      // ignore
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "Couldn't decline the request."
+      );
     } finally {
       setActionLoading("");
     }
@@ -132,6 +140,12 @@ export default function FriendRequestsPage() {
           )}
         </div>
       </div>
+
+      {(loadError || actionError) && (
+        <div className="mb-4 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+          {loadError || actionError}
+        </div>
+      )}
 
       {/* Loading */}
       {loading && (

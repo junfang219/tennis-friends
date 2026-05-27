@@ -25,18 +25,21 @@ export default function ChallengeModal({
     setError("");
     try {
       const supabase = createSupabaseBrowserClient();
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) throw new Error("Not signed in");
-      const { error: insErr } = await supabase.from("event_matches").insert({
-        event_id: eventId,
-        player1_id: auth.user.id,
-        player2_id: opponent.userId,
-        proposed_by: auth.user.id,
-        scheduled_at: scheduledAt || null,
-        court_assign: courtAssign,
-        status: "proposed",
-      });
-      if (insErr) throw insErr;
+      // Rank-gap + dedupe + ladder eligibility are enforced server-side
+      // by propose_ladder_challenge; client just forwards the inputs.
+      const args: {
+        p_event_id: string;
+        p_opponent_id: string;
+        p_scheduled_at?: string;
+        p_court_assign: string;
+      } = {
+        p_event_id: eventId,
+        p_opponent_id: opponent.userId,
+        p_court_assign: courtAssign,
+      };
+      if (scheduledAt) args.p_scheduled_at = new Date(scheduledAt).toISOString();
+      const { error: rpcErr } = await supabase.rpc("propose_ladder_challenge", args);
+      if (rpcErr) throw new Error(rpcErr.message);
       onSent();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't send challenge");

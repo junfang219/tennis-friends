@@ -14,6 +14,7 @@ import { useLongPress } from "@/hooks/useLongPress";
 import { useKeyboardHeight } from "@/hooks/useKeyboardHeight";
 import type { ReactionKey } from "@/lib/reactions";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useRealtimeTable } from "@/lib/supabase/realtime";
 import {
   getProfile,
   listDirectMessages,
@@ -69,6 +70,7 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState("");
   const [pendingMedia, setPendingMedia] = useState<{ url: string; type: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
@@ -86,7 +88,6 @@ export default function ChatPage() {
   const inputBarRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Keyboard height in px (0 when closed). Capacitor events on native,
   // visualViewport on web. See chat/group/[chatId]/page.tsx + the
@@ -216,16 +217,29 @@ export default function ChatPage() {
   useEffect(() => {
     loadMessages();
     markRead();
-    // Poll for new messages every 3 seconds; bump read on each poll so the badge clears
-    pollRef.current = setInterval(() => {
-      loadMessages();
-      markRead();
-    }, 3000);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
+
+  // Realtime: refetch + mark-read when the other user sends us a message.
+  // RLS already scopes the channel to messages we can read; we filter on
+  // receiver_id (us) and then check the sender so unrelated DMs don't
+  // trigger spurious refetches. Outgoing messages and reactions stream
+  // in via their own optimistic paths.
+  const me = session?.user?.id;
+  useRealtimeTable(
+    {
+      table: "messages",
+      event: "INSERT",
+      filter: me ? `receiver_id=eq.${me}` : undefined,
+      onChange: (payload) => {
+        const row = payload.new as { sender_id?: string } | null;
+        if (!row || row.sender_id !== userId) return;
+        loadMessages();
+        markRead();
+      },
+    },
+    [userId, me]
+  );
 
   // Scroll to bottom on new messages — but skip the *initial* load when a
   // deep-link target is set, so we land in the middle of the thread instead
@@ -377,12 +391,13 @@ export default function ChatPage() {
             : m,
         ),
       );
-    } catch {
+    } catch (err) {
       // Roll back the optimistic bubble + restore the draft so the user
       // can retry. Don't restore pendingMedia — it's already uploaded and
       // re-attaching it would re-upload on the next send.
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setInput(draftContent);
+      setSendError(err instanceof Error ? err.message : "Couldn't send.");
     }
     setSending(false);
   };
@@ -693,6 +708,18 @@ export default function ChatPage() {
           </div>
         )}
         {uploadError && <p className="text-xs text-red-500 mb-2">{uploadError}</p>}
+        {sendError && (
+          <p className="text-xs text-red-500 mb-2">
+            {sendError}{" "}
+            <button
+              onClick={() => setSendError("")}
+              className="underline text-red-700"
+              aria-label="Dismiss error"
+            >
+              Dismiss
+            </button>
+          </p>
+        )}
         <div className="flex items-center gap-2">
           <input
             ref={fileInputRef}

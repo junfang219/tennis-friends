@@ -54,6 +54,9 @@ export default function MatchList({
           courtAssign: r.court_assign,
           score: r.score,
           winnerSide: r.winner_side,
+          reportedBy: r.reported_by,
+          confirmedBy: r.confirmed_by,
+          proposedBy: r.proposed_by,
           status: r.status,
         })) as unknown as EventMatchView[];
         setMatches(adapted);
@@ -91,6 +94,26 @@ export default function MatchList({
       onChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't confirm.");
+    }
+    setActionInFlight(false);
+  }
+
+  async function respondToChallenge(match: EventMatchView, accept: boolean) {
+    setActionInFlight(true);
+    setError("");
+    try {
+      const supabase = createSupabaseBrowserClient();
+      // Notifications + chat msg fan out via the
+      // notify_on_event_match_status_change trigger (proposed -> {scheduled,declined}).
+      const { error: upErr } = await supabase
+        .from("event_matches")
+        .update({ status: accept ? "scheduled" : "declined" })
+        .eq("id", match.id);
+      if (upErr) throw upErr;
+      load();
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't respond to the challenge.");
     }
     setActionInFlight(false);
   }
@@ -162,6 +185,7 @@ export default function MatchList({
               onReport={() => setReportMatch(m)}
               onConfirm={() => confirm(m)}
               onDispute={() => dispute(m)}
+              onRespond={(accept) => respondToChallenge(m, accept)}
             />
           ))}
         </Section>
@@ -180,6 +204,7 @@ export default function MatchList({
               onReport={() => setReportMatch(m)}
               onConfirm={() => confirm(m)}
               onDispute={() => dispute(m)}
+              onRespond={(accept) => respondToChallenge(m, accept)}
             />
           ))}
         </Section>
@@ -198,6 +223,7 @@ export default function MatchList({
               onReport={() => setReportMatch(m)}
               onConfirm={() => confirm(m)}
               onDispute={() => dispute(m)}
+              onRespond={(accept) => respondToChallenge(m, accept)}
             />
           ))}
         </Section>
@@ -239,6 +265,7 @@ function MatchRow({
   onReport,
   onConfirm,
   onDispute,
+  onRespond,
 }: {
   match: EventMatchView;
   currentUserId: string | null;
@@ -248,6 +275,7 @@ function MatchRow({
   onReport: () => void;
   onConfirm: () => void;
   onDispute: () => void;
+  onRespond: (accept: boolean) => void;
 }) {
   const isPlayer =
     currentUserId != null &&
@@ -256,6 +284,13 @@ function MatchRow({
   const canConfirm =
     isPlayer && match.status === "in_progress" && currentUserId !== match.reportedBy;
   const canDispute = canConfirm;
+  // Only the challenged player (player2) can accept / decline a
+  // proposed challenge — the propose_ladder_challenge RPC puts the
+  // challenger at player1 and the opponent at player2.
+  const canRespond =
+    match.status === "proposed" &&
+    currentUserId != null &&
+    currentUserId === match.player2Id;
 
   return (
     <li
@@ -311,6 +346,24 @@ function MatchRow({
             >
               {match.status === "in_progress" ? "Re-report" : "Report score"}
             </button>
+          )}
+          {canRespond && (
+            <>
+              <button
+                onClick={() => onRespond(true)}
+                disabled={actionInFlight}
+                className="px-3 py-1 rounded-full bg-court-green text-white text-xs font-semibold hover:bg-court-green-light disabled:opacity-60"
+              >
+                Accept
+              </button>
+              <button
+                onClick={() => onRespond(false)}
+                disabled={actionInFlight}
+                className="px-3 py-1 rounded-full bg-white border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-gray-50 disabled:opacity-60"
+              >
+                Decline
+              </button>
+            </>
           )}
         </div>
       </div>

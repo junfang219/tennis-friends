@@ -50,8 +50,8 @@ describe.skipIf(!integrationEnvReady)("consolidated schemas (migrations 0010 / 0
         .select("id")
         .single();
       groupId = g!.id;
+      // owner row auto-added by groups_auto_add_owner.
       await admin.from("group_members").insert([
-        { group_id: groupId, user_id: alice.id, role: "owner" },
         { group_id: groupId, user_id: bob.id, role: "member" },
       ]);
 
@@ -273,8 +273,8 @@ describe.skipIf(!integrationEnvReady)("consolidated schemas (migrations 0010 / 0
         .select("id")
         .single();
       groupId = g!.id;
+      // owner row auto-added by groups_auto_add_owner.
       await admin.from("group_members").insert([
-        { group_id: groupId, user_id: alice.id, role: "owner" },
         { group_id: groupId, user_id: bob.id, role: "member" },
       ]);
 

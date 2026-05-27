@@ -4,7 +4,12 @@ import { useEffect, useState } from "react";
 import Avatar from "@/components/Avatar";
 import type { BracketView as BracketViewT } from "./types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { listEventMatches, type EventMatchRow } from "@/lib/supabase/queries";
+import {
+  listEventMatches,
+  listEventParticipants,
+  type EventMatchRow,
+} from "@/lib/supabase/queries";
+import { seedBracket } from "@/lib/eventCompetitive";
 
 // Group event_matches by round into the shape BracketViewT expects.
 function groupByRound(rows: EventMatchRow[]): BracketViewT["rounds"] {
@@ -76,12 +81,36 @@ export default function BracketView({
       return;
     setSeeding(true);
     setError("");
-    // Bracket seeding is a non-trivial algorithm (random pairing,
-    // optional ELO seeding, BYEs for odd counts). Reinstate as a Supabase
-    // Edge Function before launch — keeping the button disabled until then.
-    setError("Bracket seeding requires the events-bracket Edge Function (deferred). Talk to the dev.");
+    try {
+      const supabase = createSupabaseBrowserClient();
+      // Pull every registered participant and feed them through the
+      // shared seeding algorithm (src/lib/eventCompetitive.ts::
+      // seedBracket). The SECURITY DEFINER RPC validates organizer
+      // ownership + idempotency, then writes the round-1 matches.
+      const parts = await listEventParticipants(supabase, eventId);
+      const registered = parts
+        .filter((p) => p.status === "registered")
+        .map((p) => p.user_id);
+      if (registered.length < 2) {
+        setError("Need at least 2 registered players to seed a bracket.");
+        setSeeding(false);
+        return;
+      }
+      const pairs = seedBracket(registered);
+      const { error: rpcErr } = await supabase.rpc("seed_event_bracket", {
+        p_event_id: eventId,
+        p_pairs: pairs as unknown as never,
+      });
+      if (rpcErr) {
+        setError(rpcErr.message || "Couldn't seed the bracket.");
+      } else {
+        onSeeded?.();
+        load();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't seed the bracket.");
+    }
     setSeeding(false);
-    void onSeeded;
   }
 
   if (loading) return <div className="text-sm text-gray-500 py-6 text-center">Loading bracket…</div>;

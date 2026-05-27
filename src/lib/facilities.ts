@@ -255,6 +255,33 @@ export function resolveFacilityByName(query: string): Facility | null {
   return best?.f ?? null;
 }
 
+/** Top-K fuzzy name match for the courts-page search bar. Mirrors
+ *  the scoring used by resolveFacilityByName so the picker and the
+ *  search rank identically. Returns at most `limit` facilities sorted
+ *  by score desc. */
+export function searchFacilitiesByName(query: string, limit: number = 8): Facility[] {
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) return [];
+  const facilities = load().facilities;
+  const scored: Array<{ f: Facility; s: number }> = [];
+  for (const f of facilities) {
+    if (f.latitude == null || f.longitude == null) continue;
+    const n = f.name.toLowerCase();
+    let s = 0;
+    if (n === q) s = 5;
+    else if (n.startsWith(q) || q.startsWith(n)) s = 4;
+    else if (new RegExp(`\\b${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(n)) s = 3;
+    else if (n.includes(q)) s = 2;
+    else if (q.includes(n) && n.length >= 6) s = 1;
+    if (s > 0) scored.push({ f, s });
+  }
+  scored.sort((a, b) => {
+    if (b.s !== a.s) return b.s - a.s;
+    return a.f.externalId - b.f.externalId;
+  });
+  return scored.slice(0, limit).map((x) => x.f);
+}
+
 export function filterFacilitiesByBbox(bbox: BBox): Facility[] {
   return load().facilities.filter(
     (f) =>

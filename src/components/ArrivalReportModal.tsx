@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 type Props = {
   courtId: string;
@@ -38,25 +39,17 @@ export function ArrivalReportModal({ courtId, venueName, postId, onClose }: Prop
     setSubmitting(hasEmpty ? "yes" : "no");
     setErrorMessage(null);
     try {
-      const res = await fetch(
-        `/api/courts/${encodeURIComponent(courtId)}/availability-reports`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ hasEmpty, postId }),
-        }
-      );
-      if (res.ok) {
+      const supabase = createSupabaseBrowserClient();
+      const { error } = await supabase.rpc("report_court_availability", {
+        p_court_id: courtId,
+        p_has_empty: hasEmpty,
+        p_post_id: postId,
+      });
+      if (!error) {
         setDone(true);
         return;
       }
-      const body = await res.json().catch(() => ({}));
-      const msg = typeof body?.error === "string" ? body.error : null;
-      if (res.status === 429) {
-        setErrorMessage(msg || "Too many reports — try again later.");
-      } else {
-        setErrorMessage(msg || `Couldn't send (HTTP ${res.status}).`);
-      }
+      setErrorMessage(error.message || "Couldn't send.");
     } catch {
       setErrorMessage("Network error. Please try again.");
     } finally {

@@ -21,12 +21,21 @@ import { sendReminderEmail } from "@/lib/reminderEmail";
  * user session.
  */
 export async function GET(request: Request) {
+  // CRON_SECRET MUST be set in any environment that exposes this route
+  // (Vercel injects it on its scheduled calls). Allowing the check to
+  // be skipped when the env var is missing left the route as an
+  // unauthenticated trigger for service-role notifications/emails —
+  // refuse to run rather than silently fall open.
   const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const header = request.headers.get("authorization") || "";
-    if (header !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  if (!secret) {
+    return NextResponse.json(
+      { error: "CRON_SECRET not configured" },
+      { status: 500 }
+    );
+  }
+  const header = request.headers.get("authorization") || "";
+  if (header !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const admin = createSupabaseAdminClient();

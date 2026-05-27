@@ -48,6 +48,7 @@ export default function MatchUpPage() {
 
   const [listings, setListings] = useState<Listing[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [formatFilter, setFormatFilter] = useState<string>("");
   const [cityFilter, setCityFilter] = useState<string>("");
 
@@ -90,8 +91,9 @@ export default function MatchUpPage() {
           createdBy: { id: l.created_by_id, name: "", profileImageUrl: "" },
         }))
       );
-    } catch {
-      // ignore
+      setLoadError("");
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Couldn't load listings.");
     }
     setLoading(false);
   }, [formatFilter, cityFilter]);
@@ -112,7 +114,8 @@ export default function MatchUpPage() {
         }))
       );
     } catch {
-      // ignore
+      // Non-fatal — page still renders the listings; the "can post"
+      // bar just degrades to read-only until next reload.
     }
   }, []);
 
@@ -291,6 +294,17 @@ export default function MatchUpPage() {
         />
       </div>
 
+      {loadError && (
+        <div className="mb-4 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+          {loadError}{" "}
+          <button
+            onClick={() => { setLoading(true); void loadListings(); }}
+            className="underline font-semibold ml-1"
+          >
+            Retry
+          </button>
+        </div>
+      )}
       {loading ? (
         <div className="space-y-3">
           {[0, 1, 2].map((i) => <div key={i} className="skeleton w-full h-28 rounded-2xl" />)}

@@ -122,13 +122,10 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
         .select("id")
         .single();
       groupId = g!.id;
-      // Alice auto-becomes owner via her insert; need to add carol as member.
-      // RLS requires has_group_role(group_id, 'manager') for insert; alice is owner
-      // but she's not yet a group_member of her own group — we need to add her too.
+      // groups_auto_add_owner trigger writes alice's owner row.
       await adminClient()
         .from("group_members")
         .insert([
-          { group_id: groupId, user_id: alice.id, role: "owner" },
           { group_id: groupId, user_id: carol.id, role: "member" },
         ]);
 

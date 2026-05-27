@@ -175,8 +175,8 @@ function ComposerModal({
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const MAX_PHOTOS = 9;
-  const MAX_PHOTO_BYTES = 10 * 1024 * 1024; // 10 MB — matches /api/upload
-  const MAX_VIDEO_BYTES = 100 * 1024 * 1024; // 100 MB — matches /api/upload
+  const MAX_PHOTO_BYTES = 10 * 1024 * 1024; // 10 MB — matches /api/storage/sign-upload
+  const MAX_VIDEO_BYTES = 100 * 1024 * 1024; // 100 MB — matches /api/storage/sign-upload
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const teamPurposeRef = useRef<HTMLTextAreaElement>(null);

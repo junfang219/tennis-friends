@@ -138,6 +138,12 @@ export interface PostCamel {
   // post (null until the post fills and the trigger fires). PostCard
   // reads this to render the "Open chat" CTA on the collapsed card.
   sessionChatId: string | null;
+  // The auto-created team Group for a completed propose_team post
+  // (null until the post fills and the create_team_group_on_complete
+  // trigger fires). Stored as text in the DB with default '' — we
+  // collapse the empty default to null here so PostCard's
+  // `liveTeamGroupId || null` checks behave correctly.
+  teamGroupId: string | null;
 }
 
 export function toPostCamel(p: Post): PostCamel {
@@ -178,6 +184,7 @@ export function toPostCamel(p: Post): PostCamel {
     commentCount: p.comment_count,
     isLiked: p.is_liked,
     sessionChatId: p.session_chat?.[0]?.id ?? null,
+    teamGroupId: p.team_group_id ? p.team_group_id : null,
   };
 }
 

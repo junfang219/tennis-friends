@@ -93,54 +93,39 @@ export interface GroupInvite {
   group?: { id: string; name: string; image_url: string };
 }
 
+/**
+ * Look up a group invite by its shareable token. Goes through a
+ * SECURITY DEFINER RPC because the invitee isn't yet a group_member —
+ * the SELECT policy on group_invites would otherwise reject the read.
+ */
 export async function validateInvite(
   supabase: SupabaseClient<Database>,
   token: string
 ): Promise<GroupInvite | null> {
-  const { data, error } = await supabase
-    .from("group_invites")
-    .select(
-      `id, group_id, email, invited_by_id, token, role, member_type, status, expires_at, accepted_by_id, accepted_at, created_at, updated_at,
-       group:groups!group_invites_group_id_fkey ( id, name, image_url )`
-    )
-    .eq("token", token)
-    .maybeSingle();
+  const { data, error } = await supabase.rpc("get_invite_by_token", {
+    p_token: token,
+  });
   if (error) throw error;
   return (data as unknown as GroupInvite | null) ?? null;
 }
 
+/**
+ * Redeem an invite for the signed-in user. Routes through the
+ * accept_group_invite RPC, which enforces the email-match guard
+ * (caller's auth email must match the row), expiry check, and
+ * group_members + group_invites updates atomically.
+ */
 export async function acceptInvite(
   supabase: SupabaseClient<Database>,
-  inviteId: string,
-  groupId: string,
-  role: GroupInvite["role"],
-  memberType: string
-): Promise<void> {
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) throw new Error("Not signed in");
-
-  const { error: memberErr } = await supabase
-    .from("group_members")
-    .upsert(
-      {
-        group_id: groupId,
-        user_id: auth.user.id,
-        role,
-        member_type: memberType,
-      },
-      { onConflict: "group_id,user_id" }
-    );
-  if (memberErr) throw memberErr;
-
-  const { error: invErr } = await supabase
-    .from("group_invites")
-    .update({
-      status: "accepted",
-      accepted_by_id: auth.user.id,
-      accepted_at: new Date().toISOString(),
-    })
-    .eq("id", inviteId);
-  if (invErr) throw invErr;
+  token: string
+): Promise<{ groupId: string; alreadyAccepted?: boolean }> {
+  const { data, error } = await supabase.rpc("accept_group_invite", {
+    p_token: token,
+  });
+  if (error) throw new Error(error.message);
+  const result = data as { ok: boolean; group_id: string; already_accepted?: boolean } | null;
+  if (!result?.ok) throw new Error("Couldn't accept the invite.");
+  return { groupId: result.group_id, alreadyAccepted: !!result.already_accepted };
 }
 
 // ---------------------------------------------------------------------
@@ -386,7 +371,11 @@ export interface PlayRequest {
   id: string;
   post_id: string;
   user_id: string;
-  status: "pending" | "approved" | "rejected";
+  // Mirrors the play_request_status enum in schema.sql. 'withdrawn'
+  // is written by cancelPlayRequest when the request was previously
+  // APPROVED; 'removed' is written by the post author when kicking
+  // an approved player. Both are post-approval terminal states.
+  status: "pending" | "approved" | "rejected" | "withdrawn" | "removed";
   note: string;
   created_at: string;
   updated_at: string;
@@ -400,31 +389,66 @@ export async function requestToJoin(
 ): Promise<PlayRequest> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("Not signed in");
+
+  // upsert with onConflict so a user who was previously rejected /
+  // withdrew / was removed can re-apply: same (post_id, user_id) row
+  // gets re-set to 'pending' with the new note. Without this, the
+  // play_requests_unique (post_id, user_id) constraint raised 23505
+  // and the UI surfaced a generic duplicate-key error.
   const { data, error } = await supabase
     .from("play_requests")
-    .insert({
-      post_id: postId,
-      user_id: auth.user.id,
-      status: "pending",
-      note,
-    })
+    .upsert(
+      {
+        post_id: postId,
+        user_id: auth.user.id,
+        status: "pending",
+        note,
+      },
+      { onConflict: "post_id,user_id" }
+    )
     .select("id, post_id, user_id, status, note, created_at, updated_at")
     .single();
   if (error) throw error;
   return data as PlayRequest;
 }
 
+/**
+ * Cancel (PENDING) or withdraw (APPROVED) the caller's play_request on
+ * a post. PENDING is a clean delete; APPROVED transitions to 'withdrawn'
+ * so the handle_play_request_withdraw_or_remove trigger can free up the
+ * slot and DM the author the withdraw note. `note` is only meaningful
+ * for the APPROVED -> withdrawn path.
+ */
 export async function cancelPlayRequest(
   supabase: SupabaseClient<Database>,
-  postId: string
+  postId: string,
+  note?: string
 ): Promise<void> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("Not signed in");
+
+  const { data: existing, error: readErr } = await supabase
+    .from("play_requests")
+    .select("id, status")
+    .eq("post_id", postId)
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+  if (readErr) throw readErr;
+  if (!existing) return;
+
+  if (existing.status === "approved") {
+    const { error } = await supabase
+      .from("play_requests")
+      .update({ status: "withdrawn", note: note ?? "" })
+      .eq("id", existing.id);
+    if (error) throw error;
+    return;
+  }
+
   const { error } = await supabase
     .from("play_requests")
     .delete()
-    .eq("post_id", postId)
-    .eq("user_id", auth.user.id);
+    .eq("id", existing.id);
   if (error) throw error;
 }
 
@@ -596,4 +620,110 @@ export async function getDashboardUpcoming(
     events,
     teamMatches: (matchesRes.data ?? []) as unknown as DashboardUpcoming["teamMatches"],
   };
+}
+
+// ---------------------------------------------------------------------
+// Upcoming find_players games (used by the arrival-detection hook).
+// Replaces the deleted /api/games/upcoming route. Returns one entry per
+// open game the caller is involved in (author OR APPROVED play_request)
+// whose end-time is still in the future, ordered by start.
+//
+// `resolveFacilityByName` and the eligible-category filter happen
+// client-side so this module stays free of the heavy facility catalog
+// (the /lib/facilities import balloons the bundle); the hook layers
+// those checks on top.
+// ---------------------------------------------------------------------
+
+export interface UpcomingGameRow {
+  postId: string;
+  playDate: string;
+  playTime: string;
+  playDuration: number;
+  courtLocation: string;
+}
+
+export async function listUpcomingFindPlayersGames(
+  supabase: SupabaseClient<Database>
+): Promise<UpcomingGameRow[]> {
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return [];
+  const me = auth.user.id;
+
+  // playDate is a "YYYY-MM-DD" string in the user's local zone; the
+  // deleted endpoint used yesterday's UTC date as a safety buffer so we
+  // don't miss "today PDT" when UTC has rolled past midnight. The hook
+  // re-checks each game's actual end-time before prompting.
+  const yesterdayIso = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  const [authoredRes, approvedRes] = await Promise.all([
+    supabase
+      .from("posts")
+      .select("id, play_date, play_time, play_duration, court_location")
+      .eq("post_type", "find_players")
+      .eq("is_complete", false)
+      .eq("author_id", me)
+      .gte("play_date", yesterdayIso),
+    supabase
+      .from("play_requests")
+      .select(
+        `post:posts!play_requests_post_id_fkey
+           ( id, post_type, is_complete, play_date, play_time, play_duration, court_location, author_id )`
+      )
+      .eq("user_id", me)
+      .eq("status", "approved"),
+  ]);
+  if (authoredRes.error) throw authoredRes.error;
+  if (approvedRes.error) throw approvedRes.error;
+
+  const rows = new Map<string, UpcomingGameRow>();
+  for (const p of authoredRes.data ?? []) {
+    rows.set(p.id, {
+      postId: p.id,
+      playDate: p.play_date,
+      playTime: p.play_time,
+      playDuration: p.play_duration,
+      courtLocation: p.court_location,
+    });
+  }
+  type ApprovedRow = {
+    post: {
+      id: string;
+      post_type: string;
+      is_complete: boolean;
+      play_date: string;
+      play_time: string;
+      play_duration: number;
+      court_location: string;
+    } | null;
+  };
+  for (const r of (approvedRes.data ?? []) as unknown as ApprovedRow[]) {
+    const p = r.post;
+    if (!p) continue;
+    if (p.post_type !== "find_players" || p.is_complete) continue;
+    if (p.play_date < yesterdayIso) continue;
+    if (rows.has(p.id)) continue;
+    rows.set(p.id, {
+      postId: p.id,
+      playDate: p.play_date,
+      playTime: p.play_time,
+      playDuration: p.play_duration,
+      courtLocation: p.court_location,
+    });
+  }
+
+  // Drop entries whose end-time has already passed. The original route
+  // also enforced a 4-hour look-ahead — skip that here; the caller does
+  // its own in-window check and a slightly larger list is cheap.
+  const now = Date.now();
+  return Array.from(rows.values())
+    .filter((r) => {
+      if (!r.playDate || !r.playTime) return false;
+      const start = new Date(`${r.playDate}T${r.playTime}:00`).getTime();
+      if (!Number.isFinite(start)) return false;
+      const end = start + (r.playDuration || 90) * 60_000;
+      return end > now;
+    })
+    .sort((a, b) => `${a.playDate}T${a.playTime}`.localeCompare(`${b.playDate}T${b.playTime}`));
 }

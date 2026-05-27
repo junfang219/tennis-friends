@@ -61,6 +61,7 @@ export default function GroupChatThreadPage() {
   const [chatInfo, setChatInfo] = useState<ChatInfo | null>(null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState("");
   const [error, setError] = useState("");
   const [showRename, setShowRename] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -428,8 +429,8 @@ export default function GroupChatThreadPage() {
       // resign/become-first-responder cycle, which dismisses and
       // re-presents the keyboard ("bounce"). iMessage/WhatsApp keep
       // the keyboard up by leaving focus alone.
-    } catch {
-      // ignore
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Couldn't send.");
     }
     setSending(false);
   };
@@ -808,6 +809,17 @@ export default function GroupChatThreadPage() {
           </div>
         )}
         {uploadError && <p className="text-xs text-red-500 mb-2">{uploadError}</p>}
+        {sendError && (
+          <p className="text-xs text-red-500 mb-2">
+            {sendError}{" "}
+            <button
+              onClick={() => setSendError("")}
+              className="underline text-red-700"
+            >
+              Dismiss
+            </button>
+          </p>
+        )}
         <div className="flex items-center gap-2">
           <input
             ref={fileInputRef}

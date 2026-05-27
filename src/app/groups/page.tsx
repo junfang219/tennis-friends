@@ -42,15 +42,76 @@ export default function GroupsPage() {
     try {
       const supabase = createSupabaseBrowserClient();
       const rows = await listMyGroups(supabase);
-      const mapped = rows.map((g) => ({
-        id: g.id,
-        name: g.name,
-        imageUrl: g.image_url,
-        ownerId: g.owner_id,
-        owner: { id: g.owner_id, name: "", profileImageUrl: "" },
-        members: [],
-        _count: { members: 0 },
-      }));
+      if (rows.length === 0) {
+        setGroups([]);
+        setArchivedGroups([]);
+        setLoading(false);
+        return;
+      }
+      const groupIds = rows.map((g) => g.id);
+      const ownerIds = Array.from(new Set(rows.map((g) => g.owner_id)));
+
+      // Fan out the owner + member lookups in parallel. group_members
+      // and profiles are both RLS-gated to the current user's groups,
+      // so the embed-by-FK approach is safe.
+      const [ownersRes, membersRes] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("id, name, profile_image_url")
+          .in("id", ownerIds),
+        supabase
+          .from("group_members")
+          .select(
+            `id, group_id, user_id,
+             user:profiles!group_members_user_id_fkey ( id, name, profile_image_url )`
+          )
+          .in("group_id", groupIds)
+          .is("archived_at", null),
+      ]);
+
+      type OwnerRow = { id: string; name: string; profile_image_url: string };
+      type MemberRow = {
+        id: string;
+        group_id: string;
+        user_id: string;
+        user: { id: string; name: string; profile_image_url: string } | null;
+      };
+      const ownerById = new Map<string, OwnerRow>(
+        ((ownersRes.data ?? []) as OwnerRow[]).map((p) => [p.id, p])
+      );
+      const membersByGroup = new Map<string, MemberRow[]>();
+      for (const m of (membersRes.data ?? []) as unknown as MemberRow[]) {
+        const arr = membersByGroup.get(m.group_id) ?? [];
+        arr.push(m);
+        membersByGroup.set(m.group_id, arr);
+      }
+
+      const mapped = rows.map((g) => {
+        const owner = ownerById.get(g.owner_id);
+        const groupMembers = membersByGroup.get(g.id) ?? [];
+        return {
+          id: g.id,
+          name: g.name,
+          imageUrl: g.image_url,
+          ownerId: g.owner_id,
+          owner: {
+            id: g.owner_id,
+            name: owner?.name ?? "",
+            profileImageUrl: owner?.profile_image_url ?? "",
+          },
+          members: groupMembers
+            .filter((m): m is MemberRow & { user: NonNullable<MemberRow["user"]> } => m.user !== null)
+            .map((m) => ({
+              id: m.id,
+              user: {
+                id: m.user.id,
+                name: m.user.name,
+                profileImageUrl: m.user.profile_image_url,
+              },
+            })),
+          _count: { members: groupMembers.length },
+        };
+      });
       setGroups(mapped);
       setArchivedGroups([]);
       setLoading(false);
@@ -475,6 +536,7 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
   const [name, setName] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
   const [search, setSearch] = useState("");
 
   const toggle = (id: string) => {
@@ -486,25 +548,53 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
   const handleCreate = async () => {
     if (!name.trim() || creating) return;
     setCreating(true);
+    setCreateError("");
     try {
       const supabase = createSupabaseBrowserClient();
       const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) { setCreating(false); return; }
+      if (!auth.user) {
+        setCreateError("You need to be signed in.");
+        setCreating(false);
+        return;
+      }
       const { data: g, error } = await supabase
         .from("groups")
         .insert({ name: name.trim(), owner_id: auth.user.id })
         .select("id")
         .single();
-      if (error || !g) { setCreating(false); return; }
-      // Add owner as group_member, then any selected friends.
-      const memberRows = [{ group_id: g.id, user_id: auth.user.id, role: "owner" as const }];
-      for (const fid of selectedIds) {
-        memberRows.push({ group_id: g.id, user_id: fid, role: "member" as unknown as "owner" });
+      if (error || !g) {
+        setCreateError(error?.message || "Couldn't create the team.");
+        setCreating(false);
+        return;
       }
-      await supabase.from("group_members").insert(memberRows);
+      // The groups_auto_add_owner trigger writes the owner's
+      // group_members row server-side, so we only need to add the
+      // selected friends here. (group_members_insert_manager RLS now
+      // sees the freshly-inserted owner row, so this passes.)
+      if (selectedIds.size > 0) {
+        const memberRows = Array.from(selectedIds).map((fid) => ({
+          group_id: g.id,
+          user_id: fid,
+          role: "member" as const,
+        }));
+        const { error: memErr } = await supabase
+          .from("group_members")
+          .insert(memberRows);
+        if (memErr) {
+          setCreateError(`Team created, but couldn't add friends: ${memErr.message}`);
+          setCreating(false);
+          onCreated();
+          return;
+        }
+      }
       setCreating(false);
       onCreated();
-    } catch { setCreating(false); }
+    } catch (err) {
+      setCreateError(
+        err instanceof Error ? err.message : "Couldn't create the team."
+      );
+      setCreating(false);
+    }
   };
 
   const filteredFriends = friends.filter((f) =>
@@ -568,6 +658,11 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
           </>
         )}
       </div>
+      {createError && (
+        <div className="mb-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+          {createError}
+        </div>
+      )}
       <div className="flex items-center gap-3">
         <button onClick={handleCreate} disabled={!name.trim() || creating} className="btn-primary">{creating ? "Creating..." : "Create Team"}</button>
         <button onClick={onCancel} className="btn-secondary">Cancel</button>

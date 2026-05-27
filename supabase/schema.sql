@@ -39,6 +39,8 @@
 create extension if not exists "pgcrypto"; -- gen_random_uuid()
 create extension if not exists "postgis";  -- geography(Point, 4326)
 create extension if not exists "citext";   -- case-insensitive email/handle
+create extension if not exists "pg_net" with schema extensions; -- async HTTP from triggers
+create extension if not exists "supabase_vault";                -- secret storage for trigger HTTP auth
 
 -- =========================================================================
 -- Shared utility functions
@@ -70,7 +72,7 @@ create type public.group_invite_status       as enum ('pending', 'accepted', 'ca
 create type public.team_listing_status       as enum ('open', 'filled', 'closed');
 create type public.team_listing_format       as enum ('singles', 'doubles', 'mixed_doubles', 'any');
 create type public.post_type                 as enum ('regular', 'find_players', 'propose_team', 'event');
-create type public.play_request_status       as enum ('pending', 'approved', 'rejected');
+create type public.play_request_status       as enum ('pending', 'approved', 'rejected', 'withdrawn', 'removed');
 create type public.event_status              as enum ('open', 'closed', 'active', 'completed', 'cancelled');
 create type public.event_visibility          as enum ('public', 'group');
 create type public.event_match_status        as enum ('proposed', 'declined', 'scheduled', 'in_progress', 'completed', 'cancelled');
@@ -89,7 +91,15 @@ create type public.notification_type         as enum (
   'message_reaction',
   'event_invite',
   'friend_request',
-  'group_invite_accepted'
+  'group_invite_accepted',
+  'reply',
+  'event_signup',
+  'event_match_report',
+  'event_match_confirmed',
+  'event_match_disputed',
+  'event_ladder_challenge',
+  'event_challenge_accepted',
+  'event_challenge_declined'
 );
 
 -- =========================================================================
@@ -421,8 +431,11 @@ create index event_participants_user_idx         on public.event_participants (u
 create table public.event_matches (
   id            uuid primary key default gen_random_uuid(),
   event_id      uuid not null references public.events (id) on delete cascade,
-  player1_id    uuid not null references public.profiles (id) on delete restrict,
-  player2_id    uuid not null references public.profiles (id) on delete restrict,
+  -- Nullable so tournament next-round rows can be created before both
+  -- feeders complete — advance_tournament_winner fills the slot when
+  -- each sibling match completes.
+  player1_id    uuid references public.profiles (id) on delete restrict,
+  player2_id    uuid references public.profiles (id) on delete restrict,
   player3_id    uuid references public.profiles (id) on delete set null,
   player4_id    uuid references public.profiles (id) on delete set null,
   round         integer,
@@ -1612,14 +1625,32 @@ create policy event_matches_select_visible on public.event_matches
     exists(select 1 from public.events e where e.id = event_id and public.can_see_event(e))
   );
 
--- Owners create / update / delete matches; players involved can update for
--- reporting via /confirm/dispute endpoints (server route uses service_role).
-create policy event_matches_write_owner on public.event_matches
-  for all to authenticated
+-- Owners create / delete matches. UPDATE is also open to the four
+-- player_id slots so report / confirm / dispute flows (which the
+-- /api/events/[id]/matches/* routes used to gate server-side, but were
+-- deleted in the burn-down) can be performed directly by the players
+-- involved. Score/status state transitions are then policed by the
+-- notify_on_event_match_status_change trigger.
+create policy event_matches_insert_owner on public.event_matches
+  for insert to authenticated
+  with check (
+    exists(select 1 from public.events e where e.id = event_id and e.owner_id = auth.uid())
+  );
+
+create policy event_matches_update_owner_or_player on public.event_matches
+  for update to authenticated
   using (
     exists(select 1 from public.events e where e.id = event_id and e.owner_id = auth.uid())
+    or auth.uid() in (player1_id, player2_id, player3_id, player4_id)
   )
   with check (
+    exists(select 1 from public.events e where e.id = event_id and e.owner_id = auth.uid())
+    or auth.uid() in (player1_id, player2_id, player3_id, player4_id)
+  );
+
+create policy event_matches_delete_owner on public.event_matches
+  for delete to authenticated
+  using (
     exists(select 1 from public.events e where e.id = event_id and e.owner_id = auth.uid())
   );
 
@@ -3039,6 +3070,9 @@ COMMENT ON TABLE friend_group_members IS
 COMMENT ON TABLE posts IS
   'Core feed item. post_type discriminates regular / find_players / propose_team / event. Targeting via post_targets (group or friend_group). Untargeted posts default to friend-graph visibility, with broadcast posts adding a location-gated radius. Visibility is computed by can_see_post(p posts).';
 
+COMMENT ON COLUMN public.posts.manual_players IS
+  'Comma-separated guest names for find_players posts. Limitation: guest names that contain commas are split into multiple entries. Acceptable for the current dataset (Seattle-area player nicknames); revisit if real names with commas (e.g. "Smith, Jr.") become common.';
+
 COMMENT ON TABLE post_targets IS
   'Audience targets for a post. target_kind + the corresponding (group_id | friend_group_id) FK identifies which audience can see the post. Replaces post_groups + post_friend_groups (migration 0012).';
 
@@ -4248,6 +4282,149 @@ CREATE TRIGGER posts_create_session_chat_insert
   WHEN (NEW.is_complete = true)
   EXECUTE FUNCTION public.create_session_chat_on_complete();
 
+-- Keep chats.session_end_at in sync with the post's timing: if the
+-- post owner edits play_date / play_time / play_duration after the
+-- chat is created, recompute the end-of-game timestamp so any
+-- archive / cleanup logic that keys off session_end_at sees the
+-- latest value.
+CREATE OR REPLACE FUNCTION public.sync_chat_session_end_at()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_chat_id     uuid;
+  v_play_dt     timestamptz;
+  v_duration    integer;
+  v_session_end timestamptz;
+BEGIN
+  IF NEW.post_type <> 'find_players' THEN RETURN NEW; END IF;
+  IF OLD.play_date     IS NOT DISTINCT FROM NEW.play_date
+     AND OLD.play_time IS NOT DISTINCT FROM NEW.play_time
+     AND OLD.play_duration IS NOT DISTINCT FROM NEW.play_duration THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT id INTO v_chat_id FROM chats WHERE post_id = NEW.id LIMIT 1;
+  IF v_chat_id IS NULL THEN RETURN NEW; END IF;
+
+  BEGIN
+    v_play_dt := (NEW.play_date || ' ' || NEW.play_time || ':00')::timestamptz;
+  EXCEPTION WHEN OTHERS THEN
+    v_play_dt := NULL;
+  END;
+  IF v_play_dt IS NULL THEN RETURN NEW; END IF;
+  v_duration    := COALESCE(NULLIF(NEW.play_duration, 0), 90);
+  v_session_end := v_play_dt + (v_duration || ' minutes')::interval;
+
+  UPDATE chats SET session_end_at = v_session_end WHERE id = v_chat_id;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS posts_sync_chat_session_end ON public.posts;
+CREATE TRIGGER posts_sync_chat_session_end
+  AFTER UPDATE OF play_date, play_time, play_duration ON public.posts
+  FOR EACH ROW EXECUTE FUNCTION public.sync_chat_session_end_at();
+
+-- ============================================================
+-- TEAM GROUP CREATION ON PROPOSE_TEAM COMPLETION
+-- ============================================================
+--
+-- Mirrors create_session_chat_on_complete, but for propose_team posts:
+-- when one fills up (is_complete flips true), spin up a real Group with
+-- the author as owner + approved play_request users as members, post a
+-- welcome group_message, and link the new group back via
+-- posts.team_group_id. PostCard reads team_group_id (surfaced as
+-- teamGroupId by the adapter) to render the collapsed "Open team" CTA
+-- and to show the new team on /groups ("Your Teams"). Lost in the
+-- Prisma -> Supabase burn-down (was src/lib/teamGroup.ts), restored
+-- here as a SECURITY DEFINER trigger so every code path that flips
+-- is_complete = true creates the group, idempotently.
+
+CREATE OR REPLACE FUNCTION public.create_team_group_on_complete()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_group_id    uuid;
+  v_team_name   text;
+  v_author_name text;
+  v_message     text;
+BEGIN
+  IF NEW.is_complete IS NOT TRUE OR NEW.post_type <> 'propose_team' THEN
+    RETURN NEW;
+  END IF;
+
+  -- Idempotency: team_group_id defaults to '' on the posts table, so
+  -- check both null and empty. If the column is already populated, a
+  -- group exists and we must not create a second one.
+  IF NEW.team_group_id IS NOT NULL AND NEW.team_group_id <> '' THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT NULLIF(trim(name), '') INTO v_author_name FROM public.profiles WHERE id = NEW.author_id;
+  -- For propose_team posts, court_location holds the user-entered
+  -- team name (see PostComposer). Fall back order: explicit
+  -- court_location → "{author}'s Team" → bare "Team". The NULLIF on
+  -- the SELECT above prevents the empty-name case from yielding the
+  -- cosmetic-bad "'s Team".
+  v_team_name := COALESCE(
+    NULLIF(trim(NEW.court_location), ''),
+    CASE WHEN v_author_name IS NULL THEN 'Team'
+         ELSE v_author_name || '''s Team' END
+  );
+
+  INSERT INTO public.groups (name, owner_id)
+  VALUES (v_team_name, NEW.author_id)
+  RETURNING id INTO v_group_id;
+
+  -- Author as owner + every approved play_request user as member.
+  -- UNION (not UNION ALL) deduplicates in case the author somehow has
+  -- an approved request to their own post; ON CONFLICT belt-and-
+  -- suspenders against the (group_id, user_id) unique constraint.
+  INSERT INTO public.group_members (group_id, user_id, role)
+  SELECT v_group_id, NEW.author_id, 'owner'::group_role
+  UNION
+  SELECT v_group_id, pr.user_id, 'member'::group_role
+  FROM public.play_requests pr
+  WHERE pr.post_id = NEW.id AND pr.status = 'approved'
+  ON CONFLICT (group_id, user_id) DO NOTHING;
+
+  v_message := E'🏆 Team formed!\n'
+            || 'Welcome to ' || v_team_name || E' — let''s organize practice and matches.';
+
+  INSERT INTO public.group_messages (group_id, sender_id, content)
+  VALUES (v_group_id, NEW.author_id, v_message);
+
+  -- Link the post to the new group. Updating team_group_id (not
+  -- is_complete) does not re-fire the AFTER UPDATE OF is_complete
+  -- trigger, so no recursion.
+  UPDATE public.posts
+  SET team_group_id = v_group_id::text
+  WHERE id = NEW.id;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS posts_create_team_group ON public.posts;
+CREATE TRIGGER posts_create_team_group
+  AFTER UPDATE OF is_complete ON public.posts
+  FOR EACH ROW
+  WHEN (NEW.is_complete = true)
+  EXECUTE FUNCTION public.create_team_group_on_complete();
+
+DROP TRIGGER IF EXISTS posts_create_team_group_insert ON public.posts;
+CREATE TRIGGER posts_create_team_group_insert
+  AFTER INSERT ON public.posts
+  FOR EACH ROW
+  WHEN (NEW.is_complete = true)
+  EXECUTE FUNCTION public.create_team_group_on_complete();
+
 -- ============================================================
 -- NOTIFICATION SIDE EFFECTS
 -- ============================================================
@@ -4258,9 +4435,6 @@ CREATE TRIGGER posts_create_session_chat_insert
 -- they were deleted in the Prisma → Supabase burn-down (86f26a5).
 -- SECURITY DEFINER because notifications has no INSERT policy (only
 -- the recipient can SELECT/UPDATE/DELETE their own).
-
-ALTER TYPE public.notification_type ADD VALUE IF NOT EXISTS 'reply';
-ALTER TYPE public.notification_type ADD VALUE IF NOT EXISTS 'event_signup';
 
 -- ----- likes → "like" to post author --------------------------------
 CREATE OR REPLACE FUNCTION public.notify_on_like()
@@ -4375,17 +4549,57 @@ CREATE TRIGGER message_reactions_notify AFTER INSERT ON public.message_reactions
 -- Recreates /api/events/[id]/signup's server-side orchestration
 -- (capacity check, waitlist promotion, owner notification).
 
+-- BEFORE INSERT: capacity → waitlist, plus restored guards from
+-- /api/events/[id]/signup that the burn-down dropped:
+--   - Tournament signup lock once the bracket is seeded (>=1 event_matches).
+--   - NTRP gate when the event sets ntrp_min / ntrp_max.
 CREATE OR REPLACE FUNCTION public.enforce_event_capacity()
-RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
 AS $$
-DECLARE v_max integer; v_count integer;
+DECLARE
+  v_event       events%ROWTYPE;
+  v_rating      double precision;
+  v_count       integer;
+  v_match_count integer;
 BEGIN
   IF NEW.status <> 'registered' THEN RETURN NEW; END IF;
-  SELECT max_participants INTO v_max FROM events WHERE id = NEW.event_id;
-  IF v_max IS NULL THEN RETURN NEW; END IF;
+
+  SELECT * INTO v_event FROM events WHERE id = NEW.event_id;
+  IF v_event.id IS NULL THEN RETURN NEW; END IF;
+
+  IF v_event.event_type = 'tournament' THEN
+    SELECT count(*) INTO v_match_count FROM event_matches
+      WHERE event_id = NEW.event_id;
+    IF v_match_count > 0 THEN
+      RAISE EXCEPTION 'Bracket is live — signups are locked'
+        USING ERRCODE = 'check_violation';
+    END IF;
+  END IF;
+
+  IF v_event.ntrp_min IS NOT NULL OR v_event.ntrp_max IS NOT NULL THEN
+    SELECT ntrp_rating INTO v_rating FROM profiles WHERE id = NEW.user_id;
+    IF v_rating IS NULL THEN
+      RAISE EXCEPTION 'Set your NTRP rating in your profile to sign up for this event'
+        USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_event.ntrp_min IS NOT NULL AND v_rating < v_event.ntrp_min THEN
+      RAISE EXCEPTION 'NTRP % required for this event', v_event.ntrp_min
+        USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_event.ntrp_max IS NOT NULL AND v_rating > v_event.ntrp_max THEN
+      RAISE EXCEPTION 'NTRP % max for this event', v_event.ntrp_max
+        USING ERRCODE = 'check_violation';
+    END IF;
+  END IF;
+
+  IF v_event.max_participants IS NULL THEN RETURN NEW; END IF;
   SELECT count(*) INTO v_count FROM event_participants
-  WHERE event_id = NEW.event_id AND status = 'registered';
-  IF v_count >= v_max THEN NEW.status := 'waitlist'; END IF;
+    WHERE event_id = NEW.event_id AND status = 'registered';
+  IF v_count >= v_event.max_participants THEN NEW.status := 'waitlist'; END IF;
+
   RETURN NEW;
 END;
 $$;
@@ -4430,6 +4644,1539 @@ DROP TRIGGER IF EXISTS event_participants_notify_signup ON public.event_particip
 CREATE TRIGGER event_participants_notify_signup
   AFTER INSERT ON public.event_participants
   FOR EACH ROW EXECUTE FUNCTION public.notify_on_event_signup();
+
+-- ============================================================
+-- POST PLAY_REQUEST WITHDRAW / REMOVE FAN-OUT
+-- ============================================================
+--
+-- Restores the side-effects from /api/posts/join/cancel and
+-- /api/posts/join/remove. When an APPROVED play_request flips to
+-- 'withdrawn' (requester cancels) or 'removed' (post author kicks them):
+--   - decrement posts.players_confirmed and clear is_complete so the
+--     slot is free again,
+--   - DM the counterparty (author for withdraw, removed player for
+--     remove) with shared_post_id linked to the post card.
+-- PENDING -> withdrawn is just a UI cancel — no counter to free, no DM.
+CREATE OR REPLACE FUNCTION public.handle_play_request_withdraw_or_remove()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_post        posts%ROWTYPE;
+  v_actor_name  text;
+  v_content     text;
+  v_target_user uuid;
+  v_note_trim   text;
+BEGIN
+  IF NEW.status NOT IN ('withdrawn', 'removed') THEN RETURN NEW; END IF;
+  IF OLD.status = NEW.status THEN RETURN NEW; END IF;
+  IF OLD.status <> 'approved' THEN RETURN NEW; END IF;
+
+  SELECT * INTO v_post FROM posts WHERE id = NEW.post_id;
+  IF v_post.id IS NULL THEN RETURN NEW; END IF;
+
+  UPDATE posts
+    SET players_confirmed = GREATEST(0, players_confirmed - 1),
+        is_complete       = false
+    WHERE id = NEW.post_id;
+
+  v_note_trim := NULLIF(trim(NEW.note), '');
+
+  IF NEW.status = 'withdrawn' THEN
+    v_target_user := v_post.author_id;
+    SELECT name INTO v_actor_name FROM profiles WHERE id = NEW.user_id;
+    v_content := COALESCE(v_actor_name, 'A player')
+              || ' withdrew from your game'
+              || CASE WHEN v_note_trim IS NOT NULL
+                      THEN ': "' || v_note_trim || '"' ELSE '' END;
+    IF v_target_user IS NOT NULL AND v_target_user <> NEW.user_id THEN
+      INSERT INTO messages (sender_id, receiver_id, content, shared_post_id)
+      VALUES (NEW.user_id, v_target_user, v_content, NEW.post_id);
+    END IF;
+  ELSE
+    v_target_user := NEW.user_id;
+    SELECT name INTO v_actor_name FROM profiles WHERE id = v_post.author_id;
+    v_content := COALESCE(v_actor_name, 'The organizer')
+              || ' removed you from the game'
+              || CASE WHEN v_note_trim IS NOT NULL
+                      THEN ': "' || v_note_trim || '"' ELSE '' END;
+    IF v_target_user IS NOT NULL AND v_target_user <> v_post.author_id THEN
+      INSERT INTO messages (sender_id, receiver_id, content, shared_post_id)
+      VALUES (v_post.author_id, v_target_user, v_content, NEW.post_id);
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS play_requests_withdraw_or_remove ON public.play_requests;
+CREATE TRIGGER play_requests_withdraw_or_remove
+  AFTER UPDATE OF status ON public.play_requests
+  FOR EACH ROW EXECUTE FUNCTION public.handle_play_request_withdraw_or_remove();
+
+-- ============================================================
+-- EVENT MATCH STATUS FAN-OUT (report / confirm / dispute)
+-- ============================================================
+--
+-- Restores the side-effects of
+--   /api/events/[id]/matches/[matchId]/report,
+--   /api/events/[id]/matches/[matchId]/confirm,
+--   /api/events/[id]/matches/[matchId]/dispute.
+-- Fires notifications on every status transition. Best-effort posts a
+-- system message into the event's backing group chat (events.group_id)
+-- when one exists — events created without a backing group still get
+-- correct notifications, they just don't get the in-chat receipt.
+CREATE OR REPLACE FUNCTION public.notify_on_event_match_status_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_event_group uuid;
+  v_actor       uuid;
+  v_actor_name  text;
+  v_other_name  text;
+  v_other_id    uuid;
+  v_reporter    uuid;
+  v_msg         text;
+BEGIN
+  IF NEW.status = OLD.status THEN RETURN NEW; END IF;
+
+  SELECT group_id INTO v_event_group FROM events WHERE id = NEW.event_id;
+
+  IF NEW.status = 'in_progress' AND OLD.status <> 'in_progress'
+     AND NEW.reported_by IS NOT NULL THEN
+    v_actor := NEW.reported_by;
+    v_other_id := CASE WHEN v_actor = NEW.player1_id
+                       THEN NEW.player2_id ELSE NEW.player1_id END;
+    SELECT name INTO v_actor_name FROM profiles WHERE id = v_actor;
+
+    IF v_other_id IS NOT NULL AND v_other_id <> v_actor THEN
+      INSERT INTO notifications (user_id, actor_id, type, event_id, match_id)
+      VALUES (v_other_id, v_actor, 'event_match_report'::notification_type,
+              NEW.event_id, NEW.id);
+    END IF;
+    IF v_event_group IS NOT NULL THEN
+      v_msg := '📝 ' || COALESCE(v_actor_name, 'A player')
+            || ' reported: ' || COALESCE(NEW.score, '')
+            || ' — waiting on the other player to confirm.';
+      INSERT INTO group_messages (group_id, sender_id, content)
+      VALUES (v_event_group, v_actor, v_msg);
+    END IF;
+
+  ELSIF NEW.status = 'completed' AND OLD.status = 'in_progress'
+        AND NEW.confirmed_by IS NOT NULL THEN
+    v_actor    := NEW.confirmed_by;
+    v_reporter := NEW.reported_by;
+    SELECT name INTO v_actor_name FROM profiles WHERE id = v_actor;
+
+    IF v_reporter IS NOT NULL AND v_reporter <> v_actor THEN
+      INSERT INTO notifications (user_id, actor_id, type, event_id, match_id)
+      VALUES (v_reporter, v_actor, 'event_match_confirmed'::notification_type,
+              NEW.event_id, NEW.id);
+    END IF;
+    IF v_event_group IS NOT NULL THEN
+      v_msg := '✅ ' || COALESCE(v_actor_name, 'A player')
+            || ' confirmed: ' || COALESCE(NEW.score, '') || '.';
+      INSERT INTO group_messages (group_id, sender_id, content)
+      VALUES (v_event_group, v_actor, v_msg);
+    END IF;
+
+  ELSIF NEW.status = 'scheduled' AND OLD.status = 'in_progress'
+        AND NEW.disputed_at IS NOT NULL
+        AND OLD.disputed_at IS DISTINCT FROM NEW.disputed_at THEN
+    v_reporter := OLD.reported_by;
+    v_other_id := CASE WHEN v_reporter = NEW.player1_id
+                       THEN NEW.player2_id ELSE NEW.player1_id END;
+    SELECT name INTO v_actor_name FROM profiles WHERE id = v_other_id;
+
+    IF v_reporter IS NOT NULL AND v_other_id IS NOT NULL
+       AND v_reporter <> v_other_id THEN
+      INSERT INTO notifications (user_id, actor_id, type, event_id, match_id)
+      VALUES (v_reporter, v_other_id, 'event_match_disputed'::notification_type,
+              NEW.event_id, NEW.id);
+    END IF;
+    IF v_event_group IS NOT NULL AND v_other_id IS NOT NULL THEN
+      v_msg := '⚠️ ' || COALESCE(v_actor_name, 'A player')
+            || ' disputed the score (was ' || COALESCE(OLD.score, '')
+            || '). Please re-enter together.';
+      INSERT INTO group_messages (group_id, sender_id, content)
+      VALUES (v_event_group, v_other_id, v_msg);
+    END IF;
+
+  -- Ladder challenge accepted: proposed -> scheduled.
+  ELSIF NEW.status = 'scheduled' AND OLD.status = 'proposed' THEN
+    v_actor := NEW.player2_id;
+    SELECT name INTO v_actor_name FROM profiles WHERE id = v_actor;
+    SELECT name INTO v_other_name FROM profiles WHERE id = NEW.proposed_by;
+    IF NEW.proposed_by IS NOT NULL AND NEW.proposed_by <> v_actor THEN
+      INSERT INTO notifications (user_id, actor_id, type, event_id, match_id)
+      VALUES (NEW.proposed_by, v_actor,
+              'event_challenge_accepted'::notification_type, NEW.event_id, NEW.id);
+    END IF;
+    IF v_event_group IS NOT NULL THEN
+      v_msg := '🪜 ' || COALESCE(v_actor_name, 'A player')
+            || ' accepted ' || COALESCE(v_other_name, 'the challenger')
+            || '''s challenge — match scheduled.';
+      INSERT INTO group_messages (group_id, sender_id, content)
+      VALUES (v_event_group, v_actor, v_msg);
+    END IF;
+
+  -- Ladder challenge declined: proposed -> declined.
+  ELSIF NEW.status = 'declined' AND OLD.status = 'proposed' THEN
+    v_actor := NEW.player2_id;
+    SELECT name INTO v_actor_name FROM profiles WHERE id = v_actor;
+    SELECT name INTO v_other_name FROM profiles WHERE id = NEW.proposed_by;
+    IF NEW.proposed_by IS NOT NULL AND NEW.proposed_by <> v_actor THEN
+      INSERT INTO notifications (user_id, actor_id, type, event_id, match_id)
+      VALUES (NEW.proposed_by, v_actor,
+              'event_challenge_declined'::notification_type, NEW.event_id, NEW.id);
+    END IF;
+    IF v_event_group IS NOT NULL THEN
+      v_msg := '🪜 ' || COALESCE(v_actor_name, 'A player')
+            || ' declined ' || COALESCE(v_other_name, 'the challenger')
+            || '''s challenge.';
+      INSERT INTO group_messages (group_id, sender_id, content)
+      VALUES (v_event_group, v_actor, v_msg);
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS event_matches_status_fanout ON public.event_matches;
+CREATE TRIGGER event_matches_status_fanout
+  AFTER UPDATE ON public.event_matches
+  FOR EACH ROW EXECUTE FUNCTION public.notify_on_event_match_status_change();
+
+-- INSERT trigger pair for the same function — ladder challenge
+-- propose -> notify challenged player + post chat msg.
+CREATE OR REPLACE FUNCTION public.notify_on_event_match_proposed()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_event_group uuid;
+  v_event_type  text;
+  v_actor_name  text;
+  v_other_name  text;
+  v_msg         text;
+BEGIN
+  IF NEW.status <> 'proposed' OR NEW.proposed_by IS NULL OR NEW.player2_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+  SELECT event_type, group_id INTO v_event_type, v_event_group
+    FROM events WHERE id = NEW.event_id;
+  IF v_event_type <> 'ladder' THEN RETURN NEW; END IF;
+
+  SELECT name INTO v_actor_name FROM profiles WHERE id = NEW.proposed_by;
+  SELECT name INTO v_other_name FROM profiles WHERE id = NEW.player2_id;
+
+  IF NEW.player2_id <> NEW.proposed_by THEN
+    INSERT INTO notifications (user_id, actor_id, type, event_id, match_id)
+    VALUES (NEW.player2_id, NEW.proposed_by,
+            'event_ladder_challenge'::notification_type, NEW.event_id, NEW.id);
+  END IF;
+  IF v_event_group IS NOT NULL THEN
+    v_msg := '🪜 ' || COALESCE(v_actor_name, 'A player')
+          || ' challenged ' || COALESCE(v_other_name, 'another player')
+          || ' up the ladder.';
+    INSERT INTO group_messages (group_id, sender_id, content)
+    VALUES (v_event_group, NEW.proposed_by, v_msg);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS event_matches_notify_proposed ON public.event_matches;
+CREATE TRIGGER event_matches_notify_proposed
+  AFTER INSERT ON public.event_matches
+  FOR EACH ROW EXECUTE FUNCTION public.notify_on_event_match_proposed();
+
+-- ============================================================
+-- TOURNAMENT BRACKET: seed + winner advancement
+-- ============================================================
+--
+-- seed_event_bracket() is organizer-only and idempotent (refuses if
+-- any event_matches row already exists). The pairs argument comes
+-- from src/lib/eventCompetitive.ts::seedBracket so the seeding
+-- algorithm lives in one place. Byes are auto-advanced.
+CREATE OR REPLACE FUNCTION public.seed_event_bracket(
+  p_event_id uuid,
+  p_pairs    jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller     uuid := auth.uid();
+  v_event      events%ROWTYPE;
+  v_existing   integer;
+  v_total      integer;
+  v_size       integer;
+  v_p1         uuid;
+  v_p2         uuid;
+  v_slot       text;
+  v_inserted   integer := 0;
+  v_idx        integer := 0;
+  v_pair       jsonb;
+  v_match_id   uuid;
+  v_byes       uuid[] := ARRAY[]::uuid[];
+BEGIN
+  IF v_caller IS NULL THEN
+    RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  SELECT * INTO v_event FROM events WHERE id = p_event_id;
+  IF v_event.id IS NULL THEN
+    RAISE EXCEPTION 'Event not found' USING ERRCODE = 'no_data_found';
+  END IF;
+  IF v_event.owner_id <> v_caller THEN
+    RAISE EXCEPTION 'Only the organizer can seed the bracket'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF v_event.event_type <> 'tournament' THEN
+    RAISE EXCEPTION 'Only tournament events have a bracket'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  SELECT count(*) INTO v_existing FROM event_matches WHERE event_id = p_event_id;
+  IF v_existing > 0 THEN
+    RAISE EXCEPTION 'Bracket already seeded' USING ERRCODE = 'unique_violation';
+  END IF;
+
+  IF p_pairs IS NULL OR jsonb_typeof(p_pairs) <> 'array' THEN
+    RAISE EXCEPTION 'pairs must be a JSON array' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  v_total := jsonb_array_length(p_pairs);
+  IF v_total < 1 THEN
+    RAISE EXCEPTION 'Need at least one pair' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  v_size := v_total;
+  IF (v_size & (v_size - 1)) <> 0 THEN
+    RAISE EXCEPTION 'pairs.length must be a power of two' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  FOR v_idx IN 0 .. v_total - 1 LOOP
+    v_pair := p_pairs->v_idx;
+    IF jsonb_typeof(v_pair) <> 'array' OR jsonb_array_length(v_pair) <> 2 THEN
+      RAISE EXCEPTION 'pairs[%] must be a 2-element array', v_idx
+        USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_p1 := NULLIF(v_pair->>0, '')::uuid;
+    v_p2 := NULLIF(v_pair->>1, '')::uuid;
+    v_slot := 'R1-' || (v_idx + 1)::text;
+
+    IF v_p1 IS NULL AND v_p2 IS NULL THEN
+      CONTINUE;
+    END IF;
+
+    IF v_p1 IS NULL OR v_p2 IS NULL THEN
+      -- Bye: auto-completed so the cascade picks up the lone player.
+      -- INSERT doesn't fire the AFTER UPDATE advance trigger, so we
+      -- call the helper directly after the loop (see below).
+      INSERT INTO event_matches (
+        event_id, player1_id, player2_id, status, bracket_slot, round,
+        score, winner_side
+      ) VALUES (
+        p_event_id, COALESCE(v_p1, v_p2), NULL, 'completed', v_slot, 1, '', 1
+      )
+      RETURNING id INTO v_match_id;
+      v_byes := array_append(v_byes, v_match_id);
+    ELSE
+      INSERT INTO event_matches (
+        event_id, player1_id, player2_id, status, bracket_slot, round
+      ) VALUES (
+        p_event_id, v_p1, v_p2, 'scheduled', v_slot, 1
+      );
+    END IF;
+    v_inserted := v_inserted + 1;
+  END LOOP;
+
+  -- Cascade-advance every bye after the round-1 inserts so siblings
+  -- exist by the time we walk the bracket.
+  IF cardinality(v_byes) > 0 THEN
+    FOR v_idx IN 1 .. cardinality(v_byes) LOOP
+      PERFORM public.advance_event_match_to_next_round(v_byes[v_idx]);
+    END LOOP;
+  END IF;
+
+  RETURN jsonb_build_object('seeded', v_inserted);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.seed_event_bracket(uuid, jsonb) FROM public;
+GRANT EXECUTE ON FUNCTION public.seed_event_bracket(uuid, jsonb) TO authenticated;
+
+-- advance_event_match_to_next_round: shared helper containing the
+-- bracket advancement algorithm. Called both by the AFTER UPDATE
+-- trigger (advance_tournament_winner) and inline by
+-- seed_event_bracket for bye rows (which are inserted as
+-- status='completed' and would otherwise sit stranded — INSERTs
+-- don't fire AFTER UPDATE triggers).
+CREATE OR REPLACE FUNCTION public.advance_event_match_to_next_round(
+  p_match_id uuid
+) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_match       event_matches%ROWTYPE;
+  v_event       events%ROWTYPE;
+  v_winner_id   uuid;
+  v_round       integer;
+  v_slot_idx    integer;
+  v_next_round  integer;
+  v_next_idx    integer;
+  v_next_slot   text;
+  v_is_upper    boolean;
+  v_sibling_id  uuid;
+  v_next_id     uuid;
+  v_winner_name text;
+  v_msg         text;
+  v_slot_match  text[];
+BEGIN
+  SELECT * INTO v_match FROM event_matches WHERE id = p_match_id;
+  IF v_match.id IS NULL OR v_match.status <> 'completed' THEN RETURN; END IF;
+  IF v_match.winner_side IS NULL OR v_match.bracket_slot = ''
+     OR v_match.bracket_slot IS NULL THEN RETURN; END IF;
+
+  SELECT * INTO v_event FROM events WHERE id = v_match.event_id;
+  IF v_event.event_type <> 'tournament' THEN RETURN; END IF;
+
+  v_slot_match := regexp_match(v_match.bracket_slot, '^R([0-9]+)-([0-9]+)$');
+  IF v_slot_match IS NULL THEN RETURN; END IF;
+  v_round    := (v_slot_match[1])::int;
+  v_slot_idx := (v_slot_match[2])::int;
+
+  v_winner_id := CASE WHEN v_match.winner_side = 1
+                      THEN v_match.player1_id ELSE v_match.player2_id END;
+  IF v_winner_id IS NULL THEN RETURN; END IF;
+
+  v_next_round := v_round + 1;
+  v_next_idx   := CEIL(v_slot_idx::numeric / 2)::int;
+  v_next_slot  := 'R' || v_next_round || '-' || v_next_idx;
+  v_is_upper   := (v_slot_idx % 2) = 1;
+
+  SELECT id INTO v_sibling_id
+  FROM event_matches
+  WHERE event_id = v_match.event_id
+    AND bracket_slot = 'R' || v_round || '-'
+        || CASE WHEN v_is_upper THEN v_slot_idx + 1 ELSE v_slot_idx - 1 END;
+  IF v_sibling_id IS NULL AND v_slot_idx = 1 THEN
+    SELECT name INTO v_winner_name FROM profiles WHERE id = v_winner_id;
+    IF v_event.group_id IS NOT NULL AND v_winner_name IS NOT NULL THEN
+      v_msg := '🏆 Champion: ' || v_winner_name || '!';
+      INSERT INTO group_messages (group_id, sender_id, content)
+      VALUES (v_event.group_id, v_event.owner_id, v_msg);
+    END IF;
+    RETURN;
+  END IF;
+
+  SELECT id INTO v_next_id
+  FROM event_matches
+  WHERE event_id = v_match.event_id AND bracket_slot = v_next_slot;
+
+  IF v_next_id IS NOT NULL THEN
+    UPDATE event_matches
+    SET player1_id = CASE WHEN v_is_upper THEN v_winner_id ELSE player1_id END,
+        player2_id = CASE WHEN NOT v_is_upper THEN v_winner_id ELSE player2_id END
+    WHERE id = v_next_id;
+  ELSE
+    INSERT INTO event_matches (
+      event_id, player1_id, player2_id, status, bracket_slot, round
+    ) VALUES (
+      v_match.event_id,
+      CASE WHEN v_is_upper THEN v_winner_id ELSE NULL END,
+      CASE WHEN NOT v_is_upper THEN v_winner_id ELSE NULL END,
+      'scheduled',
+      v_next_slot,
+      v_next_round
+    );
+  END IF;
+END;
+$$;
+
+-- advance_tournament_winner trigger: delegates to the helper above.
+CREATE OR REPLACE FUNCTION public.advance_tournament_winner()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.status <> 'completed' OR OLD.status = 'completed' THEN
+    RETURN NEW;
+  END IF;
+  PERFORM public.advance_event_match_to_next_round(NEW.id);
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS event_matches_advance_tournament ON public.event_matches;
+CREATE TRIGGER event_matches_advance_tournament
+  AFTER UPDATE ON public.event_matches
+  FOR EACH ROW EXECUTE FUNCTION public.advance_tournament_winner();
+
+-- ============================================================
+-- LADDER CHALLENGE RPC (propose_ladder_challenge)
+-- ============================================================
+--
+-- Replaces /api/events/[id]/challenges. Reads live standings off the
+-- event_participants aggregate columns (kept in sync by
+-- recompute_event_standings) and enforces the rank-gap rule.
+CREATE OR REPLACE FUNCTION public.propose_ladder_challenge(
+  p_event_id     uuid,
+  p_opponent_id  uuid,
+  p_scheduled_at timestamptz DEFAULT NULL,
+  p_court_assign text DEFAULT ''
+) RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller   uuid := auth.uid();
+  v_event    events%ROWTYPE;
+  v_max_gap  integer;
+  v_my_rank  integer;
+  v_opp_rank integer;
+  v_existing uuid;
+  v_new_id   uuid;
+BEGIN
+  IF v_caller IS NULL THEN
+    RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF p_opponent_id IS NULL OR p_opponent_id = v_caller THEN
+    RAISE EXCEPTION 'Pick a valid opponent' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  SELECT * INTO v_event FROM events WHERE id = p_event_id;
+  IF v_event.id IS NULL THEN
+    RAISE EXCEPTION 'Event not found' USING ERRCODE = 'no_data_found';
+  END IF;
+  IF v_event.event_type <> 'ladder' THEN
+    RAISE EXCEPTION 'Only ladder events accept challenges'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF v_event.status IN ('cancelled','completed') THEN
+    RAISE EXCEPTION 'Event is closed' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM event_participants
+    WHERE event_id = p_event_id AND user_id = v_caller AND status = 'registered'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM event_participants
+    WHERE event_id = p_event_id AND user_id = p_opponent_id AND status = 'registered'
+  ) THEN
+    RAISE EXCEPTION 'Both players must be registered'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  SELECT id INTO v_existing FROM event_matches
+  WHERE event_id = p_event_id
+    AND status IN ('proposed','scheduled','in_progress')
+    AND (
+      (player1_id = v_caller AND player2_id = p_opponent_id)
+      OR
+      (player1_id = p_opponent_id AND player2_id = v_caller)
+    )
+  LIMIT 1;
+  IF v_existing IS NOT NULL THEN
+    RAISE EXCEPTION 'There''s already an open match between you two'
+      USING ERRCODE = 'unique_violation';
+  END IF;
+
+  WITH ranked AS (
+    SELECT user_id,
+           ROW_NUMBER() OVER (
+             ORDER BY points DESC,
+                      (sets_won - sets_lost) DESC,
+                      losses ASC,
+                      user_id ASC
+           ) AS rank
+    FROM event_participants
+    WHERE event_id = p_event_id AND status = 'registered'
+  )
+  SELECT
+    (SELECT rank FROM ranked WHERE user_id = v_caller),
+    (SELECT rank FROM ranked WHERE user_id = p_opponent_id)
+  INTO v_my_rank, v_opp_rank;
+
+  IF v_my_rank IS NULL OR v_opp_rank IS NULL THEN
+    RAISE EXCEPTION 'Rank not available' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF v_opp_rank >= v_my_rank THEN
+    RAISE EXCEPTION 'You can only challenge players ranked above you'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  v_max_gap := COALESCE(
+    NULLIF((v_event.config->>'ladderMaxGap'), '')::int,
+    3
+  );
+  IF (v_my_rank - v_opp_rank) > v_max_gap THEN
+    RAISE EXCEPTION 'Challenge limited to % ranks above you', v_max_gap
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  INSERT INTO event_matches (
+    event_id, player1_id, player2_id, proposed_by,
+    scheduled_at, court_assign, status
+  ) VALUES (
+    p_event_id, v_caller, p_opponent_id, v_caller,
+    p_scheduled_at, COALESCE(p_court_assign, ''), 'proposed'
+  ) RETURNING id INTO v_new_id;
+
+  RETURN v_new_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.propose_ladder_challenge(uuid, uuid, timestamptz, text) FROM public;
+GRANT EXECUTE ON FUNCTION public.propose_ladder_challenge(uuid, uuid, timestamptz, text) TO authenticated;
+
+-- ============================================================
+-- recompute_event_standings — refresh aggregate columns
+-- ============================================================
+--
+-- StandingsTable reads event_participants.{wins,losses,sets_won,
+-- sets_lost,points}. These were updated server-side in the old
+-- /report endpoint via prisma.eventParticipant.update — gone with
+-- the burn-down. Restored as a trigger that fires after every
+-- material change to a match row and rewrites the aggregates from
+-- scratch from completed event_matches. Done as a full recompute
+-- per event (not incremental) to stay correct under dispute / edit
+-- without retracing prior deltas.
+CREATE OR REPLACE FUNCTION public.recompute_event_standings_for(
+  p_event_id uuid
+) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  WITH match_breakdown AS (
+    SELECT
+      em.id,
+      em.player1_id,
+      em.player2_id,
+      em.player3_id,
+      em.player4_id,
+      em.winner_side,
+      em.score,
+      (
+        SELECT COALESCE(SUM(CASE WHEN s.a > s.b THEN 1 ELSE 0 END), 0)
+        FROM regexp_split_to_table(em.score, '[,;]') AS raw
+        CROSS JOIN LATERAL (
+          SELECT
+            (regexp_match(raw, '^\s*(\d+)\s*[-:/]\s*(\d+)'))[1]::int AS a,
+            (regexp_match(raw, '^\s*(\d+)\s*[-:/]\s*(\d+)'))[2]::int AS b
+        ) s
+        WHERE s.a IS NOT NULL AND s.b IS NOT NULL
+      ) AS side1_sets,
+      (
+        SELECT COALESCE(SUM(CASE WHEN s.b > s.a THEN 1 ELSE 0 END), 0)
+        FROM regexp_split_to_table(em.score, '[,;]') AS raw
+        CROSS JOIN LATERAL (
+          SELECT
+            (regexp_match(raw, '^\s*(\d+)\s*[-:/]\s*(\d+)'))[1]::int AS a,
+            (regexp_match(raw, '^\s*(\d+)\s*[-:/]\s*(\d+)'))[2]::int AS b
+        ) s
+        WHERE s.a IS NOT NULL AND s.b IS NOT NULL
+      ) AS side2_sets
+    FROM event_matches em
+    WHERE em.event_id = p_event_id AND em.status = 'completed' AND em.winner_side IN (1, 2)
+  ),
+  per_user AS (
+    SELECT player1_id AS uid, 1 AS w, 0 AS l, side1_sets AS sw, side2_sets AS sl, 3 AS pts
+      FROM match_breakdown WHERE winner_side = 1 AND player1_id IS NOT NULL
+    UNION ALL
+    SELECT player3_id, 1, 0, side1_sets, side2_sets, 3
+      FROM match_breakdown WHERE winner_side = 1 AND player3_id IS NOT NULL
+    UNION ALL
+    SELECT player2_id, 0, 1, side2_sets, side1_sets, 0
+      FROM match_breakdown WHERE winner_side = 1 AND player2_id IS NOT NULL
+    UNION ALL
+    SELECT player4_id, 0, 1, side2_sets, side1_sets, 0
+      FROM match_breakdown WHERE winner_side = 1 AND player4_id IS NOT NULL
+    UNION ALL
+    SELECT player2_id, 1, 0, side2_sets, side1_sets, 3
+      FROM match_breakdown WHERE winner_side = 2 AND player2_id IS NOT NULL
+    UNION ALL
+    SELECT player4_id, 1, 0, side2_sets, side1_sets, 3
+      FROM match_breakdown WHERE winner_side = 2 AND player4_id IS NOT NULL
+    UNION ALL
+    SELECT player1_id, 0, 1, side1_sets, side2_sets, 0
+      FROM match_breakdown WHERE winner_side = 2 AND player1_id IS NOT NULL
+    UNION ALL
+    SELECT player3_id, 0, 1, side1_sets, side2_sets, 0
+      FROM match_breakdown WHERE winner_side = 2 AND player3_id IS NOT NULL
+  ),
+  aggregated AS (
+    SELECT uid,
+           SUM(w)::int AS wins,
+           SUM(l)::int AS losses,
+           SUM(sw)::int AS sets_won,
+           SUM(sl)::int AS sets_lost,
+           SUM(pts)::int AS points
+    FROM per_user
+    GROUP BY uid
+  )
+  UPDATE event_participants ep
+  SET wins      = COALESCE(a.wins, 0),
+      losses    = COALESCE(a.losses, 0),
+      sets_won  = COALESCE(a.sets_won, 0),
+      sets_lost = COALESCE(a.sets_lost, 0),
+      points    = COALESCE(a.points, 0)
+  FROM (SELECT user_id FROM event_participants WHERE event_id = p_event_id) ep_ids
+  LEFT JOIN aggregated a ON a.uid = ep_ids.user_id
+  WHERE ep.event_id = p_event_id AND ep.user_id = ep_ids.user_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.recompute_event_standings_trigger()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.recompute_event_standings_for(OLD.event_id);
+    RETURN OLD;
+  END IF;
+  IF TG_OP = 'INSERT' OR
+     OLD.status     IS DISTINCT FROM NEW.status OR
+     OLD.score      IS DISTINCT FROM NEW.score OR
+     OLD.winner_side IS DISTINCT FROM NEW.winner_side
+  THEN
+    PERFORM public.recompute_event_standings_for(NEW.event_id);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS event_matches_recompute_standings ON public.event_matches;
+CREATE TRIGGER event_matches_recompute_standings
+  AFTER INSERT OR UPDATE OR DELETE ON public.event_matches
+  FOR EACH ROW EXECUTE FUNCTION public.recompute_event_standings_trigger();
+
+-- ============================================================
+-- GROUP OWNER AUTO-ADD (fixes bootstrap chicken-and-egg)
+-- ============================================================
+--
+-- group_members_insert_manager requires has_group_role('manager') —
+-- but a brand-new group owner has no group_members row yet, so the
+-- very first INSERT they make to add themselves RLS-rejects. The
+-- legacy CreateGroupForm silently swallowed the error, leaving the
+-- /groups page showing the team via groups.owner_id while every
+-- is_group_member() gate downstream returned false. Fixed by an
+-- AFTER INSERT trigger that always writes the owner row, idempotent
+-- under ON CONFLICT so existing SECURITY DEFINER paths that also
+-- attempted the insert (ensure_event_backing_group, propose_team's
+-- create_team_group_on_complete) stay correct.
+CREATE OR REPLACE FUNCTION public.auto_add_group_owner_member()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.group_members (group_id, user_id, role)
+  VALUES (NEW.id, NEW.owner_id, 'owner')
+  ON CONFLICT (group_id, user_id) DO NOTHING;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS groups_auto_add_owner ON public.groups;
+CREATE TRIGGER groups_auto_add_owner
+  AFTER INSERT ON public.groups
+  FOR EACH ROW EXECUTE FUNCTION public.auto_add_group_owner_member();
+
+-- ============================================================
+-- EVENT BACKING GROUP: auto-create + member sync
+-- ============================================================
+--
+-- The original ensureEventGroup() spun up a one-to-one Group per event
+-- so participants had a chat surface, and syncEventGroupMembers() kept
+-- group_members in lock-step with registered event_participants. Both
+-- were deleted in the burn-down; restored here. Together with the
+-- match-status fan-out trigger above, this lights up the in-chat
+-- system messages for report / confirm / dispute.
+CREATE OR REPLACE FUNCTION public.ensure_event_backing_group()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_group_id uuid;
+  v_welcome  text;
+  v_flair    text;
+BEGIN
+  IF NEW.group_id IS NOT NULL THEN RETURN NEW; END IF;
+
+  INSERT INTO public.groups (name, owner_id)
+  VALUES (NEW.title, NEW.owner_id)
+  RETURNING id INTO v_group_id;
+
+  -- Idempotent: the groups_auto_add_owner trigger already wrote this
+  -- row when the groups INSERT above fired. Kept explicit for
+  -- documentation and safety.
+  INSERT INTO public.group_members (group_id, user_id, role)
+  VALUES (v_group_id, NEW.owner_id, 'owner')
+  ON CONFLICT (group_id, user_id) DO NOTHING;
+
+  v_flair := CASE NEW.event_type
+    WHEN 'tournament'  THEN '🏆 Tournament time — bring your A game!'
+    WHEN 'round_robin' THEN '🔁 Round-robin — you''ll play everyone, good luck!'
+    WHEN 'ladder'      THEN '🪜 Ladder open — climb the ranks by challenging up.'
+    WHEN 'mixer'       THEN '🤝 Social mixer — partners rotate, just have fun.'
+    WHEN 'clinic'      THEN '🎾 Clinic — show up ready to learn.'
+    ELSE                   '🎾 Let''s play!'
+  END;
+  v_welcome := 'Welcome to ' || NEW.title || '! ' || v_flair;
+
+  INSERT INTO public.group_messages (group_id, sender_id, content)
+  VALUES (v_group_id, NEW.owner_id, v_welcome);
+
+  UPDATE public.events SET group_id = v_group_id WHERE id = NEW.id;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS events_ensure_backing_group ON public.events;
+CREATE TRIGGER events_ensure_backing_group
+  AFTER INSERT ON public.events
+  FOR EACH ROW EXECUTE FUNCTION public.ensure_event_backing_group();
+
+CREATE OR REPLACE FUNCTION public.sync_event_group_membership()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_group_id uuid;
+BEGIN
+  SELECT group_id INTO v_group_id FROM public.events WHERE id = NEW.event_id;
+  IF v_group_id IS NULL THEN RETURN NEW; END IF;
+
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.status = 'registered' THEN
+      INSERT INTO public.group_members (group_id, user_id, role)
+      VALUES (v_group_id, NEW.user_id, 'member')
+      ON CONFLICT (group_id, user_id) DO NOTHING;
+    END IF;
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF OLD.status IS DISTINCT FROM NEW.status THEN
+      IF NEW.status = 'registered' THEN
+        INSERT INTO public.group_members (group_id, user_id, role)
+        VALUES (v_group_id, NEW.user_id, 'member')
+        ON CONFLICT (group_id, user_id) DO NOTHING;
+      ELSIF OLD.status = 'registered' THEN
+        -- Don't kick the event owner out of their own chat when they
+        -- withdraw from their own playing slot. Also preserve any
+        -- pre-existing manager/captain/owner role on the backing
+        -- group — only the 'member' rows the trigger itself wrote
+        -- should ever be removed.
+        IF NEW.user_id <> (SELECT owner_id FROM public.events WHERE id = NEW.event_id) THEN
+          DELETE FROM public.group_members
+            WHERE group_id = v_group_id
+              AND user_id = NEW.user_id
+              AND role = 'member';
+        END IF;
+      END IF;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS event_participants_sync_group ON public.event_participants;
+CREATE TRIGGER event_participants_sync_group
+  AFTER INSERT OR UPDATE OF status ON public.event_participants
+  FOR EACH ROW EXECUTE FUNCTION public.sync_event_group_membership();
+
+-- ============================================================
+-- EVENT CHECK-IN: organizer-only column gate
+-- ============================================================
+-- /api/events/[id]/checkin was organizer-only; the burn-down opened
+-- the column to "self or owner" via RLS, so a player can self-check-in.
+-- A BEFORE UPDATE trigger gated to checked_in_at restores the gate
+-- without disturbing the more permissive update policy used by
+-- registered_at / status flips.
+CREATE OR REPLACE FUNCTION public.enforce_event_checkin_owner()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_owner uuid;
+BEGIN
+  IF OLD.checked_in_at IS NOT DISTINCT FROM NEW.checked_in_at THEN
+    RETURN NEW;
+  END IF;
+  SELECT owner_id INTO v_owner FROM public.events WHERE id = NEW.event_id;
+  IF v_owner IS NULL OR v_owner <> auth.uid() THEN
+    RAISE EXCEPTION 'Only the event organizer can check players in'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS event_participants_checkin_owner_only ON public.event_participants;
+CREATE TRIGGER event_participants_checkin_owner_only
+  BEFORE UPDATE OF checked_in_at ON public.event_participants
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_event_checkin_owner();
+
+-- ============================================================
+-- PRACTICE SERIES ANNOUNCEMENT
+-- ============================================================
+-- /api/groups/[id]/practices posted "📣 New practice series scheduled"
+-- into the group chat. Restored as an AFTER INSERT trigger. Attributes
+-- the message to the caller (RLS already restricts inserts to
+-- captains+ via practice_series_write_captain), with a fallback to the
+-- group owner for service-role inserts in tests / scripts.
+CREATE OR REPLACE FUNCTION public.announce_practice_series()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller uuid := auth.uid();
+  v_msg    text;
+BEGIN
+  IF v_caller IS NULL THEN
+    SELECT owner_id INTO v_caller FROM public.groups WHERE id = NEW.group_id;
+  END IF;
+  IF v_caller IS NULL THEN RETURN NEW; END IF;
+
+  v_msg := '📣 New practice series scheduled: ' || NEW.name
+        || CASE WHEN NULLIF(trim(NEW.practice_time), '') IS NOT NULL
+                THEN ' (' || NEW.practice_time || ')'
+                ELSE '' END
+        || ' @ ' || NEW.location;
+
+  INSERT INTO public.group_messages (group_id, sender_id, content)
+  VALUES (NEW.group_id, v_caller, v_msg);
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS practice_series_announce ON public.practice_series;
+CREATE TRIGGER practice_series_announce
+  AFTER INSERT ON public.practice_series
+  FOR EACH ROW EXECUTE FUNCTION public.announce_practice_series();
+
+-- ============================================================
+-- EDGE-FUNCTION DISPATCH (pg_net)
+-- ============================================================
+--
+-- Thin wrapper triggers use to fire-and-forget POST to a Supabase
+-- Edge Function. The project URL + anon JWT live in Supabase Vault
+-- so they aren't hard-coded across trigger bodies; both must be
+-- seeded once via `SELECT vault.create_secret(value, name, ...)` —
+-- the names are `supabase_url` and `supabase_anon_key`. Missing
+-- secrets degrade the call to a no-op rather than raising, so the
+-- primary write succeeds in environments where edge functions
+-- aren't configured (preview branches, fresh forks).
+--
+-- pg_net lives in the `net` schema; the request lands in
+-- net.http_request_queue and migrates to net._http_response as the
+-- background worker processes it. We also append a row to
+-- edge_function_dispatch_log so integration tests and operators have
+-- a durable signal independent of pg_net's transient queue.
+CREATE TABLE IF NOT EXISTS public.edge_function_dispatch_log (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  fn_name     text NOT NULL,
+  body        jsonb NOT NULL,
+  request_id  bigint,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS edge_function_dispatch_log_fn_created_idx
+  ON public.edge_function_dispatch_log (fn_name, created_at DESC);
+ALTER TABLE public.edge_function_dispatch_log ENABLE ROW LEVEL SECURITY;
+-- No policies = no access for authenticated/anon. service_role
+-- bypasses RLS by default, which is what tests and ops use.
+
+CREATE OR REPLACE FUNCTION public.invoke_edge_function(
+  fn_name text,
+  body    jsonb
+) RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, net, extensions
+AS $$
+DECLARE
+  v_url      text;
+  v_anon_key text;
+  v_request  bigint;
+BEGIN
+  SELECT decrypted_secret INTO v_url
+    FROM vault.decrypted_secrets WHERE name = 'supabase_url' LIMIT 1;
+  SELECT decrypted_secret INTO v_anon_key
+    FROM vault.decrypted_secrets WHERE name = 'supabase_anon_key' LIMIT 1;
+
+  IF v_url IS NULL OR v_anon_key IS NULL THEN
+    INSERT INTO public.edge_function_dispatch_log (fn_name, body, request_id)
+    VALUES (fn_name, body, NULL);
+    RETURN NULL;
+  END IF;
+
+  SELECT net.http_post(
+    url     := v_url || '/functions/v1/' || fn_name,
+    body    := body,
+    headers := jsonb_build_object(
+                 'Authorization', 'Bearer ' || v_anon_key,
+                 'Content-Type', 'application/json'
+               ),
+    timeout_milliseconds := 5000
+  ) INTO v_request;
+
+  INSERT INTO public.edge_function_dispatch_log (fn_name, body, request_id)
+  VALUES (fn_name, body, v_request);
+
+  RETURN v_request;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.invoke_edge_function(text, jsonb) FROM public;
+
+-- ============================================================
+-- GROUP INVITE EMAIL (Resend via edge function)
+-- ============================================================
+--
+-- Replaces the deleted sendInviteEmail() call from
+-- /api/groups/[id]/invites. The Edge Function (supabase/functions/
+-- group-invite-email/) reads RESEND_API_KEY from its own secrets;
+-- when unset the function no-ops gracefully. The trigger fires
+-- async via pg_net so a transient Resend outage can't roll back
+-- the invite write.
+CREATE OR REPLACE FUNCTION public.dispatch_group_invite_email()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_team_name    text;
+  v_inviter_name text;
+BEGIN
+  SELECT name INTO v_team_name FROM public.groups WHERE id = NEW.group_id;
+  SELECT name INTO v_inviter_name FROM public.profiles WHERE id = NEW.invited_by_id;
+
+  PERFORM public.invoke_edge_function(
+    'group-invite-email',
+    jsonb_build_object(
+      'to',           NEW.email,
+      'inviter_name', COALESCE(v_inviter_name, 'A teammate'),
+      'team_name',    COALESCE(v_team_name, 'a tennis team'),
+      'token',        NEW.token,
+      'expires_at',   to_char(NEW.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+    )
+  );
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS group_invites_send_email ON public.group_invites;
+CREATE TRIGGER group_invites_send_email
+  AFTER INSERT ON public.group_invites
+  FOR EACH ROW EXECUTE FUNCTION public.dispatch_group_invite_email();
+
+-- ============================================================
+-- GROUP INVITE TOKEN RPCs (replaces deleted /api/invites/[token]/*)
+-- ============================================================
+--
+-- group_invites RLS gates SELECT/UPDATE on has_group_role(g, 'manager').
+-- The invitee isn't a member yet — without these RPCs the redeem flow
+-- silently RLS-rejected. accept_group_invite enforces the
+-- email-match guard that the deleted route had, so a leaked token
+-- can't be redeemed by an unrelated account.
+CREATE OR REPLACE FUNCTION public.get_invite_by_token(
+  p_token text
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_inv     group_invites%ROWTYPE;
+  v_group   groups%ROWTYPE;
+  v_inviter text;
+BEGIN
+  IF p_token IS NULL OR length(trim(p_token)) = 0 THEN RETURN NULL; END IF;
+  SELECT * INTO v_inv FROM group_invites WHERE token = p_token;
+  IF v_inv.id IS NULL THEN RETURN NULL; END IF;
+  SELECT * INTO v_group FROM groups WHERE id = v_inv.group_id;
+  SELECT name INTO v_inviter FROM profiles WHERE id = v_inv.invited_by_id;
+  RETURN jsonb_build_object(
+    'id',             v_inv.id,
+    'group_id',       v_inv.group_id,
+    'email',          v_inv.email,
+    'invited_by_id',  v_inv.invited_by_id,
+    'token',          v_inv.token,
+    'role',           v_inv.role,
+    'member_type',    v_inv.member_type,
+    'status',         v_inv.status,
+    'expires_at',     v_inv.expires_at,
+    'accepted_by_id', v_inv.accepted_by_id,
+    'accepted_at',    v_inv.accepted_at,
+    'created_at',     v_inv.created_at,
+    'updated_at',     v_inv.updated_at,
+    'group',          jsonb_build_object(
+      'id',        v_group.id,
+      'name',      v_group.name,
+      'image_url', v_group.image_url
+    ),
+    'inviter_name',   COALESCE(v_inviter, '')
+  );
+END;
+$$;
+REVOKE ALL ON FUNCTION public.get_invite_by_token(text) FROM public;
+GRANT EXECUTE ON FUNCTION public.get_invite_by_token(text) TO authenticated, anon;
+
+CREATE OR REPLACE FUNCTION public.accept_group_invite(
+  p_token text
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller uuid := auth.uid();
+  v_email  text;
+  v_inv    group_invites%ROWTYPE;
+BEGIN
+  IF v_caller IS NULL THEN
+    RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF p_token IS NULL OR length(trim(p_token)) = 0 THEN
+    RAISE EXCEPTION 'Missing token' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  SELECT email INTO v_email FROM auth.users WHERE id = v_caller;
+  SELECT * INTO v_inv FROM group_invites WHERE token = p_token;
+  IF v_inv.id IS NULL THEN
+    RAISE EXCEPTION 'Invite not found' USING ERRCODE = 'no_data_found';
+  END IF;
+  IF v_inv.status = 'accepted' THEN
+    RETURN jsonb_build_object('ok', true, 'already_accepted', true,
+                              'group_id', v_inv.group_id);
+  END IF;
+  IF v_inv.status = 'cancelled' THEN
+    RAISE EXCEPTION 'This invite was cancelled' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF v_inv.expires_at IS NOT NULL AND v_inv.expires_at < now() THEN
+    RAISE EXCEPTION 'This invite has expired' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF lower(v_email) <> lower(v_inv.email::text) THEN
+    RAISE EXCEPTION 'This invite is for a different email address'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  INSERT INTO group_members (group_id, user_id, role, member_type)
+  VALUES (v_inv.group_id, v_caller, v_inv.role, COALESCE(v_inv.member_type, ''))
+  ON CONFLICT (group_id, user_id) DO UPDATE
+    SET role        = EXCLUDED.role,
+        member_type = EXCLUDED.member_type;
+
+  UPDATE group_invites
+  SET status         = 'accepted',
+      accepted_by_id = v_caller,
+      accepted_at    = now()
+  WHERE id = v_inv.id;
+
+  -- Notify the inviter via SECURITY DEFINER write (notifications has
+  -- no INSERT RLS for authenticated).
+  INSERT INTO notifications (user_id, actor_id, type)
+  VALUES (v_inv.invited_by_id, v_caller, 'group_invite_accepted'::notification_type);
+
+  RETURN jsonb_build_object('ok', true, 'group_id', v_inv.group_id);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.accept_group_invite(text) FROM public;
+GRANT EXECUTE ON FUNCTION public.accept_group_invite(text) TO authenticated;
+
+-- ============================================================
+-- PUSH FAN-OUT TRIGGERS (G12)
+-- ============================================================
+--
+-- Replaces the pushToUsers() calls from /api/messages, /api/chats/
+-- [id]/messages, /api/groups/[id]/messages, and /api/messages/
+-- reactions that the burn-down dropped. The actual APN HTTP/2 +
+-- ES256 JWT delivery lives in supabase/functions/push-fanout, so
+-- APNS_* secrets stay scoped to that function — Postgres only knows
+-- "post a JSON banner request" and goes through invoke_edge_function.
+
+CREATE OR REPLACE FUNCTION public.push_on_dm_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_sender_name text;
+  v_body        text;
+BEGIN
+  SELECT name INTO v_sender_name FROM public.profiles WHERE id = NEW.sender_id;
+  v_body := COALESCE(NULLIF(trim(NEW.content), ''), '[media]');
+  PERFORM public.invoke_edge_function(
+    'push-fanout',
+    jsonb_build_object(
+      'user_ids',  jsonb_build_array(NEW.receiver_id),
+      'title',     COALESCE(v_sender_name, 'A teammate'),
+      'body',      left(v_body, 200),
+      'thread_id', 'dm:' || NEW.sender_id::text,
+      'data',      jsonb_build_object(
+                     'kind',       'dm',
+                     'sender_id',  NEW.sender_id::text,
+                     'message_id', NEW.id::text
+                   )
+    )
+  );
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS messages_push_fanout ON public.messages;
+CREATE TRIGGER messages_push_fanout
+  AFTER INSERT ON public.messages
+  FOR EACH ROW EXECUTE FUNCTION public.push_on_dm_insert();
+
+CREATE OR REPLACE FUNCTION public.push_on_chat_message_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_sender_name text;
+  v_chat_name   text;
+  v_recipients  uuid[];
+  v_body        text;
+BEGIN
+  SELECT name INTO v_sender_name FROM public.profiles WHERE id = NEW.sender_id;
+  SELECT name INTO v_chat_name   FROM public.chats    WHERE id = NEW.chat_id;
+  SELECT array_agg(user_id) INTO v_recipients
+  FROM public.chat_participants
+  WHERE chat_id = NEW.chat_id AND user_id <> NEW.sender_id;
+
+  IF v_recipients IS NULL OR cardinality(v_recipients) = 0 THEN
+    RETURN NEW;
+  END IF;
+
+  v_body := COALESCE(v_sender_name, 'A player')
+         || ': '
+         || left(COALESCE(NULLIF(trim(NEW.content), ''), '[media]'), 180);
+
+  PERFORM public.invoke_edge_function(
+    'push-fanout',
+    jsonb_build_object(
+      'user_ids',  to_jsonb(v_recipients),
+      'title',     COALESCE(v_chat_name, 'Session chat'),
+      'body',      v_body,
+      'thread_id', 'chat:' || NEW.chat_id::text,
+      'data',      jsonb_build_object(
+                     'kind',       'chat',
+                     'chat_id',    NEW.chat_id::text,
+                     'message_id', NEW.id::text
+                   )
+    )
+  );
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS chat_messages_push_fanout ON public.chat_messages;
+CREATE TRIGGER chat_messages_push_fanout
+  AFTER INSERT ON public.chat_messages
+  FOR EACH ROW EXECUTE FUNCTION public.push_on_chat_message_insert();
+
+CREATE OR REPLACE FUNCTION public.push_on_group_message_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_sender_name text;
+  v_group_name  text;
+  v_recipients  uuid[];
+  v_body        text;
+BEGIN
+  SELECT name INTO v_sender_name FROM public.profiles WHERE id = NEW.sender_id;
+  SELECT name INTO v_group_name  FROM public.groups   WHERE id = NEW.group_id;
+  SELECT array_agg(user_id) INTO v_recipients
+  FROM public.group_members
+  WHERE group_id = NEW.group_id
+    AND user_id <> NEW.sender_id
+    AND muted = false
+    AND archived_at IS NULL;
+
+  IF v_recipients IS NULL OR cardinality(v_recipients) = 0 THEN
+    RETURN NEW;
+  END IF;
+
+  v_body := COALESCE(v_sender_name, 'A teammate')
+         || ': '
+         || left(COALESCE(NULLIF(trim(NEW.content), ''), '[media]'), 180);
+
+  PERFORM public.invoke_edge_function(
+    'push-fanout',
+    jsonb_build_object(
+      'user_ids',  to_jsonb(v_recipients),
+      'title',     COALESCE(v_group_name, 'Team chat'),
+      'body',      v_body,
+      'thread_id', 'group:' || NEW.group_id::text,
+      'data',      jsonb_build_object(
+                     'kind',       'group',
+                     'group_id',   NEW.group_id::text,
+                     'message_id', NEW.id::text
+                   )
+    )
+  );
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS group_messages_push_fanout ON public.group_messages;
+CREATE TRIGGER group_messages_push_fanout
+  AFTER INSERT ON public.group_messages
+  FOR EACH ROW EXECUTE FUNCTION public.push_on_group_message_insert();
+
+CREATE OR REPLACE FUNCTION public.push_on_message_reaction_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_owner_id    uuid;
+  v_actor_name  text;
+  v_body        text;
+BEGIN
+  IF NEW.target_type = 'dm' THEN
+    SELECT sender_id INTO v_owner_id FROM public.messages WHERE id = NEW.target_id;
+  ELSIF NEW.target_type = 'chat' THEN
+    SELECT sender_id INTO v_owner_id FROM public.chat_messages WHERE id = NEW.target_id;
+  ELSIF NEW.target_type = 'group' THEN
+    SELECT sender_id INTO v_owner_id FROM public.group_messages WHERE id = NEW.target_id;
+  END IF;
+
+  IF v_owner_id IS NULL OR v_owner_id = NEW.user_id THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT name INTO v_actor_name FROM public.profiles WHERE id = NEW.user_id;
+  v_body := COALESCE(v_actor_name, 'Someone')
+         || ' reacted ' || NEW.emoji || ' to your message';
+
+  PERFORM public.invoke_edge_function(
+    'push-fanout',
+    jsonb_build_object(
+      'user_ids', jsonb_build_array(v_owner_id),
+      'title',    'New reaction',
+      'body',     v_body,
+      'data',     jsonb_build_object(
+                    'kind',        'reaction',
+                    'target_type', NEW.target_type::text,
+                    'target_id',   NEW.target_id::text,
+                    'emoji',       NEW.emoji
+                  )
+    )
+  );
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS message_reactions_push_fanout ON public.message_reactions;
+CREATE TRIGGER message_reactions_push_fanout
+  AFTER INSERT ON public.message_reactions
+  FOR EACH ROW EXECUTE FUNCTION public.push_on_message_reaction_insert();
+
+-- ============================================================
+-- INVITE_TO_EVENT RPC (replaces /api/events/[id]/invite)
+-- ============================================================
+--
+-- The notifications table has no INSERT policy for `authenticated` —
+-- all writes go through SECURITY DEFINER fan-out. So client-side
+-- "supabase.from('notifications').insert(...)" for event invites
+-- silently RLS-violates. This RPC re-implements the original guards:
+--   - Caller must own the event (organizer-only invite).
+--   - Targets must be accepted friends of the caller.
+--   - Skip targets already on event_participants (they know).
+--   - Skip targets that have a prior 'event_invite' notification from
+--     the same actor on the same event (don't double-ping).
+-- Returns { invited: <count of new notification rows> }.
+CREATE OR REPLACE FUNCTION public.invite_to_event(
+  p_event_id uuid,
+  p_user_ids uuid[]
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller  uuid := auth.uid();
+  v_event   events%ROWTYPE;
+  v_invited integer := 0;
+BEGIN
+  IF v_caller IS NULL THEN
+    RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF p_user_ids IS NULL OR array_length(p_user_ids, 1) IS NULL THEN
+    RAISE EXCEPTION 'userIds array required' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  SELECT * INTO v_event FROM events WHERE id = p_event_id;
+  IF v_event.id IS NULL THEN
+    RAISE EXCEPTION 'Event not found' USING ERRCODE = 'no_data_found';
+  END IF;
+  IF v_event.owner_id <> v_caller THEN
+    RAISE EXCEPTION 'Only the organizer can invite' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  WITH input AS (
+    SELECT DISTINCT uid FROM unnest(p_user_ids) AS uid
+    WHERE uid IS NOT NULL AND uid <> v_caller
+  ),
+  friends AS (
+    SELECT requester_id AS uid FROM friendships
+      WHERE addressee_id = v_caller AND status = 'accepted'
+    UNION
+    SELECT addressee_id AS uid FROM friendships
+      WHERE requester_id = v_caller AND status = 'accepted'
+  ),
+  inserted AS (
+    INSERT INTO notifications (user_id, actor_id, type, event_id)
+    SELECT i.uid, v_caller, 'event_invite'::notification_type, p_event_id
+    FROM input i
+    WHERE EXISTS (SELECT 1 FROM friends f WHERE f.uid = i.uid)
+      AND NOT EXISTS (SELECT 1 FROM event_participants ep
+                      WHERE ep.event_id = p_event_id AND ep.user_id = i.uid)
+      AND NOT EXISTS (SELECT 1 FROM notifications n
+                      WHERE n.type = 'event_invite'
+                        AND n.event_id = p_event_id
+                        AND n.actor_id = v_caller
+                        AND n.user_id = i.uid)
+    RETURNING 1
+  )
+  SELECT count(*) INTO v_invited FROM inserted;
+
+  RETURN jsonb_build_object('invited', v_invited);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.invite_to_event(uuid, uuid[]) FROM public;
+GRANT EXECUTE ON FUNCTION public.invite_to_event(uuid, uuid[]) TO authenticated;
+
+-- ============================================================
+-- REPORT_COURT_AVAILABILITY RPC
+-- (replaces /api/courts/[id]/availability-reports)
+-- ============================================================
+--
+-- The route was deleted in the burn-down; ArrivalReportModal still
+-- POSTs to it and 404s. Restores the guards inline:
+--   - Caller signed in.
+--   - When tied to a post: caller is author OR APPROVED play_request;
+--     post has a valid play_date+play_time; "now" is in [start - 30m, end].
+--   - Same-user dedupe: drop repeats within the last 30 min for the court.
+-- IP-based rate limiting is dropped (Postgres has no source IP); the
+-- per-user dedupe handles the realistic spam case.
+CREATE OR REPLACE FUNCTION public.report_court_availability(
+  p_court_id  text,
+  p_has_empty boolean,
+  p_post_id   uuid DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller        uuid := auth.uid();
+  v_post          posts%ROWTYPE;
+  v_start         timestamptz;
+  v_end           timestamptz;
+  v_now           timestamptz := now();
+  v_window_before interval := interval '30 minutes';
+  v_dedupe_window interval := interval '30 minutes';
+  v_is_participant boolean;
+  v_recent_id     uuid;
+BEGIN
+  IF v_caller IS NULL THEN
+    RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF p_court_id IS NULL OR length(trim(p_court_id)) = 0 THEN
+    RAISE EXCEPTION 'Missing court_id' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF p_has_empty IS NULL THEN
+    RAISE EXCEPTION 'has_empty required' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  IF p_post_id IS NOT NULL THEN
+    SELECT * INTO v_post FROM posts WHERE id = p_post_id;
+    IF v_post.id IS NULL THEN
+      RAISE EXCEPTION 'Game not found' USING ERRCODE = 'no_data_found';
+    END IF;
+
+    v_is_participant := v_post.author_id = v_caller
+      OR EXISTS (
+        SELECT 1 FROM play_requests
+        WHERE post_id = p_post_id
+          AND user_id = v_caller
+          AND status = 'approved'
+      );
+    IF NOT v_is_participant THEN
+      RAISE EXCEPTION 'Not a participant' USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    IF v_post.play_date <> '' AND v_post.play_time <> '' THEN
+      BEGIN
+        v_start := (v_post.play_date || ' ' || v_post.play_time || ':00')::timestamptz;
+      EXCEPTION WHEN OTHERS THEN
+        v_start := NULL;
+      END;
+    END IF;
+    IF v_start IS NULL THEN
+      RAISE EXCEPTION 'Game has no valid start' USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_end := v_start + (COALESCE(NULLIF(v_post.play_duration, 0), 90) || ' minutes')::interval;
+    IF v_now < v_start - v_window_before OR v_now > v_end THEN
+      RAISE EXCEPTION 'Outside game window' USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+  END IF;
+
+  SELECT id INTO v_recent_id FROM court_availability_reports
+    WHERE court_id = p_court_id
+      AND user_id  = v_caller
+      AND reported_at > v_now - v_dedupe_window
+    LIMIT 1;
+  IF v_recent_id IS NOT NULL THEN
+    RETURN jsonb_build_object('ok', true, 'deduped', true);
+  END IF;
+
+  INSERT INTO court_availability_reports (court_id, user_id, has_empty, post_id)
+  VALUES (p_court_id, v_caller, p_has_empty, p_post_id);
+
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.report_court_availability(text, boolean, uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.report_court_availability(text, boolean, uuid) TO authenticated;
 
 -- ============================================================
 -- THREADED COMMENT REPLIES

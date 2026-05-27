@@ -95,6 +95,7 @@ export default function HomePage() {
   const targetPostId = searchParams.get("post");
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
+  const [feedError, setFeedError] = useState("");
   const [highlightedPostId, setHighlightedPostId] = useState<string | null>(null);
   // null = show all categories; otherwise show only the selected category
   const [activeFilter, setActiveFilter] = useState<"find_players" | "propose_team" | "social" | "nearby" | null>(null);
@@ -222,6 +223,17 @@ export default function HomePage() {
         .then((rows) => rows.map(adaptFeedPost))
         .then((data) => {
           setPosts(data);
+          setFeedError("");
+          setLoading(false);
+        })
+        .catch((err) => {
+          // Without this, a listFeed rejection (RLS regression, network
+          // blip, adapter type-cast failure) stranded the home page on
+          // the skeleton forever.
+          console.error("[home] listFeed failed:", err);
+          setFeedError(
+            err instanceof Error ? err.message : "Couldn't load the feed."
+          );
           setLoading(false);
         });
     }
@@ -543,6 +555,32 @@ export default function HomePage() {
                     <div className="skeleton w-full h-16" />
                   </div>
                 ))}
+              </div>
+            );
+          }
+
+          if (feedError) {
+            return (
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-red-100 text-center">
+                <p className="font-semibold text-gray-800 mb-1">Couldn&apos;t load the feed</p>
+                <p className="text-sm text-gray-500 mb-3">{feedError}</p>
+                <button
+                  onClick={() => {
+                    setLoading(true);
+                    setFeedError("");
+                    const supabase = createSupabaseBrowserClient();
+                    listFeed(supabase, { limit: 50 })
+                      .then((rows) => rows.map(adaptFeedPost))
+                      .then((data) => { setPosts(data); setLoading(false); })
+                      .catch((err) => {
+                        setFeedError(err instanceof Error ? err.message : "Couldn't load the feed.");
+                        setLoading(false);
+                      });
+                  }}
+                  className="btn-primary text-sm"
+                >
+                  Retry
+                </button>
               </div>
             );
           }

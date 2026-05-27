@@ -493,7 +493,9 @@ export default function ProfilePage() {
             }
           : prev
       );
-    } catch {}
+    } catch (err) {
+      setTagError(err instanceof Error ? err.message : "Couldn't save tags.");
+    }
   };
 
   const addTag = async () => {
@@ -638,8 +640,10 @@ export default function ProfilePage() {
         prev ? { ...prev, highlights: (prev.highlights || []).filter((h) => h.id !== id) } : prev
       );
       setViewingHighlightIdx(null);
-    } catch {
-      // ignore
+    } catch (err) {
+      setBioUploadError(
+        err instanceof Error ? err.message : "Couldn't remove highlight."
+      );
     }
   };
 

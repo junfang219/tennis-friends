@@ -43,10 +43,11 @@ export default function InviteAcceptPage() {
           name: row.group?.name ?? "",
           imageUrl: row.group?.image_url ?? "",
         },
-        inviterName: "",
+        inviterName:
+          (row as unknown as { inviter_name?: string }).inviter_name || "",
       });
-    } catch {
-      setLoadError("Couldn't load the invite.");
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Couldn't load the invite.");
     }
   }, [token]);
 
@@ -60,15 +61,10 @@ export default function InviteAcceptPage() {
     setAcceptError("");
     try {
       const supabase = createSupabaseBrowserClient();
-      // Re-resolve the invite to grab the latest role/member_type.
-      const row = await validateInvite(supabase, token);
-      if (!row || row.status !== "pending") {
-        setAcceptError("This invite is no longer valid.");
-        setAccepting(false);
-        return;
-      }
-      await acceptInvite(supabase, row.id, row.group_id, row.role, row.member_type);
-      router.push(`/groups/${row.group_id}`);
+      // accept_group_invite RPC re-validates token + email + expiry +
+      // status server-side, so the client doesn't need to pre-check.
+      const result = await acceptInvite(supabase, token);
+      router.push(`/groups/${result.groupId}`);
     } catch (err) {
       setAcceptError(err instanceof Error ? err.message : "Couldn't accept the invite.");
       setAccepting(false);

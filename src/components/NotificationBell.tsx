@@ -212,6 +212,7 @@ export default function NotificationBell() {
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
   const [friendReqLoading, setFriendReqLoading] = useState(false);
   const [friendReqAction, setFriendReqAction] = useState("");
+  const [friendReqError, setFriendReqError] = useState("");
 
   const openPostModal = (postId: string, withComments = false) => {
     if (!postId) return;
@@ -277,23 +278,33 @@ export default function NotificationBell() {
 
   const acceptFriendRequest = async (friendshipId: string) => {
     setFriendReqAction(friendshipId);
+    setFriendReqError("");
     try {
       const supabase = createSupabaseBrowserClient();
       await sbAcceptFriendRequest(supabase, friendshipId);
       setFriendRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId));
       setPendingFriendRequests((prev) => Math.max(0, prev - 1));
-    } catch {}
+    } catch (err) {
+      setFriendReqError(
+        err instanceof Error ? err.message : "Couldn't accept the request."
+      );
+    }
     setFriendReqAction("");
   };
 
   const rejectFriendRequest = async (friendshipId: string) => {
     setFriendReqAction(friendshipId);
+    setFriendReqError("");
     try {
       const supabase = createSupabaseBrowserClient();
       await sbRejectFriendRequest(supabase, friendshipId);
       setFriendRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId));
       setPendingFriendRequests((prev) => Math.max(0, prev - 1));
-    } catch {}
+    } catch (err) {
+      setFriendReqError(
+        err instanceof Error ? err.message : "Couldn't decline the request."
+      );
+    }
     setFriendReqAction("");
   };
 
@@ -503,6 +514,11 @@ export default function NotificationBell() {
                 </button>
                 <h3 className="font-display text-base font-bold text-gray-900">Friend Requests</h3>
               </div>
+              {friendReqError && (
+                <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+                  {friendReqError}
+                </div>
+              )}
               <div className="max-h-96 overflow-y-auto">
                 {friendReqLoading ? (
                   <div className="flex justify-center py-10">

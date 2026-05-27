@@ -347,17 +347,17 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "chat_messages_sender_id_fkey"
-            columns: ["sender_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "chat_messages_expense_id_fkey"
             columns: ["expense_id"]
             isOneToOne: false
             referencedRelation: "expenses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_sender_id_fkey"
+            columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -759,6 +759,30 @@ export type Database = {
           },
         ]
       }
+      edge_function_dispatch_log: {
+        Row: {
+          body: Json
+          created_at: string
+          fn_name: string
+          id: string
+          request_id: number | null
+        }
+        Insert: {
+          body: Json
+          created_at?: string
+          fn_name: string
+          id?: string
+          request_id?: number | null
+        }
+        Update: {
+          body?: Json
+          created_at?: string
+          fn_name?: string
+          id?: string
+          request_id?: number | null
+        }
+        Relationships: []
+      }
       event_matches: {
         Row: {
           bracket_slot: string
@@ -768,8 +792,8 @@ export type Database = {
           disputed_at: string | null
           event_id: string
           id: string
-          player1_id: string
-          player2_id: string
+          player1_id: string | null
+          player2_id: string | null
           player3_id: string | null
           player4_id: string | null
           proposed_by: string | null
@@ -788,8 +812,8 @@ export type Database = {
           disputed_at?: string | null
           event_id: string
           id?: string
-          player1_id: string
-          player2_id: string
+          player1_id?: string | null
+          player2_id?: string | null
           player3_id?: string | null
           player4_id?: string | null
           proposed_by?: string | null
@@ -808,8 +832,8 @@ export type Database = {
           disputed_at?: string | null
           event_id?: string
           id?: string
-          player1_id?: string
-          player2_id?: string
+          player1_id?: string | null
+          player2_id?: string | null
           player3_id?: string | null
           player4_id?: string | null
           proposed_by?: string | null
@@ -2813,6 +2837,7 @@ export type Database = {
         Returns: unknown
       }
       _st_within: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      accept_group_invite: { Args: { p_token: string }; Returns: Json }
       addauth: { Args: { "": string }; Returns: boolean }
       addgeometrycolumn:
         | {
@@ -2992,10 +3017,19 @@ export type Database = {
         Returns: boolean
       }
       geomfromewkt: { Args: { "": string }; Returns: unknown }
+      get_invite_by_token: { Args: { p_token: string }; Returns: Json }
       gettransactionid: { Args: never; Returns: unknown }
       has_group_role: {
         Args: { g: string; min_role: Database["public"]["Enums"]["group_role"] }
         Returns: boolean
+      }
+      invite_to_event: {
+        Args: { p_event_id: string; p_user_ids: string[] }
+        Returns: Json
+      }
+      invoke_edge_function: {
+        Args: { body: Json; fn_name: string }
+        Returns: number
       }
       is_blocked: { Args: { a: string; b: string }; Returns: boolean }
       is_chat_participant: { Args: { c: string }; Returns: boolean }
@@ -3042,6 +3076,27 @@ export type Database = {
       }
       postgis_version: { Args: never; Returns: string }
       postgis_wagyu_version: { Args: never; Returns: string }
+      propose_ladder_challenge: {
+        Args: {
+          p_court_assign?: string
+          p_event_id: string
+          p_opponent_id: string
+          p_scheduled_at?: string
+        }
+        Returns: string
+      }
+      recompute_event_standings_for: {
+        Args: { p_event_id: string }
+        Returns: undefined
+      }
+      report_court_availability: {
+        Args: { p_court_id: string; p_has_empty: boolean; p_post_id?: string }
+        Returns: Json
+      }
+      seed_event_bracket: {
+        Args: { p_event_id: string; p_pairs: Json }
+        Returns: Json
+      }
       st_3dclosestpoint: {
         Args: { geom1: unknown; geom2: unknown }
         Returns: unknown
@@ -3666,7 +3721,18 @@ export type Database = {
         | "group_invite_accepted"
         | "reply"
         | "event_signup"
-      play_request_status: "pending" | "approved" | "rejected"
+        | "event_match_report"
+        | "event_match_confirmed"
+        | "event_match_disputed"
+        | "event_ladder_challenge"
+        | "event_challenge_accepted"
+        | "event_challenge_declined"
+      play_request_status:
+        | "pending"
+        | "approved"
+        | "rejected"
+        | "withdrawn"
+        | "removed"
       post_target_kind: "group" | "friend_group"
       post_type: "regular" | "find_players" | "propose_team" | "event"
       reaction_target: "dm" | "group" | "chat"
@@ -3838,8 +3904,20 @@ export const Constants = {
         "group_invite_accepted",
         "reply",
         "event_signup",
+        "event_match_report",
+        "event_match_confirmed",
+        "event_match_disputed",
+        "event_ladder_challenge",
+        "event_challenge_accepted",
+        "event_challenge_declined",
       ],
-      play_request_status: ["pending", "approved", "rejected"],
+      play_request_status: [
+        "pending",
+        "approved",
+        "rejected",
+        "withdrawn",
+        "removed",
+      ],
       post_target_kind: ["group", "friend_group"],
       post_type: ["regular", "find_players", "propose_team", "event"],
       reaction_target: ["dm", "group", "chat"],
