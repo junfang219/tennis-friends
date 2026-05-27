@@ -79,7 +79,11 @@ export async function createTeamListing(
 export interface GroupInvite {
   id: string;
   group_id: string;
-  email: string;
+  // NOTE: `email` is deliberately not surfaced on the client. The
+  // invite token is bearer-grade; if get_invite_by_token returned the
+  // invitee email, any third party with a leaked URL could resolve
+  // it to PII. The email-match guard runs server-side inside
+  // accept_group_invite (against auth.users.email).
   invited_by_id: string;
   token: string;
   role: "owner" | "manager" | "captain" | "member";
@@ -390,22 +394,42 @@ export async function requestToJoin(
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("Not signed in");
 
-  // upsert with onConflict so a user who was previously rejected /
-  // withdrew / was removed can re-apply: same (post_id, user_id) row
-  // gets re-set to 'pending' with the new note. Without this, the
-  // play_requests_unique (post_id, user_id) constraint raised 23505
-  // and the UI surfaced a generic duplicate-key error.
+  // Re-applications: read the existing row first. A blind upsert
+  // would silently flip an APPROVED row back to 'pending' and leak
+  // the seat — handle_play_request_withdraw_or_remove only fires on
+  // approved->withdrawn/removed, so the slot counter and the chat
+  // would stay stale. Only terminal states (rejected/withdrawn/
+  // removed) are eligible for re-application.
+  const { data: existing, error: readErr } = await supabase
+    .from("play_requests")
+    .select("id, status")
+    .eq("post_id", postId)
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+  if (readErr) throw readErr;
+
+  if (existing) {
+    if (existing.status === "approved") return existing as PlayRequest;
+    if (existing.status === "pending") return existing as PlayRequest;
+    // rejected / withdrawn / removed -> reset to pending.
+    const { data, error } = await supabase
+      .from("play_requests")
+      .update({ status: "pending", note })
+      .eq("id", existing.id)
+      .select("id, post_id, user_id, status, note, created_at, updated_at")
+      .single();
+    if (error) throw error;
+    return data as PlayRequest;
+  }
+
   const { data, error } = await supabase
     .from("play_requests")
-    .upsert(
-      {
-        post_id: postId,
-        user_id: auth.user.id,
-        status: "pending",
-        note,
-      },
-      { onConflict: "post_id,user_id" }
-    )
+    .insert({
+      post_id: postId,
+      user_id: auth.user.id,
+      status: "pending",
+      note,
+    })
     .select("id, post_id, user_id, status, note, created_at, updated_at")
     .single();
   if (error) throw error;

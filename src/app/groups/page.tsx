@@ -37,19 +37,28 @@ export default function GroupsPage() {
   const [friends, setFriends] = useState<FriendEntry[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   const loadGroups = async () => {
+    setLoadError("");
     try {
       const supabase = createSupabaseBrowserClient();
-      const rows = await listMyGroups(supabase);
-      if (rows.length === 0) {
+      // Pull active + archived in parallel so the Archived Teams
+      // collapsible has data to render.
+      const [activeRows, archivedRows] = await Promise.all([
+        listMyGroups(supabase),
+        listMyGroups(supabase, { archived: true }),
+      ]);
+      const allGroupIds = [...activeRows, ...archivedRows].map((g) => g.id);
+      if (allGroupIds.length === 0) {
         setGroups([]);
         setArchivedGroups([]);
         setLoading(false);
         return;
       }
-      const groupIds = rows.map((g) => g.id);
-      const ownerIds = Array.from(new Set(rows.map((g) => g.owner_id)));
+      const ownerIds = Array.from(
+        new Set([...activeRows, ...archivedRows].map((g) => g.owner_id))
+      );
 
       // Fan out the owner + member lookups in parallel. group_members
       // and profiles are both RLS-gated to the current user's groups,
@@ -65,7 +74,7 @@ export default function GroupsPage() {
             `id, group_id, user_id,
              user:profiles!group_members_user_id_fkey ( id, name, profile_image_url )`
           )
-          .in("group_id", groupIds)
+          .in("group_id", allGroupIds)
           .is("archived_at", null),
       ]);
 
@@ -86,7 +95,7 @@ export default function GroupsPage() {
         membersByGroup.set(m.group_id, arr);
       }
 
-      const mapped = rows.map((g) => {
+      const adapt = (g: { id: string; name: string; image_url: string; owner_id: string }) => {
         const owner = ownerById.get(g.owner_id);
         const groupMembers = membersByGroup.get(g.id) ?? [];
         return {
@@ -111,11 +120,13 @@ export default function GroupsPage() {
             })),
           _count: { members: groupMembers.length },
         };
-      });
-      setGroups(mapped);
-      setArchivedGroups([]);
+      };
+
+      setGroups(activeRows.map(adapt));
+      setArchivedGroups(archivedRows.map(adapt));
       setLoading(false);
-    } catch {
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Couldn't load your teams.");
       setLoading(false);
     }
   };
@@ -209,6 +220,18 @@ export default function GroupsPage() {
       </div>
 
       <div className="space-y-4">
+
+        {loadError && (
+          <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+            {loadError}{" "}
+            <button
+              onClick={() => { setLoading(true); void loadGroups(); }}
+              className="underline font-semibold ml-1"
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
         {/* Create group form */}
         {showCreate && (

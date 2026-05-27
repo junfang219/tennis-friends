@@ -41,18 +41,25 @@ export interface GroupMember {
 const GROUP_COLUMNS =
   "id, name, image_url, cover_image_url, cover_offset_y, cover_scale, owner_id, member_types, reminder_prefs, created_at, updated_at";
 
-/** Groups the signed-in user belongs to (any role). */
+/**
+ * Groups the signed-in user belongs to (any role). The default
+ * filter excludes rows the caller has archived (group_members.
+ * archived_at NOT NULL); pass `{ archived: true }` to fetch only
+ * the archived list for the Archived Teams collapsible.
+ */
 export async function listMyGroups(
-  supabase: SupabaseClient<Database>
+  supabase: SupabaseClient<Database>,
+  opts: { archived?: boolean } = {}
 ): Promise<Group[]> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return [];
 
-  const { data: memberships, error: mErr } = await supabase
+  let q = supabase
     .from("group_members")
     .select("group_id")
-    .eq("user_id", auth.user.id)
-    .is("archived_at", null);
+    .eq("user_id", auth.user.id);
+  q = opts.archived ? q.not("archived_at", "is", null) : q.is("archived_at", null);
+  const { data: memberships, error: mErr } = await q;
   if (mErr) throw mErr;
   const groupIds = (memberships ?? []).map((m) => m.group_id);
   if (groupIds.length === 0) return [];

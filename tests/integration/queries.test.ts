@@ -2086,10 +2086,9 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         .gte("created_at", new Date(Date.now() - 60_000).toISOString());
     });
 
-    // L1 — requestToJoin upserts: a user whose prior request was
-    // rejected/withdrawn/removed can re-apply without hitting the
-    // play_requests_unique 23505.
-    it("requestToJoin upserts a prior rejected/withdrawn request back to pending", async () => {
+    // L1 — re-application of a terminal-state play_request resets to
+    // pending; an APPROVED row is never silently flipped (C1 fix).
+    it("requestToJoin resets rejected -> pending; never touches approved", async () => {
       const admin = adminClient();
       const post = await createPost(alice.client, {
         content: "Need 1 more",
@@ -2101,22 +2100,39 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         game_type: "singles",
         players_needed: 1,
       });
+      const { requestToJoin } = await import("../../src/lib/supabase/queries");
+
+      // rejected -> pending re-apply
       await admin.from("play_requests").insert({
         post_id: post.id,
         user_id: bob.id,
         status: "rejected",
         note: "wrong skill",
       });
-      const { requestToJoin } = await import("../../src/lib/supabase/queries");
       const req = await requestToJoin(bob.client, post.id, "give me another shot");
       expect(req.status).toBe("pending");
       expect(req.note).toBe("give me another shot");
-      const { data: rows } = await admin
+
+      // approved -> approved (no-op). Carol is already approved; re-call
+      // must NOT flip her to pending.
+      await admin.from("play_requests").insert({
+        post_id: post.id,
+        user_id: carol.id,
+        status: "approved",
+        note: "vetted",
+      });
+      const carolReq = await requestToJoin(carol.client, post.id, "asking again");
+      expect(carolReq.status).toBe("approved");
+      // Note text from the re-call must not overwrite the existing row.
+      const { data: carolRow } = await admin
         .from("play_requests")
-        .select("id")
+        .select("status, note")
         .eq("post_id", post.id)
-        .eq("user_id", bob.id);
-      expect((rows ?? []).length).toBe(1);
+        .eq("user_id", carol.id)
+        .single();
+      expect(carolRow?.status).toBe("approved");
+      expect(carolRow?.note).toBe("vetted");
+
       await deletePost(alice.client, post.id);
     });
 
@@ -2462,6 +2478,76 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       expect(champion).toBeDefined();
 
       await admin.from("events").delete().eq("id", eventId);
+    });
+
+    // C2 — actor-column impersonation gate. Bob (player2) cannot set
+    // reported_by to alice's id; the BEFORE UPDATE trigger rejects.
+    it("event_matches BEFORE UPDATE blocks actor-column impersonation", async () => {
+      const admin = adminClient();
+      // Two-player tournament event with both players registered so
+      // SELECT RLS lets each see the match row.
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Actor Gate Test",
+          event_type: "tournament",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+      await admin.from("event_participants").insert([
+        { event_id: eventId, user_id: alice.id, status: "registered" },
+        { event_id: eventId, user_id: bob.id, status: "registered" },
+      ]);
+      const { data: m } = await alice.client
+        .from("event_matches")
+        .insert({
+          event_id: eventId,
+          player1_id: alice.id,
+          player2_id: bob.id,
+          status: "scheduled",
+        })
+        .select("id")
+        .single();
+      const matchId = m!.id;
+
+      // Bob tries to report a score in alice's name. Trigger rejects.
+      const evilReport = await bob.client
+        .from("event_matches")
+        .update({
+          score: "6-0,6-0",
+          winner_side: 2,
+          reported_by: alice.id,
+          status: "in_progress",
+        })
+        .eq("id", matchId);
+      expect(evilReport.error?.message).toContain("reported_by must be the caller");
+
+      // Bob reporting in his own name still works.
+      const okReport = await bob.client
+        .from("event_matches")
+        .update({
+          score: "6-3,6-4",
+          winner_side: 2,
+          reported_by: bob.id,
+          status: "in_progress",
+        })
+        .eq("id", matchId);
+      expect(okReport.error).toBeNull();
+
+      // Bob trying to confirm in alice's name fails too.
+      const evilConfirm = await bob.client
+        .from("event_matches")
+        .update({ confirmed_by: alice.id, status: "completed" })
+        .eq("id", matchId);
+      expect(evilConfirm.error?.message).toContain("confirmed_by must be the caller");
+
+      await alice.client.from("events").delete().eq("id", eventId);
     });
 
     // Ladder — propose_ladder_challenge enforces rank-gap + dedupe.

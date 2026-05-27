@@ -28,6 +28,7 @@
 //   }
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { requireTriggerSecret } from "../_shared/trigger_auth.ts";
 
 interface InvitePayload {
   to?: string;
@@ -47,6 +48,13 @@ function escapeHtml(s: string): string {
 }
 
 Deno.serve(async (req: Request) => {
+  // Anon-key + verify_jwt is not enough — the anon key ships in
+  // every client bundle. Layer a shared secret attached by the DB
+  // trigger so anyone with the anon key can't use this function as
+  // a free outbound-email relay.
+  const unauthorized = requireTriggerSecret(req);
+  if (unauthorized) return unauthorized;
+
   let payload: InvitePayload;
   try {
     payload = (await req.json()) as InvitePayload;

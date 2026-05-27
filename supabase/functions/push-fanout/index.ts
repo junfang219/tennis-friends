@@ -20,6 +20,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { pushToUsers, getSupabaseAdmin, type ApnPayload } from "../_shared/apn.ts";
+import { requireTriggerSecret } from "../_shared/trigger_auth.ts";
 
 interface FanoutPayload {
   user_ids?: string[];
@@ -31,6 +32,13 @@ interface FanoutPayload {
 }
 
 Deno.serve(async (req: Request) => {
+  // verify_jwt=true on its own only proves the caller has a valid
+  // Supabase JWT — and the anon key counts. Layer a shared secret
+  // attached by the DB trigger so external POSTs (anon key only)
+  // can't fan out arbitrary push banners.
+  const unauthorized = requireTriggerSecret(req);
+  if (unauthorized) return unauthorized;
+
   let payload: FanoutPayload;
   try {
     payload = (await req.json()) as FanoutPayload;

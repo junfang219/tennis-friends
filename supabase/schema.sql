@@ -4210,10 +4210,6 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  IF EXISTS (SELECT 1 FROM public.chats WHERE post_id = NEW.id) THEN
-    RETURN NEW;
-  END IF;
-
   BEGIN
     v_play_dt := (NEW.play_date || ' ' || NEW.play_time || ':00')::timestamptz;
   EXCEPTION WHEN OTHERS THEN
@@ -4227,9 +4223,18 @@ BEGIN
               || v_location || ' · '
               || trim(to_char(v_play_dt, 'FMHH12:MI AM'));
 
+  -- ON CONFLICT (post_id) WHERE post_id IS NOT NULL DO NOTHING:
+  -- backstops the chats_post_id_unique partial index against the
+  -- race where two concurrent is_complete=true updates both pass
+  -- an EXISTS precheck. With ON CONFLICT, the loser silently
+  -- noops (v_chat_id stays NULL) instead of raising a
+  -- unique_violation that would roll back the entire UPDATE
+  -- (players_confirmed + is_complete reverting).
   INSERT INTO public.chats (name, creator_id, post_id, session_end_at, manual_player_names)
   VALUES (v_chat_name, NEW.author_id, NEW.id, v_session_end, COALESCE(NEW.manual_players, ''))
+  ON CONFLICT (post_id) WHERE post_id IS NOT NULL DO NOTHING
   RETURNING id INTO v_chat_id;
+  IF v_chat_id IS NULL THEN RETURN NEW; END IF;
 
   INSERT INTO public.chat_participants (chat_id, user_id)
   SELECT v_chat_id, NEW.author_id
@@ -4854,6 +4859,64 @@ CREATE TRIGGER event_matches_status_fanout
   AFTER UPDATE ON public.event_matches
   FOR EACH ROW EXECUTE FUNCTION public.notify_on_event_match_status_change();
 
+-- BEFORE UPDATE gate: stop a malicious player from setting
+-- reported_by / confirmed_by / proposed_by / player2_id to someone
+-- else's uuid. event_matches_update_owner_or_player permits the four
+-- player slots to UPDATE the row, and the AFTER trigger above
+-- impersonates whoever those columns name. The gate forces those
+-- "actor" columns to remain self (or NULL for clears) unless the
+-- event owner is the writer. Skipped when auth.uid() is NULL
+-- (SECURITY DEFINER cascades from trigger functions, cron, tests).
+CREATE OR REPLACE FUNCTION public.enforce_event_match_actor_columns()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  v_caller uuid := auth.uid();
+  v_owner  uuid;
+BEGIN
+  IF v_caller IS NULL THEN RETURN NEW; END IF;
+  SELECT owner_id INTO v_owner FROM events WHERE id = NEW.event_id;
+  IF v_owner = v_caller THEN RETURN NEW; END IF;
+
+  IF NEW.reported_by IS DISTINCT FROM OLD.reported_by
+     AND NEW.reported_by IS NOT NULL
+     AND NEW.reported_by <> v_caller THEN
+    RAISE EXCEPTION 'reported_by must be the caller'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF NEW.confirmed_by IS DISTINCT FROM OLD.confirmed_by
+     AND NEW.confirmed_by IS NOT NULL
+     AND NEW.confirmed_by <> v_caller THEN
+    RAISE EXCEPTION 'confirmed_by must be the caller'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF NEW.proposed_by IS DISTINCT FROM OLD.proposed_by
+     AND NEW.proposed_by IS NOT NULL
+     AND NEW.proposed_by <> v_caller THEN
+    RAISE EXCEPTION 'proposed_by must be the caller'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF OLD.status = 'proposed' AND NEW.status IN ('scheduled', 'declined')
+     AND NEW.player2_id IS DISTINCT FROM OLD.player2_id THEN
+    RAISE EXCEPTION 'cannot reassign player2 while responding to a challenge'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF OLD.status = 'proposed' AND NEW.status IN ('scheduled', 'declined')
+     AND NEW.player2_id IS NOT NULL AND NEW.player2_id <> v_caller THEN
+    RAISE EXCEPTION 'only the challenged player can respond'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS event_matches_enforce_actors ON public.event_matches;
+CREATE TRIGGER event_matches_enforce_actors
+  BEFORE UPDATE ON public.event_matches
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_event_match_actor_columns();
+
 -- INSERT trigger pair for the same function — ladder challenge
 -- propose -> notify challenged player + post chat msg.
 CREATE OR REPLACE FUNCTION public.notify_on_event_match_proposed()
@@ -5104,6 +5167,11 @@ BEGIN
   END IF;
 END;
 $$;
+-- Internal helper only — invoked from triggers + seed_event_bracket
+-- inside the database. Exposing it as an RPC would let an
+-- authenticated client advance arbitrary brackets (and impersonate
+-- the organizer via the 🏆 champion announcement INSERT).
+REVOKE ALL ON FUNCTION public.advance_event_match_to_next_round(uuid) FROM public, anon, authenticated;
 
 -- advance_tournament_winner trigger: delegates to the helper above.
 CREATE OR REPLACE FUNCTION public.advance_tournament_winner()
@@ -5341,6 +5409,10 @@ BEGIN
   WHERE ep.event_id = p_event_id AND ep.user_id = ep_ids.user_id;
 END;
 $$;
+-- Internal helper only — invoked by recompute_event_standings_trigger
+-- on event_matches changes. Exposing it as an RPC lets any client
+-- force a standings recompute for arbitrary events.
+REVOKE ALL ON FUNCTION public.recompute_event_standings_for(uuid) FROM public, anon, authenticated;
 
 CREATE OR REPLACE FUNCTION public.recompute_event_standings_trigger()
 RETURNS trigger
@@ -5467,21 +5539,30 @@ SET search_path = public
 AS $$
 DECLARE
   v_group_id uuid;
+  v_owner_id uuid;
+  v_role     group_role;
 BEGIN
-  SELECT group_id INTO v_group_id FROM public.events WHERE id = NEW.event_id;
+  SELECT group_id, owner_id INTO v_group_id, v_owner_id
+    FROM public.events WHERE id = NEW.event_id;
   IF v_group_id IS NULL THEN RETURN NEW; END IF;
+
+  -- The event owner always gets 'owner' on (re-)registration; this
+  -- restores the role if their owner row was previously DELETEd
+  -- (cascade / manual cleanup). Everyone else gets 'member'.
+  v_role := CASE WHEN NEW.user_id = v_owner_id THEN 'owner'::group_role
+                 ELSE 'member'::group_role END;
 
   IF TG_OP = 'INSERT' THEN
     IF NEW.status = 'registered' THEN
       INSERT INTO public.group_members (group_id, user_id, role)
-      VALUES (v_group_id, NEW.user_id, 'member')
+      VALUES (v_group_id, NEW.user_id, v_role)
       ON CONFLICT (group_id, user_id) DO NOTHING;
     END IF;
   ELSIF TG_OP = 'UPDATE' THEN
     IF OLD.status IS DISTINCT FROM NEW.status THEN
       IF NEW.status = 'registered' THEN
         INSERT INTO public.group_members (group_id, user_id, role)
-        VALUES (v_group_id, NEW.user_id, 'member')
+        VALUES (v_group_id, NEW.user_id, v_role)
         ON CONFLICT (group_id, user_id) DO NOTHING;
       ELSIF OLD.status = 'registered' THEN
         -- Don't kick the event owner out of their own chat when they
@@ -5489,7 +5570,7 @@ BEGIN
         -- pre-existing manager/captain/owner role on the backing
         -- group — only the 'member' rows the trigger itself wrote
         -- should ever be removed.
-        IF NEW.user_id <> (SELECT owner_id FROM public.events WHERE id = NEW.event_id) THEN
+        IF NEW.user_id <> v_owner_id THEN
           DELETE FROM public.group_members
             WHERE group_id = v_group_id
               AND user_id = NEW.user_id
@@ -5621,14 +5702,22 @@ SECURITY DEFINER
 SET search_path = public, net, extensions
 AS $$
 DECLARE
-  v_url      text;
-  v_anon_key text;
-  v_request  bigint;
+  v_url       text;
+  v_anon_key  text;
+  v_secret    text;
+  v_request   bigint;
 BEGIN
   SELECT decrypted_secret INTO v_url
     FROM vault.decrypted_secrets WHERE name = 'supabase_url' LIMIT 1;
   SELECT decrypted_secret INTO v_anon_key
     FROM vault.decrypted_secrets WHERE name = 'supabase_anon_key' LIMIT 1;
+  -- Layered defense: verify_jwt accepts the public anon key, so we
+  -- attach an HMAC-style shared secret that the edge function
+  -- validates against its own env var. Without this, anyone with the
+  -- anon key could POST directly to push-fanout / group-invite-email
+  -- and spam pushes / relay email.
+  SELECT decrypted_secret INTO v_secret
+    FROM vault.decrypted_secrets WHERE name = 'edge_function_trigger_secret' LIMIT 1;
 
   IF v_url IS NULL OR v_anon_key IS NULL THEN
     INSERT INTO public.edge_function_dispatch_log (fn_name, body, request_id)
@@ -5640,8 +5729,9 @@ BEGIN
     url     := v_url || '/functions/v1/' || fn_name,
     body    := body,
     headers := jsonb_build_object(
-                 'Authorization', 'Bearer ' || v_anon_key,
-                 'Content-Type', 'application/json'
+                 'Authorization',     'Bearer ' || v_anon_key,
+                 'Content-Type',      'application/json',
+                 'X-Trigger-Secret',  COALESCE(v_secret, '')
                ),
     timeout_milliseconds := 5000
   ) INTO v_request;
@@ -5723,10 +5813,13 @@ BEGIN
   IF v_inv.id IS NULL THEN RETURN NULL; END IF;
   SELECT * INTO v_group FROM groups WHERE id = v_inv.group_id;
   SELECT name INTO v_inviter FROM profiles WHERE id = v_inv.invited_by_id;
+  -- Note: v_inv.email is deliberately NOT exposed here. The token is
+  -- the bearer secret; anyone with it (including anon) could otherwise
+  -- resolve the URL to a PII email address. accept_group_invite
+  -- enforces the email-match check server-side against auth.users.
   RETURN jsonb_build_object(
     'id',             v_inv.id,
     'group_id',       v_inv.group_id,
-    'email',          v_inv.email,
     'invited_by_id',  v_inv.invited_by_id,
     'token',          v_inv.token,
     'role',           v_inv.role,
