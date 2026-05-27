@@ -769,6 +769,11 @@ create table public.team_matches (
   shirt_color text not null default '',
   opponent    text not null default '',
   season_id   uuid references public.seasons (id) on delete set null,
+  -- IANA timezone the wall-clock match_date/match_time strings
+  -- represent. The event-reminders cron uses this to compute the
+  -- reminder window in the user's local zone (Vercel runs UTC, so
+  -- without this every Pacific match would be reminded 7-8h off).
+  timezone    text not null default 'America/Los_Angeles',
   created_at  timestamptz not null default now()
 );
 create index team_matches_group_season_idx on public.team_matches (group_id, season_id);
@@ -803,6 +808,10 @@ create table public.team_practices (
   id            uuid primary key default gen_random_uuid(),
   series_id     uuid not null references public.practice_series (id) on delete cascade,
   practice_date text not null,
+  -- Same role as team_matches.timezone — the event-reminders cron
+  -- needs to know the user's intended zone to land notifications at
+  -- the right wall-clock time.
+  timezone      text not null default 'America/Los_Angeles',
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now()
 );

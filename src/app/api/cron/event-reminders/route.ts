@@ -3,6 +3,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { pushToUsers } from "@/lib/push";
 import { parseReminderPrefs } from "@/lib/reminderPrefs";
 import { sendReminderEmail } from "@/lib/reminderEmail";
+import { combineDateAndTime } from "@/lib/wallClock";
 
 /**
  * Hourly cron — declared in vercel.json. For each team with reminder
@@ -55,7 +56,7 @@ export async function GET(request: Request) {
   const { data: matches, error: matchErr } = await admin
     .from("team_matches")
     .select(
-      `id, group_id, match_date, match_time, location, opponent,
+      `id, group_id, match_date, match_time, location, opponent, timezone,
        group:groups!team_matches_group_id_fkey ( id, name, reminder_prefs ),
        availabilities ( user_id )`
     )
@@ -71,6 +72,7 @@ export async function GET(request: Request) {
     match_time: string;
     location: string;
     opponent: string;
+    timezone: string;
     group: { id: string; name: string; reminder_prefs: unknown };
     availabilities: { user_id: string }[];
   }>) {
@@ -81,7 +83,7 @@ export async function GET(request: Request) {
         : JSON.stringify(m.group.reminder_prefs ?? {})
     );
     if (prefs.matchHours.length === 0) continue;
-    const target = combineDateAndTime(m.match_date, m.match_time);
+    const target = combineDateAndTime(m.match_date, m.match_time, m.timezone);
     if (!target) continue;
 
     for (const hoursBefore of prefs.matchHours) {
@@ -113,7 +115,7 @@ export async function GET(request: Request) {
   const { data: practices, error: practiceErr } = await admin
     .from("team_practices")
     .select(
-      `id, practice_date,
+      `id, practice_date, timezone,
        series:practice_series!team_practices_series_id_fkey (
          id, group_id, name, location, practice_time,
          group:groups!practice_series_group_id_fkey ( id, name, reminder_prefs )
@@ -128,6 +130,7 @@ export async function GET(request: Request) {
   for (const p of (practices ?? []) as unknown as Array<{
     id: string;
     practice_date: string;
+    timezone: string;
     series: {
       id: string;
       group_id: string;
@@ -146,7 +149,7 @@ export async function GET(request: Request) {
         : JSON.stringify(group.reminder_prefs ?? {})
     );
     if (prefs.practiceHours.length === 0) continue;
-    const target = combineDateAndTime(p.practice_date, p.series.practice_time);
+    const target = combineDateAndTime(p.practice_date, p.series.practice_time, p.timezone);
     if (!target) continue;
 
     for (const hoursBefore of prefs.practiceHours) {
@@ -194,14 +197,8 @@ function isoDate(d: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function combineDateAndTime(dateStr: string, timeStr: string): Date | null {
-  if (!dateStr) return null;
-  // match_time / practice_time can be empty; default to 9am so untimed
-  // entries still get reminders rather than being silently skipped.
-  const safeTime = /^\d{1,2}:\d{2}$/.test(timeStr) ? timeStr : "09:00";
-  const d = new Date(`${dateStr}T${safeTime.padStart(5, "0")}:00`);
-  return Number.isFinite(d.getTime()) ? d : null;
-}
+// combineDateAndTime moved to src/lib/wallClock.ts so it's unit-
+// testable without the cron route's server-only deps.
 
 /**
  * Hourly cron with a 1-hour-wide window centred on (target - hoursBefore):

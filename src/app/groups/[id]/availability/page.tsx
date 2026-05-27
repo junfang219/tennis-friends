@@ -243,6 +243,13 @@ export default function AvailabilityPage() {
         match_time: matchTime,
         location: location.trim(),
         notes: notes.trim(),
+        // Tag the row with the user's local IANA zone so the
+        // event-reminders cron can compute the reminder window in
+        // their local time instead of Vercel-UTC.
+        timezone:
+          (typeof Intl !== "undefined" &&
+            Intl.DateTimeFormat().resolvedOptions().timeZone) ||
+          "America/Los_Angeles",
       })
       .select("id, match_date, match_time, location, notes")
       .single();

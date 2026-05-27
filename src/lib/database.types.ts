@@ -2543,6 +2543,7 @@ export type Database = {
           opponent: string
           season_id: string | null
           shirt_color: string
+          timezone: string
         }
         Insert: {
           created_at?: string
@@ -2556,6 +2557,7 @@ export type Database = {
           opponent?: string
           season_id?: string | null
           shirt_color?: string
+          timezone?: string
         }
         Update: {
           created_at?: string
@@ -2569,6 +2571,7 @@ export type Database = {
           opponent?: string
           season_id?: string | null
           shirt_color?: string
+          timezone?: string
         }
         Relationships: [
           {
@@ -2593,6 +2596,7 @@ export type Database = {
           id: string
           practice_date: string
           series_id: string
+          timezone: string
           updated_at: string
         }
         Insert: {
@@ -2600,6 +2604,7 @@ export type Database = {
           id?: string
           practice_date: string
           series_id: string
+          timezone?: string
           updated_at?: string
         }
         Update: {
@@ -2607,6 +2612,7 @@ export type Database = {
           id?: string
           practice_date?: string
           series_id?: string
+          timezone?: string
           updated_at?: string
         }
         Relationships: [
@@ -3094,6 +3100,10 @@ export type Database = {
       }
       recompute_event_standings_for: {
         Args: { p_event_id: string }
+        Returns: undefined
+      }
+      recount_post_players_confirmed: {
+        Args: { p_post_id: string }
         Returns: undefined
       }
       report_court_availability: {

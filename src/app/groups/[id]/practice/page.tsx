@@ -267,7 +267,19 @@ export default function TeamPracticePage() {
           }
         }
       }
-      const rows = dates.map((d) => ({ series_id: series.id, practice_date: d }));
+      // Tag each practice with the user's local IANA zone so the
+      // event-reminders cron computes the reminder window correctly
+      // (the row's wall-clock practice_time is interpreted in this
+      // zone, not Vercel-UTC).
+      const tz =
+        (typeof Intl !== "undefined" &&
+          Intl.DateTimeFormat().resolvedOptions().timeZone) ||
+        "America/Los_Angeles";
+      const rows = dates.map((d) => ({
+        series_id: series.id,
+        practice_date: d,
+        timezone: tz,
+      }));
       await supabase.from("team_practices").insert(rows);
 
       const newSeries = {
