@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import { isAtLeast, ROLE } from "@/lib/groupRoles";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listTeamListings, listMyGroups, createTeamListing } from "@/lib/supabase/queries";
+import { useCachedQuery } from "@/lib/useCachedQuery";
 
 type Listing = {
   id: string;
@@ -46,13 +47,9 @@ function ntrpLabel(min: number | null, max: number | null): string {
 export default function MatchUpPage() {
   const { data: session } = useSession();
 
-  const [listings, setListings] = useState<Listing[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
   const [formatFilter, setFormatFilter] = useState<string>("");
   const [cityFilter, setCityFilter] = useState<string>("");
 
-  const [myTeams, setMyTeams] = useState<MyTeam[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [createTeamId, setCreateTeamId] = useState("");
   const [createTitle, setCreateTitle] = useState("");
@@ -65,69 +62,54 @@ export default function MatchUpPage() {
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState("");
 
-  const loadListings = useCallback(async () => {
-    try {
+  const listingsQuery = useCachedQuery<Listing[]>(
+    `matchup:listings:${formatFilter || "any"}:${cityFilter.trim()}`,
+    async () => {
       const supabase = createSupabaseBrowserClient();
       const rows = await listTeamListings(supabase, {
         format: formatFilter || undefined,
         city: cityFilter.trim() || undefined,
       });
-      setListings(
-        rows.map((l) => ({
-          id: l.id,
-          title: l.title,
-          description: l.description,
-          format: l.format,
-          ntrpMin: l.ntrp_min,
-          ntrpMax: l.ntrp_max,
-          city: l.city,
-          status: l.status,
-          createdAt: l.created_at,
-          group: {
-            id: l.group?.id ?? l.group_id,
-            name: l.group?.name ?? "",
-            imageUrl: l.group?.image_url ?? "",
-          },
-          createdBy: { id: l.created_by_id, name: "", profileImageUrl: "" },
-        }))
-      );
-      setLoadError("");
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Couldn't load listings.");
-    }
-    setLoading(false);
-  }, [formatFilter, cityFilter]);
+      return rows.map((l) => ({
+        id: l.id,
+        title: l.title,
+        description: l.description,
+        format: l.format,
+        ntrpMin: l.ntrp_min,
+        ntrpMax: l.ntrp_max,
+        city: l.city,
+        status: l.status,
+        createdAt: l.created_at,
+        group: {
+          id: l.group?.id ?? l.group_id,
+          name: l.group?.name ?? "",
+          imageUrl: l.group?.image_url ?? "",
+        },
+        createdBy: { id: l.created_by_id, name: "", profileImageUrl: "" },
+      }));
+    },
+  );
+  const listings = listingsQuery.data ?? [];
+  const loading = listingsQuery.isLoading;
+  const loadError = listingsQuery.error
+    ? listingsQuery.error.message || "Couldn't load listings."
+    : "";
+  const loadListings = listingsQuery.refetch;
 
-  const loadMyTeams = useCallback(async () => {
-    try {
-      const supabase = createSupabaseBrowserClient();
-      const rows = await listMyGroups(supabase);
-      // myTeams shape doesn't carry members list anymore — pass an empty
-      // placeholder; the "can post" check below will narrow to teams the
-      // user owns (which RLS-wise are all in listMyGroups).
-      setMyTeams(
-        rows.map((g) => ({
-          id: g.id,
-          name: g.name,
-          ownerId: g.owner_id,
-          members: [],
-        }))
-      );
-    } catch {
-      // Non-fatal — page still renders the listings; the "can post"
-      // bar just degrades to read-only until next reload.
-    }
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadListings();
-  }, [loadListings]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadMyTeams();
-  }, [loadMyTeams]);
+  const myTeamsQuery = useCachedQuery<MyTeam[]>("matchup:my-teams", async () => {
+    const supabase = createSupabaseBrowserClient();
+    const rows = await listMyGroups(supabase);
+    // myTeams shape doesn't carry members list anymore — pass an empty
+    // placeholder; the "can post" check below will narrow to teams the
+    // user owns (which RLS-wise are all in listMyGroups).
+    return rows.map((g) => ({
+      id: g.id,
+      name: g.name,
+      ownerId: g.owner_id,
+      members: [],
+    }));
+  });
+  const myTeams = myTeamsQuery.data ?? [];
 
   const userId = session?.user?.id || "";
   // listMyGroups returns groups where the user is owner/manager/captain/
@@ -298,7 +280,7 @@ export default function MatchUpPage() {
         <div className="mb-4 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
           {loadError}{" "}
           <button
-            onClick={() => { setLoading(true); void loadListings(); }}
+            onClick={() => { void loadListings(); }}
             className="underline font-semibold ml-1"
           >
             Retry

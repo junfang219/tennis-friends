@@ -22,6 +22,10 @@ import Avatar from "@/components/Avatar";
 import PostCard from "@/components/PostCard";
 import PostComposer from "@/components/PostComposer";
 import { AGE_LABELS, GENDER_LABELS, formatRating } from "@/lib/profileLabels";
+import { useCachedQuery } from "@/lib/useCachedQuery";
+import { getCached } from "@/lib/queryCache";
+
+const PROFILE_CACHE_KEY = "profile:me";
 
 type Post = {
   id: string;
@@ -89,25 +93,58 @@ type Profile = {
 export default function ProfilePage() {
   const router = useRouter();
   const { update: updateSession } = useSession();
-  const [profile, setProfile] = useState<Profile | null>(null);
+  // Lazy-init from the in-memory cache so a tab revisit paints the profile
+  // synchronously on the very first render — no skeleton, no flicker.
+  const [profile, setProfile] = useState<Profile | null>(
+    () => getCached<Profile>(PROFILE_CACHE_KEY) ?? null,
+  );
   const [editing, setEditing] = useState(false);
   const [tab, setTab] = useState<"find_players" | "posts" | "videos">("find_players");
-  const [form, setForm] = useState({
-    name: "",
-    handle: "",
-    bio: "",
-    skillLevel: "",
-    profileImageUrl: "",
-    gender: "",
-    ageRange: "",
-    ratingSystem: "",
-    ntrpRating: "" as string | number,
-    utrRating: "" as string | number,
-    venmoHandle: "",
-    paypalHandle: "",
-    cashappHandle: "",
-    zelleHandle: "",
-    isPrivate: false,
+  const [form, setForm] = useState(() => {
+    const cached = getCached<Profile>(PROFILE_CACHE_KEY);
+    const raw = (cached as unknown as { __rawProfile?: {
+      name: string; handle: string | null; bio: string; skill_level: string;
+      profile_image_url: string; gender: string; age_range: string;
+      rating_system: string; ntrp_rating: number | null; utr_rating: number | null;
+      venmo_handle: string | null; paypal_handle: string | null;
+      cashapp_handle: string | null; zelle_handle: string | null;
+      is_private: boolean;
+    }; } | undefined)?.__rawProfile;
+    return raw
+      ? {
+          name: raw.name,
+          handle: raw.handle ?? "",
+          bio: raw.bio,
+          skillLevel: raw.skill_level,
+          profileImageUrl: raw.profile_image_url,
+          gender: raw.gender,
+          ageRange: raw.age_range,
+          ratingSystem: raw.rating_system,
+          ntrpRating: (raw.ntrp_rating ?? "") as string | number,
+          utrRating: (raw.utr_rating ?? "") as string | number,
+          venmoHandle: raw.venmo_handle ?? "",
+          paypalHandle: raw.paypal_handle ?? "",
+          cashappHandle: raw.cashapp_handle ?? "",
+          zelleHandle: raw.zelle_handle ?? "",
+          isPrivate: raw.is_private,
+        }
+      : {
+          name: "",
+          handle: "",
+          bio: "",
+          skillLevel: "",
+          profileImageUrl: "",
+          gender: "",
+          ageRange: "",
+          ratingSystem: "",
+          ntrpRating: "" as string | number,
+          utrRating: "" as string | number,
+          venmoHandle: "",
+          paypalHandle: "",
+          cashappHandle: "",
+          zelleHandle: "",
+          isPrivate: false,
+        };
   });
   const [handleError, setHandleError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -196,92 +233,111 @@ export default function ProfilePage() {
     };
   }, [menuOpen]);
 
-  useEffect(() => {
+  // Cache the assembled "my profile" so tab revisits paint instantly and
+  // background-refresh keeps the data fresh. Local `profile`/`form` state
+  // remain the source of truth for live edits — we just seed them from the
+  // cache when it resolves (or updates), and pause the sync while the user
+  // is actively editing/saving so an in-flight background refresh can't
+  // clobber their input.
+  const cachedProfile = useCachedQuery<Profile | null>("profile:me", async () => {
     const supabase = createSupabaseBrowserClient();
-    getMyProfile(supabase).then(async (p) => {
-      if (!p) {
-        router.replace("/login");
-        return;
-      }
-      // Adapt snake_case Supabase shape to the page's camelCase state. The
-      // page predates the Supabase migration; full snake_case rewrite is
-      // future cleanup. highlights / friendCount / posts hydrate via the
-      // parallel fetches below.
-      setProfile({
-        id: p.id,
-        name: p.name,
-        email: p.email ?? "",
-        bio: p.bio,
-        skillLevel: p.skill_level,
-        favoriteSurface: p.favorite_surface,
-        profileImageUrl: p.profile_image_url,
-        gender: p.gender,
-        ageRange: p.age_range,
-        ratingSystem: p.rating_system,
-        ntrpRating: p.ntrp_rating,
-        utrRating: p.utr_rating,
-        handle: p.handle,
-        coverImageUrl: p.cover_image_url,
-        coverOffsetY: p.cover_offset_y,
-        coverScale: p.cover_scale,
-        customTags: p.custom_tags ? p.custom_tags.split(",").filter(Boolean) : [],
-        latitude: p.latitude,
-        longitude: p.longitude,
-        createdAt: p.created_at,
-        highlights: [],
-        friendCount: 0,
-        posts: [],
-      });
-      setForm({
-        name: p.name,
-        handle: p.handle ?? "",
-        bio: p.bio,
-        skillLevel: p.skill_level,
-        profileImageUrl: p.profile_image_url,
-        gender: p.gender,
-        ageRange: p.age_range,
-        ratingSystem: p.rating_system,
-        ntrpRating: p.ntrp_rating ?? "",
-        utrRating: p.utr_rating ?? "",
-        venmoHandle: p.venmo_handle ?? "",
-        paypalHandle: p.paypal_handle ?? "",
-        cashappHandle: p.cashapp_handle ?? "",
-        zelleHandle: p.zelle_handle ?? "",
-        isPrivate: p.is_private,
-      });
+    const p = await getMyProfile(supabase);
+    if (!p) return null;
+    // Hydrate posts/highlights/friend count in parallel; they're additive
+    // and the page renders fine without any of them.
+    const [postsRes, highlightsRes, friendCountRes] = await Promise.allSettled([
+      listPostsByAuthor(supabase, p.id),
+      listHighlights(supabase, p.id),
+      countUserFriends(supabase, p.id),
+    ]);
+    const assembled: Profile = {
+      id: p.id,
+      name: p.name,
+      email: p.email ?? "",
+      bio: p.bio,
+      skillLevel: p.skill_level,
+      favoriteSurface: p.favorite_surface,
+      profileImageUrl: p.profile_image_url,
+      gender: p.gender,
+      ageRange: p.age_range,
+      ratingSystem: p.rating_system,
+      ntrpRating: p.ntrp_rating,
+      utrRating: p.utr_rating,
+      handle: p.handle,
+      coverImageUrl: p.cover_image_url,
+      coverOffsetY: p.cover_offset_y,
+      coverScale: p.cover_scale,
+      customTags: p.custom_tags ? p.custom_tags.split(",").filter(Boolean) : [],
+      latitude: p.latitude,
+      longitude: p.longitude,
+      createdAt: p.created_at,
+      highlights:
+        highlightsRes.status === "fulfilled"
+          ? highlightsRes.value.map((h) => ({
+              id: h.id,
+              userId: h.user_id,
+              mediaUrl: h.media_url,
+              mediaType: h.media_type,
+              caption: h.caption,
+              createdAt: h.created_at,
+            }))
+          : [],
+      friendCount:
+        friendCountRes.status === "fulfilled" ? friendCountRes.value : 0,
+      posts:
+        postsRes.status === "fulfilled"
+          ? postsRes.value.map((r) => toPostCamel(r) as unknown as Post)
+          : [],
+    };
+    // Stash form-only fields the local `form` state needs (venmo, paypal,
+    // etc.) on a hidden marker keyed by id so the seed effect below can
+    // grab them without re-fetching. They're not part of the Profile type
+    // the rest of the page uses.
+    (assembled as unknown as { __rawProfile?: typeof p }).__rawProfile = p;
+    return assembled;
+  });
 
-      // Hydrate the fields that the /api/profile -> getMyProfile migration
-      // (fed24d2) silently dropped: the user's own posts, their highlights,
-      // and their accepted-friend count. All three are independent reads, so
-      // run them in parallel and merge whichever land.
-      const [postsRes, highlightsRes, friendCountRes] = await Promise.allSettled([
-        listPostsByAuthor(supabase, p.id),
-        listHighlights(supabase, p.id),
-        countUserFriends(supabase, p.id),
-      ]);
-      setProfile((prev) => {
-        if (!prev) return prev;
-        const next = { ...prev };
-        if (postsRes.status === "fulfilled") {
-          next.posts = postsRes.value.map((r) => toPostCamel(r) as unknown as Post);
-        }
-        if (highlightsRes.status === "fulfilled") {
-          next.highlights = highlightsRes.value.map((h) => ({
-            id: h.id,
-            userId: h.user_id,
-            mediaUrl: h.media_url,
-            mediaType: h.media_type,
-            caption: h.caption,
-            createdAt: h.created_at,
-          }));
-        }
-        if (friendCountRes.status === "fulfilled") {
-          next.friendCount = friendCountRes.value;
-        }
-        return next;
+  // Seed local state from the cache. Runs once on first load (when cache
+  // resolves) and again whenever the background refresh produces a new
+  // snapshot — except while the user is editing or saving, where overwriting
+  // the form would discard in-progress changes.
+  useEffect(() => {
+    if (cachedProfile.data === undefined) return; // still loading
+    if (cachedProfile.data === null) {
+      router.replace("/login");
+      return;
+    }
+    if (editing || saving) return;
+    const assembled = cachedProfile.data;
+    setProfile(assembled);
+    const raw = (assembled as unknown as { __rawProfile?: {
+      name: string; handle: string | null; bio: string; skill_level: string;
+      profile_image_url: string; gender: string; age_range: string;
+      rating_system: string; ntrp_rating: number | null; utr_rating: number | null;
+      venmo_handle: string | null; paypal_handle: string | null;
+      cashapp_handle: string | null; zelle_handle: string | null;
+      is_private: boolean;
+    }; }).__rawProfile;
+    if (raw) {
+      setForm({
+        name: raw.name,
+        handle: raw.handle ?? "",
+        bio: raw.bio,
+        skillLevel: raw.skill_level,
+        profileImageUrl: raw.profile_image_url,
+        gender: raw.gender,
+        ageRange: raw.age_range,
+        ratingSystem: raw.rating_system,
+        ntrpRating: raw.ntrp_rating ?? "",
+        utrRating: raw.utr_rating ?? "",
+        venmoHandle: raw.venmo_handle ?? "",
+        paypalHandle: raw.paypal_handle ?? "",
+        cashappHandle: raw.cashapp_handle ?? "",
+        zelleHandle: raw.zelle_handle ?? "",
+        isPrivate: raw.is_private,
       });
-    });
-  }, [router]);
+    }
+  }, [cachedProfile.data, editing, saving, router]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -331,6 +387,9 @@ export default function ProfilePage() {
       }
       setEditing(false);
       await updateSession();
+      // Refresh the cached profile snapshot so a later tab revisit paints
+      // the saved values without a stale-then-fresh flicker.
+      void cachedProfile.refetch();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (/handle/i.test(message)) {

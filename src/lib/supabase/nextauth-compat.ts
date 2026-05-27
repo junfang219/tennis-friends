@@ -24,6 +24,7 @@
 import type { User } from "@supabase/supabase-js";
 import { createSupabaseBrowserClient } from "./browser";
 import { refreshAuthSnapshot, useAuthSnapshot } from "./auth-store";
+import { clearAllCached } from "../queryCache";
 
 interface CompatSession {
   user: {
@@ -82,6 +83,12 @@ interface SignOutOpts {
 export async function signOut(opts: SignOutOpts = {}) {
   const supabase = createSupabaseBrowserClient();
   await supabase.auth.signOut();
+  // Wipe the in-memory query cache so a subsequent sign-in (or sign-up from
+  // the same browser tab) doesn't inherit the previous user's feed/inbox/
+  // profile data. window.location.href below normally tears down the page
+  // anyway, but signOut is also called from contexts that stay on the same
+  // SPA tree.
+  clearAllCached();
   const target = opts.callbackUrl ?? "/login";
   if (typeof window !== "undefined") {
     window.location.href = target;

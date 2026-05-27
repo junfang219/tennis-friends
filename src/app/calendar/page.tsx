@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import { buildGoogleCalendarUrl, downloadIcs } from "@/lib/calendarExport";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useCachedQuery } from "@/lib/useCachedQuery";
 
 type CalendarEvent = {
   id: string;
@@ -64,11 +66,14 @@ function dateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+type CalendarBundle = {
+  events: CalendarEvent[];
+  matches: TeamMatchEvent[];
+  practices: TeamPracticeEvent[];
+  userGroups: GroupOption[];
+};
+
 export default function CalendarPage() {
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [matches, setMatches] = useState<TeamMatchEvent[]>([]);
-  const [practices, setPractices] = useState<TeamPracticeEvent[]>([]);
-  const [groups, setGroups] = useState<GroupOption[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<string>("all");
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
@@ -77,23 +82,246 @@ export default function CalendarPage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [view, setView] = useState<"calendar" | "list">("calendar");
 
-  const loadEvents = (groupId?: string) => {
-    const url = groupId && groupId !== "all"
-      ? `/api/calendar?groupId=${groupId}`
-      : "/api/calendar";
-    fetch(url)
-      .then((r) => r.json())
-      .then((data) => {
-        setEvents(data.events || []);
-        setMatches(data.matches || []);
-        setPractices(data.practices || []);
-        setGroups(data.userGroups || []);
-      });
-  };
+  // Replaces the deleted /api/calendar endpoint with direct Supabase queries.
+  // Cache key includes the group filter so switching groups doesn't blow
+  // away the "all" snapshot or vice-versa.
+  const cacheKey = `calendar:${selectedGroup}`;
+  const bundle = useCachedQuery<CalendarBundle>(cacheKey, async () => {
+    const supabase = createSupabaseBrowserClient();
+    const { data: auth } = await supabase.auth.getUser();
+    const me = auth.user?.id;
+    if (!me) {
+      return { events: [], matches: [], practices: [], userGroups: [] };
+    }
 
-  useEffect(() => {
-    loadEvents(selectedGroup);
-  }, [selectedGroup]);
+    // 1) Non-archived group memberships — drives the filter dropdown and
+    // is the eligible set for matches/practices.
+    const groupsRes = await supabase
+      .from("group_members")
+      .select(
+        `group_id, archived_at,
+         group:groups!group_members_group_id_fkey ( id, name )`
+      )
+      .eq("user_id", me)
+      .is("archived_at", null);
+    if (groupsRes.error) throw groupsRes.error;
+    type GroupRow = {
+      group_id: string;
+      group: { id: string; name: string } | null;
+    };
+    const userGroupRows = (groupsRes.data ?? []) as unknown as GroupRow[];
+    const userGroupIds = userGroupRows.map((r) => r.group_id);
+    const userGroups: GroupOption[] = userGroupRows
+      .filter((r): r is GroupRow & { group: { id: string; name: string } } => r.group !== null)
+      .map((r) => ({ id: r.group.id, name: r.group.name }));
+
+    // Honor the dropdown only if the chosen group is in the user's
+    // non-archived list — otherwise treat as no filter.
+    const groupFilterId =
+      selectedGroup !== "all" && userGroupIds.includes(selectedGroup)
+        ? selectedGroup
+        : null;
+    const teamGroupFilter = groupFilterId ? [groupFilterId] : userGroupIds;
+
+    // 2) Find-players posts I'm involved in: posts I authored + posts I
+    // have an approved play_request for. PostgREST doesn't support
+    // OR-across-subqueries cleanly, so fan out and merge.
+    const [authoredRes, approvedRes] = await Promise.all([
+      supabase
+        .from("posts")
+        .select(
+          `id, play_date, play_time, play_duration, court_location,
+           game_type, players_needed, players_confirmed, court_booked,
+           is_complete, content, author_id,
+           author:profiles!posts_author_id_fkey ( id, name, profile_image_url ),
+           post_targets ( groups ( id, name ) )`
+        )
+        .eq("post_type", "find_players")
+        .eq("author_id", me),
+      supabase
+        .from("play_requests")
+        .select(
+          `status,
+           post:posts!play_requests_post_id_fkey (
+             id, play_date, play_time, play_duration, court_location,
+             game_type, players_needed, players_confirmed, court_booked,
+             is_complete, content, author_id, post_type,
+             author:profiles!posts_author_id_fkey ( id, name, profile_image_url ),
+             post_targets ( groups ( id, name ) )
+           )`
+        )
+        .eq("user_id", me)
+        .eq("status", "approved"),
+    ]);
+    if (authoredRes.error) throw authoredRes.error;
+    if (approvedRes.error) throw approvedRes.error;
+
+    type PostRow = {
+      id: string;
+      play_date: string;
+      play_time: string;
+      play_duration: number;
+      court_location: string;
+      game_type: string;
+      players_needed: number;
+      players_confirmed: number;
+      court_booked: boolean;
+      is_complete: boolean;
+      content: string;
+      author_id: string;
+      post_type?: string;
+      author: { id: string; name: string; profile_image_url: string } | null;
+      post_targets: Array<{ groups: { id: string; name: string } | null }> | null;
+    };
+
+    const adaptPost = (p: PostRow, role: "creator" | "player"): CalendarEvent => ({
+      id: p.id,
+      playDate: p.play_date,
+      playTime: p.play_time,
+      playDuration: p.play_duration,
+      courtLocation: p.court_location,
+      gameType: p.game_type,
+      playersNeeded: p.players_needed,
+      playersConfirmed: p.players_confirmed,
+      courtBooked: p.court_booked,
+      isComplete: p.is_complete,
+      content: p.content,
+      role,
+      author: {
+        id: p.author?.id ?? "",
+        name: p.author?.name ?? "",
+        profileImageUrl: p.author?.profile_image_url ?? "",
+      },
+      groups: (p.post_targets ?? [])
+        .map((pt) => pt.groups)
+        .filter((g): g is { id: string; name: string } => g !== null),
+    });
+
+    const seenIds = new Set<string>();
+    const events: CalendarEvent[] = [];
+    for (const p of (authoredRes.data ?? []) as unknown as PostRow[]) {
+      seenIds.add(p.id);
+      events.push(adaptPost(p, "creator"));
+    }
+    for (const row of (approvedRes.data ?? []) as unknown as Array<{ post: PostRow | null }>) {
+      const p = row.post;
+      if (!p || p.post_type !== "find_players") continue;
+      if (seenIds.has(p.id)) continue;
+      seenIds.add(p.id);
+      events.push(adaptPost(p, "player"));
+    }
+    // Honor the group filter against the joined post_targets list.
+    const filteredEvents = groupFilterId
+      ? events.filter((e) => e.groups.some((g) => g.id === groupFilterId))
+      : events;
+
+    // 3) Team matches — for the eligible team set. Embed availabilities
+    // so we can surface my own lineupSlot. (The embed alias is
+    // `availabilities`, same as src/app/groups/[id]/calendar/page.tsx —
+    // PostgREST resolves it via the match_availabilities → team_matches FK.)
+    const matchesRes = teamGroupFilter.length
+      ? await supabase
+          .from("team_matches")
+          .select(
+            `id, group_id, match_date, match_time, location, notes,
+             group:groups!team_matches_group_id_fkey ( id, name ),
+             availabilities ( user_id, lineup_slot )`
+          )
+          .in("group_id", teamGroupFilter)
+          .order("match_date", { ascending: true })
+          .order("match_time", { ascending: true })
+      : { data: [], error: null };
+    if (matchesRes.error) throw matchesRes.error;
+
+    type MatchRow = {
+      id: string;
+      group_id: string;
+      match_date: string;
+      match_time: string;
+      location: string;
+      notes: string;
+      group: { id: string; name: string } | null;
+      availabilities: Array<{ user_id: string; lineup_slot: string }>;
+    };
+    const matches: TeamMatchEvent[] = ((matchesRes.data ?? []) as unknown as MatchRow[]).map(
+      (m) => {
+        const mine = m.availabilities.find((a) => a.user_id === me);
+        const slot = (mine?.lineup_slot ?? "").trim();
+        return {
+          id: m.id,
+          teamId: m.group_id,
+          teamName: m.group?.name ?? "",
+          matchDate: m.match_date,
+          matchTime: m.match_time,
+          location: m.location,
+          notes: m.notes,
+          inLineup: slot !== "",
+          lineupSlot: slot,
+        };
+      }
+    );
+
+    // 4) Practices I'm "playing" — start from team_practices (typed) and
+    // embed availabilities filtered to my own row, plus the series→group
+    // chain we need for naming + filter scope.
+    const practicesRes = teamGroupFilter.length
+      ? await supabase
+          .from("team_practices")
+          .select(
+            `id, practice_date,
+             series:practice_series!team_practices_series_id_fkey (
+               id, name, location, practice_time, notes, group_id,
+               group:groups!practice_series_group_id_fkey ( id, name )
+             ),
+             availabilities!inner ( user_id, status )`
+          )
+          .eq("availabilities.user_id", me)
+          .eq("availabilities.status", "playing")
+      : { data: [], error: null };
+    if (practicesRes.error) throw practicesRes.error;
+
+    type PracticeRow = {
+      id: string;
+      practice_date: string;
+      series: {
+        id: string;
+        name: string;
+        location: string;
+        practice_time: string;
+        notes: string;
+        group_id: string;
+        group: { id: string; name: string } | null;
+      } | null;
+    };
+    const practices: TeamPracticeEvent[] = ((practicesRes.data ?? []) as unknown as PracticeRow[])
+      .map((p) => {
+        const s = p.series;
+        if (!s) return null;
+        if (!teamGroupFilter.includes(s.group_id)) return null;
+        return {
+          id: p.id,
+          teamId: s.group_id,
+          teamName: s.group?.name ?? "",
+          seriesId: s.id,
+          seriesName: s.name,
+          practiceDate: p.practice_date,
+          practiceTime: s.practice_time,
+          location: s.location,
+          notes: s.notes,
+        } satisfies TeamPracticeEvent;
+      })
+      .filter((p): p is TeamPracticeEvent => p !== null)
+      .sort((a, b) =>
+        (a.practiceDate + a.practiceTime).localeCompare(b.practiceDate + b.practiceTime)
+      );
+
+    return { events: filteredEvents, matches, practices, userGroups };
+  });
+
+  const events = bundle.data?.events ?? [];
+  const matches = bundle.data?.matches ?? [];
+  const practices = bundle.data?.practices ?? [];
+  const groups = bundle.data?.userGroups ?? [];
 
   // Build event map by date
   const eventsByDate = new Map<string, CalendarEvent[]>();

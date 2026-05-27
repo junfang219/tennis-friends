@@ -8,6 +8,7 @@ import PostDetailModal from "@/components/PostDetailModal";
 import { emojiFor } from "@/lib/reactions";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listNotifications, markAllNotificationsRead } from "@/lib/supabase/queries";
+import { useCachedQuery } from "@/lib/useCachedQuery";
 
 type Notification = {
   id: string;
@@ -145,8 +146,6 @@ function notificationIcon(type: string) {
 export default function NotificationsPage() {
   const { status } = useSession();
   const router = useRouter();
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [loading, setLoading] = useState(true);
   // Post-detail modal: comment/reply notifications open with comments
   // expanded; like notifications open the post without expansion. This
   // matches the in-app NotificationBell so the two surfaces feel the
@@ -154,36 +153,42 @@ export default function NotificationsPage() {
   const [openPostId, setOpenPostId] = useState<string | null>(null);
   const [openWithComments, setOpenWithComments] = useState(false);
 
+  const notifQuery = useCachedQuery<Notification[]>(
+    status === "authenticated" ? "notifications:all" : null,
+    async () => {
+      const supabase = createSupabaseBrowserClient();
+      const rows = await listNotifications(supabase);
+      return rows.map((n) => ({
+        id: n.id,
+        type: n.type,
+        postId: n.post_id ?? "",
+        commentId: n.comment_id ?? "",
+        messageId: n.message_id ?? "",
+        eventId: n.event_id ?? "",
+        matchId: n.match_id ?? "",
+        emoji: n.emoji,
+        read: n.read,
+        createdAt: n.created_at,
+        actor: {
+          id: n.actor.id,
+          name: n.actor.name,
+          profileImageUrl: n.actor.profile_image_url,
+        },
+      }));
+    },
+  );
+  const notifications = notifQuery.data ?? [];
+  const loading = notifQuery.isLoading;
+
+  // Mark-all-read fires once whenever we land on the page with a fresh batch
+  // — independent of the cache layer so revisits also re-mark anything that
+  // came in via realtime / background refresh.
   useEffect(() => {
     if (status !== "authenticated") return;
+    if (!notifQuery.data) return;
     const supabase = createSupabaseBrowserClient();
-    listNotifications(supabase)
-      .then((rows) => {
-        setNotifications(
-          rows.map((n) => ({
-            id: n.id,
-            type: n.type,
-            postId: n.post_id ?? "",
-            commentId: n.comment_id ?? "",
-            messageId: n.message_id ?? "",
-            eventId: n.event_id ?? "",
-            matchId: n.match_id ?? "",
-            emoji: n.emoji,
-            read: n.read,
-            createdAt: n.created_at,
-            actor: {
-              id: n.actor.id,
-              name: n.actor.name,
-              profileImageUrl: n.actor.profile_image_url,
-            },
-          }))
-        );
-        setLoading(false);
-        // Mark all as read (fire-and-forget).
-        void markAllNotificationsRead(supabase);
-      })
-      .catch(() => setLoading(false));
-  }, [status]);
+    void markAllNotificationsRead(supabase);
+  }, [status, notifQuery.data]);
 
   if (status === "loading" || loading) {
     return (

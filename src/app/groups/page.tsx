@@ -7,6 +7,7 @@ import Avatar from "@/components/Avatar";
 import CommunitiesTabs from "@/components/CommunitiesTabs";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listMyGroups, listFriends } from "@/lib/supabase/queries";
+import { useCachedQuery } from "@/lib/useCachedQuery";
 
 type FriendEntry = {
   friendshipId: string;
@@ -28,74 +29,66 @@ type Group = {
   _count: { members: number };
 };
 
+type GroupsBundle = { active: Group[]; archived: Group[] };
+
 export default function GroupsPage() {
   const router = useRouter();
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [archivedGroups, setArchivedGroups] = useState<Group[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [swipedKey, setSwipedKey] = useState<string | null>(null);
-  const [friends, setFriends] = useState<FriendEntry[]>([]);
   const [showCreate, setShowCreate] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
 
-  const loadGroups = async () => {
-    setLoadError("");
-    try {
-      const supabase = createSupabaseBrowserClient();
-      // Pull active + archived in parallel so the Archived Teams
-      // collapsible has data to render.
-      const [activeRows, archivedRows] = await Promise.all([
-        listMyGroups(supabase),
-        listMyGroups(supabase, { archived: true }),
-      ]);
-      const allGroupIds = [...activeRows, ...archivedRows].map((g) => g.id);
-      if (allGroupIds.length === 0) {
-        setGroups([]);
-        setArchivedGroups([]);
-        setLoading(false);
-        return;
-      }
-      const ownerIds = Array.from(
-        new Set([...activeRows, ...archivedRows].map((g) => g.owner_id))
-      );
+  const groupsQuery = useCachedQuery<GroupsBundle>("groups:my", async () => {
+    const supabase = createSupabaseBrowserClient();
+    // Pull active + archived in parallel so the Archived Teams
+    // collapsible has data to render.
+    const [activeRows, archivedRows] = await Promise.all([
+      listMyGroups(supabase),
+      listMyGroups(supabase, { archived: true }),
+    ]);
+    const allGroupIds = [...activeRows, ...archivedRows].map((g) => g.id);
+    if (allGroupIds.length === 0) {
+      return { active: [], archived: [] };
+    }
+    const ownerIds = Array.from(
+      new Set([...activeRows, ...archivedRows].map((g) => g.owner_id))
+    );
 
-      // Fan out the owner + member lookups in parallel. group_members
-      // and profiles are both RLS-gated to the current user's groups,
-      // so the embed-by-FK approach is safe.
-      const [ownersRes, membersRes] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select("id, name, profile_image_url")
-          .in("id", ownerIds),
-        supabase
-          .from("group_members")
-          .select(
-            `id, group_id, user_id,
-             user:profiles!group_members_user_id_fkey ( id, name, profile_image_url )`
-          )
-          .in("group_id", allGroupIds)
-          .is("archived_at", null),
-      ]);
+    // Fan out the owner + member lookups in parallel. group_members
+    // and profiles are both RLS-gated to the current user's groups,
+    // so the embed-by-FK approach is safe.
+    const [ownersRes, membersRes] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("id, name, profile_image_url")
+        .in("id", ownerIds),
+      supabase
+        .from("group_members")
+        .select(
+          `id, group_id, user_id,
+           user:profiles!group_members_user_id_fkey ( id, name, profile_image_url )`
+        )
+        .in("group_id", allGroupIds)
+        .is("archived_at", null),
+    ]);
 
-      type OwnerRow = { id: string; name: string; profile_image_url: string };
-      type MemberRow = {
-        id: string;
-        group_id: string;
-        user_id: string;
-        user: { id: string; name: string; profile_image_url: string } | null;
-      };
-      const ownerById = new Map<string, OwnerRow>(
-        ((ownersRes.data ?? []) as OwnerRow[]).map((p) => [p.id, p])
-      );
-      const membersByGroup = new Map<string, MemberRow[]>();
-      for (const m of (membersRes.data ?? []) as unknown as MemberRow[]) {
-        const arr = membersByGroup.get(m.group_id) ?? [];
-        arr.push(m);
-        membersByGroup.set(m.group_id, arr);
-      }
+    type OwnerRow = { id: string; name: string; profile_image_url: string };
+    type MemberRow = {
+      id: string;
+      group_id: string;
+      user_id: string;
+      user: { id: string; name: string; profile_image_url: string } | null;
+    };
+    const ownerById = new Map<string, OwnerRow>(
+      ((ownersRes.data ?? []) as OwnerRow[]).map((p) => [p.id, p])
+    );
+    const membersByGroup = new Map<string, MemberRow[]>();
+    for (const m of (membersRes.data ?? []) as unknown as MemberRow[]) {
+      const arr = membersByGroup.get(m.group_id) ?? [];
+      arr.push(m);
+      membersByGroup.set(m.group_id, arr);
+    }
 
-      const adapt = (g: { id: string; name: string; image_url: string; owner_id: string }) => {
+    const adapt = (g: { id: string; name: string; image_url: string; owner_id: string }) => {
         const owner = ownerById.get(g.owner_id);
         const groupMembers = membersByGroup.get(g.id) ?? [];
         return {
@@ -122,14 +115,36 @@ export default function GroupsPage() {
         };
       };
 
-      setGroups(activeRows.map(adapt));
-      setArchivedGroups(archivedRows.map(adapt));
-      setLoading(false);
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Couldn't load your teams.");
-      setLoading(false);
-    }
-  };
+    return {
+      active: activeRows.map(adapt),
+      archived: archivedRows.map(adapt),
+    };
+  });
+
+  const groups = groupsQuery.data?.active ?? [];
+  const archivedGroups = groupsQuery.data?.archived ?? [];
+  const loading = groupsQuery.isLoading;
+  const loadError = groupsQuery.error
+    ? groupsQuery.error.message || "Couldn't load your teams."
+    : "";
+  const refetchGroups = groupsQuery.refetch;
+
+  // Friends list — small list, cached separately because the "create team"
+  // sheet needs it but the main list doesn't depend on its presence.
+  const friendsQuery = useCachedQuery<FriendEntry[]>("friends:mine", async () => {
+    const supabase = createSupabaseBrowserClient();
+    const rows = await listFriends(supabase);
+    return rows.map((u) => ({
+      friendshipId: u.id, // placeholder — list doesn't expose the join row id
+      user: {
+        id: u.id,
+        name: u.name,
+        profileImageUrl: u.profile_image_url,
+        skillLevel: u.skill_level,
+      },
+    }));
+  });
+  const friends = friendsQuery.data ?? [];
 
   const archiveTeam = async (groupId: string) => {
     setSwipedKey(null);
@@ -142,7 +157,7 @@ export default function GroupsPage() {
       .update({ archived_at: new Date().toISOString() })
       .eq("group_id", groupId)
       .eq("user_id", auth.user.id);
-    void loadGroups();
+    void refetchGroups();
   };
 
   const unarchiveTeam = async (groupId: string) => {
@@ -155,26 +170,8 @@ export default function GroupsPage() {
       .update({ archived_at: null })
       .eq("group_id", groupId)
       .eq("user_id", auth.user.id);
-    void loadGroups();
+    void refetchGroups();
   };
-
-  useEffect(() => {
-    void loadGroups();
-    const supabase = createSupabaseBrowserClient();
-    listFriends(supabase).then((rows) => {
-      setFriends(
-        rows.map((u) => ({
-          friendshipId: u.id, // placeholder — list doesn't expose the join row id
-          user: {
-            id: u.id,
-            name: u.name,
-            profileImageUrl: u.profile_image_url,
-            skillLevel: u.skill_level,
-          },
-        }))
-      );
-    });
-  }, []);
 
   if (loading) {
     return (
@@ -225,7 +222,7 @@ export default function GroupsPage() {
           <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
             {loadError}{" "}
             <button
-              onClick={() => { setLoading(true); void loadGroups(); }}
+              onClick={() => { void refetchGroups(); }}
               className="underline font-semibold ml-1"
             >
               Retry
@@ -237,7 +234,7 @@ export default function GroupsPage() {
         {showCreate && (
           <CreateGroupForm
             friends={friends}
-            onCreated={() => { setShowCreate(false); loadGroups(); }}
+            onCreated={() => { setShowCreate(false); void refetchGroups(); }}
             onCancel={() => setShowCreate(false)}
           />
         )}

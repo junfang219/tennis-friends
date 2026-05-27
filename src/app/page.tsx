@@ -1,8 +1,8 @@
 "use client";
 
 import { useSession } from "@/lib/supabase/nextauth-compat";
-import { useEffect, useState, useRef, useCallback } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import PostComposer from "@/components/PostComposer";
 import PostCard from "@/components/PostCard";
@@ -10,6 +10,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listFeed, getMyProfile, updateMyProfile, type Post as FeedPost } from "@/lib/supabase/queries";
 import { pgToIso } from "@/lib/pgDate";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
+import { useCachedQuery } from "@/lib/useCachedQuery";
 
 // Map a Supabase feed row (snake_case) into the legacy camelCase Post
 // shape this page (and PostCard) currently expects. Will go away once
@@ -90,12 +91,30 @@ type Post = {
 
 export default function HomePage() {
   const { data: session, status } = useSession();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const targetPostId = searchParams.get("post");
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [feedError, setFeedError] = useState("");
+  // Cached feed: paints instantly on tab revisit, refetches in background.
+  // The cache stores the adapted Post[] shape so consumers (PostCard) don't
+  // pay an adapter pass per render — the fetcher does it once per refetch.
+  const feed = useCachedQuery<Post[]>(
+    status === "authenticated" ? "feed:limit=50" : null,
+    async () => {
+      const supabase = createSupabaseBrowserClient();
+      const rows = await listFeed(supabase, { limit: 50 });
+      return rows.map(adaptFeedPost);
+    },
+  );
+  // Memoize so identity is stable when feed.data hasn't changed — prevents
+  // dependent effects (e.g. the targetPostId scroller below) from firing on
+  // every render.
+  const posts = useMemo<Post[]>(() => feed.data ?? [], [feed.data]);
+  const setPosts = (next: Post[] | ((prev: Post[]) => Post[])) => {
+    feed.mutate((prev) =>
+      typeof next === "function" ? next(prev ?? []) : next,
+    );
+  };
+  const loading = feed.isLoading;
+  const feedError = feed.error?.message ?? "";
   const [highlightedPostId, setHighlightedPostId] = useState<string | null>(null);
   // null = show all categories; otherwise show only the selected category
   const [activeFilter, setActiveFilter] = useState<"find_players" | "propose_team" | "social" | "nearby" | null>(null);
@@ -114,18 +133,17 @@ export default function HomePage() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const PULL_THRESHOLD = 80;
 
+  const refetchFeed = feed.refetch;
   const refreshFeed = useCallback(async () => {
     setRefreshing(true);
     setActiveFilter(null);
     try {
-      const supabase = createSupabaseBrowserClient();
-      const rows = await listFeed(supabase, { limit: 50 });
-      setPosts(rows.map(adaptFeedPost));
+      await refetchFeed();
     } finally {
       setRefreshing(false);
       setPullDistance(0);
     }
-  }, []);
+  }, [refetchFeed]);
 
   // Pull-to-refresh touch handlers
   useEffect(() => {
@@ -216,28 +234,7 @@ export default function HomePage() {
     if (el && observerRef.current) observerRef.current.observe(el);
   }, []);
 
-  useEffect(() => {
-    if (status === "authenticated") {
-      const supabase = createSupabaseBrowserClient();
-      listFeed(supabase, { limit: 50 })
-        .then((rows) => rows.map(adaptFeedPost))
-        .then((data) => {
-          setPosts(data);
-          setFeedError("");
-          setLoading(false);
-        })
-        .catch((err) => {
-          // Without this, a listFeed rejection (RLS regression, network
-          // blip, adapter type-cast failure) stranded the home page on
-          // the skeleton forever.
-          console.error("[home] listFeed failed:", err);
-          setFeedError(
-            err instanceof Error ? err.message : "Couldn't load the feed."
-          );
-          setLoading(false);
-        });
-    }
-  }, [status]);
+  // The initial fetch is owned by useCachedQuery — no separate mount effect.
 
   // First time the user activates the Nearby filter, check whether they have
   // location set. Needed to decide between showing broadcasts and showing the
@@ -259,8 +256,7 @@ export default function HomePage() {
       setHasLocation(false);
       setConfirmingTurnOff(false);
       // Re-fetch the feed so broadcasts requiring viewer coords drop out.
-      const rows = await listFeed(supabase, { limit: 50 });
-      setPosts(rows.map(adaptFeedPost));
+      await refetchFeed();
     } catch {
       setLocationError("Could not turn off location.");
     }
@@ -289,8 +285,7 @@ export default function HomePage() {
         longitude: pos.longitude,
       });
       setHasLocation(true);
-      const rows = await listFeed(supabase, { limit: 50 });
-      setPosts(rows.map(adaptFeedPost));
+      await refetchFeed();
     } catch {
       setLocationError("Could not save location.");
     }
@@ -565,18 +560,7 @@ export default function HomePage() {
                 <p className="font-semibold text-gray-800 mb-1">Couldn&apos;t load the feed</p>
                 <p className="text-sm text-gray-500 mb-3">{feedError}</p>
                 <button
-                  onClick={() => {
-                    setLoading(true);
-                    setFeedError("");
-                    const supabase = createSupabaseBrowserClient();
-                    listFeed(supabase, { limit: 50 })
-                      .then((rows) => rows.map(adaptFeedPost))
-                      .then((data) => { setPosts(data); setLoading(false); })
-                      .catch((err) => {
-                        setFeedError(err instanceof Error ? err.message : "Couldn't load the feed.");
-                        setLoading(false);
-                      });
-                  }}
+                  onClick={() => { void refetchFeed(); }}
                   className="btn-primary text-sm"
                 >
                   Retry

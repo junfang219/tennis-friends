@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import { normalizeMatchStatus, normalizePracticeStatus, RSVP, RSVP_LABEL, type RsvpStatus } from "@/lib/rsvpStatus";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getDashboardUpcoming } from "@/lib/supabase/queries";
+import { useCachedQuery } from "@/lib/useCachedQuery";
 
 type Team = { id: string; name: string; imageUrl: string };
 
@@ -63,40 +63,30 @@ function rsvpChip(status: RsvpStatus): { label: string; bg: string; text: string
 }
 
 export default function DashboardPage() {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
-
-  const load = useCallback(async () => {
-    try {
-      const supabase = createSupabaseBrowserClient();
-      const u = await getDashboardUpcoming(supabase);
-      setData({
-        matches: u.teamMatches.map((m) => ({
-          id: m.id,
-          groupId: m.group_id,
-          group: { id: m.group.id, name: m.group.name, imageUrl: "" },
-          matchDate: m.match_date,
-          matchTime: m.match_time,
-          location: m.location,
-          opponent: m.opponent,
-          homeAway: "",
-          myRsvp: null,
-        })),
-        practices: [],
-        announcements: [],
-      });
-      setLoading(false);
-    } catch (err) {
-      setErr(err instanceof Error ? err.message : "Failed to load dashboard.");
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load();
-  }, [load]);
+  const dashboardQuery = useCachedQuery<DashboardData>("dashboard:upcoming", async () => {
+    const supabase = createSupabaseBrowserClient();
+    const u = await getDashboardUpcoming(supabase);
+    return {
+      matches: u.teamMatches.map((m) => ({
+        id: m.id,
+        groupId: m.group_id,
+        group: { id: m.group.id, name: m.group.name, imageUrl: "" },
+        matchDate: m.match_date,
+        matchTime: m.match_time,
+        location: m.location,
+        opponent: m.opponent,
+        homeAway: "",
+        myRsvp: null,
+      })),
+      practices: [],
+      announcements: [],
+    };
+  });
+  const data = dashboardQuery.data ?? null;
+  const loading = dashboardQuery.isLoading;
+  const err = dashboardQuery.error
+    ? dashboardQuery.error.message || "Failed to load dashboard."
+    : "";
 
   if (loading) {
     return (

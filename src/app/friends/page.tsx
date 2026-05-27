@@ -28,6 +28,7 @@ import {
   markChatRead,
 } from "@/lib/supabase/queries";
 import { pgToIso } from "@/lib/pgDate";
+import { useCachedQuery } from "@/lib/useCachedQuery";
 
 type FriendUser = {
   id: string;
@@ -93,10 +94,8 @@ export default function FriendsPage() {
   const router = useRouter();
   const { data: session } = useSession();
   const myId = session?.user?.id || "";
-  const [data, setData] = useState<FriendsData | null>(null);
   const [tab, setTab] = useState<"friends" | "groups" | "chats">("friends");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [friendGroups, setFriendGroups] = useState<FriendGroup[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupMembers, setNewGroupMembers] = useState<string[]>([]);
@@ -105,8 +104,9 @@ export default function FriendsPage() {
   const [editGroupMembers, setEditGroupMembers] = useState<string[]>([]);
   const [groupSaving, setGroupSaving] = useState(false);
 
-  // Chats (combined inbox: 1:1 + group)
-  const [chats, setChats] = useState<InboxItem[]>([]);
+  // Chats (combined inbox: 1:1 + group). Shares the "chat:inbox" cache key
+  // with src/app/chat/page.tsx so navigating between Friends → Chat → Friends
+  // doesn't refetch the same data.
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [newChatName, setNewChatName] = useState("");
   const [newChatMembers, setNewChatMembers] = useState<string[]>([]);
@@ -120,7 +120,6 @@ export default function FriendsPage() {
   const [friendSearch, setFriendSearch] = useState("");
 
   // Blocked users
-  const [blocked, setBlocked] = useState<BlockedEntry[]>([]);
   const [openMenu, setOpenMenu] = useState<{
     friendshipId: string;
     userId: string;
@@ -143,13 +142,13 @@ export default function FriendsPage() {
   const [editChatCreatorId, setEditChatCreatorId] = useState<string>("");
   const [savingEditChat, setSavingEditChat] = useState(false);
 
-  const loadFriends = async () => {
+  const friendsQuery = useCachedQuery<FriendsData>("friends:network", async () => {
     const supabase = createSupabaseBrowserClient();
     const [friendRows, pendingRows] = await Promise.all([
       sbListFriends(supabase),
       listPendingRequests(supabase),
     ]);
-    setData({
+    return {
       friends: friendRows.map((u) => ({
         friendshipId: u.id, // placeholder
         user: {
@@ -196,34 +195,42 @@ export default function FriendsPage() {
             utrRating: r.other.utr_rating,
           },
         })),
-    });
-  };
+    };
+  });
+  const data = friendsQuery.data ?? null;
+  const loadFriends = friendsQuery.refetch;
 
-  const loadFriendGroups = async () => {
-    const supabase = createSupabaseBrowserClient();
-    const groups = await listMyFriendGroups(supabase);
-    // Fetch members for each. Small N so a sequential fan-out is fine.
-    const withMembers: FriendGroup[] = await Promise.all(
-      groups.map(async (g) => {
-        const members = await listFriendGroupMembers(supabase, g.id);
-        return {
-          id: g.id,
-          name: g.name,
-          members: members.map((m) => ({
-            user: {
-              id: m.user.id,
-              name: m.user.name,
-              profileImageUrl: m.user.profile_image_url,
-            },
-          })),
-          _count: { members: members.length },
-        };
-      })
-    );
-    setFriendGroups(withMembers);
-  };
+  const friendGroupsQuery = useCachedQuery<FriendGroup[]>(
+    "friends:friend-groups",
+    async () => {
+      const supabase = createSupabaseBrowserClient();
+      const groups = await listMyFriendGroups(supabase);
+      // Fetch members for each. Small N so a sequential fan-out is fine.
+      return Promise.all(
+        groups.map(async (g) => {
+          const members = await listFriendGroupMembers(supabase, g.id);
+          return {
+            id: g.id,
+            name: g.name,
+            members: members.map((m) => ({
+              user: {
+                id: m.user.id,
+                name: m.user.name,
+                profileImageUrl: m.user.profile_image_url,
+              },
+            })),
+            _count: { members: members.length },
+          };
+        })
+      );
+    }
+  );
+  const friendGroups = friendGroupsQuery.data ?? [];
+  const loadFriendGroups = friendGroupsQuery.refetch;
 
-  const loadChats = async () => {
+  // Reuses the "chat:inbox" cache populated by src/app/chat/page.tsx, so
+  // bouncing between Friends and Chat doesn't refetch the same data.
+  const chatsQuery = useCachedQuery<InboxItem[]>("chat:inbox", async () => {
     const supabase = createSupabaseBrowserClient();
     const [dms, chats] = await Promise.all([
       listDmThreads(supabase),
@@ -261,19 +268,22 @@ export default function FriendsPage() {
       lastMessage: null,
       participants: [],
     }));
-    setChats([...dmItems, ...chatItems]);
-  };
+    return [...dmItems, ...chatItems];
+  });
+  const chats = chatsQuery.data ?? [];
+  const loadChats = chatsQuery.refetch;
 
-  const loadBlocked = async () => {
-    const supabase = createSupabaseBrowserClient();
-    const { data: rows } = await supabase
-      .from("blocks")
-      .select(
-        `id, blocked_id, created_at,
-         user:profiles!blocks_blocked_id_fkey ( id, name, profile_image_url )`
-      );
-    setBlocked(
-      ((rows ?? []) as unknown as Array<{
+  const blockedQuery = useCachedQuery<BlockedEntry[]>(
+    "friends:blocked",
+    async () => {
+      const supabase = createSupabaseBrowserClient();
+      const { data: rows } = await supabase
+        .from("blocks")
+        .select(
+          `id, blocked_id, created_at,
+           user:profiles!blocks_blocked_id_fkey ( id, name, profile_image_url )`
+        );
+      return ((rows ?? []) as unknown as Array<{
         id: string;
         blocked_id: string;
         created_at: string;
@@ -287,9 +297,11 @@ export default function FriendsPage() {
           profileImageUrl: r.user.profile_image_url,
           skillLevel: "",
         },
-      }))
-    );
-  };
+      }));
+    }
+  );
+  const blocked = blockedQuery.data ?? [];
+  const loadBlocked = blockedQuery.refetch;
 
   const blockUser = async (otherUserId: string, name: string) => {
     if (!confirm(`Block ${name}? They won't be able to message you, send you a friend request, or see your posts. You'll also unfriend them.`)) return;
@@ -377,12 +389,8 @@ export default function FriendsPage() {
     setSavingEditChat(false);
   };
 
-  useEffect(() => {
-    loadFriends();
-    loadFriendGroups();
-    loadChats();
-    loadBlocked();
-  }, []);
+  // Initial fetches are owned by the four useCachedQuery hooks above —
+  // no separate mount effect needed.
 
   const toggleNewChatMember = (id: string) => {
     setNewChatMembers((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));

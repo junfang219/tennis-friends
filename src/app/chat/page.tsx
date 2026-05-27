@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import ConversationRow, { type InboxItem, type InboxAction } from "@/components/ConversationRow";
@@ -8,18 +8,17 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useRealtimeTable } from "@/lib/supabase/realtime";
 import { listDmThreads, listMyChats, markDmRead, markChatRead } from "@/lib/supabase/queries";
 import { pgToIso } from "@/lib/pgDate";
+import { useCachedQuery } from "@/lib/useCachedQuery";
 
 export default function ChatPage() {
   const { status, data: session } = useSession();
   const router = useRouter();
-  const [items, setItems] = useState<InboxItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
   const [openRowKey, setOpenRowKey] = useState<string | null>(null);
 
-  const loadInbox = useCallback(async () => {
-    setLoadError("");
-    try {
+  // Cached inbox: paints instantly on revisit, refetches in background.
+  const inbox = useCachedQuery<InboxItem[]>(
+    status === "authenticated" ? "chat:inbox" : null,
+    async () => {
       const supabase = createSupabaseBrowserClient();
       const [dms, chats] = await Promise.all([
         listDmThreads(supabase),
@@ -58,13 +57,16 @@ export default function ChatPage() {
         lastMessage: null,
         participants: [],
       }));
-      setItems([...dmItems, ...chatItems]);
-      setLoading(false);
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Couldn't load messages.");
-      setLoading(false);
-    }
-  }, []);
+      return [...dmItems, ...chatItems];
+    },
+  );
+  // Memoize so identity is stable when inbox.data is unchanged — keeps the
+  // prefetch effect below from firing on every render.
+  const items = useMemo<InboxItem[]>(() => inbox.data ?? [], [inbox.data]);
+  const loading = inbox.isLoading;
+  const loadError = inbox.error
+    ? inbox.error.message || "Couldn't load messages."
+    : "";
 
   // Warm the route cache for every thread visible in the inbox so tapping
   // one navigates instantly instead of cold-downloading the page chunk.
@@ -76,10 +78,7 @@ export default function ChatPage() {
     }
   }, [items, router]);
 
-  useEffect(() => {
-    if (status !== "authenticated") return;
-    loadInbox();
-  }, [status, loadInbox]);
+  // The initial fetch is owned by useCachedQuery — no separate mount effect.
 
   // Realtime: refresh the inbox when an incoming DM, session chat, or
   // group chat message arrives. The polling fallback the SSE stream
@@ -89,14 +88,15 @@ export default function ChatPage() {
   // across tables. listDmThreads / listMyChats are cheap enough that
   // re-running both on any signal isn't expensive.
   const me = session?.user?.id;
+  const refetchInbox = inbox.refetch;
   useRealtimeTable(
     {
       table: "messages",
       event: "INSERT",
       filter: me ? `receiver_id=eq.${me}` : undefined,
-      onChange: () => { void loadInbox(); },
+      onChange: () => { void refetchInbox(); },
     },
-    [me, loadInbox]
+    [me, refetchInbox]
   );
   // chat_messages (session chats) has no single-column "messages I can
   // see" filter; RLS does the heavy lifting (Realtime applies SELECT
@@ -109,10 +109,10 @@ export default function ChatPage() {
       onChange: (payload) => {
         const senderId = (payload.new as { sender_id?: string } | null)?.sender_id;
         if (senderId && senderId === me) return;
-        void loadInbox();
+        void refetchInbox();
       },
     },
-    [me, loadInbox]
+    [me, refetchInbox]
   );
 
   // Escape closes any open swipe row
@@ -126,8 +126,9 @@ export default function ChatPage() {
   }, [openRowKey]);
 
   const applyAction = async (item: InboxItem, action: InboxAction) => {
-    setItems((prev) => {
-      let next = prev.map((it) => {
+    inbox.mutate((prev) => {
+      const source = prev ?? [];
+      let next = source.map((it) => {
         if (`${it.type}-${it.id}` !== `${item.type}-${item.id}`) return it;
         switch (action) {
           case "pin":
@@ -201,7 +202,7 @@ export default function ChatPage() {
         <div className="mb-4 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
           {loadError}{" "}
           <button
-            onClick={() => { setLoading(true); void loadInbox(); }}
+            onClick={() => { void refetchInbox(); }}
             className="underline font-semibold ml-1"
           >
             Retry

@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import CommunitiesTabs from "@/components/CommunitiesTabs";
 import Avatar from "@/components/Avatar";
 import { EVENT_TYPE_META } from "@/lib/eventTypeMeta";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listEvents, getMyProfile } from "@/lib/supabase/queries";
+import { useCachedQuery } from "@/lib/useCachedQuery";
 
 type EventListItem = {
   id: string;
@@ -37,49 +38,52 @@ type FilterId = (typeof FILTER_TABS)[number]["id"];
 
 export default function EventsListPage() {
   const [filter, setFilter] = useState<FilterId>("upcoming");
-  const [events, setEvents] = useState<EventListItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [hasLocation, setHasLocation] = useState<boolean | null>(null);
 
-  useEffect(() => {
-    setLoading(true);
-    const supabase = createSupabaseBrowserClient();
-    listEvents(supabase, { upcoming: filter === "upcoming" })
-      .then((rows) =>
-        rows.map((e) => ({
-          id: e.id,
-          title: e.title,
-          description: e.description,
-          eventType: e.event_type,
-          startDate: e.start_date,
-          endDate: e.end_date,
-          signupDeadline: e.signup_deadline,
-          status: e.status,
-          venueName: e.venue_name,
-          maxParticipants: e.max_participants,
-          ntrpMin: e.ntrp_min,
-          ntrpMax: e.ntrp_max,
-          coverImageUrl: e.cover_image_url,
-          owner: { id: e.owner_id, name: "", profileImageUrl: "" },
-          myStatus: null,
-          registeredCount: 0,
-        }))
-      )
-      .then((mapped) => {
-        setEvents(mapped);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, [filter]);
+  const eventsQuery = useCachedQuery<EventListItem[]>(
+    `events:list:${filter}`,
+    async () => {
+      const supabase = createSupabaseBrowserClient();
+      const rows = await listEvents(supabase, { upcoming: filter === "upcoming" });
+      return rows.map((e) => ({
+        id: e.id,
+        title: e.title,
+        description: e.description,
+        eventType: e.event_type,
+        startDate: e.start_date,
+        endDate: e.end_date,
+        signupDeadline: e.signup_deadline,
+        status: e.status,
+        venueName: e.venue_name,
+        maxParticipants: e.max_participants,
+        ntrpMin: e.ntrp_min,
+        ntrpMax: e.ntrp_max,
+        coverImageUrl: e.cover_image_url,
+        owner: { id: e.owner_id, name: "", profileImageUrl: "" },
+        myStatus: null,
+        registeredCount: 0,
+      }));
+    },
+  );
+  const events = eventsQuery.data ?? [];
+  const loading = eventsQuery.isLoading;
 
-  useEffect(() => {
-    const supabase = createSupabaseBrowserClient();
-    getMyProfile(supabase)
-      .then((p) => {
-        if (p) setHasLocation(p.latitude != null && p.longitude != null);
-      })
-      .catch(() => {});
-  }, []);
+  // Reuses the cached "my profile" snapshot populated by /profile so the
+  // location-banner check doesn't fire a second getMyProfile.
+  const profileQuery = useCachedQuery<{ latitude: number | null; longitude: number | null } | null>(
+    "events:profile-location",
+    async () => {
+      const supabase = createSupabaseBrowserClient();
+      const p = await getMyProfile(supabase);
+      if (!p) return null;
+      return { latitude: p.latitude, longitude: p.longitude };
+    },
+  );
+  const hasLocation =
+    profileQuery.data === undefined
+      ? null
+      : profileQuery.data === null
+      ? null
+      : profileQuery.data.latitude != null && profileQuery.data.longitude != null;
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">

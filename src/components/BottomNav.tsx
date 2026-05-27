@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listDmThreads } from "@/lib/supabase/queries";
 
@@ -15,6 +15,13 @@ export default function BottomNav() {
   const router = useRouter();
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [isNative, setIsNative] = useState(false);
+  // Optimistic active tab: set on pointerdown so the tap visibly responds
+  // before the route swap + page render + Supabase fetches complete. The
+  // WKWebView is unreliable about flashing Tailwind's `active:` pseudo on
+  // tap, so we drive the feedback in JS instead. Cleared once the real
+  // pathname catches up (or the gesture is cancelled).
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const [, startTransition] = useTransition();
 
   useEffect(() => {
     // `window.Capacitor` is populated even on the web (the @capacitor/core
@@ -37,6 +44,27 @@ export default function BottomNav() {
   }, [status, router]);
 
   const isActive = (path: string) => pathname === path || pathname.startsWith(path + "/");
+
+  // Treat pendingHref as cleared once the router has actually landed on it
+  // (or onto a deeper route under it). Derived in render so we don't need
+  // a clear-on-pathname-change effect — the stale state just stops being
+  // read and gets overwritten by the next tap.
+  const activePendingHref =
+    pendingHref && !(pathname === pendingHref || pathname.startsWith(pendingHref + "/"))
+      ? pendingHref
+      : null;
+
+  const handleTabTap = (href: string) => {
+    if (pathname === href || pathname.startsWith(href + "/")) {
+      // Already here — no nav.
+      return;
+    }
+    setPendingHref(href);
+    // startTransition keeps the bottom-nav (and the rest of the previous
+    // page) interactive while React renders the new route, so the active
+    // chip's color swap isn't blocked by the new page's mount work.
+    startTransition(() => router.push(href));
+  };
 
   const fetchUnread = () => {
     const supabase = createSupabaseBrowserClient();
@@ -150,29 +178,56 @@ export default function BottomNav() {
   return (
     <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-[env(safe-area-inset-bottom)]" style={{ zIndex: 9999 }}>
       <div className="flex items-center justify-around h-14">
-        {tabs.map((tab) => (
-          <Link
-            key={tab.href}
-            href={tab.href}
-            className={`flex flex-col items-center justify-center flex-1 h-full relative transition-colors ${
-              tab.active
-                ? "text-court-green"
-                : "text-gray-400 active:text-gray-600"
-            }`}
-          >
-            <div className="relative">
-              {tab.icon(tab.active)}
-              {tab.badge !== undefined && tab.badge > 0 && (
-                <span className="absolute -top-1.5 -right-2 min-w-[16px] h-4 flex items-center justify-center bg-red-500 text-white text-[10px] font-bold rounded-full px-1">
-                  {tab.badge > 99 ? "99+" : tab.badge}
-                </span>
-              )}
-            </div>
-            <span className={`text-[10px] mt-0.5 ${tab.active ? "font-semibold" : "font-medium"}`}>
-              {tab.label}
-            </span>
-          </Link>
-        ))}
+        {tabs.map((tab) => {
+          // While a tab is pending navigation, treat *that* tab as active
+          // instead of whatever the real pathname still reports. Gives an
+          // instant visual ack to the tap, regardless of how long the new
+          // page takes to mount + fetch.
+          const visuallyActive = activePendingHref ? tab.href === activePendingHref : tab.active;
+          return (
+            <Link
+              key={tab.href}
+              href={tab.href}
+              prefetch
+              onPointerDown={() => {
+                if (tab.href !== pathname && !pathname.startsWith(tab.href + "/")) {
+                  setPendingHref(tab.href);
+                }
+              }}
+              onPointerCancel={() => setPendingHref((p) => (p === tab.href ? null : p))}
+              onPointerLeave={() => setPendingHref((p) => (p === tab.href ? null : p))}
+              onClick={(e) => {
+                // Take over from <Link>'s default navigation so we can wrap
+                // the push in startTransition (keeps the nav interactive
+                // while React renders the new route).
+                e.preventDefault();
+                handleTabTap(tab.href);
+              }}
+              style={{
+                // Disable the 300 ms tap-delay heuristic and the gray
+                // tap-highlight flash that WKWebView paints over custom
+                // controls.
+                touchAction: "manipulation",
+                WebkitTapHighlightColor: "transparent",
+              }}
+              className={`flex flex-col items-center justify-center flex-1 h-full relative transition-colors select-none ${
+                visuallyActive ? "text-court-green" : "text-gray-400"
+              }`}
+            >
+              <div className="relative">
+                {tab.icon(visuallyActive)}
+                {tab.badge !== undefined && tab.badge > 0 && (
+                  <span className="absolute -top-1.5 -right-2 min-w-[16px] h-4 flex items-center justify-center bg-red-500 text-white text-[10px] font-bold rounded-full px-1">
+                    {tab.badge > 99 ? "99+" : tab.badge}
+                  </span>
+                )}
+              </div>
+              <span className={`text-[10px] mt-0.5 ${visuallyActive ? "font-semibold" : "font-medium"}`}>
+                {tab.label}
+              </span>
+            </Link>
+          );
+        })}
       </div>
     </nav>
   );
