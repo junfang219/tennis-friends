@@ -2133,6 +2133,7 @@ export type Database = {
           play_date: string
           play_duration: number
           play_time: string
+          play_timezone: string
           players_confirmed: number
           players_needed: number
           post_type: Database["public"]["Enums"]["post_type"]
@@ -2163,6 +2164,7 @@ export type Database = {
           play_date?: string
           play_duration?: number
           play_time?: string
+          play_timezone?: string
           players_confirmed?: number
           players_needed?: number
           post_type?: Database["public"]["Enums"]["post_type"]
@@ -2193,6 +2195,7 @@ export type Database = {
           play_date?: string
           play_duration?: number
           play_time?: string
+          play_timezone?: string
           players_confirmed?: number
           players_needed?: number
           post_type?: Database["public"]["Enums"]["post_type"]
@@ -2876,6 +2879,10 @@ export type Database = {
             }
             Returns: string
           }
+      advance_event_match_to_next_round: {
+        Args: { p_match_id: string }
+        Returns: undefined
+      }
       can_see_event: {
         Args: { e: Database["public"]["Tables"]["events"]["Row"] }
         Returns: boolean

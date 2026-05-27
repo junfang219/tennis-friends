@@ -479,6 +479,13 @@ create table public.posts (
   is_complete         boolean not null default false,
   comments_disabled   boolean not null default false,
   manual_players      text not null default '',
+  -- IANA timezone the wall-clock play_date/play_time strings represent.
+  -- Triggers cast `(play_date || play_time)::timestamp AT TIME ZONE
+  -- play_timezone` so a user typing 6pm in Seattle gets interpreted as
+  -- Pacific, not UTC. Default America/Los_Angeles for the launch
+  -- market; the client should write Intl.DateTimeFormat().resolved
+  -- Options().timeZone on each new post so travelers stay correct.
+  play_timezone       text not null default 'America/Los_Angeles',
   team_group_id       text not null default '',
   is_broadcast        boolean not null default false,
   broadcast_radius_mi integer not null default 0,
@@ -4211,7 +4218,12 @@ BEGIN
   END IF;
 
   BEGIN
-    v_play_dt := (NEW.play_date || ' ' || NEW.play_time || ':00')::timestamptz;
+    -- Wall-clock parse: NEW.play_date + NEW.play_time are
+    -- user-local strings (e.g. "2026-07-15", "18:00"). Cast to a
+    -- naive timestamp first, then bind via AT TIME ZONE so the
+    -- parser uses the user's zone rather than the server's UTC.
+    v_play_dt := ((NEW.play_date || ' ' || NEW.play_time || ':00')::timestamp
+                  AT TIME ZONE COALESCE(NULLIF(NEW.play_timezone, ''), 'America/Los_Angeles'));
   EXCEPTION WHEN OTHERS THEN
     v_play_dt := now() + interval '24 hours';
   END;
@@ -4219,9 +4231,11 @@ BEGIN
   v_session_end := v_play_dt + (v_duration || ' minutes')::interval;
   v_location := COALESCE(NULLIF(NEW.court_location, ''), 'TBD');
 
-  v_chat_name := trim(to_char(v_play_dt, 'Mon FMDD')) || ' · '
+  -- Render the chat title in the user's zone so the displayed time
+  -- matches what they typed.
+  v_chat_name := trim(to_char(v_play_dt AT TIME ZONE COALESCE(NULLIF(NEW.play_timezone, ''), 'America/Los_Angeles'), 'Mon FMDD')) || ' · '
               || v_location || ' · '
-              || trim(to_char(v_play_dt, 'FMHH12:MI AM'));
+              || trim(to_char(v_play_dt AT TIME ZONE COALESCE(NULLIF(NEW.play_timezone, ''), 'America/Los_Angeles'), 'FMHH12:MI AM'));
 
   -- ON CONFLICT (post_id) WHERE post_id IS NOT NULL DO NOTHING:
   -- backstops the chats_post_id_unique partial index against the
@@ -4260,7 +4274,7 @@ BEGIN
   );
 
   v_message := E'🎾 Game confirmed!\n'
-            || E'📅 ' || trim(to_char(v_play_dt, 'Mon FMDD at FMHH12:MI AM'))
+            || E'📅 ' || trim(to_char(v_play_dt AT TIME ZONE COALESCE(NULLIF(NEW.play_timezone, ''), 'America/Los_Angeles'), 'Mon FMDD at FMHH12:MI AM'))
             || ' (' || v_duration || E' min)\n'
             || E'📍 ' || v_location || E'\n'
             || 'Players: ' || COALESCE(v_players, '') || E'\n\n'
@@ -4303,19 +4317,22 @@ DECLARE
   v_play_dt     timestamptz;
   v_duration    integer;
   v_session_end timestamptz;
+  v_tz          text;
 BEGIN
   IF NEW.post_type <> 'find_players' THEN RETURN NEW; END IF;
   IF OLD.play_date     IS NOT DISTINCT FROM NEW.play_date
      AND OLD.play_time IS NOT DISTINCT FROM NEW.play_time
-     AND OLD.play_duration IS NOT DISTINCT FROM NEW.play_duration THEN
+     AND OLD.play_duration IS NOT DISTINCT FROM NEW.play_duration
+     AND OLD.play_timezone IS NOT DISTINCT FROM NEW.play_timezone THEN
     RETURN NEW;
   END IF;
 
   SELECT id INTO v_chat_id FROM chats WHERE post_id = NEW.id LIMIT 1;
   IF v_chat_id IS NULL THEN RETURN NEW; END IF;
 
+  v_tz := COALESCE(NULLIF(NEW.play_timezone, ''), 'America/Los_Angeles');
   BEGIN
-    v_play_dt := (NEW.play_date || ' ' || NEW.play_time || ':00')::timestamptz;
+    v_play_dt := ((NEW.play_date || ' ' || NEW.play_time || ':00')::timestamp AT TIME ZONE v_tz);
   EXCEPTION WHEN OTHERS THEN
     v_play_dt := NULL;
   END;
@@ -4330,7 +4347,7 @@ $$;
 
 DROP TRIGGER IF EXISTS posts_sync_chat_session_end ON public.posts;
 CREATE TRIGGER posts_sync_chat_session_end
-  AFTER UPDATE OF play_date, play_time, play_duration ON public.posts
+  AFTER UPDATE OF play_date, play_time, play_duration, play_timezone ON public.posts
   FOR EACH ROW EXECUTE FUNCTION public.sync_chat_session_end_at();
 
 -- ============================================================
@@ -4504,6 +4521,31 @@ $$;
 DROP TRIGGER IF EXISTS play_requests_notify_insert ON public.play_requests;
 CREATE TRIGGER play_requests_notify_insert AFTER INSERT ON public.play_requests
   FOR EACH ROW EXECUTE FUNCTION public.notify_on_join_request();
+
+-- Re-application path: the C1 fix in requestToJoin re-uses an existing
+-- play_requests row (rejected/withdrawn/removed → pending) instead of
+-- INSERTing a fresh one. Without this AFTER UPDATE branch, the post
+-- author never sees a notification for the second attempt.
+CREATE OR REPLACE FUNCTION public.notify_on_join_request_reapply()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE v_author_id uuid;
+BEGIN
+  IF NEW.status <> 'pending' OR OLD.status = 'pending'
+     OR OLD.status NOT IN ('rejected','withdrawn','removed') THEN
+    RETURN NEW;
+  END IF;
+  SELECT author_id INTO v_author_id FROM posts WHERE id = NEW.post_id;
+  IF v_author_id IS NULL OR v_author_id = NEW.user_id THEN RETURN NEW; END IF;
+  INSERT INTO notifications (user_id, actor_id, type, post_id)
+  VALUES (v_author_id, NEW.user_id, 'join_request', NEW.post_id);
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS play_requests_notify_reapply ON public.play_requests;
+CREATE TRIGGER play_requests_notify_reapply
+  AFTER UPDATE OF status ON public.play_requests
+  FOR EACH ROW EXECUTE FUNCTION public.notify_on_join_request_reapply();
 
 -- ----- play_requests status flip → request_approved / request_rejected ----
 CREATE OR REPLACE FUNCTION public.notify_on_play_request_response()
@@ -4682,11 +4724,11 @@ BEGIN
   SELECT * INTO v_post FROM posts WHERE id = NEW.post_id;
   IF v_post.id IS NULL THEN RETURN NEW; END IF;
 
-  UPDATE posts
-    SET players_confirmed = GREATEST(0, players_confirmed - 1),
-        is_complete       = false
-    WHERE id = NEW.post_id;
-
+  -- Counter math (players_confirmed + is_complete) is owned by
+  -- recount_post_players_confirmed, fired via play_requests_recount_
+  -- post. This trigger only owns the DM fan-out — previously it
+  -- also decremented manually, which double-counted once the
+  -- recount path landed.
   v_note_trim := NULLIF(trim(NEW.note), '');
 
   IF NEW.status = 'withdrawn' THEN
@@ -4898,6 +4940,29 @@ BEGIN
     RAISE EXCEPTION 'proposed_by must be the caller'
       USING ERRCODE = 'insufficient_privilege';
   END IF;
+
+  -- Score / winner_side may only be written by:
+  --  (a) the event owner (handled above),
+  --  (b) a player whose own auth.uid() ends up in NEW.reported_by
+  --      (the legitimate report path — already gated above to
+  --      require self), or
+  --  (c) a player CLEARING them as part of a dispute (NEW values
+  --      empty/null AND NEW.disputed_at freshly set).
+  IF (NEW.winner_side IS DISTINCT FROM OLD.winner_side
+      OR NEW.score IS DISTINCT FROM OLD.score) THEN
+    IF NEW.reported_by IS NOT NULL AND NEW.reported_by = v_caller THEN
+      NULL;
+    ELSIF NEW.disputed_at IS DISTINCT FROM OLD.disputed_at
+          AND NEW.disputed_at IS NOT NULL
+          AND COALESCE(NEW.score, '') = ''
+          AND NEW.winner_side IS NULL THEN
+      NULL;
+    ELSE
+      RAISE EXCEPTION 'score / winner_side may only be set by the reporter or event owner'
+        USING ERRCODE = 'insufficient_privilege';
+    END IF;
+  END IF;
+
   IF OLD.status = 'proposed' AND NEW.status IN ('scheduled', 'declined')
      AND NEW.player2_id IS DISTINCT FROM OLD.player2_id THEN
     RAISE EXCEPTION 'cannot reassign player2 while responding to a challenge'
@@ -6209,6 +6274,7 @@ DECLARE
   v_dedupe_window interval := interval '30 minutes';
   v_is_participant boolean;
   v_recent_id     uuid;
+  v_tz            text;
 BEGIN
   IF v_caller IS NULL THEN
     RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege';
@@ -6237,9 +6303,12 @@ BEGIN
       RAISE EXCEPTION 'Not a participant' USING ERRCODE = 'insufficient_privilege';
     END IF;
 
+    v_tz := COALESCE(NULLIF(v_post.play_timezone, ''), 'America/Los_Angeles');
     IF v_post.play_date <> '' AND v_post.play_time <> '' THEN
       BEGIN
-        v_start := (v_post.play_date || ' ' || v_post.play_time || ':00')::timestamptz;
+        -- Wall-clock parse in the post's zone so the arrival-window
+        -- check operates on the user's intended local time, not UTC.
+        v_start := ((v_post.play_date || ' ' || v_post.play_time || ':00')::timestamp AT TIME ZONE v_tz);
       EXCEPTION WHEN OTHERS THEN
         v_start := NULL;
       END;

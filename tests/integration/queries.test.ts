@@ -2086,6 +2086,111 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         .gte("created_at", new Date(Date.now() - 60_000).toISOString());
     });
 
+    // C3 — players_confirmed + is_complete are recomputed server-side
+    // from approved play_requests + manual_players. Eliminates the
+    // multi-manager race where two concurrent approvals each read the
+    // same baseline and wrote N+1.
+    it("recount trigger keeps players_confirmed in lock-step with play_requests", async () => {
+      const admin = adminClient();
+      const post = await createPost(alice.client, {
+        content: "Need 2",
+        post_type: "find_players",
+        play_date: "2026-08-15",
+        play_time: "14:00",
+        play_duration: 90,
+        play_timezone: "America/Los_Angeles",
+        court_location: "Lower Woodland",
+        game_type: "doubles",
+        players_needed: 2,
+      });
+
+      // Two concurrent approvals — neither writes posts.players_confirmed.
+      await Promise.all([
+        admin.from("play_requests").insert({
+          post_id: post.id, user_id: bob.id, status: "approved",
+        }),
+        admin.from("play_requests").insert({
+          post_id: post.id, user_id: carol.id, status: "approved",
+        }),
+      ]);
+      const { data: row } = await admin
+        .from("posts")
+        .select("players_confirmed, is_complete")
+        .eq("id", post.id)
+        .single();
+      expect(row?.players_confirmed).toBe(2);
+      expect(row?.is_complete).toBe(true);
+
+      // Withdrawing one approved row drops the count + clears
+      // is_complete.
+      await admin
+        .from("play_requests")
+        .update({ status: "withdrawn" })
+        .eq("post_id", post.id)
+        .eq("user_id", bob.id);
+      const { data: after } = await admin
+        .from("posts")
+        .select("players_confirmed, is_complete")
+        .eq("id", post.id)
+        .single();
+      expect(after?.players_confirmed).toBe(1);
+      expect(after?.is_complete).toBe(false);
+
+      // Editing manual_players adds to the count.
+      await admin
+        .from("posts")
+        .update({ manual_players: "Guest A, Guest B" })
+        .eq("id", post.id);
+      const { data: final } = await admin
+        .from("posts")
+        .select("players_confirmed, is_complete")
+        .eq("id", post.id)
+        .single();
+      expect(final?.players_confirmed).toBe(3);
+      expect(final?.is_complete).toBe(true);
+
+      await admin.from("chats").delete().eq("post_id", post.id);
+      await deletePost(alice.client, post.id);
+    });
+
+    // C2 — wall-clock play_date/play_time are interpreted in the
+    // post's play_timezone, not server UTC. A Pacific user typing
+    // "18:00" gets a chat whose session_end_at is anchored to 18:00
+    // Pacific, not 18:00 UTC.
+    it("create_session_chat_on_complete parses play_time in play_timezone", async () => {
+      const admin = adminClient();
+      const post = await createPost(alice.client, {
+        content: "Need 1",
+        post_type: "find_players",
+        play_date: "2026-07-15",
+        play_time: "18:00",
+        play_duration: 90,
+        play_timezone: "America/Los_Angeles",
+        court_location: "Lower Woodland",
+        game_type: "singles",
+        players_needed: 1,
+      });
+      // Flip to complete -> trigger fires.
+      await alice.client
+        .from("posts")
+        .update({ players_confirmed: 1, is_complete: true })
+        .eq("id", post.id);
+      const { data: chat } = await admin
+        .from("chats")
+        .select("session_end_at, name")
+        .eq("post_id", post.id)
+        .single();
+      // Pacific 18:00 + 90 min = Pacific 19:30 = 02:30 UTC next day
+      // (PDT is UTC-7 in July). Verify the stored UTC matches.
+      const stored = new Date(chat!.session_end_at!).toISOString();
+      expect(stored.startsWith("2026-07-16T02:30")).toBe(true);
+      // Chat name should display the Pacific hour, not the UTC hour.
+      expect(chat!.name).toContain("6:00 PM");
+
+      await admin.from("chats").delete().eq("post_id", post.id);
+      await deletePost(alice.client, post.id);
+    });
+
     // L1 — re-application of a terminal-state play_request resets to
     // pending; an APPROVED row is never silently flipped (C1 fix).
     it("requestToJoin resets rejected -> pending; never touches approved", async () => {
@@ -2550,6 +2655,167 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       await alice.client.from("events").delete().eq("id", eventId);
     });
 
+    // H1 / H2 — actor gate also locks winner_side + score for non-
+    // owner players. Combined with the reported_by gate, this means
+    // a non-owner can only write a score by claiming the report.
+    it("event_matches actor gate locks score/winner_side to the reporter", async () => {
+      const admin = adminClient();
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Score Lock Test",
+          event_type: "tournament",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+      await admin.from("event_participants").insert([
+        { event_id: eventId, user_id: alice.id, status: "registered" },
+        { event_id: eventId, user_id: bob.id, status: "registered" },
+      ]);
+      const { data: m } = await alice.client
+        .from("event_matches")
+        .insert({
+          event_id: eventId,
+          player1_id: alice.id,
+          player2_id: bob.id,
+          status: "scheduled",
+        })
+        .select("id")
+        .single();
+      const matchId = m!.id;
+
+      // Bob tries to write score WITHOUT claiming the report.
+      // Should be rejected because reported_by isn't set to him.
+      const bareWrite = await bob.client
+        .from("event_matches")
+        .update({ score: "6-0,6-0", winner_side: 2 })
+        .eq("id", matchId);
+      expect(bareWrite.error?.message).toContain("reporter or event owner");
+
+      // Bob writes score AND claims report -> allowed.
+      const reportOk = await bob.client
+        .from("event_matches")
+        .update({
+          score: "6-3,6-4",
+          winner_side: 2,
+          reported_by: bob.id,
+          status: "in_progress",
+        })
+        .eq("id", matchId);
+      expect(reportOk.error).toBeNull();
+
+      await alice.client.from("events").delete().eq("id", eventId);
+    });
+
+    // H2 — actor gate also catches proposed_by impersonation on the
+    // initial propose insert (via the propose_ladder_challenge RPC,
+    // which is the only path that writes proposed_by).
+    it("propose_ladder_challenge RPC writes proposed_by = caller", async () => {
+      const admin = adminClient();
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Ladder Proposed-By Test",
+          event_type: "ladder",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+          config: { ladderMaxGap: 99 },
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+      await admin.from("event_participants").insert([
+        { event_id: eventId, user_id: alice.id, status: "registered" },
+        { event_id: eventId, user_id: bob.id, status: "registered" },
+        { event_id: eventId, user_id: carol.id, status: "registered" },
+      ]);
+      // Seed a completed match so alice has a clear #1 rank.
+      await admin.from("event_matches").insert({
+        event_id: eventId,
+        player1_id: alice.id,
+        player2_id: bob.id,
+        status: "completed",
+        score: "6-0,6-0",
+        winner_side: 1,
+      });
+
+      // carol (#3) challenges someone ranked above. The RPC writes
+      // proposed_by = caller server-side regardless of what the
+      // client passes.
+      const result = await carol.client.rpc("propose_ladder_challenge", {
+        p_event_id: eventId,
+        p_opponent_id: alice.id,
+      });
+      expect(result.error).toBeNull();
+      const matchId = result.data as string;
+      const { data: match } = await admin
+        .from("event_matches")
+        .select("proposed_by")
+        .eq("id", matchId)
+        .single();
+      expect(match?.proposed_by).toBe(carol.id);
+
+      await alice.client.from("events").delete().eq("id", eventId);
+    });
+
+    // H5 — re-applying after a rejection sends a fresh join_request
+    // notification to the post author.
+    it("requestToJoin re-application sends a new join_request notification", async () => {
+      const admin = adminClient();
+      const post = await createPost(alice.client, {
+        content: "Re-apply notify test",
+        post_type: "find_players",
+        play_date: "2026-09-15",
+        play_time: "14:00",
+        play_duration: 90,
+        play_timezone: "America/Los_Angeles",
+        court_location: "Lower Woodland",
+        game_type: "singles",
+        players_needed: 1,
+      });
+      // First request, alice rejects.
+      const { data: req } = await admin
+        .from("play_requests")
+        .insert({ post_id: post.id, user_id: bob.id, status: "pending" })
+        .select("id")
+        .single();
+      await admin
+        .from("play_requests")
+        .update({ status: "rejected" })
+        .eq("id", req!.id);
+
+      // Clear notifications so the assertion only sees the re-apply one.
+      await admin
+        .from("notifications")
+        .delete()
+        .eq("user_id", alice.id)
+        .eq("type", "join_request")
+        .eq("post_id", post.id);
+
+      const { requestToJoin } = await import("../../src/lib/supabase/queries");
+      await requestToJoin(bob.client, post.id, "second try");
+
+      const { data: notes } = await admin
+        .from("notifications")
+        .select("type, actor_id, post_id")
+        .eq("user_id", alice.id)
+        .eq("type", "join_request")
+        .eq("post_id", post.id);
+      expect((notes ?? []).length).toBe(1);
+      expect(notes![0].actor_id).toBe(bob.id);
+
+      await deletePost(alice.client, post.id);
+    });
+
     // Ladder — propose_ladder_challenge enforces rank-gap + dedupe.
     it("propose_ladder_challenge respects rank-gap + dedupe", async () => {
       const admin = adminClient();
@@ -2741,14 +3007,17 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         players_needed: 1,
       });
       const otherPost = await createPost(bob.client, {
-        content: "Need 1 more",
+        content: "Need 2 more",
         post_type: "find_players",
         play_date: fut.date,
         play_time: fut.time,
         play_duration: 90,
         court_location: "Lower Woodland",
-        game_type: "singles",
-        players_needed: 1,
+        game_type: "doubles",
+        // 2 needed so approving alice doesn't auto-complete the post
+        // (the recount trigger would flip is_complete=true and
+        // listUpcomingFindPlayersGames filters on is_complete=false).
+        players_needed: 2,
       });
       // Approve alice into bob's game so it should also show up.
       await admin.from("play_requests").insert({
@@ -2825,6 +3094,9 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
     // check, per-user dedupe.
     it("report_court_availability RPC enforces participant + window + dedupe", async () => {
       // Game starts now -> within the 30 min before / end window.
+      // Use UTC strings + play_timezone='UTC' so the trigger's
+      // wall-clock-in-zone parse round-trips to the same UTC instant
+      // as the test machine's `now`.
       const today = new Date();
       const playDate = today.toISOString().slice(0, 10);
       const playTime = today.toISOString().slice(11, 16);
@@ -2835,6 +3107,7 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         play_date: playDate,
         play_time: playTime,
         play_duration: 90,
+        play_timezone: "UTC",
         court_location: "Test Court",
         game_type: "singles",
         players_needed: 1,

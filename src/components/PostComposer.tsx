@@ -531,6 +531,17 @@ function ComposerModal({
         play_date: typeof body.playDate === "string" ? body.playDate : "",
         play_time: typeof body.playTime === "string" ? body.playTime : "",
         play_duration: typeof body.playDuration === "number" ? body.playDuration : 90,
+        // Tag the post with the user's local IANA timezone so server-
+        // side triggers (create_session_chat_on_complete,
+        // sync_chat_session_end_at, report_court_availability) can
+        // interpret play_date/play_time as wall-clock in that zone
+        // rather than UTC. Default at the DB column level is
+        // America/Los_Angeles for the Seattle launch market — this
+        // line keeps it correct for travelers / future markets.
+        play_timezone:
+          (typeof Intl !== "undefined" &&
+            Intl.DateTimeFormat().resolvedOptions().timeZone) ||
+          "America/Los_Angeles",
         court_location: typeof body.courtLocation === "string" ? body.courtLocation : "",
         game_type: typeof body.gameType === "string" ? body.gameType : "",
         players_needed: typeof body.playersNeeded === "number" ? body.playersNeeded : 0,

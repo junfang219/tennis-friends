@@ -2277,16 +2277,21 @@ function ManageRequestsModal({
       if (upErr) throw new Error(upErr.message);
       loadRequests();
       if (action === "approve") {
-        const nextConfirmed = approvedCount + 1 + manualCount;
-        const isComplete = nextConfirmed >= playersNeeded;
-        // Persist the count + completion flag so the
-        // create_session_chat_on_complete trigger can spin up the
-        // session group chat.
-        const { error: postErr } = await supabase
+        // play_requests_recount_post trigger recomputes
+        // posts.players_confirmed + is_complete from the authoritative
+        // count of approved rows + manual_players. Previously we
+        // wrote both columns client-side, which raced when two
+        // managers approved at the same time (each read the same
+        // baseline and wrote N+1, so the final count was N+1, not
+        // N+2). Now we re-fetch the post to pick up the
+        // server-computed values.
+        const { data: refreshed } = await supabase
           .from("posts")
-          .update({ players_confirmed: nextConfirmed, is_complete: isComplete })
-          .eq("id", postId);
-        if (postErr) throw new Error(postErr.message);
+          .select("players_confirmed, is_complete")
+          .eq("id", postId)
+          .single();
+        const nextConfirmed = refreshed?.players_confirmed ?? approvedCount + 1 + manualCount;
+        const isComplete = refreshed?.is_complete ?? nextConfirmed >= playersNeeded;
         const { chatId, teamGroupId } = isComplete
           ? await fetchCompletionIds(supabase, postId)
           : { chatId: null, teamGroupId: null };
