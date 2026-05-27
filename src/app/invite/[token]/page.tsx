@@ -34,9 +34,18 @@ export default function InviteAcceptPage() {
         setLoadError("This invite link is invalid.");
         return;
       }
-      // Map the row to the page's local InviteInfo (uppercase status).
+      // The DB enum is only 'pending' | 'accepted' | 'cancelled' —
+      // "expired" is a client-side derivation from a pending row
+      // with a past expires_at. Without this check the EXPIRED UI
+      // branch was dead code and clicking Join just surfaced the
+      // server error.
+      const dbStatus = row.status.toUpperCase() as InviteInfo["status"];
+      const isExpired =
+        row.status === "pending" &&
+        row.expires_at != null &&
+        new Date(row.expires_at).getTime() < Date.now();
       setInfo({
-        status: row.status.toUpperCase() as InviteInfo["status"],
+        status: isExpired ? "EXPIRED" : dbStatus,
         expiresAt: row.expires_at,
         team: {
           id: row.group?.id ?? row.group_id,

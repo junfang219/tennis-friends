@@ -46,9 +46,31 @@ describe("storage helpers", () => {
       expect(bucketAcceptsMime("posts", "application/pdf")).toBe(false);
     });
 
-    it("files accept any mime", () => {
+    it("files accept any mime except the active-content denylist", () => {
       expect(bucketAcceptsMime("files", "application/pdf")).toBe(true);
+      expect(bucketAcceptsMime("files", "application/zip")).toBe(true);
       expect(bucketAcceptsMime("files", "weird/whatever")).toBe(true);
+    });
+
+    it("rejects dangerous mimes across every bucket", () => {
+      for (const bucket of ["avatars", "posts", "albums", "files", "court-reviews"] as const) {
+        // SVG can execute JS when rendered inline; HTML/JS load script
+        // directly. None of these should be uploadable, even to the
+        // catch-all `files` bucket.
+        expect(bucketAcceptsMime(bucket, "image/svg+xml")).toBe(false);
+        expect(bucketAcceptsMime(bucket, "text/html")).toBe(false);
+        expect(bucketAcceptsMime(bucket, "application/javascript")).toBe(false);
+        expect(bucketAcceptsMime(bucket, "text/javascript")).toBe(false);
+        expect(bucketAcceptsMime(bucket, "application/x-msdownload")).toBe(false);
+      }
+    });
+
+    it("denylist is case-insensitive", () => {
+      // Browsers tend to lowercase content-types, but tools and clients
+      // can send "Image/SVG+XML". The gate must not be bypassable by
+      // capitalisation.
+      expect(bucketAcceptsMime("files", "Image/SVG+XML")).toBe(false);
+      expect(bucketAcceptsMime("files", "TEXT/HTML")).toBe(false);
     });
   });
 

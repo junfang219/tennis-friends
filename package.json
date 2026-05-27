@@ -22,7 +22,6 @@
     "@capacitor/ios": "^8.3.0",
     "@capacitor/keyboard": "^8.0.3",
     "@capacitor/push-notifications": "^8.0.4",
-    "@parse/node-apn": "^8.1.0",
     "@sentry/nextjs": "^10.53.1",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.106.1",

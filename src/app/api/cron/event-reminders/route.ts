@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { pushToUsers } from "@/lib/push";
+import { postPushFanout } from "@/lib/pushFanout";
 import { parseReminderPrefs } from "@/lib/reminderPrefs";
 import { sendReminderEmail } from "@/lib/reminderEmail";
 import { combineDateAndTime } from "@/lib/wallClock";
@@ -267,8 +267,12 @@ async function dispatch(
   });
   const kindLabel = opts.kind === "match" ? "Match" : "Practice";
 
-  // Push to all targets at once (no-op when APNs env vars are unset).
-  void pushToUsers(targets, {
+  // Single APN code path: push-fanout (Web Crypto ES256 + HTTP/2). We
+  // await the response so reminder_sent only gets written when delivery
+  // didn't outright fail — otherwise a 5xx push-fanout outage would
+  // permanently suppress the reminder for the (kind, ref_id, hoursBefore)
+  // tuple and the user would never hear about the match.
+  const pushResult = await postPushFanout(targets, {
     title: `${opts.teamName}: ${kindLabel} reminder`,
     body: `${opts.title} — ${whenLabel} · ${opts.location}`,
     threadId: `reminder:${opts.kind}:${opts.refId}`,
@@ -293,6 +297,20 @@ async function dispatch(
       hoursBefore: opts.hoursBefore,
       rsvpUrl,
     });
+  }
+
+  // Hard failures from push-fanout (network error or 5xx) should NOT
+  // mark these recipients as already-notified. push-fanout no-ops on
+  // missing config and returns ok:false / status:0 — we treat that as
+  // "delivered as far as this cron is concerned" so reminder_sent
+  // still advances and we don't re-spam on every hourly run.
+  const pushHardFail =
+    !pushResult.ok && pushResult.status >= 500;
+  if (pushHardFail) {
+    return {
+      dispatched: 0,
+      error: `push-fanout ${pushResult.status}: ${pushResult.error ?? "no detail"}`,
+    };
   }
 
   // Record dispatch. The (kind, ref_id, user_id, hours_before) unique

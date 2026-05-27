@@ -41,6 +41,7 @@ create extension if not exists "postgis";  -- geography(Point, 4326)
 create extension if not exists "citext";   -- case-insensitive email/handle
 create extension if not exists "pg_net" with schema extensions; -- async HTTP from triggers
 create extension if not exists "supabase_vault";                -- secret storage for trigger HTTP auth
+create extension if not exists "btree_gist" with schema extensions; -- (uuid, tstzrange) EXCLUDE constraints
 
 -- =========================================================================
 -- Shared utility functions
@@ -922,7 +923,14 @@ create table public.bookings (
   active_net_url  text not null default '',
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),
-  constraint bookings_time_order check (end_time > start_time)
+  constraint bookings_time_order check (end_time > start_time),
+  -- Per-court non-overlap: no two non-cancelled bookings on the same
+  -- court may overlap. tstzrange '[)' is half-open so back-to-back
+  -- bookings (end_time = next start_time) don't collide.
+  constraint bookings_no_overlap_per_court exclude using gist (
+    court_id WITH =,
+    tstzrange(start_time, end_time, '[)') WITH &&
+  ) WHERE (status <> 'cancelled')
 );
 create index bookings_court_time_idx on public.bookings (court_id, start_time, end_time);
 create index bookings_organizer_idx  on public.bookings (organizer_id);
@@ -5940,8 +5948,10 @@ BEGIN
     RAISE EXCEPTION 'Invite not found' USING ERRCODE = 'no_data_found';
   END IF;
   IF v_inv.status = 'accepted' THEN
-    RETURN jsonb_build_object('ok', true, 'already_accepted', true,
-                              'group_id', v_inv.group_id);
+    -- Don't echo group_id on a duplicate redemption: a leaked URL
+    -- would otherwise let anyone confirm which group the invite
+    -- points to without ever matching the invited email.
+    RETURN jsonb_build_object('ok', true, 'already_accepted', true);
   END IF;
   IF v_inv.status = 'cancelled' THEN
     RAISE EXCEPTION 'This invite was cancelled' USING ERRCODE = 'invalid_parameter_value';
@@ -5954,11 +5964,12 @@ BEGIN
       USING ERRCODE = 'insufficient_privilege';
   END IF;
 
+  -- Pre-existing membership wins: don't demote a user who's already
+  -- a manager/captain just because a stale 'member' invite gets
+  -- redeemed. ON CONFLICT DO NOTHING preserves the higher role.
   INSERT INTO group_members (group_id, user_id, role, member_type)
   VALUES (v_inv.group_id, v_caller, v_inv.role, COALESCE(v_inv.member_type, ''))
-  ON CONFLICT (group_id, user_id) DO UPDATE
-    SET role        = EXCLUDED.role,
-        member_type = EXCLUDED.member_type;
+  ON CONFLICT (group_id, user_id) DO NOTHING;
 
   UPDATE group_invites
   SET status         = 'accepted',

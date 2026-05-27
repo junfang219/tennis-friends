@@ -49,8 +49,9 @@ export default function PushRegistrar() {
       }
       if (!granted) return;
 
-      await cap.Push.register();
-
+      // Attach listeners BEFORE register() — when iOS already has a
+      // cached APNs token, the "registration" event fires
+      // essentially synchronously, and a previous ordering missed it.
       const onRegistered = await cap.Push.addListener("registration", async (token) => {
         try {
           const supabase = createSupabaseBrowserClient();
@@ -63,6 +64,8 @@ export default function PushRegistrar() {
       const onError = await cap.Push.addListener("registrationError", (err) => {
         console.warn("[push] registrationError", err);
       });
+
+      await cap.Push.register();
 
       // Tap on a banner from background/killed → route to the relevant chat.
       const onTap = await cap.Push.addListener("pushNotificationActionPerformed", (action) => {

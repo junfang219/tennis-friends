@@ -2351,13 +2351,67 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       expect(inv?.status).toBe("accepted");
       expect(inv?.accepted_by_id).toBe(bob.id);
 
-      // Idempotent: re-accepting returns already_accepted.
+      // Idempotent: re-accepting returns already_accepted, and does
+      // NOT echo group_id back — otherwise a leaked URL could be
+      // replayed to confirm which group a stale invite points to
+      // without ever passing the email-match gate.
       const dup = await bob.client.rpc("accept_group_invite", {
         p_token: token,
       });
       expect((dup.data as { already_accepted?: boolean } | null)?.already_accepted).toBe(
         true
       );
+      expect((dup.data as { group_id?: string } | null)?.group_id).toBeUndefined();
+
+      await admin.from("groups").delete().eq("id", groupId);
+    });
+
+    // Hardening for accept_group_invite: a pending invite at the
+    // base 'member' role must NOT demote a user who is already a
+    // member at a higher role (manager/captain). The conflict path
+    // should preserve the existing role.
+    it("accept_group_invite does not overwrite an existing member's higher role", async () => {
+      const admin = adminClient();
+      const { data: grp } = await alice.client
+        .from("groups")
+        .insert({ name: "Invite Role Preserve Test", owner_id: alice.id })
+        .select("id")
+        .single();
+      const groupId = grp!.id;
+
+      // Bob is already a manager (e.g. promoted out-of-band before
+      // the older invite is redeemed).
+      await admin.from("group_members").upsert(
+        { group_id: groupId, user_id: bob.id, role: "manager" },
+        { onConflict: "group_id,user_id" }
+      );
+
+      const { data: bobAuth } = await admin.auth.admin.getUserById(bob.id);
+      const bobEmail = bobAuth.user!.email!;
+      const token =
+        "invite-role-" +
+        Date.now() +
+        "-" +
+        Math.random().toString(36).slice(2, 8);
+      await admin.from("group_invites").insert({
+        group_id: groupId,
+        email: bobEmail,
+        invited_by_id: alice.id,
+        token,
+        role: "member",
+        expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+      });
+
+      const ok = await bob.client.rpc("accept_group_invite", { p_token: token });
+      expect(ok.error).toBeNull();
+
+      const { data: member } = await admin
+        .from("group_members")
+        .select("role")
+        .eq("group_id", groupId)
+        .eq("user_id", bob.id)
+        .single();
+      expect(member?.role).toBe("manager");
 
       await admin.from("groups").delete().eq("id", groupId);
     });
