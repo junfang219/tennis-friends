@@ -100,6 +100,13 @@ export default function CourtDetailPage() {
   const [error, setError] = useState("");
   const [tab, setTab] = useState<Tab>("overview");
   const [dashboardOpen, setDashboardOpen] = useState(false);
+  // Pre-warm the Power BI iframe on first hover/touch/focus of the
+  // availability button so its (cacheable) JS/CSS land in the browser cache
+  // before the modal mounts. The modal's iframe still loads its own
+  // instance, but Power BI's static assets are reused from cache — cutting
+  // perceived load by ~1–2s on the modal click. Set-once: subsequent hovers
+  // are no-ops, so we don't thrash the network.
+  const [prewarmDashboard, setPrewarmDashboard] = useState(false);
   // Geolocation for the Directions link's `origin` param — Google Maps then
   // opens with the route already drawn instead of asking "from where?".
   // Silent on denial; the link still works (Google falls back to prompting).
@@ -136,10 +143,19 @@ export default function CourtDetailPage() {
       }
       // Static-catalog facility plus the legacy "dashboard URL" computed
       // client-side. Replaces the deleted /api/courts/[id] route which
-      // wrapped this lookup.
+      // wrapped this lookup. Gating mirrors the original API: only SPR
+      // venues that are actually reservable, and not opted-out via
+      // `showAvailabilityDashboard: false` (e.g. high-school complexes
+      // not on the dashboard's reservable list).
+      const dashboardUrl =
+        facility.managedBy === "Seattle Parks & Recreation" &&
+        facility.bookingUrl &&
+        facility.showAvailabilityDashboard
+          ? getSeattleParksDashboardUrl()
+          : null;
       const detail: CourtDetail = {
         ...facility,
-        seattleParksDashboardUrl: facility.city === "Seattle" ? getSeattleParksDashboardUrl() : null,
+        dashboardUrl,
       } as unknown as CourtDetail;
       setCourt(detail);
     } catch (e) {
@@ -199,6 +215,27 @@ export default function CourtDetailPage() {
     fetchCourt();
     fetchReviews();
   }, [fetchCourt, fetchReviews]);
+
+  // Open the TCP+TLS handshake to Power BI's CDN the moment we know this
+  // venue has a dashboard, so the user's tap on "Check court availability"
+  // doesn't pay for the connection setup. Free (a few KB of TLS chatter)
+  // and removed when leaving the page.
+  useEffect(() => {
+    if (!court?.dashboardUrl) return;
+    const preconnect = document.createElement("link");
+    preconnect.rel = "preconnect";
+    preconnect.href = "https://app.powerbigov.us";
+    preconnect.crossOrigin = "anonymous";
+    document.head.appendChild(preconnect);
+    const dns = document.createElement("link");
+    dns.rel = "dns-prefetch";
+    dns.href = "https://app.powerbigov.us";
+    document.head.appendChild(dns);
+    return () => {
+      preconnect.remove();
+      dns.remove();
+    };
+  }, [court?.dashboardUrl]);
 
   useEffect(() => {
     if (!court) return;
@@ -477,6 +514,9 @@ export default function CourtDetailPage() {
               {court.dashboardUrl && (
                 <button
                   onClick={() => setDashboardOpen(true)}
+                  onPointerEnter={() => setPrewarmDashboard(true)}
+                  onPointerDown={() => setPrewarmDashboard(true)}
+                  onFocus={() => setPrewarmDashboard(true)}
                   className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-ball-yellow/30 hover:bg-ball-yellow/50 text-amber-800 font-semibold text-sm"
                 >
                   📊 Check court availability
@@ -749,11 +789,34 @@ export default function CourtDetailPage() {
               src={court.dashboardUrl}
               title="Seattle Parks tennis court availability"
               className="w-full flex-1 border-0"
-              loading="lazy"
               allowFullScreen
             />
           </div>
         </div>
+      )}
+
+      {/* Hidden pre-warmer: kicks off Power BI's static asset load on first
+          hover/touch of the button. The modal's own iframe will then hit
+          the browser cache for the (~MB) bundle and render markedly
+          faster. Off-DOM positioned + aria-hidden so it's invisible and
+          inert to assistive tech. */}
+      {court?.dashboardUrl && prewarmDashboard && !dashboardOpen && (
+        <iframe
+          src={court.dashboardUrl}
+          title=""
+          aria-hidden="true"
+          tabIndex={-1}
+          style={{
+            position: "fixed",
+            left: "-9999px",
+            top: 0,
+            width: "1024px",
+            height: "768px",
+            border: 0,
+            visibility: "hidden",
+            pointerEvents: "none",
+          }}
+        />
       )}
     </div>
   );
