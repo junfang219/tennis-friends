@@ -20,15 +20,14 @@ import {
   listFriendGroupMembers,
   createFriendGroup as sbCreateFriendGroup,
   deleteFriendGroup as sbDeleteFriendGroup,
-  listDmThreads,
-  listMyChats,
   getChat,
   listChatParticipants,
   markDmRead,
   markChatRead,
+  markTeamRead,
 } from "@/lib/supabase/queries";
-import { pgToIso } from "@/lib/pgDate";
 import { useCachedQuery } from "@/lib/useCachedQuery";
+import { loadInbox } from "@/lib/inboxLoader";
 import { errorMessage } from "@/lib/errorMessage";
 
 type FriendUser = {
@@ -231,46 +230,13 @@ export default function FriendsPage() {
 
   // Reuses the "chat:inbox" cache populated by src/app/chat/page.tsx, so
   // bouncing between Friends and Chat doesn't refetch the same data.
-  const chatsQuery = useCachedQuery<InboxItem[]>("chat:inbox", async () => {
-    const supabase = createSupabaseBrowserClient();
-    const [dms, chats] = await Promise.all([
-      listDmThreads(supabase),
-      listMyChats(supabase),
-    ]);
-    const dmItems: InboxItem[] = dms.map((t) => ({
-      type: "direct",
-      id: t.other.id,
-      title: t.other.name,
-      href: `/chat/${t.other.id}`,
-      unreadCount: t.unread_count,
-      muted: false,
-      pinnedAt: null,
-      avatarUser: {
-        id: t.other.id,
-        name: t.other.name,
-        profileImageUrl: t.other.profile_image_url,
-      },
-      lastMessage: {
-        content: t.last_message.content,
-        // pgToIso so iOS Safari's strict parser accepts the "+00" form.
-        createdAt: pgToIso(t.last_message.created_at),
-        fromSelf: t.last_message.sender_id !== t.other.id,
-      },
-    }));
-    const chatItems: InboxItem[] = chats.map((c) => ({
-      type: "group" as const,
-      id: c.id,
-      title: c.name || "Session chat",
-      href: `/chat/group/${c.id}`,
-      unreadCount: 0,
-      muted: false,
-      pinnedAt: null,
-      kind: "session" as const,
-      lastMessage: null,
-      participants: [],
-    }));
-    return [...dmItems, ...chatItems];
-  });
+  // The fetcher lives in src/lib/inboxLoader.ts — both pages MUST use the
+  // same loader, otherwise whichever populates the cache first wins and
+  // the other page flashes the wrong list (this is how team chats started
+  // disappearing from /chat after a /friends visit).
+  const chatsQuery = useCachedQuery<InboxItem[]>("chat:inbox", () =>
+    loadInbox(createSupabaseBrowserClient(), myId || undefined)
+  );
   const chats = chatsQuery.data ?? [];
   const loadChats = chatsQuery.refetch;
 
@@ -336,6 +302,8 @@ export default function FriendsPage() {
         await markDmRead(supabase, item.id);
       } else if (item.type === "group") {
         await markChatRead(supabase, item.id);
+      } else if (item.type === "team") {
+        await markTeamRead(supabase, item.id);
       }
     }
     loadChats();

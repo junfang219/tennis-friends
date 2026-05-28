@@ -6,8 +6,8 @@ import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import ConversationRow, { type InboxItem, type InboxAction } from "./ConversationRow";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { listDmThreads, listMyChats, listMyTeamThreads, markDmRead, markChatRead, markTeamRead } from "@/lib/supabase/queries";
-import { pgToIso } from "@/lib/pgDate";
+import { markDmRead, markChatRead, markTeamRead } from "@/lib/supabase/queries";
+import { loadInbox } from "@/lib/inboxLoader";
 
 // Per-user localStorage key so dismissals are scoped to the signed-in user.
 const DISMISS_KEY = (userId: string) => `tf_msg_tray_dismissed_${userId}`;
@@ -48,81 +48,24 @@ export default function MessageBell() {
   const [anchorPos, setAnchorPos] = useState<{ top: number; right: number } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadInbox = useCallback(async () => {
+  // Shared loader keeps this bell, /chat, and /friends in lockstep.
+  const refreshInbox = useCallback(async () => {
     try {
-      const supabase = createSupabaseBrowserClient();
-      const [dms, chats, teams] = await Promise.all([
-        listDmThreads(supabase),
-        listMyChats(supabase),
-        listMyTeamThreads(supabase),
-      ]);
-      const dmItems: InboxItem[] = dms.map((t) => ({
-        type: "direct",
-        id: t.other.id,
-        title: t.other.name,
-        href: `/chat/${t.other.id}`,
-        unreadCount: t.unread_count,
-        muted: false,
-        pinnedAt: null,
-        avatarUser: {
-          id: t.other.id,
-          name: t.other.name,
-          profileImageUrl: t.other.profile_image_url,
-        },
-        lastMessage: {
-          content: t.last_message.content,
-          // pgToIso so iOS Safari's strict parser accepts the "+00" form
-          // (timeAgo / dismissed-comparison both run new Date(createdAt)).
-          createdAt: pgToIso(t.last_message.created_at),
-          fromSelf: t.last_message.sender_id !== t.other.id,
-        },
-      }));
-      const chatItems: InboxItem[] = chats.map((c) => ({
-        type: "group" as const,
-        id: c.id,
-        title: c.name || "Session chat",
-        href: `/chat/group/${c.id}`,
-        unreadCount: 0,
-        muted: false,
-        pinnedAt: null,
-        kind: "session" as const,
-        lastMessage: null,
-        participants: [],
-      }));
-      const teamItems: InboxItem[] = teams.map((t) => ({
-        type: "team" as const,
-        id: t.group.id,
-        title: t.group.name,
-        href: `/groups/${t.group.id}/chat`,
-        unreadCount: t.unread_count,
-        muted: t.muted,
-        pinnedAt: t.pinned_at,
-        imageUrl: t.group.image_url || undefined,
-        eventId: t.event_id,
-        participants: [],
-        lastMessage: t.last_message
-          ? {
-              content: t.last_message.content,
-              createdAt: pgToIso(t.last_message.created_at),
-              fromSelf: t.last_message.sender_id === userId,
-              senderName: t.last_message.sender_name,
-            }
-          : null,
-      }));
-      setItems([...dmItems, ...chatItems, ...teamItems]);
+      const next = await loadInbox(createSupabaseBrowserClient(), userId);
+      setItems(next);
     } catch {
-      // ignore
+      // ignore — next poll / realtime tick will reconcile
     }
   }, [userId]);
 
   useEffect(() => {
-    loadInbox();
+    refreshInbox();
     // Belt-and-suspenders poll every 60s; Realtime is the primary signal.
-    pollRef.current = setInterval(loadInbox, 60000);
+    pollRef.current = setInterval(refreshInbox, 60000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [loadInbox]);
+  }, [refreshInbox]);
 
   // Subscribe to anything that could change my inbox count. RLS scopes the
   // event stream to rows I can already read, so a single channel is safe.
@@ -134,23 +77,23 @@ export default function MessageBell() {
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages", filter: `receiver_id=eq.${userId}` },
-        () => loadInbox()
+        () => refreshInbox()
       )
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "chat_messages" },
-        () => loadInbox()
+        () => refreshInbox()
       )
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "group_messages" },
-        () => loadInbox()
+        () => refreshInbox()
       )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [userId, loadInbox]);
+  }, [userId, refreshInbox]);
 
   // Load persisted dismissals once we know the user
   useEffect(() => {

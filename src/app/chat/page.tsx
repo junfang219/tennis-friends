@@ -6,9 +6,9 @@ import { useSession } from "@/lib/supabase/nextauth-compat";
 import ConversationRow, { type InboxItem, type InboxAction } from "@/components/ConversationRow";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useRealtimeTable } from "@/lib/supabase/realtime";
-import { listDmThreads, listMyChats, listMyTeamThreads, markDmRead, markChatRead, markTeamRead } from "@/lib/supabase/queries";
-import { pgToIso } from "@/lib/pgDate";
+import { markDmRead, markChatRead, markTeamRead } from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
+import { loadInbox } from "@/lib/inboxLoader";
 
 export default function ChatPage() {
   const { status, data: session } = useSession();
@@ -16,70 +16,11 @@ export default function ChatPage() {
   const [openRowKey, setOpenRowKey] = useState<string | null>(null);
 
   // Cached inbox: paints instantly on revisit, refetches in background.
+  // Fetcher lives in src/lib/inboxLoader.ts so this page, /friends, and
+  // MessageBell all populate the same cache key with the same shape.
   const inbox = useCachedQuery<InboxItem[]>(
     status === "authenticated" ? "chat:inbox" : null,
-    async () => {
-      const supabase = createSupabaseBrowserClient();
-      const [dms, chats, teams] = await Promise.all([
-        listDmThreads(supabase),
-        listMyChats(supabase),
-        listMyTeamThreads(supabase),
-      ]);
-      const dmItems: InboxItem[] = dms.map((t) => ({
-        type: "direct",
-        id: t.other.id,
-        title: t.other.name,
-        href: `/chat/${t.other.id}`,
-        unreadCount: t.unread_count,
-        muted: false,
-        pinnedAt: null,
-        avatarUser: {
-          id: t.other.id,
-          name: t.other.name,
-          profileImageUrl: t.other.profile_image_url,
-        },
-        lastMessage: {
-          content: t.last_message.content,
-          // Postgres "2026-05-21 18:23:35+00" → strict ISO so iOS Safari's
-          // Date parser doesn't NaN out and render "Invalid Date".
-          createdAt: pgToIso(t.last_message.created_at),
-          fromSelf: t.last_message.sender_id !== t.other.id,
-        },
-      }));
-      const chatItems: InboxItem[] = chats.map((c) => ({
-        type: "group" as const,
-        id: c.id,
-        title: c.name || "Session chat",
-        href: `/chat/group/${c.id}`,
-        unreadCount: 0,
-        muted: false,
-        pinnedAt: null,
-        kind: "session" as const,
-        lastMessage: null,
-        participants: [],
-      }));
-      const teamItems: InboxItem[] = teams.map((t) => ({
-        type: "team" as const,
-        id: t.group.id,
-        title: t.group.name,
-        href: `/groups/${t.group.id}/chat`,
-        unreadCount: t.unread_count,
-        muted: t.muted,
-        pinnedAt: t.pinned_at,
-        imageUrl: t.group.image_url || undefined,
-        eventId: t.event_id,
-        participants: [],
-        lastMessage: t.last_message
-          ? {
-              content: t.last_message.content,
-              createdAt: pgToIso(t.last_message.created_at),
-              fromSelf: t.last_message.sender_id === session?.user?.id,
-              senderName: t.last_message.sender_name,
-            }
-          : null,
-      }));
-      return [...dmItems, ...chatItems, ...teamItems];
-    },
+    () => loadInbox(createSupabaseBrowserClient(), session?.user?.id),
   );
   // Memoize so identity is stable when inbox.data is unchanged — keeps the
   // prefetch effect below from firing on every render.
