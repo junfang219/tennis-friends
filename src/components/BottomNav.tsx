@@ -98,9 +98,16 @@ export default function BottomNav() {
   // dedicated typing surface — the bottom tab strip squeezes the input
   // away from the keyboard and adds a visible gap on iOS. The inbox at
   // /chat itself keeps the nav so tab-switching still works there.
+  // /groups/[id]/chat is the team group chat — same focused-thread UX
+  // as the DM and session chats, so it gets the same treatment. Before
+  // this match the body's 5rem padding-bottom plus the chat
+  // container's fixed-height calc made the page scrollable, and the
+  // sticky global navbar (z-40) ended up covering the chat header
+  // (see iPhone 17 screenshot, 2026-05-28).
   const isChatThread =
     (pathname.startsWith("/chat/") && pathname !== "/chat") ||
-    pathname.startsWith("/chat/group/");
+    pathname.startsWith("/chat/group/") ||
+    /^\/groups\/[^/]+\/chat(?:\/|$)/.test(pathname);
 
   // Add bottom padding to body so content isn't hidden behind the nav —
   // but only when the nav is actually rendered. On chat threads the nav
