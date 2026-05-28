@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Avatar from "@/components/Avatar";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { errorMessage } from "@/lib/errorMessage";
 
 type Participant = {
   id: string;
@@ -49,7 +50,7 @@ export default function CheckinDrawer({
       setLocalState((prev) => ({ ...prev, [userId]: next }));
       onChanged?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't update check-in");
+      setError(errorMessage(err, "Couldn't update check-in"));
     }
     setPending(null);
   }

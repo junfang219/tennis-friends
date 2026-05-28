@@ -27,6 +27,7 @@ import {
 } from "@/lib/supabase/queries";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { toGroupMessageCamel } from "@/lib/supabase/adapters";
+import { errorMessage } from "@/lib/errorMessage";
 
 // Page Message is the shared GroupMessageCamel adapter (snake→camel +
 // pgToIso on createdAt and pinnedAt) plus the resolved shared-post body,
@@ -232,7 +233,7 @@ export default function GroupChatPage() {
       setAnnouncementMode(false);
       inputRef.current?.focus();
     } catch (err) {
-      setSendError(err instanceof Error ? err.message : "Failed to send.");
+      setSendError(errorMessage(err, "Failed to send."));
     }
     setSending(false);
   };
@@ -269,7 +270,7 @@ export default function GroupChatPage() {
       setPollOptions(["", ""]);
       setPollIsMulti(false);
     } catch (err) {
-      setSendError(err instanceof Error ? err.message : "Failed to create poll.");
+      setSendError(errorMessage(err, "Failed to create poll."));
     }
     setPollSending(false);
   };

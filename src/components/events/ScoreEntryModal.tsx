@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { EventMatchView } from "./types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { errorMessage } from "@/lib/errorMessage";
 
 type SetScore = { a: string; b: string };
 
@@ -74,7 +75,7 @@ export default function ScoreEntryModal({
       // lag until that lands.
       onSubmitted();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't submit score");
+      setError(errorMessage(err, "Couldn't submit score"));
     }
     setSubmitting(false);
     void eventId;

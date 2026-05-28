@@ -11,6 +11,7 @@ import AttendanceTally from "@/components/attendance/AttendanceTally";
 import { normalizePracticeStatus } from "@/lib/rsvpStatus";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getGroup, listGroupMembers, sendGroupMessage } from "@/lib/supabase/queries";
+import { errorMessage } from "@/lib/errorMessage";
 
 type Member = {
   id: string;
@@ -304,7 +305,7 @@ export default function TeamPracticePage() {
       setRepeatUntil("");
       setWeekdays([]);
     } catch (err) {
-      setAddError(err instanceof Error ? err.message : "Failed to add practice");
+      setAddError(errorMessage(err, "Failed to add practice"));
     }
     setAdding(false);
   };
@@ -466,7 +467,7 @@ export default function TeamPracticePage() {
       await sendGroupMessage(supabase, groupId, content);
       router.push(`/groups/${groupId}/chat`);
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to send to team chat");
+      alert(errorMessage(err, "Failed to send to team chat"));
       setSendingPracticeId(null);
     }
   };
@@ -898,10 +899,15 @@ export default function TeamPracticePage() {
                                       <button
                                         onClick={(e) => {
                                           const rect = e.currentTarget.getBoundingClientRect();
+                                          // Status popover is w-44 (176px). Clamp
+                                          // so it doesn't overflow the right edge
+                                          // when the anchor cell is far right.
+                                          const popW = 176;
+                                          const maxLeft = window.innerWidth - popW - 8;
                                           setStatusPopover({
                                             practiceId: practice.id,
                                             top: rect.bottom + 4,
-                                            left: rect.left,
+                                            left: Math.max(8, Math.min(rect.left, maxLeft)),
                                           });
                                         }}
                                         className={`w-full text-left px-2 py-1.5 rounded-lg border ${

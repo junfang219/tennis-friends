@@ -22,6 +22,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { getCached, setCached, subscribeCached } from "./queryCache";
+import { toError } from "./errorMessage";
 
 interface UseCachedQueryResult<T> {
   data: T | undefined;
@@ -71,7 +72,7 @@ export function useCachedQuery<T>(
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err : new Error(String(err)));
+        setError(toError(err));
       });
     return () => {
       cancelled = true;
@@ -85,7 +86,7 @@ export function useCachedQuery<T>(
       setCached(key, result);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err : new Error(String(err)));
+      setError(toError(err));
     }
   }, [key]);
 

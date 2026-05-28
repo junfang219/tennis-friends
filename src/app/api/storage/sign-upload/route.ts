@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { errorMessage } from "@/lib/errorMessage";
 import {
   STORAGE_BUCKETS,
   BUCKET_MAX_BYTES,
@@ -32,7 +33,7 @@ export async function POST(req: NextRequest) {
     body = bodySchema.parse(await req.json());
   } catch (err) {
     return NextResponse.json(
-      { error: "Invalid request body", details: err instanceof Error ? err.message : String(err) },
+      { error: "Invalid request body", details: errorMessage(err, String(err)) },
       { status: 400 }
     );
   }

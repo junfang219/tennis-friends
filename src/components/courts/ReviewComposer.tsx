@@ -5,6 +5,7 @@ import { StarRatingInput } from "./StarRating";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { addCourtReview } from "@/lib/supabase/queries";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
+import { errorMessage } from "@/lib/errorMessage";
 
 type Initial = {
   stars?: number;
@@ -59,7 +60,7 @@ export function ReviewComposer({ courtId, courtName, initial, onClose, onSaved }
       }
       setPhotoUrls((prev) => [...prev, ...results].slice(0, MAX_PHOTOS));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
+      setError(errorMessage(e, "Upload failed"));
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -84,12 +85,7 @@ export function ReviewComposer({ courtId, courtName, initial, onClose, onSaved }
     } catch (e) {
       // Supabase throws a PostgrestError, not an Error instance — checking
       // instanceof first hides the real message. Probe the common shapes.
-      const msg =
-        e instanceof Error
-          ? e.message
-          : typeof e === "object" && e !== null && "message" in e
-            ? String((e as { message: unknown }).message)
-            : "Failed to save review";
+      const msg = errorMessage(e, "Failed to save review");
       setError(msg);
     } finally {
       setSubmitting(false);

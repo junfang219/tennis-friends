@@ -9,6 +9,7 @@ import { DEFAULT_MEMBER_TYPES, isAtLeast, ROLE } from "@/lib/groupRoles";
 import { parseReminderPrefs, REMINDER_HOUR_CHOICES, type ReminderPrefs } from "@/lib/reminderPrefs";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
+import { errorMessage } from "@/lib/errorMessage";
 
 type Member = {
   id: string;
@@ -485,7 +486,7 @@ function RosterTab({
       setInviteType("");
       void loadInvites();
     } catch (err) {
-      setInviteErr(err instanceof Error ? err.message : "Failed to send invite.");
+      setInviteErr(errorMessage(err, "Failed to send invite."));
     }
     setSending(false);
   };
@@ -501,7 +502,7 @@ function RosterTab({
       if (delErr) throw delErr;
       void loadInvites();
     } catch (err) {
-      setInviteErr(err instanceof Error ? err.message : "Failed to cancel invite.");
+      setInviteErr(errorMessage(err, "Failed to cancel invite."));
     }
   };
 

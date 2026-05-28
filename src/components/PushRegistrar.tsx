@@ -34,60 +34,72 @@ export default function PushRegistrar() {
     let cleanup: (() => void) | null = null;
 
     (async () => {
-      const cap = await loadCapacitor();
-      if (!cap) return;
-      const platform = cap.Core.getPlatform(); // "ios" | "android" | "web"
-      if (platform !== "ios" && platform !== "android") return;
+      try {
+        const cap = await loadCapacitor();
+        if (!cap) return;
+        const platform = cap.Core.getPlatform(); // "ios" | "android" | "web"
+        if (platform !== "ios" && platform !== "android") return;
 
-      // Ask permission. iOS will prompt the first time; subsequent calls return
-      // the previously chosen state without re-prompting.
-      const perm = await cap.Push.checkPermissions();
-      let granted = perm.receive === "granted";
-      if (!granted) {
-        const req = await cap.Push.requestPermissions();
-        granted = req.receive === "granted";
+        // Ask permission. iOS will prompt the first time; subsequent calls return
+        // the previously chosen state without re-prompting.
+        const perm = await cap.Push.checkPermissions();
+        let granted = perm.receive === "granted";
+        if (!granted) {
+          const req = await cap.Push.requestPermissions();
+          granted = req.receive === "granted";
+        }
+        if (!granted) return;
+
+        // Attach listeners BEFORE register() — when iOS already has a
+        // cached APNs token, the "registration" event fires
+        // essentially synchronously, and a previous ordering missed it.
+        const onRegistered = await cap.Push.addListener("registration", async (token) => {
+          try {
+            const supabase = createSupabaseBrowserClient();
+            await registerDeviceToken(supabase, token.value, platform);
+          } catch {
+            // Will be re-registered on next sign-in.
+          }
+        });
+
+        const onError = await cap.Push.addListener("registrationError", (err) => {
+          // Use console.debug — APNs registration always fails on the iOS
+          // Simulator (no APS environment), and console.warn would trip
+          // Next.js's dev overlay on every page load.
+          console.debug("[push] registrationError", err);
+        });
+
+        await cap.Push.register();
+
+        // Tap on a banner from background/killed → route to the relevant chat.
+        const onTap = await cap.Push.addListener("pushNotificationActionPerformed", (action) => {
+          const data = action.notification.data || {};
+          const kind = data.kind as string | undefined;
+          if (kind === "dm" && data.from) {
+            router.push(`/chat/${data.from}`);
+          } else if (kind === "message_reaction" && data.from) {
+            const target = data.messageId ? `/chat/${data.from}?msg=${data.messageId}` : `/chat/${data.from}`;
+            router.push(target);
+          } else if (kind === "group" && data.groupId) {
+            router.push(`/groups/${data.groupId}/chat`);
+          } else if (kind === "chat" && data.chatId) {
+            router.push(`/chat/group/${data.chatId}`);
+          }
+        });
+
+        cleanup = () => {
+          onRegistered.remove();
+          onError.remove();
+          onTap.remove();
+        };
+      } catch (err) {
+        // Capacitor plugin rejections (especially APNs on the iOS Simulator,
+        // which has no APS environment) used to become unhandled promise
+        // rejections and surface as a Console Error on every page in the
+        // Next.js dev overlay. Swallow at debug level — push registration
+        // is best-effort.
+        console.debug("[push] registration failed", err);
       }
-      if (!granted) return;
-
-      // Attach listeners BEFORE register() — when iOS already has a
-      // cached APNs token, the "registration" event fires
-      // essentially synchronously, and a previous ordering missed it.
-      const onRegistered = await cap.Push.addListener("registration", async (token) => {
-        try {
-          const supabase = createSupabaseBrowserClient();
-          await registerDeviceToken(supabase, token.value, platform);
-        } catch {
-          // Will be re-registered on next sign-in.
-        }
-      });
-
-      const onError = await cap.Push.addListener("registrationError", (err) => {
-        console.warn("[push] registrationError", err);
-      });
-
-      await cap.Push.register();
-
-      // Tap on a banner from background/killed → route to the relevant chat.
-      const onTap = await cap.Push.addListener("pushNotificationActionPerformed", (action) => {
-        const data = action.notification.data || {};
-        const kind = data.kind as string | undefined;
-        if (kind === "dm" && data.from) {
-          router.push(`/chat/${data.from}`);
-        } else if (kind === "message_reaction" && data.from) {
-          const target = data.messageId ? `/chat/${data.from}?msg=${data.messageId}` : `/chat/${data.from}`;
-          router.push(target);
-        } else if (kind === "group" && data.groupId) {
-          router.push(`/groups/${data.groupId}/chat`);
-        } else if (kind === "chat" && data.chatId) {
-          router.push(`/chat/group/${data.chatId}`);
-        }
-      });
-
-      cleanup = () => {
-        onRegistered.remove();
-        onError.remove();
-        onTap.remove();
-      };
     })();
 
     return () => {

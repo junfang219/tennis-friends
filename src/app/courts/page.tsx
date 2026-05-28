@@ -17,6 +17,7 @@ import {
 } from "@/lib/facilities";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
+import { errorMessage } from "@/lib/errorMessage";
 
 type ManagedByBucket = "city" | "club" | "school";
 
@@ -835,7 +836,7 @@ export default function CourtsPage() {
       // Refetch so review summaries / dataset state stay consistent.
       runFetch();
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : "Save failed");
+      setEditError(errorMessage(err, "Save failed"));
     } finally {
       setEditSaving(false);
     }

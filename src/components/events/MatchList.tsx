@@ -6,6 +6,7 @@ import type { EventMatchView, PlayerMini } from "./types";
 import ScoreEntryModal from "./ScoreEntryModal";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listEventMatches } from "@/lib/supabase/queries";
+import { errorMessage } from "@/lib/errorMessage";
 
 export default function MatchList({
   eventId,
@@ -93,7 +94,7 @@ export default function MatchList({
       load();
       onChanged?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't confirm.");
+      setError(errorMessage(err, "Couldn't confirm."));
     }
     setActionInFlight(false);
   }
@@ -113,7 +114,7 @@ export default function MatchList({
       load();
       onChanged?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't respond to the challenge.");
+      setError(errorMessage(err, "Couldn't respond to the challenge."));
     }
     setActionInFlight(false);
   }
@@ -140,7 +141,7 @@ export default function MatchList({
       load();
       onChanged?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't dispute.");
+      setError(errorMessage(err, "Couldn't dispute."));
     }
     setActionInFlight(false);
   }

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { completeOnboarding } from "@/lib/supabase/queries";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
+import { errorMessage } from "@/lib/errorMessage";
 
 type Gender = "male" | "female" | "non_binary" | "prefer_not_to_say";
 type AgeRange = "under_18" | "18_29" | "30_49" | "50_plus";
@@ -98,7 +99,7 @@ export default function OnboardingPage() {
       router.replace("/");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError(errorMessage(err, "Something went wrong"));
       setSubmitting(false);
     }
   };

@@ -24,6 +24,7 @@ import PostComposer from "@/components/PostComposer";
 import { AGE_LABELS, GENDER_LABELS, formatRating } from "@/lib/profileLabels";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 import { getCached } from "@/lib/queryCache";
+import { errorMessage } from "@/lib/errorMessage";
 
 const PROFILE_CACHE_KEY = "profile:me";
 
@@ -391,7 +392,7 @@ export default function ProfilePage() {
       // the saved values without a stale-then-fresh flicker.
       void cachedProfile.refetch();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err, String(err));
       if (/handle/i.test(message)) {
         setHandleError(message);
       }
@@ -553,7 +554,7 @@ export default function ProfilePage() {
           : prev
       );
     } catch (err) {
-      setTagError(err instanceof Error ? err.message : "Couldn't save tags.");
+      setTagError(errorMessage(err, "Couldn't save tags."));
     }
   };
 
@@ -701,7 +702,7 @@ export default function ProfilePage() {
       setViewingHighlightIdx(null);
     } catch (err) {
       setBioUploadError(
-        err instanceof Error ? err.message : "Couldn't remove highlight."
+        errorMessage(err, "Couldn't remove highlight.")
       );
     }
   };

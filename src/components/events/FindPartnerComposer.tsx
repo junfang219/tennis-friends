@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { createPost } from "@/lib/supabase/queries";
+import { errorMessage } from "@/lib/errorMessage";
 
 // A focused composer for posting a "I want to play within this event" note.
 // Writes to the same /api/posts endpoint as the main composer but with the
@@ -50,7 +51,7 @@ export default function FindPartnerComposer({
       });
       onPosted();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't post. Try again.");
+      setError(errorMessage(err, "Couldn't post. Try again."));
     }
     setSubmitting(false);
   }

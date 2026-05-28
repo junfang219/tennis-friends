@@ -6,6 +6,7 @@ import { EVENT_TYPE_META } from "@/lib/eventTypeMeta";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getEvent } from "@/lib/supabase/queries";
 import { toEventCamel } from "@/lib/supabase/adapters";
+import { errorMessage } from "@/lib/errorMessage";
 
 const VALID_STATUSES = ["open", "closed", "active", "completed", "cancelled"] as const;
 
@@ -102,7 +103,7 @@ export default function EditEventPage() {
       }
       router.push(`/events/${params.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Network error. Try again.");
+      setError(errorMessage(err, "Network error. Try again."));
       setSubmitting(false);
     }
   }
@@ -124,7 +125,7 @@ export default function EditEventPage() {
       }
       router.push(`/events/${params.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Network error. Try again.");
+      setError(errorMessage(err, "Network error. Try again."));
       setSubmitting(false);
     }
   }

@@ -18,6 +18,7 @@ import {
   PAYMENT_PROFILE_COLUMNS,
   type PaymentProfile,
 } from "@/lib/supabase/queries";
+import { errorMessage } from "@/lib/errorMessage";
 
 type Participant = { id: string; name: string; profileImageUrl: string };
 
@@ -406,7 +407,7 @@ export default function SplitCostSheet({
       onExpenseCreated();
       setTab("balances");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Network error. Try again.");
+      setError(errorMessage(err, "Network error. Try again."));
     }
     setSubmitting(false);
   };
@@ -777,7 +778,7 @@ function BalancesView({
       cancelEdit();
       reload();
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : "Network error.");
+      setEditError(errorMessage(err, "Network error."));
     }
     setEditBusy(false);
   };
@@ -1176,7 +1177,7 @@ function PaymentSetupCard({
       setEditing(false);
       onSaved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Network error.");
+      setError(errorMessage(err, "Network error."));
     }
     setSaving(false);
   };

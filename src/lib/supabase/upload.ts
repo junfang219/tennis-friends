@@ -1,6 +1,7 @@
 "use client";
 
 import type { StorageBucket } from "./storage";
+import { errorMessage } from "../errorMessage";
 
 // Shared client-side upload helper. Mints a signed upload URL via our
 // /api/storage/sign-upload route, PUTs the file to it, returns the
@@ -54,7 +55,7 @@ export async function uploadToBucket(
       mediaType: isVideo ? "video" : isImage ? "image" : "other",
     };
   } catch (err) {
-    return { message: err instanceof Error ? err.message : "Upload failed" };
+    return { message: errorMessage(err, "Upload failed") };
   }
 }
 

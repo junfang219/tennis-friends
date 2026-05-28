@@ -12,6 +12,8 @@
 // On web / iOS Simulator (localhost is secure), we still fall back to
 // the standard browser API so behavior is identical.
 
+import { errorMessage } from "./errorMessage";
+
 export interface PositionResult {
   latitude: number;
   longitude: number;
@@ -51,7 +53,7 @@ export async function getCurrentPosition(): Promise<PositionResult | PositionErr
       } catch (err) {
         return {
           code: "unknown",
-          message: err instanceof Error ? err.message : "Could not get location",
+          message: errorMessage(err, "Could not get location"),
         };
       }
     }

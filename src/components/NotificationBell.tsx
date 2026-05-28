@@ -18,6 +18,7 @@ import {
   unreadNotificationCount,
 } from "@/lib/supabase/queries";
 import { toNotificationCamel } from "@/lib/supabase/adapters";
+import { errorMessage } from "@/lib/errorMessage";
 
 type Notification = {
   id: string;
@@ -286,7 +287,7 @@ export default function NotificationBell() {
       setPendingFriendRequests((prev) => Math.max(0, prev - 1));
     } catch (err) {
       setFriendReqError(
-        err instanceof Error ? err.message : "Couldn't accept the request."
+        errorMessage(err, "Couldn't accept the request.")
       );
     }
     setFriendReqAction("");
@@ -302,7 +303,7 @@ export default function NotificationBell() {
       setPendingFriendRequests((prev) => Math.max(0, prev - 1));
     } catch (err) {
       setFriendReqError(
-        err instanceof Error ? err.message : "Couldn't decline the request."
+        errorMessage(err, "Couldn't decline the request.")
       );
     }
     setFriendReqAction("");

@@ -29,6 +29,7 @@ import {
 } from "@/lib/supabase/queries";
 import { pgToIso } from "@/lib/pgDate";
 import { useCachedQuery } from "@/lib/useCachedQuery";
+import { errorMessage } from "@/lib/errorMessage";
 
 type FriendUser = {
   id: string;
@@ -444,7 +445,7 @@ export default function FriendsPage() {
     } catch (err) {
       setOpenChatError({
         id: g.id,
-        message: err instanceof Error ? err.message : "Network error",
+        message: errorMessage(err, "Network error"),
       });
     } finally {
       setOpeningChatId(null);

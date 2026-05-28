@@ -1,5 +1,7 @@
 import "server-only";
 
+import { errorMessage } from "./errorMessage";
+
 // Thin HTTPS shim that posts to the push-fanout edge function so the
 // cron (and any future Node caller) doesn't need its own APN client.
 // All APN delivery flows through supabase/functions/push-fanout, which
@@ -61,7 +63,7 @@ export async function postPushFanout(
     return {
       ok: false,
       status: 0,
-      error: err instanceof Error ? err.message : "fetch failed",
+      error: errorMessage(err, "fetch failed"),
     };
   }
   if (!res.ok) {

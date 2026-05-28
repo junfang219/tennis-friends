@@ -11,6 +11,7 @@ import AttendanceTally from "@/components/attendance/AttendanceTally";
 import { normalizeMatchStatus, RSVP } from "@/lib/rsvpStatus";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getGroup, listGroupMembers, sendGroupMessage } from "@/lib/supabase/queries";
+import { errorMessage } from "@/lib/errorMessage";
 
 type Member = {
   id: string;
@@ -412,7 +413,7 @@ export default function AvailabilityPage() {
       await sendGroupMessage(supabase, groupId, content);
       router.push(`/groups/${groupId}/chat`);
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to send to team chat");
+      alert(errorMessage(err, "Failed to send to team chat"));
       setSendingLineupId(null);
     }
   };

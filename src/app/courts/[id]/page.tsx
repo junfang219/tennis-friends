@@ -13,6 +13,7 @@ import { getFacilityByCourtId, getSeattleParksDashboardUrl } from "@/lib/facilit
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listCourtReviews } from "@/lib/supabase/queries";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
+import { errorMessage } from "@/lib/errorMessage";
 
 // Mirrors `Facility` in src/lib/facilities.ts plus the dashboard URL the
 // detail API attaches conditionally.
@@ -159,7 +160,7 @@ export default function CourtDetailPage() {
       } as unknown as CourtDetail;
       setCourt(detail);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong");
+      setError(errorMessage(e, "Something went wrong"));
     } finally {
       setLoading(false);
     }

@@ -1182,7 +1182,10 @@ returns boolean
 language plpgsql
 stable
 security invoker
-set search_path = public
+-- `extensions` is required so PL/pgSQL can resolve the `geography` type when
+-- it compiles the body — the type lives in the extensions schema and the
+-- `authenticated` role's default search_path doesn't include it.
+set search_path = public, extensions
 as $$
 declare
   viewer uuid := auth.uid();
@@ -1238,7 +1241,8 @@ returns boolean
 language plpgsql
 stable
 security invoker
-set search_path = public
+-- See can_see_event above — `extensions` is required to resolve `geography`.
+set search_path = public, extensions
 as $$
 declare
   viewer uuid := auth.uid();

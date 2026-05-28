@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorMessage } from "@/lib/errorMessage";
 
 /**
  * Catch-all reverse proxy for Seattle Parks ActiveNet.
@@ -116,7 +117,7 @@ async function proxy(
     return NextResponse.json(
       {
         error: "Proxy fetch failed",
-        detail: err instanceof Error ? err.message : "Unknown error",
+        detail: errorMessage(err, "Unknown error"),
       },
       { status: 502 }
     );

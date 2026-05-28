@@ -16,6 +16,7 @@ import {
 import { buildObjectKey, type StorageBucket } from "@/lib/supabase/storage";
 import { toPostCamel } from "@/lib/supabase/adapters";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
+import { errorMessage } from "@/lib/errorMessage";
 
 const PLACEHOLDERS = [
   "Just finished a great match...",
@@ -578,7 +579,7 @@ function ComposerModal({
       // which renders find-player posts as plain text with "Invalid Date".
       onPost(toPostCamel(newPost) as unknown as Record<string, unknown>);
     } catch (err) {
-      setPostError(err instanceof Error ? err.message : "Network error");
+      setPostError(errorMessage(err, "Network error"));
     } finally {
       setPosting(false);
     }

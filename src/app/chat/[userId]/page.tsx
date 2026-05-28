@@ -27,6 +27,7 @@ import {
 } from "@/lib/supabase/queries";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { toDirectMessageCamel } from "@/lib/supabase/adapters";
+import { errorMessage } from "@/lib/errorMessage";
 
 // Page Message is the shared DirectMessageCamel adapter (snake→camel +
 // pgToIso) plus the per-message reactions list and the resolved shared
@@ -397,7 +398,7 @@ export default function ChatPage() {
       // re-attaching it would re-upload on the next send.
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setInput(draftContent);
-      setSendError(err instanceof Error ? err.message : "Couldn't send.");
+      setSendError(errorMessage(err, "Couldn't send."));
     }
     setSending(false);
   };

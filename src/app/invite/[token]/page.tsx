@@ -6,6 +6,7 @@ import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { validateInvite, acceptInvite } from "@/lib/supabase/queries";
+import { errorMessage } from "@/lib/errorMessage";
 
 type InviteInfo = {
   status: "PENDING" | "ACCEPTED" | "CANCELLED" | "EXPIRED";
@@ -56,7 +57,7 @@ export default function InviteAcceptPage() {
           (row as unknown as { inviter_name?: string }).inviter_name || "",
       });
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Couldn't load the invite.");
+      setLoadError(errorMessage(err, "Couldn't load the invite."));
     }
   }, [token]);
 
@@ -75,7 +76,7 @@ export default function InviteAcceptPage() {
       const result = await acceptInvite(supabase, token);
       router.push(`/groups/${result.groupId}`);
     } catch (err) {
-      setAcceptError(err instanceof Error ? err.message : "Couldn't accept the invite.");
+      setAcceptError(errorMessage(err, "Couldn't accept the invite."));
       setAccepting(false);
     }
   };

@@ -25,6 +25,7 @@ import {
   listFriends,
 } from "@/lib/supabase/queries";
 import { toCommentCamel } from "@/lib/supabase/adapters";
+import { errorMessage } from "@/lib/errorMessage";
 
 type PlayRequestInfo = { id: string; status: string; note: string } | null;
 
@@ -2082,7 +2083,7 @@ function SendToModal({
       setSentKeys((prev) => new Set(prev).add(key));
       router.push(target.kind === "friend" ? `/chat/${target.id}` : `/groups/${target.id}/chat`);
     } catch (err) {
-      setSendError(err instanceof Error ? err.message : "Failed to send");
+      setSendError(errorMessage(err, "Failed to send"));
       setSendingKey(null);
     }
   };
@@ -2324,7 +2325,7 @@ function ManageRequestsModal({
       }
     } catch (err) {
       setRespondError(
-        err instanceof Error ? err.message : "Couldn't update the request."
+        errorMessage(err, "Couldn't update the request.")
       );
     }
     setRespondingTo(null);

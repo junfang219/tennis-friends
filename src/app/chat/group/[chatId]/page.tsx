@@ -20,6 +20,7 @@ import {
   addReaction,
 } from "@/lib/supabase/queries";
 import { toChatMessageCamel } from "@/lib/supabase/adapters";
+import { errorMessage } from "@/lib/errorMessage";
 
 // Page Message is the shared ChatMessageCamel adapter (which handles
 // snake→camel + pgToIso on createdAt) plus the per-message reaction list
@@ -430,7 +431,7 @@ export default function GroupChatThreadPage() {
       // re-presents the keyboard ("bounce"). iMessage/WhatsApp keep
       // the keyboard up by leaving focus alone.
     } catch (err) {
-      setSendError(err instanceof Error ? err.message : "Couldn't send.");
+      setSendError(errorMessage(err, "Couldn't send."));
     }
     setSending(false);
   };

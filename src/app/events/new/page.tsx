@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listMyGroups, createEvent } from "@/lib/supabase/queries";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
+import { errorMessage } from "@/lib/errorMessage";
 
 const TYPES = [
   { id: "tournament", label: "Tournament", emoji: "🏆", blurb: "Single-elimination bracket. Organizer seeds pairings." },
@@ -174,7 +175,7 @@ export default function NewEventPage() {
       void postToFeed;
       router.push(`/events/${created.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't create the event. Try again.");
+      setError(errorMessage(err, "Couldn't create the event. Try again."));
       setSubmitting(false);
     }
   }

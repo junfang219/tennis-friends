@@ -9,6 +9,7 @@ import {
   acceptFriendRequest,
   rejectFriendRequest,
 } from "@/lib/supabase/queries";
+import { errorMessage } from "@/lib/errorMessage";
 
 type FriendRequest = {
   friendshipId: string;
@@ -66,7 +67,7 @@ export default function FriendRequestsPage() {
           }))
       );
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Couldn't load requests.");
+      setLoadError(errorMessage(err, "Couldn't load requests."));
     } finally {
       setLoading(false);
     }
@@ -85,7 +86,7 @@ export default function FriendRequestsPage() {
       setRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId));
     } catch (err) {
       setActionError(
-        err instanceof Error ? err.message : "Couldn't accept the request."
+        errorMessage(err, "Couldn't accept the request.")
       );
     } finally {
       setActionLoading("");
@@ -101,7 +102,7 @@ export default function FriendRequestsPage() {
       setRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId));
     } catch (err) {
       setActionError(
-        err instanceof Error ? err.message : "Couldn't decline the request."
+        errorMessage(err, "Couldn't decline the request.")
       );
     } finally {
       setActionLoading("");

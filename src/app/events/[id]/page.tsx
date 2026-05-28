@@ -23,6 +23,7 @@ import LadderList from "@/components/events/LadderList";
 import RotationCard from "@/components/events/RotationCard";
 import CheckinDrawer from "@/components/events/CheckinDrawer";
 import FindPartnerComposer from "@/components/events/FindPartnerComposer";
+import { errorMessage } from "@/lib/errorMessage";
 
 type Participant = {
   id: string;
@@ -204,7 +205,7 @@ export default function EventDetailPage() {
       await signupForEvent(supabase, event.id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't sign up. Try again.");
+      setError(errorMessage(err, "Couldn't sign up. Try again."));
     } finally {
       setActionInFlight(false);
     }
@@ -220,7 +221,7 @@ export default function EventDetailPage() {
       await withdrawFromEvent(supabase, event.id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't withdraw.");
+      setError(errorMessage(err, "Couldn't withdraw."));
     } finally {
       setActionInFlight(false);
     }
@@ -709,7 +710,7 @@ function InviteFriendsModal({
       const invited = (data as { invited?: number } | null)?.invited ?? 0;
       onSent(invited);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Network error. Try again.");
+      setError(errorMessage(err, "Network error. Try again."));
       setSending(false);
     }
   }

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { StandingsRowView } from "./types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { errorMessage } from "@/lib/errorMessage";
 
 export default function ChallengeModal({
   eventId,
@@ -42,7 +43,7 @@ export default function ChallengeModal({
       if (rpcErr) throw new Error(rpcErr.message);
       onSent();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't send challenge");
+      setError(errorMessage(err, "Couldn't send challenge"));
     }
     setSending(false);
   }

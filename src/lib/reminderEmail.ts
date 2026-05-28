@@ -1,5 +1,7 @@
 import { Resend } from "resend";
 
+import { errorMessage } from "./errorMessage";
+
 const REMINDER_FROM = "TennisFriend <reminders@mytennisfriends.com>";
 
 export type ReminderEmailOptions = {
@@ -75,7 +77,7 @@ export async function sendReminderEmail(opts: ReminderEmailOptions): Promise<str
     return null;
   } catch (err) {
     console.error("[reminder-email] resend threw:", err);
-    return err instanceof Error ? err.message : "Send failed.";
+    return errorMessage(err, "Send failed.");
   }
 }
 

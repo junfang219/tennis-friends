@@ -17,6 +17,7 @@ import {
 } from "@/lib/supabase/queries";
 import { toGroupCamel, toGroupMemberCamel, toPostCamel } from "@/lib/supabase/adapters";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
+import { errorMessage } from "@/lib/errorMessage";
 
 type Member = {
   id: string;
@@ -840,7 +841,7 @@ function MembersButton({
       setSelected(new Set());
       setRemoved(new Set());
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to save changes");
+      setErrorMsg(errorMessage(err, "Failed to save changes"));
     }
     setSaving(false);
   };
@@ -858,7 +859,7 @@ function MembersButton({
         .eq("user_id", auth.user.id);
       window.location.href = "/groups";
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to leave team");
+      alert(errorMessage(err, "Failed to leave team"));
     }
   };
 
@@ -870,7 +871,7 @@ function MembersButton({
       if (delErr) throw delErr;
       window.location.href = "/groups";
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to delete team");
+      alert(errorMessage(err, "Failed to delete team"));
     }
   };
 
@@ -1265,7 +1266,7 @@ function GroupComposerModal({
         .insert({ post_id: newPost.id, target_kind: "group", group_id: groupId });
       onPost(toPostCamel(newPost) as unknown as Record<string, unknown>);
     } catch (err) {
-      setPostError(err instanceof Error ? err.message : "Network error");
+      setPostError(errorMessage(err, "Network error"));
     } finally {
       setPosting(false);
     }

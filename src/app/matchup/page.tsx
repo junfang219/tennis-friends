@@ -8,6 +8,7 @@ import { isAtLeast, ROLE } from "@/lib/groupRoles";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listTeamListings, listMyGroups, createTeamListing } from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
+import { errorMessage } from "@/lib/errorMessage";
 
 type Listing = {
   id: string;
@@ -139,7 +140,7 @@ export default function MatchUpPage() {
       });
       success = true;
     } catch (err) {
-      setCreateErr(err instanceof Error ? err.message : "Failed to create listing");
+      setCreateErr(errorMessage(err, "Failed to create listing"));
     }
     const res = { ok: success };
     if (res.ok) {

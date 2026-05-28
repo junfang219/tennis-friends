@@ -8,6 +8,7 @@ import CommunitiesTabs from "@/components/CommunitiesTabs";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listMyGroups, listFriends } from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
+import { errorMessage } from "@/lib/errorMessage";
 
 type FriendEntry = {
   friendshipId: string;
@@ -611,7 +612,7 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
       onCreated();
     } catch (err) {
       setCreateError(
-        err instanceof Error ? err.message : "Couldn't create the team."
+        errorMessage(err, "Couldn't create the team.")
       );
       setCreating(false);
     }

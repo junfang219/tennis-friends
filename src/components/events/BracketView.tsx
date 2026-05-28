@@ -10,6 +10,7 @@ import {
   type EventMatchRow,
 } from "@/lib/supabase/queries";
 import { seedBracket } from "@/lib/eventCompetitive";
+import { errorMessage } from "@/lib/errorMessage";
 
 // Group event_matches by round into the shape BracketViewT expects.
 function groupByRound(rows: EventMatchRow[]): BracketViewT["rounds"] {
@@ -108,7 +109,7 @@ export default function BracketView({
         load();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't seed the bracket.");
+      setError(errorMessage(err, "Couldn't seed the bracket."));
     }
     setSeeding(false);
   }
