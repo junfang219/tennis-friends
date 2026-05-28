@@ -139,6 +139,147 @@ export async function listGroupMessages(
   return (data ?? []).reverse() as unknown as GroupMessage[];
 }
 
+/**
+ * Inbox row for a team group chat. Mirrors the DMThread / Chat shapes so
+ * the /chat page can fold team chats into the same list of conversations.
+ */
+export interface TeamThread {
+  group: { id: string; name: string; image_url: string };
+  last_message: {
+    id: string;
+    sender_id: string;
+    sender_name: string;
+    content: string;
+    created_at: string;
+  } | null;
+  unread_count: number;
+  muted: boolean;
+  pinned_at: string | null;
+  /** Non-null when this group is the backing chat for an Event. */
+  event_id: string | null;
+}
+
+/** Inbox: every team chat the user is a member of (not hidden / archived). */
+export async function listMyTeamThreads(
+  supabase: SupabaseClient<Database>
+): Promise<TeamThread[]> {
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return [];
+  const me = auth.user.id;
+
+  const { data: memberships, error: mErr } = await supabase
+    .from("group_members")
+    .select("group_id, last_read_at, muted, pinned_at")
+    .eq("user_id", me)
+    .is("archived_at", null)
+    .is("hidden_at", null);
+  if (mErr) throw mErr;
+  const groupIds = (memberships ?? []).map((m) => m.group_id);
+  if (groupIds.length === 0) return [];
+
+  // Groups + recent messages + event backing in parallel.
+  const [groupsRes, msgsRes, eventsRes] = await Promise.all([
+    supabase
+      .from("groups")
+      .select("id, name, image_url")
+      .in("id", groupIds),
+    supabase
+      .from("group_messages")
+      .select(
+        `id, group_id, sender_id, content, created_at,
+         sender:profiles!group_messages_sender_id_fkey ( id, name )`
+      )
+      .in("group_id", groupIds)
+      .order("created_at", { ascending: false })
+      .limit(500),
+    supabase
+      .from("events")
+      .select("id, host_group_id")
+      .in("host_group_id", groupIds),
+  ]);
+  if (groupsRes.error) throw groupsRes.error;
+  if (msgsRes.error) throw msgsRes.error;
+  if (eventsRes.error) throw eventsRes.error;
+
+  const groupsById = new Map(
+    (groupsRes.data ?? []).map((g) => [g.id, g as { id: string; name: string; image_url: string }])
+  );
+  const eventByGroup = new Map<string, string>();
+  for (const e of eventsRes.data ?? []) {
+    if (e.host_group_id) eventByGroup.set(e.host_group_id, e.id);
+  }
+
+  type MsgRow = {
+    id: string;
+    group_id: string;
+    sender_id: string;
+    content: string;
+    created_at: string;
+    sender: { id: string; name: string };
+  };
+  const byGroup = new Map<string, MsgRow[]>();
+  for (const m of (msgsRes.data ?? []) as unknown as MsgRow[]) {
+    if (!byGroup.has(m.group_id)) byGroup.set(m.group_id, []);
+    byGroup.get(m.group_id)!.push(m);
+  }
+
+  const threads: TeamThread[] = [];
+  for (const m of memberships ?? []) {
+    const group = groupsById.get(m.group_id);
+    if (!group) continue;
+    const msgs = (byGroup.get(m.group_id) ?? []).sort((a, b) =>
+      b.created_at.localeCompare(a.created_at)
+    );
+    const last = msgs[0] ?? null;
+    const lastReadAt = m.last_read_at ?? "1970-01-01T00:00:00Z";
+    const unread = msgs.filter(
+      (msg) => msg.sender_id !== me && msg.created_at > lastReadAt
+    ).length;
+    threads.push({
+      group,
+      last_message: last
+        ? {
+            id: last.id,
+            sender_id: last.sender_id,
+            sender_name: last.sender.name,
+            content: last.content,
+            created_at: last.created_at,
+          }
+        : null,
+      unread_count: unread,
+      muted: !!m.muted,
+      pinned_at: m.pinned_at ?? null,
+      event_id: eventByGroup.get(group.id) ?? null,
+    });
+  }
+
+  // Newest activity first; teams with no messages drop to the bottom in
+  // group creation-time order (already implicit since msgs[] is empty
+  // for those — null last_message sorts to "1970" and stays at the end).
+  threads.sort((a, b) => {
+    const at = a.last_message?.created_at ?? "1970-01-01T00:00:00Z";
+    const bt = b.last_message?.created_at ?? "1970-01-01T00:00:00Z";
+    return bt.localeCompare(at);
+  });
+
+  return threads;
+}
+
+/** Stamps group_members.last_read_at = now() for the signed-in user. */
+export async function markTeamRead(
+  supabase: SupabaseClient<Database>,
+  groupId: string
+): Promise<void> {
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return;
+  const { error } = await supabase
+    .from("group_members")
+    .update({ last_read_at: new Date().toISOString() })
+    .eq("group_id", groupId)
+    .eq("user_id", auth.user.id);
+  if (error) throw error;
+}
+
 export async function sendGroupMessage(
   supabase: SupabaseClient<Database>,
   groupId: string,

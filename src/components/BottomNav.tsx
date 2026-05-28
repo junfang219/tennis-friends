@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import { useEffect, useState, useTransition } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { listDmThreads } from "@/lib/supabase/queries";
+import { listDmThreads, listMyTeamThreads } from "@/lib/supabase/queries";
 
 const TAB_ROUTES = ["/", "/groups", "/courts", "/chat", "/profile"] as const;
 
@@ -68,10 +68,17 @@ export default function BottomNav() {
 
   const fetchUnread = () => {
     const supabase = createSupabaseBrowserClient();
-    listDmThreads(supabase)
-      .then((threads) => {
-        const total = threads.reduce((sum, t) => sum + t.unread_count, 0);
-        setUnreadMessages(total);
+    // Sum DM + team-chat unreads. Session chats currently report 0 unread
+    // so they don't contribute. Muted teams are excluded — they're meant
+    // not to pull attention to the badge.
+    Promise.all([listDmThreads(supabase), listMyTeamThreads(supabase)])
+      .then(([dms, teams]) => {
+        const dmUnread = dms.reduce((sum, t) => sum + t.unread_count, 0);
+        const teamUnread = teams.reduce(
+          (sum, t) => sum + (t.muted ? 0 : t.unread_count),
+          0
+        );
+        setUnreadMessages(dmUnread + teamUnread);
       })
       .catch(() => {});
   };

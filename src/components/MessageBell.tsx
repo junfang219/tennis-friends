@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import ConversationRow, { type InboxItem, type InboxAction } from "./ConversationRow";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { listDmThreads, listMyChats, markDmRead, markChatRead } from "@/lib/supabase/queries";
+import { listDmThreads, listMyChats, listMyTeamThreads, markDmRead, markChatRead, markTeamRead } from "@/lib/supabase/queries";
 import { pgToIso } from "@/lib/pgDate";
 
 // Per-user localStorage key so dismissals are scoped to the signed-in user.
@@ -51,9 +51,10 @@ export default function MessageBell() {
   const loadInbox = useCallback(async () => {
     try {
       const supabase = createSupabaseBrowserClient();
-      const [dms, chats] = await Promise.all([
+      const [dms, chats, teams] = await Promise.all([
         listDmThreads(supabase),
         listMyChats(supabase),
+        listMyTeamThreads(supabase),
       ]);
       const dmItems: InboxItem[] = dms.map((t) => ({
         type: "direct",
@@ -88,11 +89,31 @@ export default function MessageBell() {
         lastMessage: null,
         participants: [],
       }));
-      setItems([...dmItems, ...chatItems]);
+      const teamItems: InboxItem[] = teams.map((t) => ({
+        type: "team" as const,
+        id: t.group.id,
+        title: t.group.name,
+        href: `/groups/${t.group.id}/chat`,
+        unreadCount: t.unread_count,
+        muted: t.muted,
+        pinnedAt: t.pinned_at,
+        imageUrl: t.group.image_url || undefined,
+        eventId: t.event_id,
+        participants: [],
+        lastMessage: t.last_message
+          ? {
+              content: t.last_message.content,
+              createdAt: pgToIso(t.last_message.created_at),
+              fromSelf: t.last_message.sender_id === userId,
+              senderName: t.last_message.sender_name,
+            }
+          : null,
+      }));
+      setItems([...dmItems, ...chatItems, ...teamItems]);
     } catch {
       // ignore
     }
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     loadInbox();
@@ -287,6 +308,8 @@ export default function MessageBell() {
         await markDmRead(supabase, item.id);
       } else if (item.type === "group") {
         await markChatRead(supabase, item.id);
+      } else if (item.type === "team") {
+        await markTeamRead(supabase, item.id);
       }
     } catch {
       // Best-effort; next poll will reconcile

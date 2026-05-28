@@ -6,7 +6,7 @@ import { useSession } from "@/lib/supabase/nextauth-compat";
 import ConversationRow, { type InboxItem, type InboxAction } from "@/components/ConversationRow";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useRealtimeTable } from "@/lib/supabase/realtime";
-import { listDmThreads, listMyChats, markDmRead, markChatRead } from "@/lib/supabase/queries";
+import { listDmThreads, listMyChats, listMyTeamThreads, markDmRead, markChatRead, markTeamRead } from "@/lib/supabase/queries";
 import { pgToIso } from "@/lib/pgDate";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 
@@ -20,9 +20,10 @@ export default function ChatPage() {
     status === "authenticated" ? "chat:inbox" : null,
     async () => {
       const supabase = createSupabaseBrowserClient();
-      const [dms, chats] = await Promise.all([
+      const [dms, chats, teams] = await Promise.all([
         listDmThreads(supabase),
         listMyChats(supabase),
+        listMyTeamThreads(supabase),
       ]);
       const dmItems: InboxItem[] = dms.map((t) => ({
         type: "direct",
@@ -57,7 +58,27 @@ export default function ChatPage() {
         lastMessage: null,
         participants: [],
       }));
-      return [...dmItems, ...chatItems];
+      const teamItems: InboxItem[] = teams.map((t) => ({
+        type: "team" as const,
+        id: t.group.id,
+        title: t.group.name,
+        href: `/groups/${t.group.id}/chat`,
+        unreadCount: t.unread_count,
+        muted: t.muted,
+        pinnedAt: t.pinned_at,
+        imageUrl: t.group.image_url || undefined,
+        eventId: t.event_id,
+        participants: [],
+        lastMessage: t.last_message
+          ? {
+              content: t.last_message.content,
+              createdAt: pgToIso(t.last_message.created_at),
+              fromSelf: t.last_message.sender_id === session?.user?.id,
+              senderName: t.last_message.sender_name,
+            }
+          : null,
+      }));
+      return [...dmItems, ...chatItems, ...teamItems];
     },
   );
   // Memoize so identity is stable when inbox.data is unchanged — keeps the
@@ -105,6 +126,19 @@ export default function ChatPage() {
   useRealtimeTable(
     {
       table: "chat_messages",
+      event: "INSERT",
+      onChange: (payload) => {
+        const senderId = (payload.new as { sender_id?: string } | null)?.sender_id;
+        if (senderId && senderId === me) return;
+        void refetchInbox();
+      },
+    },
+    [me, refetchInbox]
+  );
+  // group_messages (team chats) — same shape as chat_messages.
+  useRealtimeTable(
+    {
+      table: "group_messages",
       event: "INSERT",
       onChange: (payload) => {
         const senderId = (payload.new as { sender_id?: string } | null)?.sender_id;
@@ -169,6 +203,8 @@ export default function ChatPage() {
         await markDmRead(supabase, item.id);
       } else if (item.type === "group") {
         await markChatRead(supabase, item.id);
+      } else if (item.type === "team") {
+        await markTeamRead(supabase, item.id);
       }
     } catch {
       // Best-effort
