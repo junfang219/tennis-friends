@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useLayoutEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
@@ -28,6 +28,7 @@ import {
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { toGroupMessageCamel } from "@/lib/supabase/adapters";
 import { errorMessage } from "@/lib/errorMessage";
+import { useKeyboardHeight } from "@/hooks/useKeyboardHeight";
 
 // Page Message is the shared GroupMessageCamel adapter (snake→camel +
 // pgToIso on createdAt and pinnedAt) plus the resolved shared-post body,
@@ -98,7 +99,29 @@ export default function GroupChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputBarRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Same keyboard-aware layout as the DM chat (src/app/chat/[userId]/page.tsx).
+  // Without this the iOS keyboard slides up over the input bar and there's
+  // nothing the user can type into. The hook reports the keyboard height
+  // (Capacitor Keyboard plugin on native, VisualViewport on web); the input
+  // bar gets absolutely positioned at that offset, and the messages scroller
+  // reserves equal padding-bottom so nothing is clipped underneath.
+  const keyboardHeight = useKeyboardHeight();
+  const [inputBarHeight, setInputBarHeight] = useState(72);
+  useLayoutEffect(() => {
+    const el = inputBarRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const h = e.borderBoxSize?.[0]?.blockSize ?? e.contentRect.height;
+        if (h > 0) setInputBarHeight(h);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -210,10 +233,12 @@ export default function GroupChatPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId]);
 
-  // Scroll to bottom
+  // Scroll to bottom — also re-pins when the keyboard appears/disappears or
+  // the input bar resizes (poll composer expanding, announcement chip wrap),
+  // so the latest message stays visible above the input.
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  }, [messages.length, keyboardHeight, inputBarHeight]);
 
   const handleSend = async () => {
     if ((!input.trim() && !pendingMedia) || sending || uploading) return;
@@ -371,7 +396,13 @@ export default function GroupChatPage() {
   });
 
   return (
-    <div className="max-w-2xl mx-auto flex flex-col" style={{ height: "calc(100dvh - 4rem - env(safe-area-inset-top) - env(safe-area-inset-bottom))" }}>
+    <div
+      className="max-w-2xl mx-auto flex flex-col relative"
+      // Don't subtract safe-area-inset-bottom here — the input bar absorbs
+      // the home-indicator inset via its own padding-bottom so its
+      // background extends edge-to-edge (iMessage/WhatsApp convention).
+      style={{ height: "calc(100dvh - 4rem - env(safe-area-inset-top))" }}
+    >
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shrink-0">
         {(() => {
@@ -419,8 +450,17 @@ export default function GroupChatPage() {
         )}
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 bg-surface/50 net-texture">
+      {/* Messages — paddingBottom reserves room for the absolutely-positioned
+          input bar plus the iOS keyboard plus the home indicator inset. */}
+      <div
+        className="flex-1 overflow-y-auto px-4 py-4 bg-surface/50 net-texture"
+        style={{
+          // inputBarHeight already includes the home-indicator inset (the
+          // input bar adds it as paddingBottom), so we only add keyboard +
+          // a small breathing gap here.
+          paddingBottom: `calc(${inputBarHeight}px + ${keyboardHeight}px + 0.5rem)`,
+        }}
+      >
         {messages.length === 0 && groupInfo && (
           <div className="text-center py-16">
             <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-court-green to-court-green-soft flex items-center justify-center text-white font-bold text-2xl mx-auto shadow-lg">
@@ -594,8 +634,20 @@ export default function GroupChatPage() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
-      <div className="bg-white border-t border-gray-200 px-4 py-3 shrink-0">
+      {/* Input — absolutely positioned so it sits on top of the messages
+          scroller and follows the iOS keyboard. The messages scroller's
+          padding-bottom mirrors these offsets so nothing is clipped. */}
+      <div
+        ref={inputBarRef}
+        className="absolute left-0 right-0 bg-white border-t border-gray-200 px-4 py-3"
+        // Sit flush against the bottom (or the keyboard). The bar's bottom
+        // padding absorbs the home-indicator inset so its white background
+        // extends edge-to-edge — matches the iMessage / WhatsApp convention.
+        style={{
+          bottom: `${keyboardHeight}px`,
+          paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))",
+        }}
+      >
         {(canPostAnnouncement || groupInfo) && (
           <div className="mb-2 flex items-center gap-2 text-xs flex-wrap">
             {canPostAnnouncement && (

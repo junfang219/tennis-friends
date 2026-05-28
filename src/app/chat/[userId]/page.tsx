@@ -557,7 +557,10 @@ export default function ChatPage() {
         ref={messagesScrollRef}
         className="flex-1 overflow-y-auto min-h-0 px-4 py-4 bg-surface/50 net-texture"
         style={{
-          paddingBottom: `calc(${inputBarHeight}px + max(${keyboardHeight}px, env(safe-area-inset-bottom)) + 0.5rem)`,
+          // inputBarHeight already includes the input bar's own safe-area
+          // padding (see the paddingBottom on the input bar below), so we
+          // only add keyboard + a small breathing gap here.
+          paddingBottom: `calc(${inputBarHeight}px + ${keyboardHeight}px + 0.5rem)`,
         }}
       >
         {/* min-h-full + justify-end pins short threads to the bottom of
@@ -686,7 +689,15 @@ export default function ChatPage() {
       <div
         ref={inputBarRef}
         className="absolute left-0 right-0 bg-white border-t border-gray-200 px-4 py-3"
-        style={{ bottom: `max(${keyboardHeight}px, env(safe-area-inset-bottom))` }}
+        // Sit flush against the bottom of the surface (or the keyboard when
+        // it's up). The bar's bottom padding absorbs the home-indicator
+        // inset so its white background extends edge-to-edge — matches the
+        // iMessage / WhatsApp convention. Previously the bar floated
+        // safe-area-inset-bottom above the edge, leaving a visible gap.
+        style={{
+          bottom: `${keyboardHeight}px`,
+          paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))",
+        }}
       >
         {/* Pending media preview */}
         {pendingMedia && (
