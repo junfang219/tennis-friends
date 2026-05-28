@@ -40,6 +40,12 @@ function adaptFeedPost(p: FeedPost): Post {
     pendingRequestCount: 0,
     myPlayRequest: null,
     sessionChatId: p.session_chat?.[0]?.id ?? null,
+    // Empty default from posts.team_group_id collapses to null so
+    // PostCard's `liveTeamGroupId || null` checks render the collapsed
+    // "Open team" CTA whenever the create_team_group_on_complete trigger
+    // has populated the column.
+    teamGroupId: p.team_group_id ? p.team_group_id : null,
+    manualPlayers: p.manual_players,
     // PostgREST emits "2026-05-21 18:23:35.123+00"; iOS Safari's strict
     // Date parser rejects the space + bare-offset form. Normalize once
     // here so every consumer (timeAgo, toLocaleDateString) sees ISO.
@@ -80,6 +86,8 @@ type Post = {
   pendingRequestCount?: number;
   myPlayRequest?: { id: string; status: string; note: string } | null;
   sessionChatId?: string | null;
+  teamGroupId?: string | null;
+  manualPlayers?: string;
   createdAt: string;
   author: { id: string; name: string; profileImageUrl: string };
   likeCount: number;

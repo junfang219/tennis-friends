@@ -46,6 +46,8 @@ type UserPost = {
   courtBooked: boolean;
   isComplete: boolean;
   sessionChatId: string | null;
+  teamGroupId: string | null;
+  manualPlayers: string;
   commentsDisabled: boolean;
   createdAt: string;
   _count: { likes: number; comments: number; playRequests: number };
@@ -166,6 +168,8 @@ export default function UserProfilePage() {
               courtBooked: c.courtBooked,
               isComplete: c.isComplete,
               sessionChatId: c.sessionChatId,
+              teamGroupId: c.teamGroupId,
+              manualPlayers: (r as { manual_players?: string }).manual_players ?? "",
               commentsDisabled: c.commentsDisabled,
               createdAt: c.createdAt,
               _count: {
