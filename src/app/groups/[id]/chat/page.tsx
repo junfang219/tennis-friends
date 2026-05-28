@@ -19,6 +19,7 @@ import {
   listGroupMembers,
   listGroupMessages,
   sendGroupMessage,
+  markTeamRead,
   addReaction,
   createPollInGroup,
   votePoll,
@@ -226,9 +227,23 @@ export default function GroupChatPage() {
       .catch(() => {});
   };
 
+  // Mark the team chat read whenever we open it or poll for new messages.
+  // Without this, the Messages inbox unread badge for this team never
+  // clears — listMyTeamThreads counts messages newer than
+  // group_members.last_read_at, so we have to advance that timestamp here
+  // (mirrors the markDmRead pattern in /chat/[userId]).
+  const markRead = () => {
+    const supabase = createSupabaseBrowserClient();
+    void markTeamRead(supabase, groupId).catch(() => {});
+  };
+
   useEffect(() => {
     loadMessages();
-    pollRef.current = setInterval(loadMessages, 3000);
+    markRead();
+    pollRef.current = setInterval(() => {
+      loadMessages();
+      markRead();
+    }, 3000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId]);
