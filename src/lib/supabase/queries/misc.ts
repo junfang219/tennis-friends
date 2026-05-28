@@ -572,6 +572,107 @@ export async function setPollClosed(
   if (error) throw error;
 }
 
+export interface PollWithOptions {
+  id: string;
+  question: string;
+  isMulti: boolean;
+  isClosed: boolean;
+  createdById: string;
+  options: { id: string; text: string; order: number; voteCount: number }[];
+  myOptionIds: string[];
+  totalVotes: number;
+}
+
+/**
+ * Fetch full poll bodies (question + options + per-option vote counts +
+ * the signed-in user's own votes) for a batch of poll ids — typically
+ * one round trip when the chat page loads a screenful of messages.
+ *
+ * Group-chat poll messages store only `poll_id` on group_messages, so
+ * without this helper the chat UI has no way to render the poll card
+ * and falls back to plain-text — what the user reported on 2026-05-28.
+ */
+export async function getPollsByIds(
+  supabase: SupabaseClient<Database>,
+  pollIds: string[]
+): Promise<Map<string, PollWithOptions>> {
+  const result = new Map<string, PollWithOptions>();
+  if (pollIds.length === 0) return result;
+
+  const { data: auth } = await supabase.auth.getUser();
+  const me = auth.user?.id ?? null;
+
+  const [pollsRes, optionsRes, votesRes] = await Promise.all([
+    supabase
+      .from("polls")
+      .select("id, question, is_multi, is_closed, created_by_id")
+      .in("id", pollIds),
+    supabase
+      .from("poll_options")
+      .select(`id, poll_id, text, "order"`)
+      .in("poll_id", pollIds),
+    supabase
+      .from("poll_votes")
+      .select("poll_id, option_id, user_id")
+      .in("poll_id", pollIds),
+  ]);
+  if (pollsRes.error) throw pollsRes.error;
+  if (optionsRes.error) throw optionsRes.error;
+  if (votesRes.error) throw votesRes.error;
+
+  // option_id -> count across all polls (poll ids in keys are unique).
+  const voteCountByOption = new Map<string, number>();
+  // poll_id -> option_ids the signed-in user voted for. Empty array if
+  // they haven't voted yet (or aren't signed in).
+  const myOptionsByPoll = new Map<string, string[]>();
+  // poll_id -> total cast votes (across everyone, multi-vote polls count
+  // each option pick separately so this matches sum(voteCount)).
+  const totalByPoll = new Map<string, number>();
+
+  for (const v of votesRes.data ?? []) {
+    voteCountByOption.set(v.option_id, (voteCountByOption.get(v.option_id) ?? 0) + 1);
+    totalByPoll.set(v.poll_id, (totalByPoll.get(v.poll_id) ?? 0) + 1);
+    if (me && v.user_id === me) {
+      const arr = myOptionsByPoll.get(v.poll_id) ?? [];
+      arr.push(v.option_id);
+      myOptionsByPoll.set(v.poll_id, arr);
+    }
+  }
+
+  // poll_id -> options array (sorted by `order`).
+  const optionsByPoll = new Map<
+    string,
+    { id: string; text: string; order: number; voteCount: number }[]
+  >();
+  for (const o of optionsRes.data ?? []) {
+    const arr = optionsByPoll.get(o.poll_id) ?? [];
+    arr.push({
+      id: o.id,
+      text: o.text,
+      order: o.order,
+      voteCount: voteCountByOption.get(o.id) ?? 0,
+    });
+    optionsByPoll.set(o.poll_id, arr);
+  }
+  for (const arr of optionsByPoll.values()) {
+    arr.sort((a, b) => a.order - b.order);
+  }
+
+  for (const p of pollsRes.data ?? []) {
+    result.set(p.id, {
+      id: p.id,
+      question: p.question,
+      isMulti: p.is_multi,
+      isClosed: p.is_closed,
+      createdById: p.created_by_id,
+      options: optionsByPoll.get(p.id) ?? [],
+      myOptionIds: myOptionsByPoll.get(p.id) ?? [],
+      totalVotes: totalByPoll.get(p.id) ?? 0,
+    });
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------
 // Dashboard aggregator
 // ---------------------------------------------------------------------

@@ -23,6 +23,7 @@ import {
   createPollInGroup,
   votePoll,
   setPollClosed,
+  getPollsByIds,
 } from "@/lib/supabase/queries";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { toGroupMessageCamel } from "@/lib/supabase/adapters";
@@ -179,11 +180,25 @@ export default function GroupChatPage() {
   const loadMessages = () => {
     const supabase = createSupabaseBrowserClient();
     listGroupMessages(supabase, groupId)
-      .then((rows) =>
+      .then(async (rows) => {
+        // Resolve every poll referenced by the visible messages in a single
+        // batch (one query for polls + one for options + one for votes).
+        // Without this, poll messages render as plain text because the
+        // chat row only carries the `poll_id` FK, not the body.
+        const pollIds = Array.from(
+          new Set(rows.map((m) => m.poll_id).filter((id): id is string => !!id))
+        );
+        const pollMap = pollIds.length > 0
+          ? await getPollsByIds(supabase, pollIds)
+          : new Map();
         setMessages(
-          rows.map((m) => ({ ...toGroupMessageCamel(m), reactions: [] }))
-        )
-      )
+          rows.map((m) => ({
+            ...toGroupMessageCamel(m),
+            reactions: [],
+            poll: m.poll_id ? pollMap.get(m.poll_id) ?? null : null,
+          }))
+        );
+      })
       .catch(() => {});
   };
 
