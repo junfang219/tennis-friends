@@ -691,10 +691,15 @@ export default function AvailabilityPage() {
                               <button
                                 onClick={(e) => {
                                   const rect = e.currentTarget.getBoundingClientRect();
+                                  // Status popover is w-44 (176px). Clamp so it
+                                  // doesn't overflow the right edge on mobile
+                                  // when the anchor cell is far right.
+                                  const popW = 176;
+                                  const maxLeft = window.innerWidth - popW - 8;
                                   setStatusPopover({
                                     matchId: match.id,
                                     top: rect.bottom + 4,
-                                    left: rect.left,
+                                    left: Math.max(8, Math.min(rect.left, maxLeft)),
                                   });
                                 }}
                                 className={`w-full text-left px-2 py-1.5 rounded-lg border ${
@@ -730,11 +735,16 @@ export default function AvailabilityPage() {
                               <button
                                 onClick={(e) => {
                                   const rect = e.currentTarget.getBoundingClientRect();
+                                  // Lineup popover is w-60 (240px). Clamp left
+                                  // so it doesn't overflow the viewport when
+                                  // the anchor cell is on the right side.
+                                  const popW = 240;
+                                  const maxLeft = window.innerWidth - popW - 8;
                                   setLineupPopover({
                                     matchId: match.id,
                                     userId: m.user.id,
                                     top: rect.bottom + 4,
-                                    left: rect.left,
+                                    left: Math.max(8, Math.min(rect.left, maxLeft)),
                                   });
                                   setCustomSlotInput(a?.lineupSlot || "");
                                 }}
@@ -888,13 +898,13 @@ export default function AvailabilityPage() {
               })}
             </div>
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Custom</p>
-            <div className="flex items-center gap-1.5 mb-3">
+            <div className="space-y-1.5 mb-3">
               <input
                 type="text"
                 value={customSlotInput}
                 onChange={(e) => setCustomSlotInput(e.target.value.slice(0, 24))}
                 placeholder="e.g. Coach"
-                className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-court-green"
+                className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-court-green"
               />
               <button
                 onClick={() => {
@@ -904,7 +914,7 @@ export default function AvailabilityPage() {
                   }
                 }}
                 disabled={!customSlotInput.trim()}
-                className="text-[11px] font-semibold px-2 py-1.5 bg-court-green text-white rounded disabled:opacity-40"
+                className="w-full text-[11px] font-semibold px-2 py-1.5 bg-court-green text-white rounded disabled:opacity-40"
               >
                 Set
               </button>
