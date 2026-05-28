@@ -144,6 +144,12 @@ export interface PostCamel {
   // collapse the empty default to null here so PostCard's
   // `liveTeamGroupId || null` checks behave correctly.
   teamGroupId: string | null;
+  // The signed-in user's own play_request against this post, if any.
+  // Status is uppercased here so the legacy PostCard checks
+  // (status === "APPROVED" / "PENDING" / …) keep working; Supabase
+  // stores the enum in lowercase. Null for the author + when no
+  // request exists.
+  myPlayRequest: { id: string; status: string; note: string } | null;
 }
 
 export function toPostCamel(p: Post): PostCamel {
@@ -185,6 +191,13 @@ export function toPostCamel(p: Post): PostCamel {
     isLiked: p.is_liked,
     sessionChatId: p.session_chat?.[0]?.id ?? null,
     teamGroupId: p.team_group_id ? p.team_group_id : null,
+    myPlayRequest: p.my_play_request
+      ? {
+          id: p.my_play_request.id,
+          status: p.my_play_request.status.toUpperCase(),
+          note: p.my_play_request.note,
+        }
+      : null,
   };
 }
 

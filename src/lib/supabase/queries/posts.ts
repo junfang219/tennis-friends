@@ -47,6 +47,11 @@ export type Post = PostRow & {
   like_count: number;
   comment_count: number;
   is_liked: boolean;
+  // The signed-in user's own play_request against this post, if any.
+  // Null when not signed in, when no request exists, or for the post's
+  // own author. PostCard reads this to render the collapsed "Open team"
+  // CTA for approved players (alongside the post creator).
+  my_play_request: { id: string; status: string; note: string } | null;
 };
 
 export type PostInsert = Inserts<"posts">;
@@ -141,7 +146,7 @@ async function enrichPosts(
   const { data: auth } = await supabase.auth.getUser();
   const me = auth.user?.id ?? null;
 
-  const [likesRes, commentsRes, myLikesRes] = await Promise.all([
+  const [likesRes, commentsRes, myLikesRes, myRequestsRes] = await Promise.all([
     supabase.from("likes").select("post_id", { count: "exact", head: false }).in("post_id", ids),
     supabase
       .from("comments")
@@ -150,11 +155,22 @@ async function enrichPosts(
     me
       ? supabase.from("likes").select("post_id").eq("user_id", me).in("post_id", ids)
       : Promise.resolve({ data: [] as { post_id: string }[], error: null }),
+    me
+      ? supabase
+          .from("play_requests")
+          .select("id, post_id, status, note")
+          .eq("user_id", me)
+          .in("post_id", ids)
+      : Promise.resolve({
+          data: [] as { id: string; post_id: string; status: string; note: string }[],
+          error: null,
+        }),
   ]);
 
   if (likesRes.error) throw likesRes.error;
   if (commentsRes.error) throw commentsRes.error;
   if (myLikesRes.error) throw myLikesRes.error;
+  if (myRequestsRes.error) throw myRequestsRes.error;
 
   const likeCount = new Map<string, number>();
   for (const row of likesRes.data ?? []) {
@@ -165,12 +181,22 @@ async function enrichPosts(
     commentCount.set(row.post_id, (commentCount.get(row.post_id) ?? 0) + 1);
   }
   const myLiked = new Set((myLikesRes.data ?? []).map((r) => r.post_id));
+  // post_id -> the signed-in user's request row (1:1 by unique
+  // (post_id, user_id) index, so the map is unambiguous).
+  const myRequestByPost = new Map<
+    string,
+    { id: string; status: string; note: string }
+  >();
+  for (const r of myRequestsRes.data ?? []) {
+    myRequestByPost.set(r.post_id, { id: r.id, status: r.status, note: r.note });
+  }
 
   return posts.map((p) => ({
     ...p,
     like_count: likeCount.get(p.id) ?? 0,
     comment_count: commentCount.get(p.id) ?? 0,
     is_liked: myLiked.has(p.id),
+    my_play_request: myRequestByPost.get(p.id) ?? null,
   }));
 }
 

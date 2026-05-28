@@ -622,31 +622,55 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
             <span className="text-base leading-none">{isProposeTeam ? "🏆" : "🎾"}</span>
           </div>
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`text-sm font-bold truncate ${roleStyles.title}`}>
-                {titleText}
-              </span>
-              {(livePlayDate || livePlayTime) && (
-                <>
-                  <span className={`text-xs ${roleStyles.dot}`}>·</span>
-                  <span className={`text-xs truncate capitalize font-medium ${roleStyles.subtitle}`}>
-                    {livePlayDate} {livePlayTime}{endTime ? `–${endTime}` : ""}
-                  </span>
-                </>
-              )}
-            </div>
-            <div className={`text-[11px] truncate mt-0.5 font-medium ${roleStyles.meta}`}>
-              {liveCourtLocation || (isProposeTeam ? `${confirmed} member${confirmed === 1 ? "" : "s"}` : "Location TBD")}
-              {((post.approvedPlayerNames && post.approvedPlayerNames.length > 0) || liveManualPlayers) && (
-                <>
-                  {" · "}
+            {/* Collapsed-card body. Two lines: a bold headline and a single
+                muted meta line. The previous title row used flex-wrap with
+                a "·" separator that orphaned onto its own line whenever the
+                title overflowed (see Chaoran-on-Mimi's-team screenshot,
+                2026-05-28). Headline + single meta line removes the wrap
+                surface entirely.
+
+                propose_team and find_players use the same shape but
+                different content: for propose_team the team name leads
+                (play_date/play_time aren't real date/time — they store the
+                schedule string and NTRP range), and the meta line carries
+                the "X's team formed" annotation plus member count. */}
+            {isProposeTeam ? (
+              <>
+                <div className={`text-sm font-bold truncate ${roleStyles.title}`}>
+                  {liveCourtLocation || titleText}
+                </div>
+                <div className={`text-[11px] truncate mt-0.5 font-medium ${roleStyles.meta}`}>
                   {[
-                    ...(post.approvedPlayerNames || []),
-                    ...(liveManualPlayers ? liveManualPlayers.split(",").filter((n: string) => n.trim()) : []),
-                  ].map((n: string) => n.trim()).join(", ")}
-                </>
-              )}
-            </div>
+                    `${isAuthor ? "Your" : `${post.author.name}'s`} team formed`,
+                    confirmed > 0 && `${confirmed} member${confirmed === 1 ? "" : "s"}`,
+                  ].filter(Boolean).join(" · ")}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className={`text-sm font-bold truncate ${roleStyles.title}`}>
+                  {titleText}
+                </div>
+                <div className={`text-[11px] truncate mt-0.5 font-medium ${roleStyles.meta}`}>
+                  {[
+                    (livePlayDate || livePlayTime) &&
+                      `${livePlayDate} ${livePlayTime}${endTime ? `–${endTime}` : ""}`.trim(),
+                    liveCourtLocation || "Location TBD",
+                    [
+                      ...(post.approvedPlayerNames || []),
+                      ...(liveManualPlayers
+                        ? liveManualPlayers.split(",").filter((n: string) => n.trim())
+                        : []),
+                    ]
+                      .map((n: string) => n.trim())
+                      .filter(Boolean)
+                      .join(", ") || null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </div>
+              </>
+            )}
           </div>
         </button>
         {!isProposeTeam && liveSessionChatId ? (

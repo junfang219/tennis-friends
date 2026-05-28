@@ -105,6 +105,7 @@ describe("snake_case → camelCase adapters", () => {
       like_count: 3,
       comment_count: 1,
       is_liked: true,
+      my_play_request: null,
     });
     expect(result.author.profileImageUrl).toBe("x.png");
     expect(result.likeCount).toBe(3);
@@ -148,6 +149,7 @@ describe("snake_case → camelCase adapters", () => {
       like_count: 0,
       comment_count: 0,
       is_liked: false,
+      my_play_request: null,
     });
     expect(result.sessionChatId).toBe("chat-123");
   });
@@ -193,6 +195,7 @@ describe("snake_case → camelCase adapters", () => {
       like_count: 0,
       comment_count: 0,
       is_liked: false,
+      my_play_request: null,
     });
     expect(result.postType).toBe("find_players");
     expect(result.playDate).toBe("2026-05-23");
@@ -206,6 +209,75 @@ describe("snake_case → camelCase adapters", () => {
     // the strict iOS Safari Date parser will accept.
     expect(result.createdAt).toBe("2026-05-22T03:50:35.739572+00:00");
     expect(Number.isNaN(new Date(result.createdAt).getTime())).toBe(false);
+  });
+
+  // Regression: PostCard's role gate compares
+  // `myRequest.status === "APPROVED"` (uppercase, legacy Prisma enum)
+  // but Supabase stores `approved`. toPostCamel must uppercase at the
+  // boundary so an approved member (e.g. Chaoran on the "Love hurts"
+  // team) renders as a "player" and sees the "Open team" pill on the
+  // collapsed propose_team card, not as a "bystander".
+  it("toPostCamel uppercases my_play_request.status", () => {
+    const result = toPostCamel({
+      id: "p-team",
+      author_id: "a1",
+      content: "",
+      media_url: "",
+      media_type: "",
+      post_type: "propose_team",
+      play_date: "",
+      play_time: "",
+      play_duration: 0,
+      court_location: "Love hurts",
+      game_type: "",
+      players_needed: 4,
+      players_confirmed: 4,
+      skill_min: null,
+      skill_max: null,
+      court_booked: false,
+      is_complete: true,
+      comments_disabled: false,
+      manual_players: "",
+      team_group_id: "grp-1",
+      is_broadcast: false,
+      broadcast_radius_mi: 0,
+      broadcast_lat: null,
+      broadcast_lng: null,
+      event_id: null,
+      pinned_at: null,
+      created_at: "2026-05-26 06:43:19.824402+00",
+      author: { id: "a1", name: "Mimi", profile_image_url: "" },
+      photos: [],
+      session_chat: [],
+      like_count: 0,
+      comment_count: 0,
+      is_liked: false,
+      my_play_request: { id: "req-1", status: "approved", note: "" },
+    });
+    expect(result.myPlayRequest).toEqual({
+      id: "req-1",
+      status: "APPROVED",
+      note: "",
+    });
+    expect(result.teamGroupId).toBe("grp-1");
+  });
+
+  it("toPostCamel passes null my_play_request through unchanged", () => {
+    const base = {
+      id: "p", author_id: "a1", content: "", media_url: "", media_type: "",
+      post_type: "regular" as const, play_date: "", play_time: "",
+      play_duration: 0, court_location: "", game_type: "",
+      players_needed: 0, players_confirmed: 0, skill_min: null, skill_max: null,
+      court_booked: false, is_complete: false, comments_disabled: false,
+      manual_players: "", team_group_id: "", is_broadcast: false,
+      broadcast_radius_mi: 0, broadcast_lat: null, broadcast_lng: null,
+      event_id: null, pinned_at: null, created_at: "t",
+      author: { id: "a1", name: "", profile_image_url: "" },
+      photos: [], session_chat: [],
+      like_count: 0, comment_count: 0, is_liked: false,
+      my_play_request: null,
+    };
+    expect(toPostCamel(base).myPlayRequest).toBeNull();
   });
 
   it("toCommentCamel flattens author and surfaces parentCommentId + updatedAt", () => {

@@ -38,7 +38,17 @@ function adaptFeedPost(p: FeedPost): Post {
     broadcastRadiusMi: p.broadcast_radius_mi,
     distanceMiles: null,
     pendingRequestCount: 0,
-    myPlayRequest: null,
+    // Uppercase the Supabase lowercase enum so PostCard's legacy
+    // `status === "APPROVED"` checks resolve to "player" instead of
+    // "bystander" for approved members. enrichPosts already restricted
+    // the join to the signed-in user, so this row is theirs.
+    myPlayRequest: p.my_play_request
+      ? {
+          id: p.my_play_request.id,
+          status: p.my_play_request.status.toUpperCase(),
+          note: p.my_play_request.note,
+        }
+      : null,
     sessionChatId: p.session_chat?.[0]?.id ?? null,
     // Empty default from posts.team_group_id collapses to null so
     // PostCard's `liveTeamGroupId || null` checks render the collapsed

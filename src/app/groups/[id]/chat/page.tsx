@@ -145,20 +145,29 @@ export default function GroupChatPage() {
           setError("Group not found.");
           return;
         }
+        const adaptedMembers = members.map((m) => ({
+          id: m.id,
+          userId: m.user_id,
+          role: m.role,
+          user: {
+            id: m.user.id,
+            name: m.user.name,
+            profileImageUrl: m.user.profile_image_url,
+          },
+        }));
         setGroupInfo({
           id: g.id,
           name: g.name,
           imageUrl: g.image_url,
-          members: members.map((m) => ({
-            id: m.id,
-            userId: m.user_id,
-            role: m.role,
-            user: {
-              id: m.user.id,
-              name: m.user.name,
-              profileImageUrl: m.user.profile_image_url,
-            },
-          })),
+          ownerId: g.owner_id,
+          members: adaptedMembers,
+          // Header reads _count.members to render the "N members" pill —
+          // without this, the chat page crashes with
+          // "undefined is not an object (groupInfo._count.members)" the
+          // first time it renders for any team. Kept as an object (not
+          // members.length inlined) so the legacy GroupInfo type stays
+          // intact across both this page and group landing.
+          _count: { members: adaptedMembers.length },
         } as unknown as typeof groupInfo);
       } catch {
         setError("You are not a member of this group.");
