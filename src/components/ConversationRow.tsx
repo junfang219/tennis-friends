@@ -95,7 +95,20 @@ export default function ConversationRow({
   const ACTIONS_WIDTH = buttonW * 4;
   const OPEN_THRESHOLD = ACTIONS_WIDTH / 2;
 
-  const [drag, setDrag] = useState<{ startX: number; startY: number; dx: number; active: boolean; isDrag: boolean } | null>(null);
+  // `isDrag` = pointer committed to a horizontal swipe (locks vertical scroll
+  // and engages the action panel). `movedBeyondTap` = pointer moved enough in
+  // *any* direction that this gesture is no longer a tap. The two are
+  // distinct: a vertical scroll sets movedBeyondTap=true but leaves isDrag
+  // false — so on lift we neither open the chat nor reveal swipe actions.
+  // Matches iPhone Messages: scroll past a row, lift, no chat opens.
+  const [drag, setDrag] = useState<{
+    startX: number;
+    startY: number;
+    dx: number;
+    active: boolean;
+    isDrag: boolean;
+    movedBeyondTap: boolean;
+  } | null>(null);
   // Local override: when an action is tapped, force the row closed immediately
   // regardless of parent state so the animation plays and actions don't stay overlapped.
   const [forceClosed, setForceClosed] = useState(false);
@@ -129,7 +142,14 @@ export default function ConversationRow({
     const target = e.target as HTMLElement;
     if (target.closest("[data-swipe-action]")) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    setDrag({ startX: e.clientX, startY: e.clientY, dx: 0, active: true, isDrag: false });
+    setDrag({
+      startX: e.clientX,
+      startY: e.clientY,
+      dx: 0,
+      active: true,
+      isDrag: false,
+      movedBeyondTap: false,
+    });
   }, []);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
@@ -137,12 +157,20 @@ export default function ConversationRow({
     const dx = e.clientX - drag.startX;
     const dy = e.clientY - drag.startY;
     const isHorizontalIntent = Math.abs(dx) > Math.abs(dy) + 4;
+    // Any movement past the tap threshold in *either* axis disqualifies the
+    // gesture from being a tap — even if it never becomes a horizontal swipe.
+    // Without this, a vertical scroll on the list opens whatever chat the
+    // finger happened to lift over (the iOS-Messages footgun).
+    const movedBeyondTap =
+      Math.abs(dx) > TAP_THRESHOLD_PX || Math.abs(dy) > TAP_THRESHOLD_PX;
     if (!drag.isDrag && Math.abs(dx) > TAP_THRESHOLD_PX && isHorizontalIntent) {
       setDrag((d) => (d ? { ...d, isDrag: true } : d));
     }
     // Prevent vertical scroll once we've committed to a horizontal drag
     if (drag.isDrag) e.preventDefault();
-    setDrag((d) => (d ? { ...d, dx } : d));
+    setDrag((d) =>
+      d ? { ...d, dx, movedBeyondTap: d.movedBeyondTap || movedBeyondTap } : d
+    );
   }, [drag]);
 
   const handlePointerUp = useCallback(() => {
@@ -157,11 +185,15 @@ export default function ConversationRow({
       } else {
         onClose();
       }
-    } else {
-      // No drag — it's a tap. If row is currently open, close it; otherwise select.
+    } else if (!drag.movedBeyondTap) {
+      // Genuine tap — no movement in any direction past the threshold.
+      // If row is currently open, close it; otherwise select.
       if (isOpen) onClose();
       else onSelect();
     }
+    // else: finger moved (scrolling, or a swipe that didn't commit). Don't
+    // open the chat and don't toggle the actions — let the native scroll
+    // handle itself.
     setDrag(null);
   }, [drag, isOpen, ACTIONS_WIDTH, OPEN_THRESHOLD, onOpen, onClose, onSelect]);
 
