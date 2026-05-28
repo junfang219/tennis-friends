@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useSearchParams } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
@@ -242,82 +242,41 @@ export default function ChatPage() {
     [userId, me]
   );
 
-  // Scroll to bottom on new messages — but skip the *initial* load when a
-  // deep-link target is set, so we land in the middle of the thread instead
-  // of bouncing past it. After the target is centered, future arrivals scroll
-  // to bottom as usual.
-  // Split scroll-to-bottom into two effects so the keyboard trigger
-  // doesn't get incorrectly suppressed by the "near bottom" guard.
-  // See chat/group/[chatId]/page.tsx for the full rationale.
-  const isInitialPinRef = useRef(true);
-  useEffect(() => {
-    isInitialPinRef.current = true;
-  }, [userId]);
+  // Sticky-to-bottom scroll model (iPhone Messages convention).
+  //
+  // The previous implementation had three separate effects (keyboard,
+  // messages, ResizeObserver) that all wrote to the same `_raf2` stash on
+  // the scroll element, so their cleanups cancelled each other's pending
+  // scrolls. The chat would land in the middle of the thread on open and
+  // fail to follow the keyboard on send.
+  //
+  // Model: track whether the user is currently anchored to the bottom in a
+  // ref (no re-renders). The onScroll handler flips it false when the user
+  // drags up past 100px from the bottom, true when they come back near.
+  // A single useLayoutEffect re-pins to `scrollHeight` whenever anything
+  // that grows the content fires — messages.length, keyboard height,
+  // input-bar height — but ONLY while still anchored. useLayoutEffect runs
+  // after React commits the new DOM but before paint, so scrollHeight
+  // already reflects the new content; no rAF dance needed.
+  //
+  // Initial state: anchored UNLESS a `?msg=…` deep-link is active (the
+  // deep-link effect below scrolls to a specific bubble instead).
+  const stickToBottomRef = useRef(!focusTargetRef.current);
 
-  // (1) Keyboard / input-bar change — always pin.
-  useEffect(() => {
-    if (focusTargetRef.current && !focusHandledRef.current) return;
+  const handleMessagesScroll = useCallback(() => {
     const el = messagesScrollRef.current;
     if (!el) return;
-    const raf1 = requestAnimationFrame(() => {
-      const raf2 = requestAnimationFrame(() => {
-        const sc = messagesScrollRef.current;
-        if (sc) sc.scrollTop = sc.scrollHeight;
-      });
-      (el as HTMLDivElement & { _raf2?: number })._raf2 = raf2;
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      const stashed = (el as HTMLDivElement & { _raf2?: number })._raf2;
-      if (stashed !== undefined) cancelAnimationFrame(stashed);
-    };
-  }, [keyboardHeight, inputBarHeight, userId]);
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = distance < 100;
+  }, []);
 
-  // (2) Messages change — pin only if user was near the bottom (80px).
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (focusTargetRef.current && !focusHandledRef.current) return;
+    if (!stickToBottomRef.current) return;
     const el = messagesScrollRef.current;
     if (!el) return;
-    const initial = isInitialPinRef.current;
-    if (!initial) {
-      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      if (distanceFromBottom > 80 && messages.length > 0) return;
-    }
-    const raf1 = requestAnimationFrame(() => {
-      const raf2 = requestAnimationFrame(() => {
-        const sc = messagesScrollRef.current;
-        if (!sc) return;
-        sc.scrollTop = sc.scrollHeight;
-        if (sc.clientHeight > 0 && sc.scrollHeight > 0) {
-          isInitialPinRef.current = false;
-        }
-      });
-      (el as HTMLDivElement & { _raf2?: number })._raf2 = raf2;
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      const stashed = (el as HTMLDivElement & { _raf2?: number })._raf2;
-      if (stashed !== undefined) cancelAnimationFrame(stashed);
-    };
-  }, [messages.length]);
-
-  // Pin to bottom the first time the scroll container actually gets a
-  // real height — catches the case where the initial effect ran while
-  // clientHeight was still 0 (Suspense boundary / portal mount race).
-  useEffect(() => {
-    const el = messagesScrollRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    let firedOnce = false;
-    const ro = new ResizeObserver(() => {
-      if (firedOnce) return;
-      if (el.clientHeight > 0 && el.scrollHeight > 0) {
-        firedOnce = true;
-        el.scrollTop = el.scrollHeight;
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [userId]);
+    el.scrollTop = el.scrollHeight;
+  }, [messages.length, keyboardHeight, inputBarHeight, userId]);
 
   // Deep-link: scroll to and briefly highlight the message referenced by ?msg=…
   useEffect(() => {
@@ -555,6 +514,7 @@ export default function ChatPage() {
       */}
       <div
         ref={messagesScrollRef}
+        onScroll={handleMessagesScroll}
         className="flex-1 overflow-y-auto min-h-0 px-4 py-4 bg-surface/50 net-texture"
         style={{
           // inputBarHeight already includes the input bar's own safe-area
