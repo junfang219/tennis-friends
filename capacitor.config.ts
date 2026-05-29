@@ -21,16 +21,20 @@ const config: CapacitorConfig = {
     },
   },
   server: {
-    // Currently pointed at the Mac's LAN IP so a physical iPhone on the
-    // same Wi-Fi can reach the Next.js dev server. Switch back to
-    // http://localhost:3000 for iOS Simulator runs (the simulator shares
-    // the Mac's loopback). For production, change to the deployed URL
-    // and remove cleartext.
-    url: 'http://192.168.7.129:3000',
+    // Pointed at the Mac's Bonjour/mDNS hostname so a physical iPhone on the
+    // same Wi-Fi reaches the Next.js dev server without hardcoding a LAN IP
+    // (DHCP reassigns those, which shows up as an all-white screen). The
+    // hostname resolves to the current IP automatically. If mDNS doesn't
+    // resolve on your network (AP/client isolation, some VPNs), run
+    // `npm run ios:ip` to fall back to the raw LAN IP. Switch to
+    // http://localhost:3000 for iOS Simulator runs (the simulator shares the
+    // Mac's loopback). For production, change to the deployed URL and remove
+    // cleartext.
+    url: 'http://Juns-MacBook-Pro-3.local:3000',
     cleartext: true,
     // Belt + suspenders: tell WKWebView these hosts are OK to navigate to.
     // The signed-upload PUTs go to *.supabase.co.
-    allowNavigation: ['192.168.7.129', 'localhost', '*.supabase.co'],
+    allowNavigation: ['Juns-MacBook-Pro-3.local', 'localhost', '*.supabase.co'],
   },
   ios: {
     contentInset: 'never',
