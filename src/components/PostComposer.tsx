@@ -11,6 +11,8 @@ import {
   updateMyProfile,
   listMyGroups,
   listMyFriendGroups,
+  getGroupMemberCounts,
+  getFriendGroupMemberCounts,
   createPost,
 } from "@/lib/supabase/queries";
 import { buildObjectKey, type StorageBucket } from "@/lib/supabase/storage";
@@ -273,12 +275,24 @@ function ComposerModal({
 
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
-    listMyGroups(supabase).then((rows) =>
-      setGroups(rows.map((g) => ({ id: g.id, name: g.name, _count: { members: 0 } })))
-    );
-    listMyFriendGroups(supabase).then((rows) =>
-      setFriendGroups(rows.map((g) => ({ id: g.id, name: g.name, _count: { members: 0 } })))
-    );
+    (async () => {
+      const rows = await listMyGroups(supabase);
+      const counts = await getGroupMemberCounts(supabase, rows.map((g) => g.id));
+      setGroups(rows.map((g) => ({
+        id: g.id,
+        name: g.name,
+        _count: { members: counts.get(g.id) ?? 0 },
+      })));
+    })();
+    (async () => {
+      const rows = await listMyFriendGroups(supabase);
+      const counts = await getFriendGroupMemberCounts(supabase, rows.map((g) => g.id));
+      setFriendGroups(rows.map((g) => ({
+        id: g.id,
+        name: g.name,
+        _count: { members: counts.get(g.id) ?? 0 },
+      })));
+    })();
   }, []);
 
   // Auto-focus textarea

@@ -166,6 +166,28 @@ export async function listMyFriendGroups(
   return (data ?? []) as FriendGroup[];
 }
 
+/**
+ * Member counts for a set of friend groups, keyed by friend_group_id.
+ * Used by audience pickers that only need "N members" labels without
+ * loading the full member list.
+ */
+export async function getFriendGroupMemberCounts(
+  supabase: SupabaseClient<Database>,
+  fgIds: string[]
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (fgIds.length === 0) return counts;
+  const { data, error } = await supabase
+    .from("friend_group_members")
+    .select("friend_group_id")
+    .in("friend_group_id", fgIds);
+  if (error) throw error;
+  for (const row of data ?? []) {
+    counts.set(row.friend_group_id, (counts.get(row.friend_group_id) ?? 0) + 1);
+  }
+  return counts;
+}
+
 export async function listFriendGroupMembers(
   supabase: SupabaseClient<Database>,
   fgId: string

@@ -75,6 +75,29 @@ export async function listMyGroups(
   return (data ?? []) as Group[];
 }
 
+/**
+ * Member counts for a set of groups, keyed by group_id. Used by pickers
+ * that only need "N members" labels without loading the full member list.
+ * Excludes members who have archived the group (matches listGroupMembers).
+ */
+export async function getGroupMemberCounts(
+  supabase: SupabaseClient<Database>,
+  groupIds: string[]
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (groupIds.length === 0) return counts;
+  const { data, error } = await supabase
+    .from("group_members")
+    .select("group_id")
+    .in("group_id", groupIds)
+    .is("archived_at", null);
+  if (error) throw error;
+  for (const row of data ?? []) {
+    counts.set(row.group_id, (counts.get(row.group_id) ?? 0) + 1);
+  }
+  return counts;
+}
+
 // Cross-tab cache for the team header data. The team page primes these when
 // it loads; the action tabs (chat, availability, practice, calendar, albums,
 // files) read them synchronously for an instant first paint and revalidate in
