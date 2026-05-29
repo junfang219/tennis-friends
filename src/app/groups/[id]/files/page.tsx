@@ -58,6 +58,13 @@ export default function GroupFilesPage() {
   const [description, setDescription] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Note composer (text files written in-app rather than uploaded).
+  const [showNote, setShowNote] = useState(false);
+  const [noteTitle, setNoteTitle] = useState("");
+  const [noteBody, setNoteBody] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+  const [noteErr, setNoteErr] = useState("");
+
   const loadFiles = useCallback(async () => {
     const supabase = createSupabaseBrowserClient();
     const { data } = await supabase
@@ -125,6 +132,31 @@ export default function GroupFilesPage() {
     : null;
   const canUpload = !!myRole && isAtLeast(myRole, ROLE.CAPTAIN);
 
+  // Insert a group_files row pointing at an already-uploaded object. Shared by
+  // the file-upload and write-a-note flows. Returns an error message, or null
+  // on success.
+  const registerFile = async (meta: {
+    url: string;
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+    description: string;
+  }): Promise<string | null> => {
+    const supabase = createSupabaseBrowserClient();
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth.user) return "Not signed in.";
+    const { error: insErr } = await supabase.from("group_files").insert({
+      group_id: groupId,
+      url: meta.url,
+      filename: meta.filename,
+      mime_type: meta.mimeType,
+      size_bytes: meta.sizeBytes,
+      description: meta.description,
+      uploaded_by_id: auth.user.id,
+    });
+    return insErr ? insErr.message || "Failed to register file." : null;
+  };
+
   const onFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -138,30 +170,64 @@ export default function GroupFilesPage() {
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
-    const supabase = createSupabaseBrowserClient();
-    const { data: auth } = await supabase.auth.getUser();
-    if (!auth.user) {
-      setErr("Not signed in.");
-      setUploading(false);
-      return;
-    }
-    const { error: insErr } = await supabase.from("group_files").insert({
-      group_id: groupId,
+    const rowErr = await registerFile({
       url: upResult.url,
       filename: file.name,
-      mime_type: file.type || "application/octet-stream",
-      size_bytes: file.size,
+      mimeType: file.type || "application/octet-stream",
+      sizeBytes: file.size,
       description,
-      uploaded_by_id: auth.user.id,
     });
-    if (!insErr) {
+    if (!rowErr) {
       setDescription("");
       await loadFiles();
     } else {
-      setErr(insErr.message || "Failed to register file.");
+      setErr(rowErr);
     }
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const onSaveNote = async () => {
+    const title = noteTitle.trim();
+    if (!title) {
+      setNoteErr("Give your note a name.");
+      return;
+    }
+    if (!noteBody.trim()) {
+      setNoteErr("Write something before saving.");
+      return;
+    }
+    setNoteErr("");
+    setSavingNote(true);
+
+    // Save the note as a .txt file in the same bucket, so it lists, opens in
+    // the viewer, and behaves like any other team file. Keep the user's
+    // extension if they typed one; otherwise add .txt.
+    const filename = /\.[a-z0-9]{1,8}$/i.test(title) ? title : `${title}.txt`;
+    const file = new File([noteBody], filename, { type: "text/plain" });
+
+    const upResult = await uploadToBucket(file, "files");
+    if (isUploadError(upResult)) {
+      setNoteErr(upResult.message);
+      setSavingNote(false);
+      return;
+    }
+    const rowErr = await registerFile({
+      url: upResult.url,
+      filename,
+      mimeType: "text/plain",
+      sizeBytes: file.size,
+      description: "",
+    });
+    if (!rowErr) {
+      setNoteTitle("");
+      setNoteBody("");
+      setShowNote(false);
+      await loadFiles();
+    } else {
+      setNoteErr(rowErr);
+    }
+    setSavingNote(false);
   };
 
   const removeFile = async (fileId: string) => {
@@ -236,6 +302,54 @@ export default function GroupFilesPage() {
           </button>
           <p className="text-[11px] text-gray-400">PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, CSV up to 25 MB.</p>
           {err && <p className="text-xs text-red-600">{err}</p>}
+
+          <div className="pt-1 border-t border-gray-100">
+            {!showNote ? (
+              <button
+                onClick={() => {
+                  setShowNote(true);
+                  setNoteErr("");
+                }}
+                className="btn-secondary w-full mt-2"
+              >
+                📝 Write a note
+              </button>
+            ) : (
+              <div className="space-y-2 mt-2">
+                <input
+                  type="text"
+                  value={noteTitle}
+                  onChange={(e) => setNoteTitle(e.target.value)}
+                  placeholder="Note name (e.g. 'Lineup for Saturday')"
+                  maxLength={200}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-court-green"
+                />
+                <textarea
+                  value={noteBody}
+                  onChange={(e) => setNoteBody(e.target.value)}
+                  placeholder="Type your notes here…"
+                  rows={8}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-court-green resize-y"
+                />
+                <div className="flex gap-2">
+                  <button onClick={onSaveNote} disabled={savingNote} className="btn-primary flex-1">
+                    {savingNote ? "Saving…" : "Save note"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowNote(false);
+                      setNoteErr("");
+                    }}
+                    disabled={savingNote}
+                    className="btn-secondary"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {noteErr && <p className="text-xs text-red-600">{noteErr}</p>}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
