@@ -1547,7 +1547,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
 
       {/* Post menu popup */}
       {showMenu && createPortal(
-        <div className="fixed inset-0 z-[999] bg-black/40 flex items-center justify-center p-4" onClick={() => setShowMenu(false)}>
+        <div className="fixed inset-0 z-[10000] bg-black/40 flex items-center justify-center p-4" onClick={() => setShowMenu(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs overflow-hidden animate-fade-in-up" onClick={(e) => e.stopPropagation()}>
             <div className="p-3 border-b border-gray-100">
               <p className="text-sm font-bold text-gray-800 text-center">Post Options</p>
@@ -1645,7 +1645,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
 
       {/* Edit post modal */}
       {showEditModal && createPortal(
-        <div className="fixed inset-0 z-[999] bg-black/50 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto" onClick={() => setShowEditModal(false)}>
+        <div className="fixed inset-0 z-[10000] bg-black/50 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto" onClick={() => setShowEditModal(false)}>
           <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl shadow-2xl animate-fade-in-up min-h-screen sm:min-h-0 sm:my-8 flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] sm:pt-0 sm:pb-0" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <h2 className="font-display text-xl font-bold text-gray-900">Edit Post</h2>
@@ -1820,7 +1820,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
       {/* Edit audience picker sub-modal */}
       {showEditAudiencePicker && createPortal(
         <div
-          className="fixed inset-0 z-[1000] bg-black/40 flex items-center justify-center p-4"
+          className="fixed inset-0 z-[10001] bg-black/40 flex items-center justify-center p-4"
           onClick={(e) => { e.stopPropagation(); setShowEditAudiencePicker(false); }}
         >
           <div
@@ -1948,7 +1948,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
       {/* Likes list modal */}
       {showLikes && createPortal(
         <div
-          className="fixed inset-0 z-[999] bg-black/50 flex items-center justify-center p-4"
+          className="fixed inset-0 z-[10000] bg-black/50 flex items-center justify-center p-4"
           onClick={() => setShowLikes(false)}
         >
           <div
@@ -2119,7 +2119,7 @@ function SendToModal({
   const nothingToSendTo = !loading && friends.length === 0 && groups.length === 0;
 
   return (
-    <div className="fixed inset-0 z-[999] bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[10000] bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in-up" onClick={(e) => e.stopPropagation()}>
         <div className="p-4 border-b border-gray-100 flex items-center justify-between">
           <h3 className="font-display text-lg font-bold text-gray-800">Send to...</h3>
