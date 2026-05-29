@@ -348,12 +348,14 @@ export default function EventDetailPage() {
             <span>📅</span>
             <span>{formatDateRange(event.startDate, event.endDate)}</span>
           </div>
-          {event.venueName && (
+          {(event.venueName || event.venueAddress) && (
             <div className="flex items-center gap-2">
               <span>📍</span>
               <span>
-                {event.venueName}
-                {event.venueAddress && <span className="text-gray-400"> · {event.venueAddress}</span>}
+                {event.venueName || event.venueAddress}
+                {event.venueName && event.venueAddress && (
+                  <span className="text-gray-400"> · {event.venueAddress}</span>
+                )}
               </span>
             </div>
           )}

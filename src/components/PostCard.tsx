@@ -80,6 +80,7 @@ type Post = {
     startDate: string;
     endDate: string;
     venueName: string;
+    venueAddress: string;
     maxParticipants: number | null;
     ntrpMin: number | null;
     ntrpMax: number | null;
@@ -2905,7 +2906,11 @@ function EventChip({
           </div>
           <div className="text-xs text-gray-600 mt-1 space-y-0.5">
             <div>📅 {dateStr}</div>
-            {event.venueName && <div>📍 {event.venueName}</div>}
+            {(event.venueName || event.venueAddress) && (
+              <div className="truncate">
+                📍 {event.venueName || event.venueAddress}
+              </div>
+            )}
             <div className="flex items-center gap-3">
               <span>
                 👤 {event.registeredCount}

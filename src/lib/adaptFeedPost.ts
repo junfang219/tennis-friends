@@ -45,6 +45,7 @@ export type FeedPostView = {
     startDate: string;
     endDate: string;
     venueName: string;
+    venueAddress: string;
     maxParticipants: number | null;
     ntrpMin: number | null;
     ntrpMax: number | null;
@@ -120,6 +121,7 @@ export function adaptFeedPost(p: FeedPost): FeedPostView {
           startDate: pgToIso(p.event.start_date),
           endDate: pgToIso(p.event.end_date),
           venueName: p.event.venue_name,
+          venueAddress: p.event.venue_address,
           maxParticipants: p.event.max_participants,
           ntrpMin: p.event.ntrp_min,
           ntrpMax: p.event.ntrp_max,

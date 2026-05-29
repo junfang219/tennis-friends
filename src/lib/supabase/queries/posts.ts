@@ -71,6 +71,7 @@ export type Post = PostRow & {
     start_date: string;
     end_date: string;
     venue_name: string;
+    venue_address: string;
     max_participants: number | null;
     ntrp_min: number | null;
     ntrp_max: number | null;
@@ -253,7 +254,7 @@ async function enrichPosts(
         ? supabase
             .from("events")
             .select(
-              "id, title, event_type, start_date, end_date, venue_name, max_participants, ntrp_min, ntrp_max, cover_image_url"
+              "id, title, event_type, start_date, end_date, venue_name, venue_address, max_participants, ntrp_min, ntrp_max, cover_image_url"
             )
             .in("id", eventIds)
         : Promise.resolve({
@@ -264,6 +265,7 @@ async function enrichPosts(
               start_date: string;
               end_date: string;
               venue_name: string;
+              venue_address: string;
               max_participants: number | null;
               ntrp_min: number | null;
               ntrp_max: number | null;
@@ -339,6 +341,7 @@ async function enrichPosts(
       start_date: e.start_date,
       end_date: e.end_date,
       venue_name: e.venue_name,
+      venue_address: e.venue_address,
       max_participants: e.max_participants,
       ntrp_min: e.ntrp_min,
       ntrp_max: e.ntrp_max,

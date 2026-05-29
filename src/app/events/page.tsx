@@ -26,6 +26,7 @@ type EventListItem = {
   signupDeadline: string | null;
   status: string;
   venueName: string;
+  venueAddress: string;
   maxParticipants: number | null;
   ntrpMin: number | null;
   ntrpMax: number | null;
@@ -70,6 +71,7 @@ export default function EventsListPage() {
         signupDeadline: e.signup_deadline,
         status: e.status,
         venueName: e.venue_name,
+        venueAddress: e.venue_address,
         maxParticipants: e.max_participants,
         ntrpMin: e.ntrp_min,
         ntrpMax: e.ntrp_max,
@@ -266,7 +268,9 @@ function EventCard({ event }: { event: EventListItem }) {
           <h3 className="font-semibold text-gray-900 truncate">{event.title}</h3>
           <div className="text-xs text-gray-500 mt-1 space-y-0.5">
             <div>{formatDateRange(event.startDate, event.endDate)}</div>
-            {event.venueName && <div>📍 {event.venueName}</div>}
+            {(event.venueName || event.venueAddress) && (
+              <div>📍 {event.venueName || event.venueAddress}</div>
+            )}
             <div className="flex items-center gap-3">
               <span>
                 👤 {event.registeredCount}

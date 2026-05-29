@@ -122,6 +122,34 @@ export default function NewEventPage() {
     setEventLat(pos.latitude);
     setEventLng(pos.longitude);
     setGeocodeState("ok");
+    // Reverse-geocode so the event/post surfaces have an address to
+    // display. Without this, the only signal is the lat/lng pin —
+    // venue_name/venue_address stay empty and the location row hides.
+    // Skip if the user already typed an address; their input wins.
+    if (venueAddress.trim()) return;
+    try {
+      const url =
+        "https://nominatim.openstreetmap.org/reverse?" +
+        `lat=${pos.latitude}&lon=${pos.longitude}&format=json&zoom=18`;
+      const res = await fetch(url, { headers: { "Accept-Language": "en" } });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        display_name?: string;
+        address?: { amenity?: string; leisure?: string; sport?: string };
+      };
+      if (data.display_name) setVenueAddress(data.display_name);
+      // If Nominatim tagged the spot as a named amenity/park/sport
+      // facility and the organizer hasn't typed a venue name yet,
+      // pre-fill it — saves typing for the common "I'm at this park"
+      // case.
+      const named =
+        data.address?.amenity ||
+        data.address?.leisure ||
+        data.address?.sport;
+      if (named && !venueName.trim()) setVenueName(named);
+    } catch {
+      // Reverse-geocode is best-effort; lat/lng is still usable.
+    }
   }
 
   const publicReady =
