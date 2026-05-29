@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
@@ -98,6 +98,7 @@ export default function GroupChatPage() {
   const [pollIsMulti, setPollIsMulti] = useState(false);
   const [pollSending, setPollSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
@@ -256,11 +257,30 @@ export default function GroupChatPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId]);
 
-  // Scroll to bottom — also re-pins when the keyboard appears/disappears or
-  // the input bar resizes (poll composer expanding, announcement chip wrap),
-  // so the latest message stays visible above the input.
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  // Sticky-to-bottom scroll model (iPhone Messages convention) — matches the
+  // DM (chat/[userId]) and session (chat/group/[chatId]) threads so all chats
+  // behave identically. Re-pins to scrollHeight whenever content grows
+  // (messages.length / keyboardHeight / inputBarHeight — keyboard opening,
+  // poll composer expanding, announcement chip wrapping) but ONLY while the
+  // user is anchored to the bottom. Uses scrollTop on the scroll container
+  // (not scrollIntoView on a sentinel — iOS WKWebView has been observed
+  // scrolling the document instead of the container) inside a useLayoutEffect,
+  // which runs after commit but before paint, so scrollHeight already reflects
+  // the new content with no rAF dance.
+  const stickToBottomRef = useRef(true);
+
+  const handleMessagesScroll = useCallback(() => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = distance < 100;
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!stickToBottomRef.current) return;
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
   }, [messages.length, keyboardHeight, inputBarHeight]);
 
   const handleSend = async () => {
@@ -279,7 +299,13 @@ export default function GroupChatPage() {
       setInput("");
       setPendingMedia(null);
       setAnnouncementMode(false);
-      inputRef.current?.focus();
+      // Intentionally NOT calling inputRef.current?.focus() — see
+      // chat/group/[chatId]/page.tsx for full rationale. The input is already
+      // focused (Send was tapped or Enter was pressed); calling focus() on an
+      // already-focused input on iOS WKWebView triggers a resign/become-
+      // first-responder cycle that dismisses and re-presents the keyboard
+      // (the "bounce"). iMessage/WhatsApp keep the keyboard up by leaving
+      // focus alone.
     } catch (err) {
       setSendError(errorMessage(err, "Failed to send."));
     }
@@ -476,7 +502,9 @@ export default function GroupChatPage() {
       {/* Messages — paddingBottom reserves room for the absolutely-positioned
           input bar plus the iOS keyboard plus the home indicator inset. */}
       <div
-        className="flex-1 overflow-y-auto px-4 py-4 bg-surface/50 net-texture"
+        ref={messagesScrollRef}
+        onScroll={handleMessagesScroll}
+        className="flex-1 overflow-y-auto min-h-0 px-4 py-4 bg-surface/50 net-texture"
         style={{
           // inputBarHeight already includes the home-indicator inset (the
           // input bar adds it as paddingBottom), so we only add keyboard +
@@ -846,6 +874,12 @@ export default function GroupChatPage() {
           />
           <EmojiPicker open={emojiOpen} onOpenChange={setEmojiOpen} onSelect={insertEmoji} />
           <button
+            // Keep the OSK up on send — see chat/group/[chatId]/page.tsx for
+            // the full rationale. Tapping a <button> on iOS WKWebView would
+            // otherwise shift focus from the input to the button and dismiss
+            // the keyboard.
+            onMouseDown={(e) => e.preventDefault()}
+            onTouchStart={(e) => e.preventDefault()}
             onClick={handleSend}
             disabled={(!input.trim() && !pendingMedia) || sending || uploading}
             className="w-10 h-10 rounded-full bg-court-green text-white flex items-center justify-center hover:bg-court-green-light transition-colors disabled:opacity-40 disabled:hover:bg-court-green shrink-0"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
@@ -325,103 +325,45 @@ export default function GroupChatThreadPage() {
     [chatId, chatInfo]
   );
 
-  // Auto-pin to the bottom of the messages scroller.
+  // Sticky-to-bottom scroll model (iPhone Messages convention) — identical
+  // to the DM thread (src/app/chat/[userId]/page.tsx).
   //
-  // Split into two effects because the trigger matters:
+  // The previous version had three rAF-based effects (keyboard, messages,
+  // ResizeObserver) that all stashed their pending frame on the same `_raf2`
+  // slot on the scroll element, so their cleanups cancelled each other's
+  // scrolls. On the keyboard-open path this left the latest message sitting
+  // in the freshly-revealed area *under* the input bar — the bug reported
+  // for the session/game chat: "the keyboard didn't adapt, new text can't be
+  // seen." (The DM chat already moved to this model in da53dad; this brings
+  // the session chat in line so all threads behave the same.)
   //
-  // (1) Keyboard / input-bar size change — ALWAYS pin, no guard.
-  //     When the keyboard opens, our padding-bottom on the scroller
-  //     grows by keyboardHeight (so the last bubble has room to clear
-  //     the input). scrollTop doesn't follow that growth, so the user
-  //     who *was* at the bottom is suddenly keyboardHeight away from
-  //     the new bottom — a "near bottom" guard would bail here and
-  //     leave the latest message sitting in the freshly-revealed area
-  //     under the input bar. Diagnosed by the device logs (May 2026):
-  //     scrollTop=1031, scrollHeight jumped 1764 → 2099 on keyboard
-  //     open, guard read distanceFromBottom=335 and returned early.
-  //     The keyboard is opened by the user *because* they want the
-  //     bottom of the thread; always pin.
-  //
-  // (2) New message — KEEP the 80px guard. The intent is to preserve
-  //     scroll position when an incoming bubble would otherwise yank
-  //     a user reading older messages.
-  //
-  // Both use scrollTop = scrollHeight directly on the right ref (not
-  // scrollIntoView on a sentinel — iOS WKWebView has been observed
-  // scrolling the document instead of this container). Double rAF
-  // waits for the post-state-change layout to settle before measuring
-  // scrollHeight. isInitialPinRef bypasses the message-effect guard
-  // on first mount (scrollTop is 0 by definition there).
-  const isInitialPinRef = useRef(true);
+  // Model: a ref tracks whether the user is anchored to the bottom. The
+  // onScroll handler flips it false when they drag up past 100px and true
+  // when they come back near. A single useLayoutEffect re-pins to
+  // scrollHeight whenever content grows (messages.length / keyboardHeight /
+  // inputBarHeight) but ONLY while still anchored. useLayoutEffect runs
+  // after React commits the new DOM but before paint, so scrollHeight already
+  // reflects the new content — no rAF dance, no clobbering.
+  const stickToBottomRef = useRef(true);
+
+  // Re-anchor on chat switch so a fresh thread always opens at the bottom.
   useEffect(() => {
-    isInitialPinRef.current = true;
+    stickToBottomRef.current = true;
   }, [chatId]);
 
-  // (1) Keyboard / input-bar change — always pin.
-  useEffect(() => {
+  const handleMessagesScroll = useCallback(() => {
     const el = messagesScrollRef.current;
     if (!el) return;
-    const raf1 = requestAnimationFrame(() => {
-      const raf2 = requestAnimationFrame(() => {
-        const sc = messagesScrollRef.current;
-        if (sc) sc.scrollTop = sc.scrollHeight;
-      });
-      (el as HTMLDivElement & { _raf2?: number })._raf2 = raf2;
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      const stashed = (el as HTMLDivElement & { _raf2?: number })._raf2;
-      if (stashed !== undefined) cancelAnimationFrame(stashed);
-    };
-  }, [keyboardHeight, inputBarHeight, chatId]);
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = distance < 100;
+  }, []);
 
-  // (2) Messages change — pin only if user was near the bottom.
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!stickToBottomRef.current) return;
     const el = messagesScrollRef.current;
     if (!el) return;
-    const initial = isInitialPinRef.current;
-    if (!initial) {
-      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      if (distanceFromBottom > 80 && messages.length > 0) return;
-    }
-    const raf1 = requestAnimationFrame(() => {
-      const raf2 = requestAnimationFrame(() => {
-        const sc = messagesScrollRef.current;
-        if (!sc) return;
-        sc.scrollTop = sc.scrollHeight;
-        if (sc.clientHeight > 0 && sc.scrollHeight > 0) {
-          isInitialPinRef.current = false;
-        }
-      });
-      (el as HTMLDivElement & { _raf2?: number })._raf2 = raf2;
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      const stashed = (el as HTMLDivElement & { _raf2?: number })._raf2;
-      if (stashed !== undefined) cancelAnimationFrame(stashed);
-    };
-  }, [messages.length]);
-
-  // ResizeObserver catch-all: pins to bottom the first time the
-  // messages scroller goes from 0 height to a real height. The Suspense
-  // boundary / portal mount can leave the element measuring 0×0 for a
-  // tick or two on iOS WKWebView; the effect above runs once but the
-  // scrollTop = scrollHeight is a no-op on a 0-height container, so
-  // without this we'd start scrolled to the top.
-  useEffect(() => {
-    const el = messagesScrollRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    let firedOnce = false;
-    const ro = new ResizeObserver(() => {
-      if (firedOnce) return;
-      if (el.clientHeight > 0 && el.scrollHeight > 0) {
-        firedOnce = true;
-        el.scrollTop = el.scrollHeight;
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [chatId]);
+    el.scrollTop = el.scrollHeight;
+  }, [messages.length, keyboardHeight, inputBarHeight, chatId]);
 
   const handleSend = async () => {
     if ((!input.trim() && !pendingMedia) || sending || uploading) return;
@@ -668,6 +610,7 @@ export default function GroupChatThreadPage() {
       */}
       <div
         ref={messagesScrollRef}
+        onScroll={handleMessagesScroll}
         className="flex-1 overflow-y-auto min-h-0 px-4 py-4 bg-surface/50 net-texture"
         style={{
           // inputBarHeight already includes the input bar's own safe-area
