@@ -9,6 +9,7 @@ import { isAtLeast, ROLE } from "@/lib/groupRoles";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
+import { publicStorageThumbUrl } from "@/lib/supabase/storage";
 
 type Item = {
   id: string;
@@ -322,7 +323,12 @@ export default function AlbumDetailPage() {
                     </>
                   ) : (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={it.url} alt={it.caption || ""} className="w-full h-full object-cover" />
+                    <img
+                      src={publicStorageThumbUrl(it.url, { width: 300, height: 300 })}
+                      alt={it.caption || ""}
+                      loading="lazy"
+                      className="w-full h-full object-cover"
+                    />
                   )}
                 </button>
                 {canRemove && (

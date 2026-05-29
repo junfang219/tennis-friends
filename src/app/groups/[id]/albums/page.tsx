@@ -7,6 +7,7 @@ import Link from "next/link";
 import { isAtLeast, ROLE } from "@/lib/groupRoles";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
+import { publicStorageThumbUrl } from "@/lib/supabase/storage";
 
 type Album = {
   id: string;
@@ -246,7 +247,12 @@ export default function AlbumsListPage() {
                     />
                   ) : (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={a.cover.url} alt={a.name} className="absolute inset-0 w-full h-full object-cover" />
+                    <img
+                      src={publicStorageThumbUrl(a.cover.url, { width: 400, height: 400 })}
+                      alt={a.name}
+                      loading="lazy"
+                      className="absolute inset-0 w-full h-full object-cover"
+                    />
                   )
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center text-gray-300">

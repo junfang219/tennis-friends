@@ -4,6 +4,7 @@ import {
   bucketAcceptsMime,
   buildObjectKey,
   inferMediaTypeFromMime,
+  publicStorageThumbUrl,
 } from "./storage";
 
 describe("storage helpers", () => {
@@ -79,6 +80,47 @@ describe("storage helpers", () => {
       expect(inferMediaTypeFromMime("image/jpeg")).toBe("image");
       expect(inferMediaTypeFromMime("video/mp4")).toBe("video");
       expect(inferMediaTypeFromMime("application/pdf")).toBe(null);
+    });
+  });
+
+  describe("publicStorageThumbUrl", () => {
+    const ORIGIN = "https://fqopzafmnaviipumsmfm.supabase.co";
+    const PUBLIC = `${ORIGIN}/storage/v1/object/public/albums/user-1/photo.jpeg`;
+
+    it("rewrites the public-object URL onto the render endpoint", () => {
+      const u = publicStorageThumbUrl(PUBLIC, { width: 400, height: 400 });
+      expect(u.startsWith(`${ORIGIN}/storage/v1/render/image/public/albums/user-1/photo.jpeg?`)).toBe(true);
+    });
+
+    it("encodes the requested size + sensible defaults", () => {
+      const u = new URL(publicStorageThumbUrl(PUBLIC, { width: 400, height: 300 }));
+      expect(u.searchParams.get("width")).toBe("400");
+      expect(u.searchParams.get("height")).toBe("300");
+      // Defaults: cover-resize, quality 75 — keeps callers from having to repeat themselves.
+      expect(u.searchParams.get("resize")).toBe("cover");
+      expect(u.searchParams.get("quality")).toBe("75");
+    });
+
+    it("respects explicit resize + quality overrides", () => {
+      const u = new URL(publicStorageThumbUrl(PUBLIC, { width: 800, resize: "contain", quality: 90 }));
+      expect(u.searchParams.get("resize")).toBe("contain");
+      expect(u.searchParams.get("quality")).toBe("90");
+      // Omitted height stays omitted so the transformer scales by width alone.
+      expect(u.searchParams.has("height")).toBe(false);
+    });
+
+    it("returns non-public-object URLs unchanged", () => {
+      // Video URLs, external CDNs, and seed/default avatars should pass through
+      // so the helper is safe to wrap every <img src> with.
+      const passthroughs = [
+        "https://example.com/photo.jpg",
+        `${ORIGIN}/storage/v1/object/sign/albums/user-1/photo.jpeg?token=abc`,
+        "/local/asset.png",
+        "",
+      ];
+      for (const url of passthroughs) {
+        expect(publicStorageThumbUrl(url, { width: 400, height: 400 })).toBe(url);
+      }
     });
   });
 

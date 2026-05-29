@@ -91,3 +91,34 @@ export function inferMediaTypeFromMime(mime: string): "image" | "video" | null {
   if (VIDEO_MIME.has(mime)) return "video";
   return null;
 }
+
+// Rewrite a public Supabase Storage object URL to use the on-the-fly
+// image transformer. The transformer returns a resized + Accept-negotiated
+// (webp/avif) version of the source image, which lets us serve a small
+// grid thumbnail without shipping the 2-10 MB original.
+//
+// Any URL that isn't shaped like a Supabase public-object URL — including
+// videos and externally-hosted images — is returned unchanged so callers
+// can safely pipe every image URL through this helper.
+const PUBLIC_OBJECT_MARKER = "/storage/v1/object/public/";
+
+export function publicStorageThumbUrl(
+  url: string,
+  opts: {
+    width: number;
+    height?: number;
+    resize?: "cover" | "contain" | "fill";
+    quality?: number;
+  }
+): string {
+  const idx = url.indexOf(PUBLIC_OBJECT_MARKER);
+  if (idx === -1) return url;
+  const prefix = url.slice(0, idx);
+  const rest = url.slice(idx + PUBLIC_OBJECT_MARKER.length);
+  const params = new URLSearchParams();
+  params.set("width", String(opts.width));
+  if (opts.height != null) params.set("height", String(opts.height));
+  params.set("resize", opts.resize ?? "cover");
+  params.set("quality", String(opts.quality ?? 75));
+  return `${prefix}/storage/v1/render/image/public/${rest}?${params.toString()}`;
+}
