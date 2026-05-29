@@ -312,9 +312,30 @@ export default function CourtsPage() {
       // here without a roundtrip. Params is now unused but the var is kept
       // for compatibility with the older logging that referenced it.
       void params;
-      const data: CourtData[] = filterFacilitiesByBbox({
-        south, west, north, east,
-      }).map((f) => {
+      const facilities = filterFacilitiesByBbox({ south, west, north, east });
+
+      // Overlay dev pin overrides on top of the bundled JSON coords. The
+      // override table is tiny (one row per moved pin), so a single .in()
+      // keyed on the viewport's facility ids is cheap. Missing/failed
+      // fetch is non-fatal — we fall through to the static coords.
+      const facilityIds = facilities.map((f) => f.courtId);
+      const overrideMap = new Map<string, { lat: number; lng: number }>();
+      if (facilityIds.length > 0) {
+        try {
+          const supabase = createSupabaseBrowserClient();
+          const { data: overrides } = await supabase
+            .from("facility_pin_overrides")
+            .select("court_id, latitude, longitude")
+            .in("court_id", facilityIds);
+          for (const o of overrides ?? []) {
+            overrideMap.set(o.court_id, { lat: o.latitude, lng: o.longitude });
+          }
+        } catch {
+          // Network/RLS error — proceed with static coords.
+        }
+      }
+
+      const data: CourtData[] = facilities.map((f) => {
         const indoor = f.indoorOutdoor === "indoor" || f.indoorOutdoor === "both";
         const bucket: ManagedByBucket | undefined =
           f.category === "private_club" || f.category === "hoa_community"
@@ -322,12 +343,13 @@ export default function CourtsPage() {
             : f.category === "school" || f.category === "college"
               ? "school"
               : "city";
+        const override = overrideMap.get(f.courtId);
         return {
           id: f.courtId,
           type: "tennis",
           osmId: 0,
-          lat: f.latitude ?? 0,
-          lng: f.longitude ?? 0,
+          lat: override?.lat ?? f.latitude ?? 0,
+          lng: override?.lng ?? f.longitude ?? 0,
           name: f.name,
           surface: indoor ? "indoor" : "hard",
           access: f.bookable ? "public" : undefined,
@@ -824,10 +846,21 @@ export default function CourtsPage() {
     setEditError(null);
     try {
       const supabase = createSupabaseBrowserClient();
+      // Upsert into the override table — keyed by the facility's text courtId
+      // (the bundled catalog's "tf-N" namespace, not the user-added-courts
+      // uuid namespace). runFetch overlays these rows on top of the static
+      // JSON so the move shows up for everyone, not just this dev session.
       const { error: upErr } = await supabase
-        .from("courts")
-        .update({ latitude: editDraft.lat, longitude: editDraft.lng })
-        .eq("id", editingCourtId);
+        .from("facility_pin_overrides")
+        .upsert(
+          {
+            court_id: editingCourtId,
+            latitude: editDraft.lat,
+            longitude: editDraft.lng,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "court_id" }
+        );
       if (upErr) {
         throw new Error(upErr.message || "Save failed");
       }

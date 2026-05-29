@@ -984,6 +984,19 @@ create table public.court_availability_reports (
 create index court_availability_reports_court_idx on public.court_availability_reports (court_id, reported_at desc);
 create index court_availability_reports_user_idx  on public.court_availability_reports (user_id, reported_at desc);
 
+-- Overrides for the lat/lng of static-catalog facilities (data/tennis_courts.json).
+-- Keyed by the catalog's text courtId (e.g. "tf-7"), intentionally no FK to
+-- public.courts (which uses uuid for user-added courts only). The /courts
+-- map overlays these rows on top of the bundled JSON so dev edits via the
+-- IS_DEV "Edit pin" affordance show up for every user without a redeploy.
+create table public.facility_pin_overrides (
+  court_id    text primary key,
+  latitude    double precision not null check (latitude between -90 and 90),
+  longitude   double precision not null check (longitude between -180 and 180),
+  updated_at  timestamptz not null default now(),
+  updated_by  uuid references public.profiles (id) on delete set null
+);
+
 -- =========================================================================
 -- Highlights (story-style media on profile)
 -- =========================================================================
@@ -2352,6 +2365,24 @@ create policy court_availability_reports_insert_self on public.court_availabilit
 
 create policy court_availability_reports_delete_self on public.court_availability_reports
   for delete to authenticated using (user_id = auth.uid());
+
+alter table public.facility_pin_overrides enable row level security;
+
+-- Anyone (including signed-out visitors) can read overrides — the map needs
+-- them to render the correct coords for every user.
+create policy facility_pin_overrides_select_all
+  on public.facility_pin_overrides
+  for select to anon, authenticated using (true);
+
+-- Writes restricted to the developer's email at the policy level. Production
+-- builds strip the UI via the IS_DEV constant; this is the defense-in-depth
+-- gate so a curious authenticated user can't bypass the client by calling
+-- supabase.from() directly.
+create policy facility_pin_overrides_write_developer
+  on public.facility_pin_overrides
+  for all to authenticated
+  using ((auth.jwt() ->> 'email') = 'junfang219@gmail.com')
+  with check ((auth.jwt() ->> 'email') = 'junfang219@gmail.com');
 
 -- =========================================================================
 -- Highlights + device tokens

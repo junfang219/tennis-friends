@@ -1163,6 +1163,38 @@ export type Database = {
           },
         ]
       }
+      facility_pin_overrides: {
+        Row: {
+          court_id: string
+          latitude: number
+          longitude: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          court_id: string
+          latitude: number
+          longitude: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          court_id?: string
+          latitude?: number
+          longitude?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "facility_pin_overrides_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       friend_group_members: {
         Row: {
           created_at: string
