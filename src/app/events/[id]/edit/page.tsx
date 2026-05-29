@@ -216,13 +216,13 @@ export default function EditEventPage() {
         </section>
 
         <section className="bg-white rounded-2xl p-5 shadow-sm space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Start">
               <input
                 type="datetime-local"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className={inputCls}
+                className={`${inputCls} min-w-0`}
                 required
               />
             </Field>
@@ -231,7 +231,7 @@ export default function EditEventPage() {
                 type="datetime-local"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className={inputCls}
+                className={`${inputCls} min-w-0`}
                 required
               />
             </Field>
