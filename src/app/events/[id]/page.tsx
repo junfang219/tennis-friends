@@ -23,7 +23,6 @@ import LadderList from "@/components/events/LadderList";
 import RotationCard from "@/components/events/RotationCard";
 import RoundRobinScheduleControls from "@/components/events/RoundRobinScheduleControls";
 import CheckinDrawer from "@/components/events/CheckinDrawer";
-import FindPartnerComposer from "@/components/events/FindPartnerComposer";
 import { errorMessage } from "@/lib/errorMessage";
 
 type Participant = {
@@ -81,10 +80,9 @@ export default function EventDetailPage() {
   const [loading, setLoading] = useState(true);
   const [actionInFlight, setActionInFlight] = useState(false);
   const [error, setError] = useState("");
-  const [activePanel, setActivePanel] = useState<PanelKey | null>(null);
+  const [activePanel, setActivePanel] = useState<PanelKey | null>("roster");
   const [showInvite, setShowInvite] = useState(false);
   const [showCheckin, setShowCheckin] = useState(false);
-  const [showFindPartner, setShowFindPartner] = useState(false);
 
   // If we arrived via a match-deep-link, auto-open the Matches panel.
   useEffect(() => {
@@ -572,21 +570,6 @@ export default function EventDetailPage() {
           </section>
         )}
 
-        {/* Find-a-partner CTA — registered participants only */}
-        {event.myStatus === "registered" && (
-          <section className="bg-white rounded-2xl p-5 shadow-sm border border-court-green-pale/30">
-            <h3 className="font-semibold text-gray-900 mb-1">Find a match partner</h3>
-            <p className="text-sm text-gray-500 mb-3">
-              Post a quick note to the event chat and the discover feed.
-            </p>
-            <button
-              onClick={() => setShowFindPartner(true)}
-              className="px-4 py-2 rounded-full bg-court-green text-white text-sm font-semibold hover:bg-court-green-light"
-            >
-              + New post
-            </button>
-          </section>
-        )}
       </div>
 
       {showInvite && (
@@ -610,19 +593,6 @@ export default function EventDetailPage() {
         />
       )}
 
-      {showFindPartner && (
-        <FindPartnerComposer
-          eventId={event.id}
-          eventTitle={event.title}
-          defaultSkillMin={event.ntrpMin}
-          defaultSkillMax={event.ntrpMax}
-          onClose={() => setShowFindPartner(false)}
-          onPosted={() => {
-            setShowFindPartner(false);
-            load();
-          }}
-        />
-      )}
     </div>
   );
 }
