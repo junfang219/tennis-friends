@@ -250,7 +250,7 @@ export default function NewEventPage() {
                 type="datetime-local"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="w-full min-w-0 px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-court-green/30 focus:border-court-green text-sm"
+                className="block w-full min-w-0 max-w-full appearance-none bg-white px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-court-green/30 focus:border-court-green text-sm"
                 required
               />
             </Field>
@@ -259,7 +259,7 @@ export default function NewEventPage() {
                 type="datetime-local"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="w-full min-w-0 px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-court-green/30 focus:border-court-green text-sm"
+                className="block w-full min-w-0 max-w-full appearance-none bg-white px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-court-green/30 focus:border-court-green text-sm"
                 required
               />
             </Field>
@@ -269,7 +269,7 @@ export default function NewEventPage() {
               type="datetime-local"
               value={signupDeadline}
               onChange={(e) => setSignupDeadline(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-court-green/30 focus:border-court-green text-sm"
+              className="block w-full min-w-0 max-w-full appearance-none bg-white px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-court-green/30 focus:border-court-green text-sm"
             />
           </Field>
         </section>
