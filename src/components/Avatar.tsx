@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 const COLORS = [
   "bg-court-green-soft",
   "bg-clay",
@@ -25,6 +27,8 @@ export default function Avatar({
   image?: string | null;
   size?: "sm" | "md" | "lg" | "xl";
 }) {
+  const [broken, setBroken] = useState(false);
+
   const sizeClasses = {
     sm: "w-8 h-8 text-xs",
     md: "w-10 h-10 text-sm",
@@ -41,11 +45,18 @@ export default function Avatar({
 
   const colorClass = COLORS[hashName(name) % COLORS.length];
 
-  if (image) {
+  if (image && !broken) {
     return (
       <img
         src={image}
         alt={name}
+        // Google's lh3.googleusercontent.com avatar URLs (returned in
+        // user_metadata for OAuth signups) 403 when the Referer is an
+        // unfamiliar origin — most notably the Capacitor iOS WebView's
+        // capacitor://localhost, which leaves the avatar as a broken
+        // image icon. no-referrer strips the header so the load succeeds.
+        referrerPolicy="no-referrer"
+        onError={() => setBroken(true)}
         className={`${sizeClasses[size]} shrink-0 rounded-full object-cover ring-2 ring-white/80 shadow-sm`}
       />
     );
