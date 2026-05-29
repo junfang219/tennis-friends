@@ -21,6 +21,7 @@ import BracketView from "@/components/events/BracketView";
 import StandingsTable from "@/components/events/StandingsTable";
 import LadderList from "@/components/events/LadderList";
 import RotationCard from "@/components/events/RotationCard";
+import RoundRobinScheduleControls from "@/components/events/RoundRobinScheduleControls";
 import CheckinDrawer from "@/components/events/CheckinDrawer";
 import FindPartnerComposer from "@/components/events/FindPartnerComposer";
 import { errorMessage } from "@/lib/errorMessage";
@@ -525,6 +526,12 @@ export default function EventDetailPage() {
         {/* Matches panel */}
         {activePanel === "matches" && typeMeta.supportsMatches && (
           <section className="bg-white rounded-2xl p-4 shadow-sm">
+            {event.eventType === "round_robin" && isOwner && (
+              <RoundRobinScheduleControls
+                eventId={event.id}
+                onGenerated={load}
+              />
+            )}
             <MatchList
               eventId={event.id}
               currentUserId={currentUserId}

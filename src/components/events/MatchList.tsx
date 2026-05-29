@@ -5,7 +5,7 @@ import Avatar from "@/components/Avatar";
 import type { EventMatchView, PlayerMini } from "./types";
 import ScoreEntryModal from "./ScoreEntryModal";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { listEventMatches } from "@/lib/supabase/queries";
+import { listEventMatches, listEventParticipants } from "@/lib/supabase/queries";
 import { errorMessage } from "@/lib/errorMessage";
 
 export default function MatchList({
@@ -38,10 +38,24 @@ export default function MatchList({
     (async () => {
       try {
         const supabase = createSupabaseBrowserClient();
-        const rows = await listEventMatches(supabase, eventId);
-        // Adapt to the page's EventMatchView shape (camelCase + display
-        // helpers). PlayerMini info isn't joined here yet — the page
-        // gracefully renders unknown player IDs.
+        const [rows, parts] = await Promise.all([
+          listEventMatches(supabase, eventId),
+          listEventParticipants(supabase, eventId),
+        ]);
+        // Build a profile lookup so each row renders real names/avatars.
+        // Without this every match shows "TBD vs TBD" — the bug visible
+        // on the round-robin matches tab right after schedule generation.
+        const playerById = new Map<string, PlayerMini>(
+          parts.map((p) => [
+            p.user_id,
+            {
+              id: p.user.id,
+              name: p.user.name,
+              profileImageUrl: p.user.profile_image_url,
+              ntrpRating: p.user.ntrp_rating,
+            },
+          ])
+        );
         const adapted = rows.map((r) => ({
           id: r.id,
           eventId: r.event_id,
@@ -59,6 +73,10 @@ export default function MatchList({
           confirmedBy: r.confirmed_by,
           proposedBy: r.proposed_by,
           status: r.status,
+          player1: playerById.get(r.player1_id) ?? null,
+          player2: playerById.get(r.player2_id) ?? null,
+          player3: r.player3_id ? playerById.get(r.player3_id) ?? null : null,
+          player4: r.player4_id ? playerById.get(r.player4_id) ?? null : null,
         })) as unknown as EventMatchView[];
         setMatches(adapted);
       } catch {

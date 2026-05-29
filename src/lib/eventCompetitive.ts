@@ -280,6 +280,56 @@ export function mixerPairings(
   return { pairs, bye };
 }
 
+// ---------------------------------------------------------------------
+// Round-robin schedule (singles)
+// ---------------------------------------------------------------------
+
+export type RoundRobinRound = {
+  round: number;
+  pairs: Array<[string, string]>;
+  bye: string | null;
+};
+
+// Singles round-robin via the circle method: every player plays every
+// other player exactly once. N even → N-1 rounds, N/2 pairs per round.
+// N odd → N rounds, (N-1)/2 pairs per round, one bye rotating through.
+// Deterministic in input order so previewing client-side and inserting
+// server-side produce identical assignments.
+export function roundRobinSinglesSchedule(
+  playerIds: readonly string[]
+): { rounds: RoundRobinRound[] } {
+  const n = playerIds.length;
+  if (n < 2) return { rounds: [] };
+
+  // Add a phantom bye slot for odd N so the same circle rotation handles
+  // both cases. Whichever real player is paired with the phantom sits out.
+  const BYE = "__BYE__";
+  const players: string[] = n % 2 === 1 ? [...playerIds, BYE] : [...playerIds];
+  const size = players.length;
+  const numRounds = size - 1;
+
+  // arr[i] holds an index into `players`. Index 0 stays pinned; the rest
+  // rotate clockwise after each round (classic Berger fixture).
+  let arr = Array.from({ length: size }, (_, i) => i);
+  const rounds: RoundRobinRound[] = [];
+
+  for (let r = 0; r < numRounds; r++) {
+    const pairs: Array<[string, string]> = [];
+    let bye: string | null = null;
+    for (let i = 0; i < size / 2; i++) {
+      const a = players[arr[i]];
+      const b = players[arr[size - 1 - i]];
+      if (a === BYE) bye = b;
+      else if (b === BYE) bye = a;
+      else pairs.push([a, b]);
+    }
+    rounds.push({ round: r + 1, pairs, bye });
+    // Rotate: keep arr[0] fixed, move arr[size-1] to position 1, shift rest.
+    arr = [arr[0], arr[size - 1], ...arr.slice(1, size - 1)];
+  }
+  return { rounds };
+}
+
 // Ladder challenge gap config: parsed from events.config jsonb (or a
 // JSON string, for forward-compat). Default 3.
 export function ladderMaxGap(rawConfig: unknown): number {

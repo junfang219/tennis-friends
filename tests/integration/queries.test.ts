@@ -2882,6 +2882,109 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       await admin.from("events").delete().eq("id", eventId);
     });
 
+    // Round-robin — generate_round_robin_schedule inserts every round
+    // at once, organizer-only, refuses re-runs, and gates to round_robin
+    // events. With 3 players the circle method produces 3 rounds × 1
+    // match (one player sits the bye each round).
+    it("generate_round_robin_schedule inserts every round; organizer-only and idempotent", async () => {
+      const admin = adminClient();
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "RR Schedule Test",
+          event_type: "round_robin",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+      await admin.from("event_participants").insert([
+        { event_id: eventId, user_id: alice.id, status: "registered" },
+        { event_id: eventId, user_id: bob.id, status: "registered" },
+        { event_id: eventId, user_id: carol.id, status: "registered" },
+      ]);
+
+      // Schedule from roundRobinSinglesSchedule([alice, bob, carol]):
+      // 3 rounds, 1 pair each, the remaining player sits the bye.
+      const schedule = [
+        { round: 1, pairs: [[bob.id, carol.id]], bye: alice.id },
+        { round: 2, pairs: [[alice.id, carol.id]], bye: bob.id },
+        { round: 3, pairs: [[alice.id, bob.id]], bye: carol.id },
+      ];
+
+      // Non-organizer is rejected.
+      const denied = await bob.client.rpc("generate_round_robin_schedule", {
+        p_event_id: eventId,
+        p_schedule: schedule as unknown as never,
+      });
+      expect(denied.error?.message).toContain("organizer");
+
+      const ok = await alice.client.rpc("generate_round_robin_schedule", {
+        p_event_id: eventId,
+        p_schedule: schedule as unknown as never,
+      });
+      expect(ok.error).toBeNull();
+      const okData = ok.data as { rounds?: number; matches?: number } | null;
+      expect(okData?.rounds).toBe(3);
+      expect(okData?.matches).toBe(3);
+
+      const { data: matches } = await admin
+        .from("event_matches")
+        .select("round, status, player1_id, player2_id")
+        .eq("event_id", eventId)
+        .order("round", { ascending: true });
+      expect((matches ?? []).length).toBe(3);
+      expect(matches!.every((m) => m.status === "scheduled")).toBe(true);
+      // Every pair must be unique — the whole point of round-robin.
+      const seen = new Set<string>();
+      for (const m of matches!) {
+        const key = [m.player1_id, m.player2_id].sort().join("|");
+        expect(seen.has(key)).toBe(false);
+        seen.add(key);
+      }
+
+      // Idempotent: a second call refuses.
+      const second = await alice.client.rpc("generate_round_robin_schedule", {
+        p_event_id: eventId,
+        p_schedule: schedule as unknown as never,
+      });
+      expect(second.error?.message).toContain("already generated");
+
+      await admin.from("events").delete().eq("id", eventId);
+    });
+
+    // Round-robin RPC also gates by event_type so a non-RR event with
+    // an organizer-fired call still gets rejected.
+    it("generate_round_robin_schedule rejects non-round-robin events", async () => {
+      const admin = adminClient();
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "RR Wrong Type Test",
+          event_type: "mixer",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+      const wrong = await alice.client.rpc("generate_round_robin_schedule", {
+        p_event_id: eventId,
+        p_schedule: [
+          { round: 1, pairs: [[alice.id, bob.id]], bye: null },
+        ] as unknown as never,
+      });
+      expect(wrong.error?.message).toContain("round-robin");
+      await admin.from("events").delete().eq("id", eventId);
+    });
+
     // Tournament — advance_tournament_winner advances the round-1
     // winner into the final slot. (No backing group chat means no
     // champion announcement to assert on; the bracket-state change is

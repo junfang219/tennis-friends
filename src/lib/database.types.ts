@@ -2729,6 +2729,10 @@ export type Database = {
       }
       cleanup_user_for_test: { Args: { uid: string }; Returns: undefined }
       count_user_friends: { Args: { user_id: string }; Returns: number }
+      generate_round_robin_schedule: {
+        Args: { p_event_id: string; p_schedule: Json }
+        Returns: Json
+      }
       get_invite_by_token: { Args: { p_token: string }; Returns: Json }
       has_group_role: {
         Args: { g: string; min_role: Database["public"]["Enums"]["group_role"] }
@@ -2746,6 +2750,15 @@ export type Database = {
       is_chat_participant: { Args: { c: string }; Returns: boolean }
       is_friend: { Args: { other_user: string }; Returns: boolean }
       is_group_member: { Args: { g: string }; Returns: boolean }
+      post_event_rotation_round: {
+        Args: {
+          p_bye?: string
+          p_event_id: string
+          p_pairs: Json
+          p_round: number
+        }
+        Returns: Json
+      }
       propose_ladder_challenge: {
         Args: {
           p_court_assign?: string
@@ -2765,15 +2778,6 @@ export type Database = {
       }
       report_court_availability: {
         Args: { p_court_id: string; p_has_empty: boolean; p_post_id?: string }
-        Returns: Json
-      }
-      post_event_rotation_round: {
-        Args: {
-          p_bye?: string
-          p_event_id: string
-          p_pairs: Json
-          p_round: number
-        }
         Returns: Json
       }
       seed_event_bracket: {

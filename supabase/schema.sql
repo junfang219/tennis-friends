@@ -5230,6 +5230,121 @@ $$;
 REVOKE ALL ON FUNCTION public.post_event_rotation_round(uuid, integer, jsonb, uuid) FROM public;
 GRANT EXECUTE ON FUNCTION public.post_event_rotation_round(uuid, integer, jsonb, uuid) TO authenticated;
 
+-- generate_round_robin_schedule(): organizer-only, round-robin-only,
+-- atomic insert of every match for every round. Schedule comes from
+-- src/lib/eventCompetitive.ts::roundRobinSinglesSchedule so the
+-- deterministic Berger fixture lives in one place. Idempotent — refuses
+-- if any event_matches row already exists for the event. p_schedule
+-- shape: [{ "round": int, "pairs": [[uuid,uuid], ...], "bye": uuid|null }].
+CREATE OR REPLACE FUNCTION public.generate_round_robin_schedule(
+  p_event_id uuid,
+  p_schedule jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller   uuid := auth.uid();
+  v_event    events%ROWTYPE;
+  v_existing integer;
+  v_round_obj jsonb;
+  v_round_num integer;
+  v_pairs    jsonb;
+  v_pair     jsonb;
+  v_p1       uuid;
+  v_p2       uuid;
+  v_idx      integer;
+  v_court    integer;
+  v_inserted integer := 0;
+  v_rounds   integer := 0;
+BEGIN
+  IF v_caller IS NULL THEN
+    RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  SELECT * INTO v_event FROM events WHERE id = p_event_id;
+  IF v_event.id IS NULL THEN
+    RAISE EXCEPTION 'Event not found' USING ERRCODE = 'no_data_found';
+  END IF;
+  IF v_event.owner_id <> v_caller THEN
+    RAISE EXCEPTION 'Only the organizer can generate the schedule'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF v_event.event_type <> 'round_robin' THEN
+    RAISE EXCEPTION 'Schedule generation is only for round-robin events'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  -- Idempotent: refuse if any matches already exist for this event.
+  -- Same shape as seed_event_bracket — re-running silently would
+  -- duplicate the entire schedule.
+  SELECT count(*) INTO v_existing
+    FROM event_matches
+   WHERE event_id = p_event_id;
+  IF v_existing > 0 THEN
+    RAISE EXCEPTION 'Schedule already generated for this event'
+      USING ERRCODE = 'unique_violation';
+  END IF;
+
+  IF p_schedule IS NULL OR jsonb_typeof(p_schedule) <> 'array' THEN
+    RAISE EXCEPTION 'schedule must be a JSON array'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF jsonb_array_length(p_schedule) < 1 THEN
+    RAISE EXCEPTION 'schedule must contain at least one round'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  FOR v_round_obj IN SELECT * FROM jsonb_array_elements(p_schedule) LOOP
+    IF jsonb_typeof(v_round_obj) <> 'object' THEN
+      RAISE EXCEPTION 'each schedule entry must be an object'
+        USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_round_num := NULLIF(v_round_obj->>'round','')::integer;
+    v_pairs := v_round_obj->'pairs';
+    IF v_round_num IS NULL OR v_round_num < 1 THEN
+      RAISE EXCEPTION 'round must be >= 1'
+        USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_pairs IS NULL OR jsonb_typeof(v_pairs) <> 'array' THEN
+      RAISE EXCEPTION 'pairs must be a JSON array for round %', v_round_num
+        USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    v_court := 1;
+    FOR v_idx IN 0 .. jsonb_array_length(v_pairs) - 1 LOOP
+      v_pair := v_pairs->v_idx;
+      IF jsonb_typeof(v_pair) <> 'array' OR jsonb_array_length(v_pair) <> 2 THEN
+        RAISE EXCEPTION 'round % pairs[%] must be a 2-element array',
+          v_round_num, v_idx USING ERRCODE = 'invalid_parameter_value';
+      END IF;
+      v_p1 := NULLIF(v_pair->>0, '')::uuid;
+      v_p2 := NULLIF(v_pair->>1, '')::uuid;
+      IF v_p1 IS NULL OR v_p2 IS NULL THEN
+        RAISE EXCEPTION 'round % pairs[%]: both slots required',
+          v_round_num, v_idx USING ERRCODE = 'invalid_parameter_value';
+      END IF;
+      IF v_p1 = v_p2 THEN
+        RAISE EXCEPTION 'round % pairs[%]: a player cannot be paired with themselves',
+          v_round_num, v_idx USING ERRCODE = 'invalid_parameter_value';
+      END IF;
+      INSERT INTO event_matches (
+        event_id, player1_id, player2_id, status, round, court_assign
+      ) VALUES (
+        p_event_id, v_p1, v_p2, 'scheduled', v_round_num, 'Court ' || v_court::text
+      );
+      v_court := v_court + 1;
+      v_inserted := v_inserted + 1;
+    END LOOP;
+    v_rounds := v_rounds + 1;
+  END LOOP;
+
+  RETURN jsonb_build_object('rounds', v_rounds, 'matches', v_inserted);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.generate_round_robin_schedule(uuid, jsonb) FROM public;
+GRANT EXECUTE ON FUNCTION public.generate_round_robin_schedule(uuid, jsonb) TO authenticated;
+
 -- advance_event_match_to_next_round: shared helper containing the
 -- bracket advancement algorithm. Called both by the AFTER UPDATE
 -- trigger (advance_tournament_winner) and inline by
