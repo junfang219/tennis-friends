@@ -52,6 +52,25 @@ export type Post = PostRow & {
   // own author. PostCard reads this to render the collapsed "Open team"
   // CTA for approved players (alongside the post creator).
   my_play_request: { id: string; status: string; note: string } | null;
+  // The post's audience targets, resolved from post_targets. Empty arrays
+  // mean a default friends-visibility post. PostCard reads these to render
+  // the audience badge AND to pre-select the right groups when editing —
+  // an empty list here would make an edit silently wipe the targets.
+  groups: { id: string; name: string }[];
+  friend_groups: { id: string; name: string }[];
+  // Populated for cross-posts created when a new event is published
+  // (post_type='event', event_id set). PostCard renders an EventChip
+  // from this so the card shows date / venue / type at a glance.
+  // Null for non-event posts and when the linked event was deleted.
+  event: {
+    id: string;
+    title: string;
+    event_type: string;
+    start_date: string;
+    end_date: string;
+    venue_name: string;
+    status: string;
+  } | null;
 };
 
 export type PostInsert = Inserts<"posts">;
@@ -105,6 +124,33 @@ export async function listFeed(
   return enrichPosts(supabase, posts as unknown as PostRow[]);
 }
 
+/**
+ * Fetch the posts targeted at a single group (the team page feed). Mirrors
+ * listFeed, but inner-joins post_targets so only posts cross-posted to this
+ * group come back. RLS still applies via can_see_post() — non-members get an
+ * empty list. Ordered newest-first like the main feed.
+ */
+export async function listGroupFeed(
+  supabase: SupabaseClient<Database>,
+  groupId: string,
+  opts: { limit?: number; before?: string } = {}
+): Promise<Post[]> {
+  let q = supabase
+    .from("posts")
+    .select(`${POST_COLUMNS}, post_targets!inner ( group_id, target_kind )`)
+    .eq("post_targets.target_kind", "group")
+    .eq("post_targets.group_id", groupId)
+    .order("created_at", { ascending: false })
+    .limit(opts.limit ?? 50);
+  if (opts.before) q = q.lt("created_at", opts.before);
+
+  const { data: posts, error } = await q;
+  if (error) throw error;
+  if (!posts || posts.length === 0) return [];
+
+  return enrichPosts(supabase, posts as unknown as PostRow[]);
+}
+
 export async function getPost(
   supabase: SupabaseClient<Database>,
   id: string
@@ -146,31 +192,77 @@ async function enrichPosts(
   const { data: auth } = await supabase.auth.getUser();
   const me = auth.user?.id ?? null;
 
-  const [likesRes, commentsRes, myLikesRes, myRequestsRes] = await Promise.all([
-    supabase.from("likes").select("post_id", { count: "exact", head: false }).in("post_id", ids),
-    supabase
-      .from("comments")
-      .select("post_id", { count: "exact", head: false })
-      .in("post_id", ids),
-    me
-      ? supabase.from("likes").select("post_id").eq("user_id", me).in("post_id", ids)
-      : Promise.resolve({ data: [] as { post_id: string }[], error: null }),
-    me
-      ? supabase
-          .from("play_requests")
-          .select("id, post_id, status, note")
-          .eq("user_id", me)
-          .in("post_id", ids)
-      : Promise.resolve({
-          data: [] as { id: string; post_id: string; status: string; note: string }[],
-          error: null,
-        }),
-  ]);
+  // event_id values across this page of posts. Used to batch-fetch the
+  // linked events without an N+1. Embedding via the posts_event_id_fkey
+  // FK in POST_COLUMNS would be cleaner, but the listGroupFeed
+  // post_targets!inner select already nests one relation — adding a
+  // second embed there starts to bend PostgREST. One extra .in() query
+  // is simpler and still O(1).
+  const eventIds = Array.from(
+    new Set(
+      posts
+        .map((p) => p.event_id)
+        .filter((id): id is string => Boolean(id))
+    )
+  );
 
+  const [likesRes, commentsRes, myLikesRes, myRequestsRes, targetsRes, eventsRes] =
+    await Promise.all([
+      supabase.from("likes").select("post_id", { count: "exact", head: false }).in("post_id", ids),
+      supabase
+        .from("comments")
+        .select("post_id", { count: "exact", head: false })
+        .in("post_id", ids),
+      me
+        ? supabase.from("likes").select("post_id").eq("user_id", me).in("post_id", ids)
+        : Promise.resolve({ data: [] as { post_id: string }[], error: null }),
+      me
+        ? supabase
+            .from("play_requests")
+            .select("id, post_id, status, note")
+            .eq("user_id", me)
+            .in("post_id", ids)
+        : Promise.resolve({
+            data: [] as { id: string; post_id: string; status: string; note: string }[],
+            error: null,
+          }),
+      // Audience targets + their display names. RLS (post_targets_select_visible)
+      // only returns rows for posts the viewer can already see, which these are.
+      // The embedded group/friend_group name may be null if the viewer can't read
+      // that row, so we fall back to the FK id as the source of truth.
+      supabase
+        .from("post_targets")
+        .select(
+          "post_id, target_kind, group_id, friend_group_id, groups ( id, name ), friend_groups ( id, name )"
+        )
+        .in("post_id", ids),
+      eventIds.length > 0
+        ? supabase
+            .from("events")
+            .select(
+              "id, title, event_type, start_date, end_date, venue_name, status"
+            )
+            .in("id", eventIds)
+        : Promise.resolve({
+            data: [] as {
+              id: string;
+              title: string;
+              event_type: string;
+              start_date: string;
+              end_date: string;
+              venue_name: string;
+              status: string;
+            }[],
+            error: null,
+          }),
+    ]);
+
+  if (targetsRes.error) throw targetsRes.error;
   if (likesRes.error) throw likesRes.error;
   if (commentsRes.error) throw commentsRes.error;
   if (myLikesRes.error) throw myLikesRes.error;
   if (myRequestsRes.error) throw myRequestsRes.error;
+  if (eventsRes.error) throw eventsRes.error;
 
   const likeCount = new Map<string, number>();
   for (const row of likesRes.data ?? []) {
@@ -191,14 +283,59 @@ async function enrichPosts(
     myRequestByPost.set(r.post_id, { id: r.id, status: r.status, note: r.note });
   }
 
+  const groupsByPost = new Map<string, { id: string; name: string }[]>();
+  const friendGroupsByPost = new Map<string, { id: string; name: string }[]>();
+  for (const row of (targetsRes.data ?? []) as TargetRow[]) {
+    if (row.target_kind === "group" && row.group_id) {
+      const arr = groupsByPost.get(row.post_id) ?? [];
+      arr.push({ id: row.group_id, name: row.groups?.name ?? "" });
+      groupsByPost.set(row.post_id, arr);
+    } else if (row.target_kind === "friend_group" && row.friend_group_id) {
+      const arr = friendGroupsByPost.get(row.post_id) ?? [];
+      arr.push({ id: row.friend_group_id, name: row.friend_groups?.name ?? "" });
+      friendGroupsByPost.set(row.post_id, arr);
+    }
+  }
+
+  const eventById = new Map<
+    string,
+    {
+      id: string;
+      title: string;
+      event_type: string;
+      start_date: string;
+      end_date: string;
+      venue_name: string;
+      status: string;
+    }
+  >();
+  for (const e of eventsRes.data ?? []) {
+    eventById.set(e.id, e);
+  }
+
   return posts.map((p) => ({
     ...p,
     like_count: likeCount.get(p.id) ?? 0,
     comment_count: commentCount.get(p.id) ?? 0,
     is_liked: myLiked.has(p.id),
     my_play_request: myRequestByPost.get(p.id) ?? null,
+    groups: groupsByPost.get(p.id) ?? [],
+    friend_groups: friendGroupsByPost.get(p.id) ?? [],
+    event: p.event_id ? eventById.get(p.event_id) ?? null : null,
   }));
 }
+
+// Shape of a post_targets row joined to its group/friend_group name. PostgREST
+// types the embedded relations loosely (they can arrive as an object or null),
+// so we narrow them here for the enrichPosts mapping.
+type TargetRow = {
+  post_id: string;
+  target_kind: "group" | "friend_group";
+  group_id: string | null;
+  friend_group_id: string | null;
+  groups: { id: string; name: string } | null;
+  friend_groups: { id: string; name: string } | null;
+};
 
 export async function createPost(
   supabase: SupabaseClient<Database>,

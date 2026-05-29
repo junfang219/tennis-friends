@@ -12,10 +12,12 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
   getGroup,
   listGroupMembers,
+  listGroupFeed,
   listFriends,
   createPost,
 } from "@/lib/supabase/queries";
-import { toGroupCamel, toGroupMemberCamel, toPostCamel } from "@/lib/supabase/adapters";
+import { toGroupCamel, toGroupMemberCamel } from "@/lib/supabase/adapters";
+import { adaptFeedPost, type FeedPostView } from "@/lib/adaptFeedPost";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { errorMessage } from "@/lib/errorMessage";
 
@@ -24,17 +26,7 @@ type Member = {
   user: { id: string; name: string; profileImageUrl: string; skillLevel: string };
 };
 
-type Post = {
-  id: string;
-  content: string;
-  mediaUrl?: string;
-  mediaType?: string;
-  createdAt: string;
-  author: { id: string; name: string; profileImageUrl: string };
-  likeCount: number;
-  isLiked: boolean;
-  groups?: { id: string; name: string }[];
-};
+type Post = FeedPostView;
 
 type GroupData = {
   id: string;
@@ -67,9 +59,10 @@ export default function GroupPage() {
     try {
       const supabase = createSupabaseBrowserClient();
       const id = String(params.id);
-      const [g, members] = await Promise.all([
+      const [g, members, postRows] = await Promise.all([
         getGroup(supabase, id),
         listGroupMembers(supabase, id),
+        listGroupFeed(supabase, id),
       ]);
       if (!g) {
         setError("Group not found or you're not a member.");
@@ -94,11 +87,9 @@ export default function GroupPage() {
         owner: { id: g.owner_id, name: "", profileImageUrl: "" },
         members: adaptedMembers,
         _count: { members: adaptedMembers.length },
-        posts: [],
+        posts: postRows.map(adaptFeedPost),
       };
       setGroup(next);
-      // Also fetch full post rows separately if needed; we just expose IDs
-      // for now and let post links resolve when clicked.
       void toGroupMemberCamel;
     } catch {
       setError("Group not found or you're not a member.");
@@ -302,7 +293,7 @@ export default function GroupPage() {
           groupId={group.id}
           groupName={group.name}
           session={session}
-          onPost={(post) => setGroup({ ...group, posts: [post as Post, ...group.posts] })}
+          onPost={(post) => setGroup({ ...group, posts: [post, ...group.posts] })}
         />
       </div>
 
@@ -1098,7 +1089,7 @@ function GroupPostComposer({
   groupId: string;
   groupName: string;
   session: ReturnType<typeof useSession>["data"];
-  onPost: (post: Record<string, unknown>) => void;
+  onPost: (post: FeedPostView) => void;
 }) {
   const [showModal, setShowModal] = useState(false);
 
@@ -1152,7 +1143,7 @@ function GroupComposerModal({
   groupId: string;
   groupName: string;
   session: ReturnType<typeof useSession>["data"];
-  onPost: (post: Record<string, unknown>) => void;
+  onPost: (post: FeedPostView) => void;
   onClose: () => void;
 }) {
   const [content, setContent] = useState("");
@@ -1264,7 +1255,12 @@ function GroupComposerModal({
       await supabase
         .from("post_targets")
         .insert({ post_id: newPost.id, target_kind: "group", group_id: groupId });
-      onPost(toPostCamel(newPost) as unknown as Record<string, unknown>);
+      // createPost enriches before the target insert above, so newPost.groups
+      // is empty — graft this group on so the optimistic card shows the right
+      // audience badge immediately.
+      const optimistic = adaptFeedPost(newPost);
+      optimistic.groups = [{ id: groupId, name: groupName }];
+      onPost(optimistic);
     } catch (err) {
       setPostError(errorMessage(err, "Network error"));
     } finally {
@@ -1274,7 +1270,7 @@ function GroupComposerModal({
 
   return (
     <div
-      className="fixed inset-0 z-[999] bg-black/50 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
+      className="fixed inset-0 z-[10000] bg-black/50 flex items-start sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
       onClick={onClose}
     >
       <div
@@ -1310,7 +1306,7 @@ function GroupComposerModal({
         </div>
 
         {/* Textarea */}
-        <div className="flex-1 px-5 py-3">
+        <div className="px-5 py-3">
           <textarea
             ref={textareaRef}
             value={content}

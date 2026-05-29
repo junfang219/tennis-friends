@@ -372,8 +372,6 @@ create index group_files_group_created_idx on public.group_files (group_id, crea
 create table public.events (
   id                uuid primary key default gen_random_uuid(),
   owner_id          uuid not null references public.profiles (id) on delete restrict,
-  -- One-to-one backing group auto-created when the event is created.
-  group_id          uuid unique references public.groups (id) on delete set null,
   title             text not null,
   description       text not null default '',
   event_type        text not null,
@@ -4824,10 +4822,8 @@ CREATE TRIGGER play_requests_withdraw_or_remove
 --   /api/events/[id]/matches/[matchId]/report,
 --   /api/events/[id]/matches/[matchId]/confirm,
 --   /api/events/[id]/matches/[matchId]/dispute.
--- Fires notifications on every status transition. Best-effort posts a
--- system message into the event's backing group chat (events.group_id)
--- when one exists — events created without a backing group still get
--- correct notifications, they just don't get the in-chat receipt.
+-- Fires notifications on every status transition. Events no longer get
+-- an auto-created backing group chat, so this is notification-only.
 CREATE OR REPLACE FUNCTION public.notify_on_event_match_status_change()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -4835,54 +4831,31 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_event_group uuid;
-  v_actor       uuid;
-  v_actor_name  text;
-  v_other_name  text;
-  v_other_id    uuid;
-  v_reporter    uuid;
-  v_msg         text;
+  v_actor    uuid;
+  v_other_id uuid;
+  v_reporter uuid;
 BEGIN
   IF NEW.status = OLD.status THEN RETURN NEW; END IF;
-
-  SELECT group_id INTO v_event_group FROM events WHERE id = NEW.event_id;
 
   IF NEW.status = 'in_progress' AND OLD.status <> 'in_progress'
      AND NEW.reported_by IS NOT NULL THEN
     v_actor := NEW.reported_by;
     v_other_id := CASE WHEN v_actor = NEW.player1_id
                        THEN NEW.player2_id ELSE NEW.player1_id END;
-    SELECT name INTO v_actor_name FROM profiles WHERE id = v_actor;
-
     IF v_other_id IS NOT NULL AND v_other_id <> v_actor THEN
       INSERT INTO notifications (user_id, actor_id, type, event_id, match_id)
       VALUES (v_other_id, v_actor, 'event_match_report'::notification_type,
               NEW.event_id, NEW.id);
-    END IF;
-    IF v_event_group IS NOT NULL THEN
-      v_msg := '📝 ' || COALESCE(v_actor_name, 'A player')
-            || ' reported: ' || COALESCE(NEW.score, '')
-            || ' — waiting on the other player to confirm.';
-      INSERT INTO group_messages (group_id, sender_id, content)
-      VALUES (v_event_group, v_actor, v_msg);
     END IF;
 
   ELSIF NEW.status = 'completed' AND OLD.status = 'in_progress'
         AND NEW.confirmed_by IS NOT NULL THEN
     v_actor    := NEW.confirmed_by;
     v_reporter := NEW.reported_by;
-    SELECT name INTO v_actor_name FROM profiles WHERE id = v_actor;
-
     IF v_reporter IS NOT NULL AND v_reporter <> v_actor THEN
       INSERT INTO notifications (user_id, actor_id, type, event_id, match_id)
       VALUES (v_reporter, v_actor, 'event_match_confirmed'::notification_type,
               NEW.event_id, NEW.id);
-    END IF;
-    IF v_event_group IS NOT NULL THEN
-      v_msg := '✅ ' || COALESCE(v_actor_name, 'A player')
-            || ' confirmed: ' || COALESCE(NEW.score, '') || '.';
-      INSERT INTO group_messages (group_id, sender_id, content)
-      VALUES (v_event_group, v_actor, v_msg);
     END IF;
 
   ELSIF NEW.status = 'scheduled' AND OLD.status = 'in_progress'
@@ -4891,56 +4864,29 @@ BEGIN
     v_reporter := OLD.reported_by;
     v_other_id := CASE WHEN v_reporter = NEW.player1_id
                        THEN NEW.player2_id ELSE NEW.player1_id END;
-    SELECT name INTO v_actor_name FROM profiles WHERE id = v_other_id;
-
     IF v_reporter IS NOT NULL AND v_other_id IS NOT NULL
        AND v_reporter <> v_other_id THEN
       INSERT INTO notifications (user_id, actor_id, type, event_id, match_id)
       VALUES (v_reporter, v_other_id, 'event_match_disputed'::notification_type,
               NEW.event_id, NEW.id);
     END IF;
-    IF v_event_group IS NOT NULL AND v_other_id IS NOT NULL THEN
-      v_msg := '⚠️ ' || COALESCE(v_actor_name, 'A player')
-            || ' disputed the score (was ' || COALESCE(OLD.score, '')
-            || '). Please re-enter together.';
-      INSERT INTO group_messages (group_id, sender_id, content)
-      VALUES (v_event_group, v_other_id, v_msg);
-    END IF;
 
   -- Ladder challenge accepted: proposed -> scheduled.
   ELSIF NEW.status = 'scheduled' AND OLD.status = 'proposed' THEN
     v_actor := NEW.player2_id;
-    SELECT name INTO v_actor_name FROM profiles WHERE id = v_actor;
-    SELECT name INTO v_other_name FROM profiles WHERE id = NEW.proposed_by;
     IF NEW.proposed_by IS NOT NULL AND NEW.proposed_by <> v_actor THEN
       INSERT INTO notifications (user_id, actor_id, type, event_id, match_id)
       VALUES (NEW.proposed_by, v_actor,
               'event_challenge_accepted'::notification_type, NEW.event_id, NEW.id);
     END IF;
-    IF v_event_group IS NOT NULL THEN
-      v_msg := '🪜 ' || COALESCE(v_actor_name, 'A player')
-            || ' accepted ' || COALESCE(v_other_name, 'the challenger')
-            || '''s challenge — match scheduled.';
-      INSERT INTO group_messages (group_id, sender_id, content)
-      VALUES (v_event_group, v_actor, v_msg);
-    END IF;
 
   -- Ladder challenge declined: proposed -> declined.
   ELSIF NEW.status = 'declined' AND OLD.status = 'proposed' THEN
     v_actor := NEW.player2_id;
-    SELECT name INTO v_actor_name FROM profiles WHERE id = v_actor;
-    SELECT name INTO v_other_name FROM profiles WHERE id = NEW.proposed_by;
     IF NEW.proposed_by IS NOT NULL AND NEW.proposed_by <> v_actor THEN
       INSERT INTO notifications (user_id, actor_id, type, event_id, match_id)
       VALUES (NEW.proposed_by, v_actor,
               'event_challenge_declined'::notification_type, NEW.event_id, NEW.id);
-    END IF;
-    IF v_event_group IS NOT NULL THEN
-      v_msg := '🪜 ' || COALESCE(v_actor_name, 'A player')
-            || ' declined ' || COALESCE(v_other_name, 'the challenger')
-            || '''s challenge.';
-      INSERT INTO group_messages (group_id, sender_id, content)
-      VALUES (v_event_group, v_actor, v_msg);
     END IF;
   END IF;
 
@@ -5034,8 +4980,7 @@ CREATE TRIGGER event_matches_enforce_actors
   BEFORE UPDATE ON public.event_matches
   FOR EACH ROW EXECUTE FUNCTION public.enforce_event_match_actor_columns();
 
--- INSERT trigger pair for the same function — ladder challenge
--- propose -> notify challenged player + post chat msg.
+-- INSERT trigger: ladder challenge propose -> notify challenged player.
 CREATE OR REPLACE FUNCTION public.notify_on_event_match_proposed()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -5043,33 +4988,18 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_event_group uuid;
-  v_event_type  text;
-  v_actor_name  text;
-  v_other_name  text;
-  v_msg         text;
+  v_event_type text;
 BEGIN
   IF NEW.status <> 'proposed' OR NEW.proposed_by IS NULL OR NEW.player2_id IS NULL THEN
     RETURN NEW;
   END IF;
-  SELECT event_type, group_id INTO v_event_type, v_event_group
-    FROM events WHERE id = NEW.event_id;
+  SELECT event_type INTO v_event_type FROM events WHERE id = NEW.event_id;
   IF v_event_type <> 'ladder' THEN RETURN NEW; END IF;
-
-  SELECT name INTO v_actor_name FROM profiles WHERE id = NEW.proposed_by;
-  SELECT name INTO v_other_name FROM profiles WHERE id = NEW.player2_id;
 
   IF NEW.player2_id <> NEW.proposed_by THEN
     INSERT INTO notifications (user_id, actor_id, type, event_id, match_id)
     VALUES (NEW.player2_id, NEW.proposed_by,
             'event_ladder_challenge'::notification_type, NEW.event_id, NEW.id);
-  END IF;
-  IF v_event_group IS NOT NULL THEN
-    v_msg := '🪜 ' || COALESCE(v_actor_name, 'A player')
-          || ' challenged ' || COALESCE(v_other_name, 'another player')
-          || ' up the ladder.';
-    INSERT INTO group_messages (group_id, sender_id, content)
-    VALUES (v_event_group, NEW.proposed_by, v_msg);
   END IF;
   RETURN NEW;
 END;
@@ -5220,8 +5150,6 @@ DECLARE
   v_is_upper    boolean;
   v_sibling_id  uuid;
   v_next_id     uuid;
-  v_winner_name text;
-  v_msg         text;
   v_slot_match  text[];
 BEGIN
   SELECT * INTO v_match FROM event_matches WHERE id = p_match_id;
@@ -5251,13 +5179,8 @@ BEGIN
   WHERE event_id = v_match.event_id
     AND bracket_slot = 'R' || v_round || '-'
         || CASE WHEN v_is_upper THEN v_slot_idx + 1 ELSE v_slot_idx - 1 END;
+  -- Final match completed (no sibling, slot 1): bracket is done.
   IF v_sibling_id IS NULL AND v_slot_idx = 1 THEN
-    SELECT name INTO v_winner_name FROM profiles WHERE id = v_winner_id;
-    IF v_event.group_id IS NOT NULL AND v_winner_name IS NOT NULL THEN
-      v_msg := '🏆 Champion: ' || v_winner_name || '!';
-      INSERT INTO group_messages (group_id, sender_id, content)
-      VALUES (v_event.group_id, v_event.owner_id, v_msg);
-    END IF;
     RETURN;
   END IF;
 
@@ -5286,8 +5209,7 @@ END;
 $$;
 -- Internal helper only — invoked from triggers + seed_event_bracket
 -- inside the database. Exposing it as an RPC would let an
--- authenticated client advance arbitrary brackets (and impersonate
--- the organizer via the 🏆 champion announcement INSERT).
+-- authenticated client advance arbitrary brackets.
 REVOKE ALL ON FUNCTION public.advance_event_match_to_next_round(uuid) FROM public, anon, authenticated;
 
 -- advance_tournament_winner trigger: delegates to the helper above.
@@ -5569,9 +5491,8 @@ CREATE TRIGGER event_matches_recompute_standings
 -- /groups page showing the team via groups.owner_id while every
 -- is_group_member() gate downstream returned false. Fixed by an
 -- AFTER INSERT trigger that always writes the owner row, idempotent
--- under ON CONFLICT so existing SECURITY DEFINER paths that also
--- attempted the insert (ensure_event_backing_group, propose_team's
--- create_team_group_on_complete) stay correct.
+-- under ON CONFLICT so propose_team's create_team_group_on_complete
+-- SECURITY DEFINER path that also attempts the insert stays correct.
 CREATE OR REPLACE FUNCTION public.auto_add_group_owner_member()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -5590,120 +5511,6 @@ DROP TRIGGER IF EXISTS groups_auto_add_owner ON public.groups;
 CREATE TRIGGER groups_auto_add_owner
   AFTER INSERT ON public.groups
   FOR EACH ROW EXECUTE FUNCTION public.auto_add_group_owner_member();
-
--- ============================================================
--- EVENT BACKING GROUP: auto-create + member sync
--- ============================================================
---
--- The original ensureEventGroup() spun up a one-to-one Group per event
--- so participants had a chat surface, and syncEventGroupMembers() kept
--- group_members in lock-step with registered event_participants. Both
--- were deleted in the burn-down; restored here. Together with the
--- match-status fan-out trigger above, this lights up the in-chat
--- system messages for report / confirm / dispute.
-CREATE OR REPLACE FUNCTION public.ensure_event_backing_group()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_group_id uuid;
-  v_welcome  text;
-  v_flair    text;
-BEGIN
-  IF NEW.group_id IS NOT NULL THEN RETURN NEW; END IF;
-
-  INSERT INTO public.groups (name, owner_id)
-  VALUES (NEW.title, NEW.owner_id)
-  RETURNING id INTO v_group_id;
-
-  -- Idempotent: the groups_auto_add_owner trigger already wrote this
-  -- row when the groups INSERT above fired. Kept explicit for
-  -- documentation and safety.
-  INSERT INTO public.group_members (group_id, user_id, role)
-  VALUES (v_group_id, NEW.owner_id, 'owner')
-  ON CONFLICT (group_id, user_id) DO NOTHING;
-
-  v_flair := CASE NEW.event_type
-    WHEN 'tournament'  THEN '🏆 Tournament time — bring your A game!'
-    WHEN 'round_robin' THEN '🔁 Round-robin — you''ll play everyone, good luck!'
-    WHEN 'ladder'      THEN '🪜 Ladder open — climb the ranks by challenging up.'
-    WHEN 'mixer'       THEN '🤝 Social mixer — partners rotate, just have fun.'
-    WHEN 'clinic'      THEN '🎾 Clinic — show up ready to learn.'
-    ELSE                   '🎾 Let''s play!'
-  END;
-  v_welcome := 'Welcome to ' || NEW.title || '! ' || v_flair;
-
-  INSERT INTO public.group_messages (group_id, sender_id, content)
-  VALUES (v_group_id, NEW.owner_id, v_welcome);
-
-  UPDATE public.events SET group_id = v_group_id WHERE id = NEW.id;
-  RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS events_ensure_backing_group ON public.events;
-CREATE TRIGGER events_ensure_backing_group
-  AFTER INSERT ON public.events
-  FOR EACH ROW EXECUTE FUNCTION public.ensure_event_backing_group();
-
-CREATE OR REPLACE FUNCTION public.sync_event_group_membership()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_group_id uuid;
-  v_owner_id uuid;
-  v_role     group_role;
-BEGIN
-  SELECT group_id, owner_id INTO v_group_id, v_owner_id
-    FROM public.events WHERE id = NEW.event_id;
-  IF v_group_id IS NULL THEN RETURN NEW; END IF;
-
-  -- The event owner always gets 'owner' on (re-)registration; this
-  -- restores the role if their owner row was previously DELETEd
-  -- (cascade / manual cleanup). Everyone else gets 'member'.
-  v_role := CASE WHEN NEW.user_id = v_owner_id THEN 'owner'::group_role
-                 ELSE 'member'::group_role END;
-
-  IF TG_OP = 'INSERT' THEN
-    IF NEW.status = 'registered' THEN
-      INSERT INTO public.group_members (group_id, user_id, role)
-      VALUES (v_group_id, NEW.user_id, v_role)
-      ON CONFLICT (group_id, user_id) DO NOTHING;
-    END IF;
-  ELSIF TG_OP = 'UPDATE' THEN
-    IF OLD.status IS DISTINCT FROM NEW.status THEN
-      IF NEW.status = 'registered' THEN
-        INSERT INTO public.group_members (group_id, user_id, role)
-        VALUES (v_group_id, NEW.user_id, v_role)
-        ON CONFLICT (group_id, user_id) DO NOTHING;
-      ELSIF OLD.status = 'registered' THEN
-        -- Don't kick the event owner out of their own chat when they
-        -- withdraw from their own playing slot. Also preserve any
-        -- pre-existing manager/captain/owner role on the backing
-        -- group — only the 'member' rows the trigger itself wrote
-        -- should ever be removed.
-        IF NEW.user_id <> v_owner_id THEN
-          DELETE FROM public.group_members
-            WHERE group_id = v_group_id
-              AND user_id = NEW.user_id
-              AND role = 'member';
-        END IF;
-      END IF;
-    END IF;
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS event_participants_sync_group ON public.event_participants;
-CREATE TRIGGER event_participants_sync_group
-  AFTER INSERT OR UPDATE OF status ON public.event_participants
-  FOR EACH ROW EXECUTE FUNCTION public.sync_event_group_membership();
 
 -- ============================================================
 -- EVENT CHECK-IN: organizer-only column gate

@@ -591,7 +591,20 @@ function ComposerModal({
       // their local Post type, so the snake_case row from createPost would
       // arrive with every field undefined (postType, playDate, createdAt…),
       // which renders find-player posts as plain text with "Invalid Date".
-      onPost(toPostCamel(newPost) as unknown as Record<string, unknown>);
+      // createPost enriches before the post_targets insert above, so its
+      // groups/friendGroups come back empty — graft the just-selected audience
+      // on so the new card shows the right badge (and editing it pre-selects
+      // the groups instead of wiping them).
+      const optimistic = toPostCamel(newPost);
+      optimistic.groups = groupIds.flatMap((id) => {
+        const g = groups.find((x) => x.id === id);
+        return g ? [{ id: g.id, name: g.name }] : [];
+      });
+      optimistic.friendGroups = friendGroupIds.flatMap((id) => {
+        const g = friendGroups.find((x) => x.id === id);
+        return g ? [{ id: g.id, name: g.name }] : [];
+      });
+      onPost(optimistic as unknown as Record<string, unknown>);
     } catch (err) {
       setPostError(errorMessage(err, "Network error"));
     } finally {

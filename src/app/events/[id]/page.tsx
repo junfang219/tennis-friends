@@ -41,7 +41,6 @@ type Participant = {
 type EventDetail = {
   id: string;
   ownerId: string;
-  groupId: string | null;
   title: string;
   description: string;
   eventType: string;
@@ -118,7 +117,6 @@ export default function EventDetailPage() {
       const adapted = {
         id: ev.id,
         ownerId: ev.owner_id,
-        groupId: ev.group_id,
         title: ev.title,
         description: ev.description,
         eventType: ev.event_type,
@@ -458,13 +456,7 @@ export default function EventDetailPage() {
         )}
 
         {/* Action grid */}
-        <div className={`grid ${isOwner ? "grid-cols-5" : "grid-cols-4"} gap-2`}>
-          <ActionButton
-            label="Chat"
-            emoji="💬"
-            href={event.groupId ? `/groups/${event.groupId}/chat` : undefined}
-            disabled={!event.groupId}
-          />
+        <div className={`grid ${isOwner ? "grid-cols-4" : "grid-cols-3"} gap-2`}>
           <ActionButton
             label="Roster"
             emoji="👥"

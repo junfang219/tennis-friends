@@ -106,6 +106,8 @@ describe("snake_case → camelCase adapters", () => {
       comment_count: 1,
       is_liked: true,
       my_play_request: null,
+      groups: [],
+      friend_groups: [],
     });
     expect(result.author.profileImageUrl).toBe("x.png");
     expect(result.likeCount).toBe(3);
@@ -150,6 +152,8 @@ describe("snake_case → camelCase adapters", () => {
       comment_count: 0,
       is_liked: false,
       my_play_request: null,
+      groups: [],
+      friend_groups: [],
     });
     expect(result.sessionChatId).toBe("chat-123");
   });
@@ -196,6 +200,8 @@ describe("snake_case → camelCase adapters", () => {
       comment_count: 0,
       is_liked: false,
       my_play_request: null,
+      groups: [],
+      friend_groups: [],
     });
     expect(result.postType).toBe("find_players");
     expect(result.playDate).toBe("2026-05-23");
@@ -253,6 +259,8 @@ describe("snake_case → camelCase adapters", () => {
       comment_count: 0,
       is_liked: false,
       my_play_request: { id: "req-1", status: "approved", note: "" },
+      groups: [],
+      friend_groups: [],
     });
     expect(result.myPlayRequest).toEqual({
       id: "req-1",
@@ -276,8 +284,31 @@ describe("snake_case → camelCase adapters", () => {
       photos: [], session_chat: [],
       like_count: 0, comment_count: 0, is_liked: false,
       my_play_request: null,
+      groups: [], friend_groups: [],
     };
     expect(toPostCamel(base).myPlayRequest).toBeNull();
+  });
+
+  it("toPostCamel maps audience targets (snake -> camel)", () => {
+    const base = {
+      id: "p", author_id: "a1", content: "", media_url: "", media_type: "",
+      post_type: "regular" as const, play_date: "", play_time: "",
+      play_duration: 0, court_location: "", game_type: "",
+      players_needed: 0, players_confirmed: 0, skill_min: null, skill_max: null,
+      court_booked: false, is_complete: false, comments_disabled: false,
+      manual_players: "", team_group_id: "", is_broadcast: false,
+      broadcast_radius_mi: 0, broadcast_lat: null, broadcast_lng: null,
+      event_id: null, pinned_at: null, created_at: "t",
+      author: { id: "a1", name: "", profile_image_url: "" },
+      photos: [], session_chat: [],
+      like_count: 0, comment_count: 0, is_liked: false,
+      my_play_request: null,
+      groups: [{ id: "g1", name: "Wolves" }],
+      friend_groups: [{ id: "fg1", name: "Inner Circle" }],
+    };
+    const result = toPostCamel(base);
+    expect(result.groups).toEqual([{ id: "g1", name: "Wolves" }]);
+    expect(result.friendGroups).toEqual([{ id: "fg1", name: "Inner Circle" }]);
   });
 
   it("toCommentCamel flattens author and surfaces parentCommentId + updatedAt", () => {
@@ -312,7 +343,7 @@ describe("snake_case → camelCase adapters", () => {
 
   it("toEventCamel + toGroupCamel + toTeamListingCamel basic shape", () => {
     const ev = toEventCamel({
-      id: "e", owner_id: "o", group_id: null, title: "T",
+      id: "e", owner_id: "o", title: "T",
       description: "", event_type: "mixer",
       start_date: "2026-06-01", end_date: "2026-06-02",
       signup_deadline: null, is_public_signup: true,

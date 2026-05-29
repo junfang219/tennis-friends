@@ -6,7 +6,6 @@ import type { Database, Inserts } from "../types";
 export interface EventRow {
   id: string;
   owner_id: string;
-  group_id: string | null;
   title: string;
   description: string;
   event_type: string;
@@ -33,7 +32,7 @@ export interface EventRow {
 }
 
 const EVENT_COLUMNS = `
-  id, owner_id, group_id, title, description, event_type, start_date,
+  id, owner_id, title, description, event_type, start_date,
   end_date, signup_deadline, is_public_signup, max_participants, ntrp_min,
   ntrp_max, status, venue_name, venue_address, visibility, event_lat,
   event_lng, radius_mi, host_group_id, config, cover_image_url, season_id,
@@ -42,16 +41,66 @@ const EVENT_COLUMNS = `
 
 export type EventInsert = Inserts<"events">;
 
+export type ListEventsMode = "upcoming" | "past" | "all";
+
 export async function listEvents(
   supabase: SupabaseClient<Database>,
-  opts: { upcoming?: boolean; limit?: number } = {}
+  opts: { mode?: ListEventsMode; limit?: number } = {}
 ): Promise<EventRow[]> {
+  const mode = opts.mode ?? "upcoming";
+  const nowIso = new Date().toISOString();
   let q = supabase.from("events").select(EVENT_COLUMNS);
-  if (opts.upcoming !== false) {
-    q = q.gte("end_date", new Date().toISOString()).neq("status", "cancelled");
+  if (mode === "upcoming") {
+    q = q.gte("end_date", nowIso).neq("status", "cancelled");
+    q = q.order("start_date", { ascending: true });
+  } else if (mode === "past") {
+    // "Past" = the event window has already closed. Cancelled events
+    // still belong here regardless of when they were scheduled, so
+    // they don't dangle in Upcoming.
+    q = q.or(`end_date.lt.${nowIso},status.eq.cancelled`);
+    q = q.order("start_date", { ascending: false });
+  } else {
+    q = q.order("start_date", { ascending: true });
   }
-  q = q.order("start_date", { ascending: true }).limit(opts.limit ?? 100);
+  q = q.limit(opts.limit ?? 100);
   const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []) as EventRow[];
+}
+
+/**
+ * Events the signed-in user has RSVP'd to (status = registered or
+ * waitlist). Owned-but-not-RSVPed events are intentionally excluded —
+ * "My Events" is "events I'm playing in," not "events I created."
+ * Organizers can still find their events via the Upcoming tab. Sorted
+ * by start_date ascending so the next event bubbles to the top.
+ */
+export async function listMyEvents(
+  supabase: SupabaseClient<Database>,
+  opts: { limit?: number } = {}
+): Promise<EventRow[]> {
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return [];
+  const me = auth.user.id;
+
+  const { data: parts, error: partErr } = await supabase
+    .from("event_participants")
+    .select("event_id")
+    .eq("user_id", me)
+    .neq("status", "withdrawn");
+  if (partErr) throw partErr;
+
+  const ids = (parts ?? [])
+    .map((r) => r.event_id)
+    .filter((id): id is string => Boolean(id));
+  if (ids.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("events")
+    .select(EVENT_COLUMNS)
+    .in("id", ids)
+    .order("start_date", { ascending: true })
+    .limit(opts.limit ?? 100);
   if (error) throw error;
   return (data ?? []) as EventRow[];
 }
@@ -97,6 +146,30 @@ export interface EventParticipantRow {
   sets_lost: number;
   points: number;
   user: { id: string; name: string; profile_image_url: string; ntrp_rating: number | null };
+}
+
+/**
+ * Returns Map<eventId, registeredCount> for a batch of event IDs. Used
+ * by list views (events feed, "My Events") that need to render
+ * "X signed up" without an N+1 fetch. Counts only status='registered'
+ * — waitlisted and withdrawn rows don't count toward the headline.
+ */
+export async function countRegisteredByEvent(
+  supabase: SupabaseClient<Database>,
+  eventIds: string[]
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (eventIds.length === 0) return counts;
+  const { data, error } = await supabase
+    .from("event_participants")
+    .select("event_id")
+    .in("event_id", eventIds)
+    .eq("status", "registered");
+  if (error) throw error;
+  for (const row of data ?? []) {
+    counts.set(row.event_id, (counts.get(row.event_id) ?? 0) + 1);
+  }
+  return counts;
 }
 
 export async function listEventParticipants(

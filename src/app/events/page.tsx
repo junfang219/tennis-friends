@@ -6,7 +6,12 @@ import CommunitiesTabs from "@/components/CommunitiesTabs";
 import Avatar from "@/components/Avatar";
 import { EVENT_TYPE_META } from "@/lib/eventTypeMeta";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { listEvents, getMyProfile } from "@/lib/supabase/queries";
+import {
+  listEvents,
+  listMyEvents,
+  countRegisteredByEvent,
+  getMyProfile,
+} from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 
 type EventListItem = {
@@ -43,7 +48,14 @@ export default function EventsListPage() {
     `events:list:${filter}`,
     async () => {
       const supabase = createSupabaseBrowserClient();
-      const rows = await listEvents(supabase, { upcoming: filter === "upcoming" });
+      const rows =
+        filter === "joined"
+          ? await listMyEvents(supabase)
+          : await listEvents(supabase, { mode: filter });
+      const counts = await countRegisteredByEvent(
+        supabase,
+        rows.map((e) => e.id)
+      );
       return rows.map((e) => ({
         id: e.id,
         title: e.title,
@@ -60,7 +72,7 @@ export default function EventsListPage() {
         coverImageUrl: e.cover_image_url,
         owner: { id: e.owner_id, name: "", profileImageUrl: "" },
         myStatus: null,
-        registeredCount: 0,
+        registeredCount: counts.get(e.id) ?? 0,
       }));
     },
   );

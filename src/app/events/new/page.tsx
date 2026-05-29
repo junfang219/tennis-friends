@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { listMyGroups, createEvent } from "@/lib/supabase/queries";
+import { listMyGroups, createEvent, createPost } from "@/lib/supabase/queries";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 import { errorMessage } from "@/lib/errorMessage";
 
@@ -52,7 +52,7 @@ export default function NewEventPage() {
   const [groups, setGroups] = useState<GroupOption[]>([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
 
-  // Load the user's non-event-backed groups when the group branch is chosen.
+  // Load the user's groups when the group-visibility branch is chosen.
   useEffect(() => {
     if (visibility !== "group" || groups.length > 0 || groupsLoading) return;
     setGroupsLoading(true);
@@ -169,10 +169,38 @@ export default function NewEventPage() {
         radius_mi: visibility === "public" ? radiusMi : null,
         host_group_id: visibility === "group" ? hostGroupId : null,
       });
-      // postToFeed (cross-post to feed) is a follow-up: the event-creating
-      // post used to be inserted by the route handler. Could be reinstated
-      // via a Postgres trigger or done client-side here when needed.
-      void postToFeed;
+
+      // Cross-post a recruitment card to the feed. Public events go to
+      // the location-anchored broadcast (so eligible players within
+      // radius see it). Group events target the host group via
+      // post_targets — that lights up the group's posts list AND keeps
+      // the main-feed copy visible to members only (can_see_post
+      // restricts targeted posts to the targeted audience).
+      if (postToFeed) {
+        try {
+          const newPost = await createPost(supabase, {
+            content: description.trim(),
+            post_type: "event",
+            event_id: created.id,
+            is_broadcast: visibility === "public",
+            broadcast_radius_mi: visibility === "public" ? radiusMi : 0,
+            broadcast_lat: visibility === "public" ? eventLat : null,
+            broadcast_lng: visibility === "public" ? eventLng : null,
+          });
+          if (visibility === "group" && hostGroupId) {
+            await supabase.from("post_targets").insert({
+              post_id: newPost.id,
+              target_kind: "group",
+              group_id: hostGroupId,
+            });
+          }
+        } catch {
+          // Cross-post is a best-effort side effect. The event itself
+          // landed, so don't block navigation — the organizer can still
+          // share it manually if posting failed.
+        }
+      }
+
       router.push(`/events/${created.id}`);
     } catch (err) {
       setError(errorMessage(err, "Couldn't create the event. Try again."));
@@ -353,20 +381,6 @@ export default function NewEventPage() {
                 </div>
               </Field>
 
-              <label className="flex items-start gap-3 cursor-pointer pt-1">
-                <input
-                  type="checkbox"
-                  checked={postToFeed}
-                  onChange={(e) => setPostToFeed(e.target.checked)}
-                  className="mt-0.5 w-4 h-4 rounded accent-court-green"
-                />
-                <span className="flex-1">
-                  <span className="block text-sm font-semibold text-gray-700">Cross-post to feed</span>
-                  <span className="block text-[12px] text-gray-500 mt-0.5">
-                    Share an event card in the main feed so eligible players spot it sooner.
-                  </span>
-                </span>
-              </label>
             </div>
           )}
 
@@ -394,10 +408,35 @@ export default function NewEventPage() {
                 )}
               </Field>
               <p className="text-[12px] text-gray-500">
-                Only members of this group will see the event. Group events can&apos;t be cross-posted to the public feed.
+                Only members of this group will see the event.
               </p>
             </div>
           )}
+
+          {/* Cross-post toggle: applies to both visibilities. For public
+              events it broadcasts to nearby players; for group events it
+              posts to the host group's feed so members see it alongside
+              the event detail page. */}
+          <label className="flex items-start gap-3 cursor-pointer pt-1">
+            <input
+              type="checkbox"
+              checked={postToFeed}
+              onChange={(e) => setPostToFeed(e.target.checked)}
+              className="mt-0.5 w-4 h-4 rounded accent-court-green"
+            />
+            <span className="flex-1">
+              <span className="block text-sm font-semibold text-gray-700">
+                {visibility === "group"
+                  ? "Post to the group feed"
+                  : "Cross-post to feed"}
+              </span>
+              <span className="block text-[12px] text-gray-500 mt-0.5">
+                {visibility === "group"
+                  ? "Share a recruitment card on the group's posts wall so members spot it."
+                  : "Share an event card in the main feed so eligible players spot it sooner."}
+              </span>
+            </span>
+          </label>
         </section>
 
         <section className="bg-white rounded-2xl p-5 shadow-sm space-y-4">

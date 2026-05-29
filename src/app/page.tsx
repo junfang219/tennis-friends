@@ -7,105 +7,12 @@ import Link from "next/link";
 import PostComposer from "@/components/PostComposer";
 import PostCard from "@/components/PostCard";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { listFeed, getMyProfile, updateMyProfile, type Post as FeedPost } from "@/lib/supabase/queries";
-import { pgToIso } from "@/lib/pgDate";
+import { listFeed, getMyProfile, updateMyProfile } from "@/lib/supabase/queries";
+import { adaptFeedPost, type FeedPostView as Post } from "@/lib/adaptFeedPost";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 
-// Map a Supabase feed row (snake_case) into the legacy camelCase Post
-// shape this page (and PostCard) currently expects. Will go away once
-// every consumer migrates to the snake_case shape natively.
-function adaptFeedPost(p: FeedPost): Post {
-  return {
-    id: p.id,
-    content: p.content,
-    mediaUrl: p.media_url,
-    mediaType: p.media_type,
-    // Flatten the joined photos rows into PostCard's photoUrls list.
-    // Sorted by the explicit display order so the multi-photo viewer
-    // stays consistent with how PostComposer inserted them.
-    photoUrls: [...p.photos].sort((a, b) => a.order - b.order).map((ph) => ph.url),
-    postType: p.post_type,
-    playDate: p.play_date,
-    playTime: p.play_time,
-    courtLocation: p.court_location,
-    gameType: p.game_type,
-    playersNeeded: p.players_needed,
-    playersConfirmed: p.players_confirmed,
-    courtBooked: p.court_booked,
-    isComplete: p.is_complete,
-    isBroadcast: p.is_broadcast,
-    broadcastRadiusMi: p.broadcast_radius_mi,
-    distanceMiles: null,
-    pendingRequestCount: 0,
-    // Uppercase the Supabase lowercase enum so PostCard's legacy
-    // `status === "APPROVED"` checks resolve to "player" instead of
-    // "bystander" for approved members. enrichPosts already restricted
-    // the join to the signed-in user, so this row is theirs.
-    myPlayRequest: p.my_play_request
-      ? {
-          id: p.my_play_request.id,
-          status: p.my_play_request.status.toUpperCase(),
-          note: p.my_play_request.note,
-        }
-      : null,
-    sessionChatId: p.session_chat?.[0]?.id ?? null,
-    // Empty default from posts.team_group_id collapses to null so
-    // PostCard's `liveTeamGroupId || null` checks render the collapsed
-    // "Open team" CTA whenever the create_team_group_on_complete trigger
-    // has populated the column.
-    teamGroupId: p.team_group_id ? p.team_group_id : null,
-    manualPlayers: p.manual_players,
-    // PostgREST emits "2026-05-21 18:23:35.123+00"; iOS Safari's strict
-    // Date parser rejects the space + bare-offset form. Normalize once
-    // here so every consumer (timeAgo, toLocaleDateString) sees ISO.
-    createdAt: pgToIso(p.created_at),
-    author: {
-      id: p.author.id,
-      name: p.author.name,
-      profileImageUrl: p.author.profile_image_url,
-    },
-    likeCount: p.like_count,
-    commentCount: p.comment_count,
-    isLiked: p.is_liked,
-    groups: [],
-    friendGroups: [],
-  };
-}
-
 const SEEN_KEY = "tennisfriend_seen_posts";
-
-type Post = {
-  id: string;
-  content: string;
-  mediaUrl?: string;
-  mediaType?: string;
-  postType?: string;
-  playDate?: string;
-  playTime?: string;
-  courtLocation?: string;
-  gameType?: string;
-  playersNeeded?: number;
-  playersConfirmed?: number;
-  courtBooked?: boolean;
-  isComplete?: boolean;
-  photoUrls?: string[];
-  isBroadcast?: boolean;
-  broadcastRadiusMi?: number;
-  distanceMiles?: number | null;
-  pendingRequestCount?: number;
-  myPlayRequest?: { id: string; status: string; note: string } | null;
-  sessionChatId?: string | null;
-  teamGroupId?: string | null;
-  manualPlayers?: string;
-  createdAt: string;
-  author: { id: string; name: string; profileImageUrl: string };
-  likeCount: number;
-  commentCount?: number;
-  isLiked: boolean;
-  groups?: { id: string; name: string }[];
-  friendGroups?: { id: string; name: string }[];
-};
 
 export default function HomePage() {
   const { data: session, status } = useSession();

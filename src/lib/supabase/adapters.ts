@@ -150,6 +150,11 @@ export interface PostCamel {
   // stores the enum in lowercase. Null for the author + when no
   // request exists.
   myPlayRequest: { id: string; status: string; note: string } | null;
+  // Audience targets resolved from post_targets. Empty arrays = default
+  // friends-visibility. PostCard reads these for the audience badge and to
+  // pre-select groups when editing.
+  groups: { id: string; name: string }[];
+  friendGroups: { id: string; name: string }[];
 }
 
 export function toPostCamel(p: Post): PostCamel {
@@ -198,6 +203,8 @@ export function toPostCamel(p: Post): PostCamel {
           note: p.my_play_request.note,
         }
       : null,
+    groups: p.groups,
+    friendGroups: p.friend_groups,
   };
 }
 
@@ -237,7 +244,6 @@ export function toCommentCamel(c: Comment): CommentCamel {
 export interface EventCamel {
   id: string;
   ownerId: string;
-  groupId: string | null;
   title: string;
   description: string;
   eventType: string;
@@ -264,7 +270,6 @@ export function toEventCamel(e: EventRow): EventCamel {
   return {
     id: e.id,
     ownerId: e.owner_id,
-    groupId: e.group_id,
     title: e.title,
     description: e.description,
     eventType: e.event_type,

@@ -62,10 +62,13 @@ import {
   listMyGroups,
   getGroup,
   listGroupMembers,
+  listGroupFeed,
   listGroupMessages,
   sendGroupMessage,
   // Events
   listEvents,
+  listMyEvents,
+  countRegisteredByEvent,
   getEvent,
   createEvent,
   listEventParticipants,
@@ -791,6 +794,84 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       const msgs = await listGroupMessages(alice.client, groupId);
       expect(msgs.some((m) => m.id === sent.id)).toBe(true);
     });
+
+    // A post created on the team page gets a post_targets group row, which
+    // both scopes its visibility (can_see_post) and feeds the team page via
+    // listGroupFeed. The home feed still surfaces it for fellow members
+    // (RLS), but a non-member sees it nowhere.
+    it("listGroupFeed returns the group's targeted posts to members, hides them from non-members", async () => {
+      const post = await createPost(alice.client, {
+        content: "Practice this Saturday 9am",
+        post_type: "regular",
+      });
+      const { error: targetErr } = await alice.client
+        .from("post_targets")
+        .insert({ post_id: post.id, target_kind: "group", group_id: groupId });
+      expect(targetErr).toBeNull();
+
+      // Owner and member see it on the team page.
+      const aliceGroupFeed = await listGroupFeed(alice.client, groupId);
+      expect(aliceGroupFeed.some((p) => p.id === post.id)).toBe(true);
+      const bobGroupFeed = await listGroupFeed(bob.client, groupId);
+      expect(bobGroupFeed.some((p) => p.id === post.id)).toBe(true);
+
+      // Member also sees it in the home feed; non-member sees it in neither.
+      const bobHomeFeed = await listFeed(bob.client, { limit: 50 });
+      expect(bobHomeFeed.some((p) => p.id === post.id)).toBe(true);
+      const carolGroupFeed = await listGroupFeed(carol.client, groupId);
+      expect(carolGroupFeed.some((p) => p.id === post.id)).toBe(false);
+      const carolHomeFeed = await listFeed(carol.client, { limit: 50 });
+      expect(carolHomeFeed.some((p) => p.id === post.id)).toBe(false);
+
+      await alice.client.from("posts").delete().eq("id", post.id);
+    });
+
+    // enrichPosts must resolve post_targets into post.groups so PostCard shows
+    // the right audience badge AND the edit modal pre-selects the actual
+    // groups. An empty post.groups here is the bug that made every edit wipe
+    // the target and re-broadcast the post to all friends.
+    it("listFeed/getPost populate post.groups from post_targets", async () => {
+      const post = await createPost(alice.client, {
+        content: "Targeted at the squad",
+        post_type: "regular",
+      });
+      await alice.client
+        .from("post_targets")
+        .insert({ post_id: post.id, target_kind: "group", group_id: groupId });
+
+      const fetched = await getPost(alice.client, post.id);
+      expect(fetched?.groups).toEqual([{ id: groupId, name: "Test Squad" }]);
+      expect(fetched?.friend_groups).toEqual([]);
+
+      const feed = await listFeed(alice.client, { limit: 50 });
+      const inFeed = feed.find((p) => p.id === post.id);
+      expect(inFeed?.groups.some((g) => g.id === groupId)).toBe(true);
+
+      await alice.client.from("posts").delete().eq("id", post.id);
+    });
+
+    it("post.groups is empty for an untargeted post", async () => {
+      const post = await createPost(alice.client, {
+        content: "No audience target",
+        post_type: "regular",
+      });
+      const fetched = await getPost(alice.client, post.id);
+      expect(fetched?.groups).toEqual([]);
+      expect(fetched?.friend_groups).toEqual([]);
+      await alice.client.from("posts").delete().eq("id", post.id);
+    });
+
+    // A plain friend-visibility post (no group target) must NOT leak into the
+    // team page feed — listGroupFeed is restricted to group-targeted posts.
+    it("listGroupFeed excludes untargeted posts", async () => {
+      const post = await createPost(alice.client, {
+        content: "Just a normal post",
+        post_type: "regular",
+      });
+      const groupFeed = await listGroupFeed(alice.client, groupId);
+      expect(groupFeed.some((p) => p.id === post.id)).toBe(false);
+      await alice.client.from("posts").delete().eq("id", post.id);
+    });
   });
 
   // ---------------------------------------------------------------------
@@ -819,8 +900,313 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
     it("getEvent + listEvents return the new event", async () => {
       const e = await getEvent(alice.client, eventId);
       expect(e?.id).toBe(eventId);
-      const upcoming = await listEvents(alice.client, { upcoming: true });
+      const upcoming = await listEvents(alice.client, { mode: "upcoming" });
       expect(upcoming.some((x) => x.id === eventId)).toBe(true);
+    });
+
+    // Regression: listEvents({ mode: 'past' }) used to return everything
+    // when upcoming was false (the page just rendered the unfiltered
+    // list), so the Past tab showed upcoming events too.
+    it("listEvents splits upcoming vs. past by end_date", async () => {
+      const admin = adminClient();
+      const { data: pastRow } = await admin
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Last Week's Mixer",
+          event_type: "mixer",
+          start_date: new Date(Date.now() - 86_400_000 * 8).toISOString(),
+          end_date: new Date(Date.now() - 86_400_000 * 7).toISOString(),
+          is_public_signup: true,
+          visibility: "public",
+          event_lat: 47.6062,
+          event_lng: -122.3321,
+          radius_mi: 25,
+        })
+        .select("id")
+        .single();
+      const pastId = pastRow!.id;
+
+      const upcoming = await listEvents(alice.client, { mode: "upcoming" });
+      const past = await listEvents(alice.client, { mode: "past" });
+
+      expect(upcoming.some((x) => x.id === eventId)).toBe(true);
+      expect(upcoming.some((x) => x.id === pastId)).toBe(false);
+      expect(past.some((x) => x.id === pastId)).toBe(true);
+      expect(past.some((x) => x.id === eventId)).toBe(false);
+
+      // Cancelled events belong in Past regardless of their dates so
+      // they don't dangle in Upcoming.
+      await admin
+        .from("events")
+        .update({ status: "cancelled" })
+        .eq("id", pastId);
+      const futureCancelledInsert = await admin
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Cancelled Future",
+          event_type: "mixer",
+          start_date: new Date(Date.now() + 86_400_000 * 14).toISOString(),
+          end_date: new Date(Date.now() + 86_400_000 * 15).toISOString(),
+          status: "cancelled",
+          is_public_signup: true,
+          visibility: "public",
+          event_lat: 47.6062,
+          event_lng: -122.3321,
+          radius_mi: 25,
+        })
+        .select("id")
+        .single();
+      const cancelledId = futureCancelledInsert.data!.id;
+
+      const upcomingAfter = await listEvents(alice.client, { mode: "upcoming" });
+      const pastAfter = await listEvents(alice.client, { mode: "past" });
+      expect(upcomingAfter.some((x) => x.id === cancelledId)).toBe(false);
+      expect(pastAfter.some((x) => x.id === cancelledId)).toBe(true);
+
+      await admin.from("events").delete().in("id", [pastId, cancelledId]);
+    });
+
+    // Regression: listMyEvents used to UNION owner_id = me, so an
+    // organizer who created an event without RSVPing saw it in their
+    // "My Events" tab. Mimi hit this on prod with Fun + Ttyy. The tab
+    // should only show events the user is actually playing in.
+    it("listMyEvents returns RSVP'd events only — not owned-but-not-RSVPed", async () => {
+      const admin = adminClient();
+      // Alice owns the test event but never inserted a participant row
+      // for herself, so it should NOT be in her My Events.
+      const aliceList = await listMyEvents(alice.client);
+      expect(aliceList.some((x) => x.id === eventId)).toBe(false);
+
+      // Bob has nothing of his own and isn't signed up yet.
+      const before = await listMyEvents(bob.client);
+      expect(before.some((x) => x.id === eventId)).toBe(false);
+
+      await admin
+        .from("event_participants")
+        .insert({ event_id: eventId, user_id: bob.id, status: "registered" });
+      const after = await listMyEvents(bob.client);
+      expect(after.some((x) => x.id === eventId)).toBe(true);
+
+      // Withdrawn participants drop out of the list.
+      await admin
+        .from("event_participants")
+        .update({ status: "withdrawn" })
+        .eq("event_id", eventId)
+        .eq("user_id", bob.id);
+      const afterWithdraw = await listMyEvents(bob.client);
+      expect(afterWithdraw.some((x) => x.id === eventId)).toBe(false);
+
+      // Waitlist counts as "playing in" — it's a real RSVP.
+      await admin
+        .from("event_participants")
+        .update({ status: "waitlist" })
+        .eq("event_id", eventId)
+        .eq("user_id", bob.id);
+      const afterWaitlist = await listMyEvents(bob.client);
+      expect(afterWaitlist.some((x) => x.id === eventId)).toBe(true);
+
+      // Reset so the subsequent signup test starts from a clean slate.
+      await admin
+        .from("event_participants")
+        .delete()
+        .eq("event_id", eventId)
+        .eq("user_id", bob.id);
+    });
+
+    // Regression: event cards showed "0 signed up" because the page
+    // hardcoded registeredCount: 0. countRegisteredByEvent batches the
+    // count and ignores waitlist/withdrawn rows.
+    it("countRegisteredByEvent counts only registered rows", async () => {
+      const admin = adminClient();
+      // Two extra events so the count map has multiple entries.
+      const futureA = await admin
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Count A",
+          event_type: "mixer",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 86_400_000 * 2).toISOString(),
+          is_public_signup: true,
+          visibility: "public",
+          event_lat: 47.6062,
+          event_lng: -122.3321,
+          radius_mi: 25,
+        })
+        .select("id")
+        .single();
+      const futureB = await admin
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Count B",
+          event_type: "mixer",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 86_400_000 * 2).toISOString(),
+          is_public_signup: true,
+          visibility: "public",
+          event_lat: 47.6062,
+          event_lng: -122.3321,
+          radius_mi: 25,
+        })
+        .select("id")
+        .single();
+      const aId = futureA.data!.id;
+      const bId = futureB.data!.id;
+
+      // A: alice + bob registered, carol waitlisted -> count = 2
+      //    (the waitlist row must not contribute).
+      // B: alice registered, bob withdrawn -> count = 1
+      //    (the withdrawn row must not contribute).
+      await admin.from("event_participants").insert([
+        { event_id: aId, user_id: alice.id, status: "registered" },
+        { event_id: aId, user_id: bob.id, status: "registered" },
+        { event_id: aId, user_id: carol.id, status: "waitlist" },
+        { event_id: bId, user_id: alice.id, status: "registered" },
+        { event_id: bId, user_id: bob.id, status: "withdrawn" },
+      ]);
+
+      const counts = await countRegisteredByEvent(alice.client, [aId, bId]);
+      expect(counts.get(aId)).toBe(2);
+      expect(counts.get(bId)).toBe(1);
+
+      // Empty-input fast path returns an empty map without hitting the DB.
+      const empty = await countRegisteredByEvent(alice.client, []);
+      expect(empty.size).toBe(0);
+
+      // Unknown event IDs: not present in the map (caller treats as 0).
+      const unknown = await countRegisteredByEvent(alice.client, [
+        "00000000-0000-0000-0000-000000000000",
+      ]);
+      expect(unknown.size).toBe(0);
+
+      await admin.from("events").delete().in("id", [aId, bId]);
+    });
+
+    // Event creation cross-posts a recruitment card to the feed. The
+    // post carries the event_id and post_type='event'; enrichPosts
+    // resolves it into post.event so PostCard's EventChip renders
+    // date / venue / type without a follow-up fetch.
+    it("posts cross-posted from an event surface post.event in the feed", async () => {
+      const admin = adminClient();
+      // Make sure alice is within broadcast radius (she defaults to
+      // Seattle anyway, but be explicit so the test isn't dependent on
+      // earlier test ordering).
+      await admin
+        .from("profiles")
+        .update({ latitude: 47.6062, longitude: -122.3321 })
+        .eq("id", alice.id);
+
+      const evIns = await admin
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Sunday Round Robin",
+          description: "Looking for 8 players, 3.5 level.",
+          event_type: "round_robin",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 86_400_000 * 2).toISOString(),
+          venue_name: "Lower Woodland",
+          is_public_signup: true,
+          visibility: "public",
+          event_lat: 47.6062,
+          event_lng: -122.3321,
+          radius_mi: 25,
+        })
+        .select("id")
+        .single();
+      const eventCrossId = evIns.data!.id;
+
+      const recruitPost = await createPost(alice.client, {
+        content: "Looking for 8 players, 3.5 level.",
+        post_type: "event",
+        event_id: eventCrossId,
+        is_broadcast: true,
+        broadcast_radius_mi: 25,
+        broadcast_lat: 47.6062,
+        broadcast_lng: -122.3321,
+      });
+
+      const fetched = await getPost(alice.client, recruitPost.id);
+      expect(fetched?.event?.id).toBe(eventCrossId);
+      expect(fetched?.event?.title).toBe("Sunday Round Robin");
+      expect(fetched?.event?.event_type).toBe("round_robin");
+      expect(fetched?.event?.venue_name).toBe("Lower Woodland");
+
+      const feed = await listFeed(alice.client, { limit: 50 });
+      const inFeed = feed.find((p) => p.id === recruitPost.id);
+      expect(inFeed?.event?.id).toBe(eventCrossId);
+
+      await alice.client.from("posts").delete().eq("id", recruitPost.id);
+      await admin.from("events").delete().eq("id", eventCrossId);
+    });
+
+    // A group-visibility event cross-posts with a post_targets row
+    // pointing at the host group. The card appears on the group's posts
+    // wall AND in members' main feeds; non-members see it in neither.
+    it("group-visibility events cross-post to the host group only", async () => {
+      const admin = adminClient();
+      const { data: grp } = await admin
+        .from("groups")
+        .insert({ name: "Event Cross-Post Test", owner_id: alice.id })
+        .select("id")
+        .single();
+      const grpId = grp!.id;
+      // Add bob as a member; carol stays outside.
+      await admin
+        .from("group_members")
+        .insert({ group_id: grpId, user_id: bob.id, role: "member" });
+
+      const evIns = await admin
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Squad Practice",
+          description: "Members only — let's drill.",
+          event_type: "clinic",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 86_400_000 * 2).toISOString(),
+          is_public_signup: false,
+          visibility: "group",
+          host_group_id: grpId,
+        })
+        .select("id")
+        .single();
+      const eventCrossId = evIns.data!.id;
+
+      const recruitPost = await createPost(alice.client, {
+        content: "Members only — let's drill.",
+        post_type: "event",
+        event_id: eventCrossId,
+      });
+      await alice.client
+        .from("post_targets")
+        .insert({ post_id: recruitPost.id, target_kind: "group", group_id: grpId });
+
+      // Author + member see it on the group wall and main feed.
+      const aliceGroupFeed = await listGroupFeed(alice.client, grpId);
+      expect(aliceGroupFeed.some((p) => p.id === recruitPost.id)).toBe(true);
+      const bobGroupFeed = await listGroupFeed(bob.client, grpId);
+      expect(bobGroupFeed.some((p) => p.id === recruitPost.id)).toBe(true);
+      const bobHomeFeed = await listFeed(bob.client, { limit: 50 });
+      expect(bobHomeFeed.some((p) => p.id === recruitPost.id)).toBe(true);
+
+      // Non-member sees it in neither feed.
+      const carolGroupFeed = await listGroupFeed(carol.client, grpId);
+      expect(carolGroupFeed.some((p) => p.id === recruitPost.id)).toBe(false);
+      const carolHomeFeed = await listFeed(carol.client, { limit: 50 });
+      expect(carolHomeFeed.some((p) => p.id === recruitPost.id)).toBe(false);
+
+      // Either feed surfaces the enriched event for members.
+      const enriched = bobGroupFeed.find((p) => p.id === recruitPost.id);
+      expect(enriched?.event?.id).toBe(eventCrossId);
+      expect(enriched?.event?.title).toBe("Squad Practice");
+
+      await alice.client.from("posts").delete().eq("id", recruitPost.id);
+      await admin.from("events").delete().eq("id", eventCrossId);
+      await admin.from("groups").delete().eq("id", grpId);
     });
 
     it("signupForEvent + listEventParticipants round-trip", async () => {
@@ -1650,8 +2036,8 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       await alice.client.from("events").delete().eq("id", eventId);
     });
 
-    // G6/G7/G8 — match status fan-out. Bare event (no backing group_id)
-    // so we cover the notification-only branch. Both alice and bob are
+    // G6/G7/G8 — match status fan-out. Events no longer have a backing
+    // group chat, so this is notification-only. Both alice and bob are
     // registered participants so they pass can_see_event for the match
     // row — RLS on event_matches inherits SELECT visibility from
     // can_see_event, so players must also be registered to UPDATE their
@@ -1811,16 +2197,23 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       await alice.client.from("events").delete().eq("id", eventId);
     });
 
-    // U5 — every new event auto-creates a backing group, adds the
-    // owner as group owner, and posts a typed welcome message. The
-    // event row gets group_id populated. Membership stays in sync as
-    // event_participants flip between registered and other statuses.
-    it("event create auto-spins a backing group + welcome message", async () => {
+    // U5 — events do NOT auto-create a backing group or chat. Creating
+    // an event leaves the creator's group list untouched: no new groups
+    // row, no group_members row, no welcome message. (We pre-snapshot
+    // groups the creator already owns so the assertion isolates the
+    // event's effect from any unrelated test fixture state.)
+    it("event create does not spin up a backing group or chat", async () => {
+      const { data: beforeGroups } = await alice.client
+        .from("groups")
+        .select("id")
+        .eq("owner_id", alice.id);
+      const beforeIds = new Set((beforeGroups ?? []).map((g) => g.id));
+
       const { data: ev } = await alice.client
         .from("events")
         .insert({
           owner_id: alice.id,
-          title: "Backing Group Test",
+          title: "No Backing Group Test",
           event_type: "mixer",
           start_date: new Date(Date.now() + 86_400_000).toISOString(),
           end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
@@ -1829,88 +2222,13 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         })
         .select("id")
         .single();
-      // RETURNING is computed BEFORE the AFTER-INSERT trigger sets
-      // group_id, so re-fetch to see the linked group.
-      const { data: hydrated } = await alice.client
-        .from("events")
-        .select("id, group_id")
-        .eq("id", ev!.id)
-        .single();
-      expect(hydrated?.group_id).toBeTruthy();
-      const groupId = hydrated!.group_id!;
 
-      const { data: ownerMember } = await alice.client
-        .from("group_members")
-        .select("role")
-        .eq("group_id", groupId)
-        .eq("user_id", alice.id)
-        .single();
-      expect(ownerMember?.role).toBe("owner");
-
-      const { data: welcome } = await alice.client
-        .from("group_messages")
-        .select("content, sender_id")
-        .eq("group_id", groupId);
-      expect((welcome ?? []).length).toBe(1);
-      expect(welcome![0].content).toContain("mixer");
-      expect(welcome![0].sender_id).toBe(alice.id);
-
-      await alice.client.from("events").delete().eq("id", ev!.id);
-    });
-
-    it("event_participants membership stays in sync with the backing group", async () => {
-      const { data: ev } = await alice.client
-        .from("events")
-        .insert({
-          owner_id: alice.id,
-          title: "Sync Members Test",
-          event_type: "round_robin",
-          start_date: new Date(Date.now() + 86_400_000).toISOString(),
-          end_date: new Date(Date.now() + 2 * 86_400_000).toISOString(),
-          visibility: "public",
-          is_public_signup: true,
-        })
+      const { data: afterGroups } = await alice.client
+        .from("groups")
         .select("id")
-        .single();
-      const { data: hydrated } = await alice.client
-        .from("events")
-        .select("group_id")
-        .eq("id", ev!.id)
-        .single();
-      const groupId = hydrated!.group_id!;
-
-      // bob registers via admin so we sidestep can_see_event for the test.
-      const admin = adminClient();
-      const { data: bobPart } = await admin
-        .from("event_participants")
-        .insert({ event_id: ev!.id, user_id: bob.id, status: "registered" })
-        .select("id")
-        .single();
-      const { data: bobMember } = await admin
-        .from("group_members")
-        .select("role")
-        .eq("group_id", groupId)
-        .eq("user_id", bob.id)
-        .single();
-      expect(bobMember?.role).toBe("member");
-
-      // Withdraw -> bob removed from chat (owner row stays untouched).
-      await admin
-        .from("event_participants")
-        .update({ status: "withdrawn" })
-        .eq("id", bobPart!.id);
-      const { data: bobAfter } = await admin
-        .from("group_members")
-        .select("id")
-        .eq("group_id", groupId)
-        .eq("user_id", bob.id);
-      expect((bobAfter ?? []).length).toBe(0);
-      const { data: ownerStill } = await admin
-        .from("group_members")
-        .select("id")
-        .eq("group_id", groupId)
-        .eq("user_id", alice.id);
-      expect((ownerStill ?? []).length).toBe(1);
+        .eq("owner_id", alice.id);
+      const newGroups = (afterGroups ?? []).filter((g) => !beforeIds.has(g.id));
+      expect(newGroups).toEqual([]);
 
       await alice.client.from("events").delete().eq("id", ev!.id);
     });
@@ -2564,10 +2882,11 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       await admin.from("events").delete().eq("id", eventId);
     });
 
-    // Tournament — advance_tournament_winner pulls the winner of a
-    // round-1 match into the next round's slot when the sibling
-    // hasn't completed yet, and posts a champion message on the final.
-    it("advance_tournament_winner promotes winners + announces champion", async () => {
+    // Tournament — advance_tournament_winner advances the round-1
+    // winner into the final slot. (No backing group chat means no
+    // champion announcement to assert on; the bracket-state change is
+    // the contract.)
+    it("advance_tournament_winner advances the winner to the final", async () => {
       const admin = adminClient();
       const { data: ev } = await alice.client
         .from("events")
@@ -2583,20 +2902,14 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         .select("id")
         .single();
       const eventId = ev!.id;
-      const { data: hydrated } = await alice.client
-        .from("events")
-        .select("group_id")
-        .eq("id", eventId)
-        .single();
-      const groupId = hydrated!.group_id!;
 
       await admin.from("event_participants").insert([
         { event_id: eventId, user_id: alice.id, status: "registered" },
         { event_id: eventId, user_id: bob.id, status: "registered" },
       ]);
 
-      // Two-player tournament: seed one round-1 match. Completing it is
-      // the final — champion announcement should fire.
+      // Two-player tournament: seed one round-1 match, which is the
+      // final. Completing it should mark the bracket done.
       const seeded = await alice.client.rpc("seed_event_bracket", {
         p_event_id: eventId,
         p_pairs: [[alice.id, bob.id]],
@@ -2625,16 +2938,13 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         .update({ confirmed_by: bob.id, status: "completed" })
         .eq("id", matchId);
 
-      // Final completed -> "🏆 Champion" announcement in the backing
-      // group chat.
-      const { data: msgs } = await admin
-        .from("group_messages")
-        .select("content")
-        .eq("group_id", groupId)
-        .order("created_at", { ascending: false })
-        .limit(5);
-      const champion = (msgs ?? []).find((m) => m.content.includes("Champion"));
-      expect(champion).toBeDefined();
+      // The final completing should not spawn a phantom R2 row.
+      const { data: r2 } = await admin
+        .from("event_matches")
+        .select("id")
+        .eq("event_id", eventId)
+        .eq("round", 2);
+      expect((r2 ?? []).length).toBe(0);
 
       await admin.from("events").delete().eq("id", eventId);
     });
