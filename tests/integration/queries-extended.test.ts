@@ -323,4 +323,66 @@ describe.skipIf(!integrationEnvReady)("extended query helpers (live Supabase)", 
       expect(aft?.length).toBe(0);
     });
   });
+
+  // Albums has TWO FKs between albums and album_items
+  // (album_items.album_id and albums.cover_item_id), so the embed needs an
+  // explicit FK hint. Without it PostgREST silently returns an error and
+  // the page renders "No albums yet" even after a successful insert.
+  describe("album page selects", () => {
+    let groupId: string;
+    let albumId: string;
+    beforeAll(async () => {
+      const { data: g, error: gErr } = await alice.client
+        .from("groups")
+        .insert({ name: "Album Test Squad", owner_id: alice.id })
+        .select("id")
+        .single();
+      if (gErr) throw gErr;
+      groupId = g!.id;
+      const { data: a, error: aErr } = await alice.client
+        .from("albums")
+        .insert({
+          group_id: groupId,
+          name: "Spring 2026",
+          description: "season opener",
+          created_by_id: alice.id,
+        })
+        .select("id")
+        .single();
+      if (aErr) throw aErr;
+      albumId = a!.id;
+    });
+
+    it("/groups/[id]/albums list select returns the album", async () => {
+      const { data, error } = await alice.client
+        .from("albums")
+        .select(
+          `id, name, description, created_at, cover_item_id,
+           createdBy:profiles!albums_created_by_id_fkey ( id, name, profile_image_url ),
+           items:album_items!album_items_album_id_fkey ( id, url, media_type )`
+        )
+        .eq("group_id", groupId)
+        .order("created_at", { ascending: false });
+      expect(error).toBeNull();
+      expect(data?.length).toBe(1);
+      expect(data?.[0].id).toBe(albumId);
+      expect(Array.isArray(data?.[0].items)).toBe(true);
+    });
+
+    it("/groups/[id]/albums/[albumId] detail select returns the album", async () => {
+      const { data, error } = await alice.client
+        .from("albums")
+        .select(
+          `id, name, description, created_at, created_by_id, cover_item_id,
+           createdBy:profiles!albums_created_by_id_fkey ( id, name, profile_image_url ),
+           items:album_items!album_items_album_id_fkey ( id, url, media_type, caption, created_at,
+             addedBy:profiles!album_items_added_by_id_fkey ( id, name, profile_image_url )
+           )`
+        )
+        .eq("id", albumId)
+        .maybeSingle();
+      expect(error).toBeNull();
+      expect(data?.id).toBe(albumId);
+    });
+  });
 });

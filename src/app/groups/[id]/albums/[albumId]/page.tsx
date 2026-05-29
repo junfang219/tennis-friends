@@ -64,7 +64,7 @@ export default function AlbumDetailPage() {
       .select(
         `id, name, description, created_at, created_by_id, cover_item_id,
          createdBy:profiles!albums_created_by_id_fkey ( id, name, profile_image_url ),
-         items:album_items ( id, url, media_type, caption, created_at,
+         items:album_items!album_items_album_id_fkey ( id, url, media_type, caption, created_at,
            addedBy:profiles!album_items_added_by_id_fkey ( id, name, profile_image_url )
          )`
       )

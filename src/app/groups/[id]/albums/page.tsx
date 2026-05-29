@@ -43,15 +43,21 @@ export default function AlbumsListPage() {
 
   const loadAlbums = useCallback(async () => {
     const supabase = createSupabaseBrowserClient();
-    const { data } = await supabase
+    // album_items has two relationships to albums (album_id FK and the
+    // cover_item_id reverse FK), so the embed needs an explicit hint.
+    const { data, error } = await supabase
       .from("albums")
       .select(
         `id, name, description, created_at, cover_item_id,
          createdBy:profiles!albums_created_by_id_fkey ( id, name, profile_image_url ),
-         items:album_items ( id, url, media_type )`
+         items:album_items!album_items_album_id_fkey ( id, url, media_type )`
       )
       .eq("group_id", groupId)
       .order("created_at", { ascending: false });
+    if (error) {
+      setErr(error.message);
+      return;
+    }
     type Row = {
       id: string;
       name: string;
