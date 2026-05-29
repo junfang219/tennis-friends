@@ -2,6 +2,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../types";
+import { getMyIdFast } from "./_authFast";
 
 export interface Chat {
   id: string;
@@ -43,12 +44,12 @@ const CHAT_COLS =
   "id, name, creator_id, post_id, friend_group_id, session_end_at, manual_player_names, created_at, updated_at";
 
 export async function listMyChats(supabase: SupabaseClient<Database>): Promise<Chat[]> {
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) return [];
+  const me = await getMyIdFast(supabase);
+  if (!me) return [];
   const { data: parts, error: pErr } = await supabase
     .from("chat_participants")
     .select("chat_id")
-    .eq("user_id", auth.user.id)
+    .eq("user_id", me)
     .is("hidden_at", null);
   if (pErr) throw pErr;
   const chatIds = (parts ?? []).map((p) => p.chat_id);
@@ -206,12 +207,12 @@ export async function markChatRead(
   supabase: SupabaseClient<Database>,
   chatId: string
 ): Promise<void> {
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) return;
+  const me = await getMyIdFast(supabase);
+  if (!me) return;
   const { error } = await supabase
     .from("chat_participants")
     .update({ last_read_at: new Date().toISOString() })
     .eq("chat_id", chatId)
-    .eq("user_id", auth.user.id);
+    .eq("user_id", me);
   if (error) throw error;
 }

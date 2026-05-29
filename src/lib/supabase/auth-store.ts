@@ -71,3 +71,12 @@ export async function refreshAuthSnapshot(): Promise<void> {
   const { data } = await supabase.auth.getUser();
   setSnapshot({ user: data.user ?? null, loaded: true });
 }
+
+// Non-hook synchronous accessor for query helpers that run outside a
+// React render. Reads from the same in-memory snapshot the hooks read,
+// so query helpers can build RLS-aware filters without a /auth/v1/user
+// round trip every time. Returns null before the initial getUser()
+// resolves; callers should fall back to a network read in that window.
+export function getCachedUserId(): string | null {
+  return snapshot.user?.id ?? null;
+}

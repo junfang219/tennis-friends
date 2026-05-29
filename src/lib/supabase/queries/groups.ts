@@ -2,6 +2,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../types";
+import { getMyIdFast } from "./_authFast";
 
 export interface Group {
   id: string;
@@ -163,9 +164,8 @@ export interface TeamThread {
 export async function listMyTeamThreads(
   supabase: SupabaseClient<Database>
 ): Promise<TeamThread[]> {
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) return [];
-  const me = auth.user.id;
+  const me = await getMyIdFast(supabase);
+  if (!me) return [];
 
   const { data: memberships, error: mErr } = await supabase
     .from("group_members")
@@ -270,13 +270,13 @@ export async function markTeamRead(
   supabase: SupabaseClient<Database>,
   groupId: string
 ): Promise<void> {
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) return;
+  const me = await getMyIdFast(supabase);
+  if (!me) return;
   const { error } = await supabase
     .from("group_members")
     .update({ last_read_at: new Date().toISOString() })
     .eq("group_id", groupId)
-    .eq("user_id", auth.user.id);
+    .eq("user_id", me);
   if (error) throw error;
 }
 

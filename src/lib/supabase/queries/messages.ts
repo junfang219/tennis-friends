@@ -2,6 +2,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../types";
+import { getMyIdFast } from "./_authFast";
 
 const MESSAGE_COLUMNS =
   "id, sender_id, receiver_id, content, media_url, media_type, shared_post_id, created_at";
@@ -33,9 +34,10 @@ export async function listDirectMessages(
   otherId: string,
   opts: { limit?: number } = {}
 ): Promise<DirectMessage[]> {
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) return [];
-  const me = auth.user.id;
+  // Cached snapshot first — avoids a ~60-90ms /auth/v1/user round trip on
+  // every chat open. See getMyIdFast for the trust-boundary rationale.
+  const me = await getMyIdFast(supabase);
+  if (!me) return [];
   const { data, error } = await supabase
     .from("messages")
     .select(MESSAGE_COLUMNS)
@@ -87,11 +89,11 @@ export async function markDmRead(
   supabase: SupabaseClient<Database>,
   otherId: string
 ): Promise<void> {
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) throw new Error("Not signed in");
+  const me = await getMyIdFast(supabase);
+  if (!me) throw new Error("Not signed in");
   const { error } = await supabase.from("direct_message_reads").upsert(
     {
-      user_id: auth.user.id,
+      user_id: me,
       other_id: otherId,
       last_read_at: new Date().toISOString(),
     },
@@ -104,9 +106,8 @@ export async function markDmRead(
 export async function listDmThreads(
   supabase: SupabaseClient<Database>
 ): Promise<DMThread[]> {
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) return [];
-  const me = auth.user.id;
+  const me = await getMyIdFast(supabase);
+  if (!me) return [];
 
   const [msgsRes, readsRes] = await Promise.all([
     supabase
