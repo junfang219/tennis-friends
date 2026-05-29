@@ -22,6 +22,7 @@ import StandingsTable from "@/components/events/StandingsTable";
 import LadderList from "@/components/events/LadderList";
 import RotationCard from "@/components/events/RotationCard";
 import RoundRobinScheduleControls from "@/components/events/RoundRobinScheduleControls";
+import LadderLineupControls from "@/components/events/LadderLineupControls";
 import CheckinDrawer from "@/components/events/CheckinDrawer";
 import { errorMessage } from "@/lib/errorMessage";
 
@@ -566,6 +567,9 @@ export default function EventDetailPage() {
         {event.eventType === "ladder" && (
           <section>
             <h3 className="font-semibold text-gray-900 mb-2 px-1">Ladder</h3>
+            {isOwner && (
+              <LadderLineupControls eventId={event.id} onSeeded={load} />
+            )}
             <LadderList eventId={event.id} currentUserId={currentUserId} />
           </section>
         )}

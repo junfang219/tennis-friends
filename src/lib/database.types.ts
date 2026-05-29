@@ -908,6 +908,7 @@ export type Database = {
           checked_in_at: string | null
           event_id: string
           id: string
+          ladder_rank: number | null
           losses: number
           points: number
           registered_at: string
@@ -921,6 +922,7 @@ export type Database = {
           checked_in_at?: string | null
           event_id: string
           id?: string
+          ladder_rank?: number | null
           losses?: number
           points?: number
           registered_at?: string
@@ -934,6 +936,7 @@ export type Database = {
           checked_in_at?: string | null
           event_id?: string
           id?: string
+          ladder_rank?: number | null
           losses?: number
           points?: number
           registered_at?: string
@@ -2784,6 +2787,7 @@ export type Database = {
         Args: { p_event_id: string; p_pairs: Json }
         Returns: Json
       }
+      seed_ladder_lineup: { Args: { p_event_id: string }; Returns: Json }
     }
     Enums: {
       availability_event_kind: "match" | "practice"

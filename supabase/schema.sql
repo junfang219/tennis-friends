@@ -422,10 +422,17 @@ create table public.event_participants (
   sets_won       integer not null default 0,
   sets_lost      integer not null default 0,
   points         integer not null default 0,
+  -- Ladder-only: explicit rung. Populated by seed_ladder_lineup() and
+  -- swapped by handle_ladder_match_completion() when a lower-ranked
+  -- player wins. Null for non-ladder events and un-seeded ladders.
+  ladder_rank    integer,
   constraint event_participants_unique unique (event_id, user_id)
 );
 create index event_participants_event_status_idx on public.event_participants (event_id, status);
 create index event_participants_user_idx         on public.event_participants (user_id);
+create unique index event_participants_event_ladder_rank_unique
+  on public.event_participants (event_id, ladder_rank)
+  where ladder_rank is not null;
 
 create table public.event_matches (
   id            uuid primary key default gen_random_uuid(),
@@ -5454,12 +5461,80 @@ CREATE TRIGGER event_matches_advance_tournament
   FOR EACH ROW EXECUTE FUNCTION public.advance_tournament_winner();
 
 -- ============================================================
--- LADDER CHALLENGE RPC (propose_ladder_challenge)
+-- LADDER LINEUP + CHALLENGE RPCs
 -- ============================================================
 --
--- Replaces /api/events/[id]/challenges. Reads live standings off the
--- event_participants aggregate columns (kept in sync by
--- recompute_event_standings) and enforces the rank-gap rule.
+-- seed_ladder_lineup() assigns the initial 1..N rungs by NTRP (with
+-- signup time as a tiebreaker so unrated players don't get a random
+-- order). Idempotent: refuses once any participant already has a
+-- ladder_rank. propose_ladder_challenge() prefers the seeded
+-- ladder_rank when present and falls back to the points-derived rank
+-- otherwise. handle_ladder_match_completion() swaps rungs when a
+-- lower-ranked player wins, which is the actual ladder dynamic.
+CREATE OR REPLACE FUNCTION public.seed_ladder_lineup(
+  p_event_id uuid
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller  uuid := auth.uid();
+  v_event   events%ROWTYPE;
+  v_seeded  integer;
+  v_ranked  integer;
+BEGIN
+  IF v_caller IS NULL THEN
+    RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  SELECT * INTO v_event FROM events WHERE id = p_event_id;
+  IF v_event.id IS NULL THEN
+    RAISE EXCEPTION 'Event not found' USING ERRCODE = 'no_data_found';
+  END IF;
+  IF v_event.owner_id <> v_caller THEN
+    RAISE EXCEPTION 'Only the organizer can seed the ladder'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF v_event.event_type <> 'ladder' THEN
+    RAISE EXCEPTION 'Lineup seeding is only for ladder events'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  SELECT count(*) INTO v_seeded
+    FROM event_participants
+   WHERE event_id = p_event_id AND ladder_rank IS NOT NULL;
+  IF v_seeded > 0 THEN
+    RAISE EXCEPTION 'Ladder lineup already seeded for this event'
+      USING ERRCODE = 'unique_violation';
+  END IF;
+
+  WITH ordered AS (
+    SELECT ep.id,
+           ROW_NUMBER() OVER (
+             ORDER BY p.ntrp_rating DESC NULLS LAST,
+                      ep.registered_at ASC,
+                      ep.user_id ASC
+           ) AS rk
+    FROM event_participants ep
+    JOIN profiles p ON p.id = ep.user_id
+    WHERE ep.event_id = p_event_id AND ep.status = 'registered'
+  )
+  UPDATE event_participants ep
+     SET ladder_rank = o.rk
+    FROM ordered o
+   WHERE ep.id = o.id;
+  GET DIAGNOSTICS v_ranked = ROW_COUNT;
+
+  IF v_ranked = 0 THEN
+    RAISE EXCEPTION 'No registered players to seed'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  RETURN jsonb_build_object('seeded', v_ranked);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.seed_ladder_lineup(uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.seed_ladder_lineup(uuid) TO authenticated;
+
 CREATE OR REPLACE FUNCTION public.propose_ladder_challenge(
   p_event_id     uuid,
   p_opponent_id  uuid,
@@ -5478,6 +5553,7 @@ DECLARE
   v_opp_rank integer;
   v_existing uuid;
   v_new_id   uuid;
+  v_seeded   integer;
 BEGIN
   IF v_caller IS NULL THEN
     RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege';
@@ -5523,21 +5599,34 @@ BEGIN
       USING ERRCODE = 'unique_violation';
   END IF;
 
-  WITH ranked AS (
-    SELECT user_id,
-           ROW_NUMBER() OVER (
-             ORDER BY points DESC,
-                      (sets_won - sets_lost) DESC,
-                      losses ASC,
-                      user_id ASC
-           ) AS rank
+  SELECT count(*) INTO v_seeded
     FROM event_participants
-    WHERE event_id = p_event_id AND status = 'registered'
-  )
-  SELECT
-    (SELECT rank FROM ranked WHERE user_id = v_caller),
-    (SELECT rank FROM ranked WHERE user_id = p_opponent_id)
-  INTO v_my_rank, v_opp_rank;
+   WHERE event_id = p_event_id AND ladder_rank IS NOT NULL;
+
+  IF v_seeded > 0 THEN
+    SELECT
+      (SELECT ladder_rank FROM event_participants
+        WHERE event_id = p_event_id AND user_id = v_caller),
+      (SELECT ladder_rank FROM event_participants
+        WHERE event_id = p_event_id AND user_id = p_opponent_id)
+    INTO v_my_rank, v_opp_rank;
+  ELSE
+    WITH ranked AS (
+      SELECT user_id,
+             ROW_NUMBER() OVER (
+               ORDER BY points DESC,
+                        (sets_won - sets_lost) DESC,
+                        losses ASC,
+                        user_id ASC
+             ) AS rank
+      FROM event_participants
+      WHERE event_id = p_event_id AND status = 'registered'
+    )
+    SELECT
+      (SELECT rank FROM ranked WHERE user_id = v_caller),
+      (SELECT rank FROM ranked WHERE user_id = p_opponent_id)
+    INTO v_my_rank, v_opp_rank;
+  END IF;
 
   IF v_my_rank IS NULL OR v_opp_rank IS NULL THEN
     RAISE EXCEPTION 'Rank not available' USING ERRCODE = 'invalid_parameter_value';
@@ -5569,6 +5658,76 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.propose_ladder_challenge(uuid, uuid, timestamptz, text) FROM public;
 GRANT EXECUTE ON FUNCTION public.propose_ladder_challenge(uuid, uuid, timestamptz, text) TO authenticated;
+
+-- Trigger: when a ladder match completes, swap rungs if the lower
+-- ranked player (higher rank number) won. Uses a temporary -1 stash
+-- to dodge the (event_id, ladder_rank) unique index during the swap.
+CREATE OR REPLACE FUNCTION public.handle_ladder_match_completion()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_event       events%ROWTYPE;
+  v_winner_id   uuid;
+  v_loser_id    uuid;
+  v_winner_rank integer;
+  v_loser_rank  integer;
+BEGIN
+  IF NEW.status <> 'completed' OR OLD.status = 'completed' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.winner_side IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT * INTO v_event FROM events WHERE id = NEW.event_id;
+  IF v_event.event_type <> 'ladder' THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.winner_side = 1 THEN
+    v_winner_id := NEW.player1_id;
+    v_loser_id  := NEW.player2_id;
+  ELSE
+    v_winner_id := NEW.player2_id;
+    v_loser_id  := NEW.player1_id;
+  END IF;
+
+  SELECT ladder_rank INTO v_winner_rank
+    FROM event_participants
+   WHERE event_id = NEW.event_id AND user_id = v_winner_id;
+  SELECT ladder_rank INTO v_loser_rank
+    FROM event_participants
+   WHERE event_id = NEW.event_id AND user_id = v_loser_id;
+
+  IF v_winner_rank IS NULL OR v_loser_rank IS NULL THEN
+    RETURN NEW;
+  END IF;
+  IF v_winner_rank <= v_loser_rank THEN
+    RETURN NEW;
+  END IF;
+
+  UPDATE event_participants
+     SET ladder_rank = -1
+   WHERE event_id = NEW.event_id AND user_id = v_winner_id;
+  UPDATE event_participants
+     SET ladder_rank = v_winner_rank
+   WHERE event_id = NEW.event_id AND user_id = v_loser_id;
+  UPDATE event_participants
+     SET ladder_rank = v_loser_rank
+   WHERE event_id = NEW.event_id AND user_id = v_winner_id;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS handle_ladder_match_completion ON public.event_matches;
+CREATE TRIGGER handle_ladder_match_completion
+AFTER UPDATE ON public.event_matches
+FOR EACH ROW
+EXECUTE FUNCTION public.handle_ladder_match_completion();
 
 -- ============================================================
 -- recompute_event_standings — refresh aggregate columns

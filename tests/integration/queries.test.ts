@@ -2985,6 +2985,113 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       await admin.from("events").delete().eq("id", eventId);
     });
 
+    // Ladder — seed_ladder_lineup ranks by NTRP desc, is organizer-
+    // only + idempotent, and the propose_ladder_challenge gap check
+    // then reads from ladder_rank instead of points. handle_ladder_
+    // match_completion swaps rungs when a lower-ranked player wins.
+    it("seed_ladder_lineup ranks by NTRP and rungs swap on a lower-ranked win", async () => {
+      const admin = adminClient();
+      // Pin NTRP so the seeded order is predictable: bob (4.0) > alice
+      // (3.5) > carol (3.0). bob ends at rung 1, alice at rung 2,
+      // carol at rung 3.
+      await admin.from("profiles").update({ ntrp_rating: 3.5 }).eq("id", alice.id);
+      await admin.from("profiles").update({ ntrp_rating: 4.0 }).eq("id", bob.id);
+      await admin.from("profiles").update({ ntrp_rating: 3.0 }).eq("id", carol.id);
+
+      const { data: ev } = await alice.client
+        .from("events")
+        .insert({
+          owner_id: alice.id,
+          title: "Ladder Seed Test",
+          event_type: "ladder",
+          start_date: new Date(Date.now() + 86_400_000).toISOString(),
+          end_date: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+          visibility: "public",
+          is_public_signup: true,
+        })
+        .select("id")
+        .single();
+      const eventId = ev!.id;
+      await admin.from("event_participants").insert([
+        { event_id: eventId, user_id: alice.id, status: "registered" },
+        { event_id: eventId, user_id: bob.id, status: "registered" },
+        { event_id: eventId, user_id: carol.id, status: "registered" },
+      ]);
+
+      // Non-organizer is rejected.
+      const denied = await bob.client.rpc("seed_ladder_lineup", {
+        p_event_id: eventId,
+      });
+      expect(denied.error?.message).toContain("organizer");
+
+      const ok = await alice.client.rpc("seed_ladder_lineup", {
+        p_event_id: eventId,
+      });
+      expect(ok.error).toBeNull();
+      expect((ok.data as { seeded?: number } | null)?.seeded).toBe(3);
+
+      const { data: ranks } = await admin
+        .from("event_participants")
+        .select("user_id, ladder_rank")
+        .eq("event_id", eventId);
+      const rankByUser = new Map(
+        (ranks ?? []).map((r) => [r.user_id, r.ladder_rank])
+      );
+      expect(rankByUser.get(bob.id)).toBe(1);
+      expect(rankByUser.get(alice.id)).toBe(2);
+      expect(rankByUser.get(carol.id)).toBe(3);
+
+      // Re-seeding refuses.
+      const second = await alice.client.rpc("seed_ladder_lineup", {
+        p_event_id: eventId,
+      });
+      expect(second.error?.message).toContain("already seeded");
+
+      // Carol (rung 3) challenges alice (rung 2) — within the default
+      // max gap of 3. The challenge inserts a 'proposed' match.
+      const challenge = await carol.client.rpc("propose_ladder_challenge", {
+        p_event_id: eventId,
+        p_opponent_id: alice.id,
+      });
+      expect(challenge.error).toBeNull();
+      const matchId = challenge.data as string;
+
+      // Accept, complete, and report carol as the winner. The trigger
+      // should swap rungs so carol ends at 2, alice at 3.
+      await admin
+        .from("event_matches")
+        .update({ status: "scheduled" })
+        .eq("id", matchId);
+      await admin
+        .from("event_matches")
+        .update({
+          score: "6-4,6-3",
+          // propose_ladder_challenge puts the challenger (carol) at
+          // player1 and the opponent (alice) at player2, so a carol
+          // win is winner_side=1.
+          winner_side: 1,
+          status: "completed",
+        })
+        .eq("id", matchId);
+
+      const { data: ranksAfter } = await admin
+        .from("event_participants")
+        .select("user_id, ladder_rank")
+        .eq("event_id", eventId);
+      const afterByUser = new Map(
+        (ranksAfter ?? []).map((r) => [r.user_id, r.ladder_rank])
+      );
+      expect(afterByUser.get(carol.id)).toBe(2);
+      expect(afterByUser.get(alice.id)).toBe(3);
+      expect(afterByUser.get(bob.id)).toBe(1);
+
+      await admin.from("events").delete().eq("id", eventId);
+      // Reset NTRP to keep other tests independent.
+      await admin.from("profiles").update({ ntrp_rating: null }).eq("id", alice.id);
+      await admin.from("profiles").update({ ntrp_rating: null }).eq("id", bob.id);
+      await admin.from("profiles").update({ ntrp_rating: null }).eq("id", carol.id);
+    });
+
     // Tournament — advance_tournament_winner advances the round-1
     // winner into the final slot. (No backing group chat means no
     // champion announcement to assert on; the bracket-state change is

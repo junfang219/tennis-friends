@@ -28,10 +28,21 @@ export default function LadderList({
       try {
         const supabase = createSupabaseBrowserClient();
         const parts = await listEventParticipants(supabase, eventId);
-        const sorted = [...parts].sort((a, b) => b.points - a.points);
+        // Once the ladder is seeded, ladder_rank is the source of
+        // truth (swapped by handle_ladder_match_completion on match
+        // wins). Falls back to points-based ordering for un-seeded
+        // ladders so this view keeps working the way it did before.
+        const isSeeded = parts.some((p) => p.ladder_rank != null);
+        const sorted = isSeeded
+          ? [...parts].sort(
+              (a, b) =>
+                (a.ladder_rank ?? Number.MAX_SAFE_INTEGER) -
+                (b.ladder_rank ?? Number.MAX_SAFE_INTEGER)
+            )
+          : [...parts].sort((a, b) => b.points - a.points);
         setRows(
           sorted.map((p, i) => ({
-            rank: i + 1,
+            rank: p.ladder_rank ?? i + 1,
             userId: p.user_id,
             user: {
               id: p.user.id,

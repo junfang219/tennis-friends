@@ -145,6 +145,7 @@ export interface EventParticipantRow {
   sets_won: number;
   sets_lost: number;
   points: number;
+  ladder_rank: number | null;
   user: { id: string; name: string; profile_image_url: string; ntrp_rating: number | null };
 }
 
@@ -179,7 +180,7 @@ export async function listEventParticipants(
   const { data, error } = await supabase
     .from("event_participants")
     .select(
-      `id, event_id, user_id, status, registered_at, checked_in_at, wins, losses, sets_won, sets_lost, points,
+      `id, event_id, user_id, status, registered_at, checked_in_at, wins, losses, sets_won, sets_lost, points, ladder_rank,
        user:profiles!event_participants_user_id_fkey ( id, name, profile_image_url, ntrp_rating )`
     )
     .eq("event_id", eventId);
@@ -197,7 +198,7 @@ export async function signupForEvent(
     .from("event_participants")
     .insert({ event_id: eventId, user_id: auth.user.id, status: "registered" })
     .select(
-      `id, event_id, user_id, status, registered_at, checked_in_at, wins, losses, sets_won, sets_lost, points,
+      `id, event_id, user_id, status, registered_at, checked_in_at, wins, losses, sets_won, sets_lost, points, ladder_rank,
        user:profiles!event_participants_user_id_fkey ( id, name, profile_image_url, ntrp_rating )`
     )
     .single();
