@@ -4,6 +4,10 @@ const config: Config = {
   content: [
     "./src/**/*.{js,ts,jsx,tsx,mdx}",
   ],
+  // Tailwind's content scanner picks up `[-:/]` from regex character classes
+  // in source files (e.g. /^(\d+)\s*[-:/]\s*(\d+)/) and tries to emit it as
+  // an arbitrary property, producing invalid CSS (`-: /;`). Block it.
+  blocklist: ["[-:/]"],
   theme: {
     extend: {
       colors: {

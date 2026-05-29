@@ -2812,25 +2812,36 @@ CREATE POLICY availabilities_select_member ON availabilities
     )
   );
 
--- INSERT: only self, and only if member of the parent group.
-CREATE POLICY availabilities_upsert_self ON availabilities
+-- INSERT: self for matches/practices in their group; captains+ on matches can
+-- also insert rows on behalf of any group member (so they can assign a lineup
+-- slot before the member has RSVP'd themselves — mirrors the UPDATE policy).
+CREATE POLICY availabilities_insert_self_or_captain ON availabilities
   FOR INSERT TO authenticated WITH CHECK (
-    user_id = auth.uid()
-    AND (
-      (
-        match_id IS NOT NULL AND EXISTS (
-          SELECT 1 FROM team_matches tm
-          WHERE tm.id = availabilities.match_id
-            AND is_group_member(tm.group_id)
+    (
+      user_id = auth.uid()
+      AND (
+        (
+          match_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM team_matches tm
+            WHERE tm.id = availabilities.match_id
+              AND is_group_member(tm.group_id)
+          )
+        )
+        OR (
+          practice_id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM team_practices tp
+            JOIN practice_series ps ON ps.id = tp.series_id
+            WHERE tp.id = availabilities.practice_id
+              AND is_group_member(ps.group_id)
+          )
         )
       )
-      OR (
-        practice_id IS NOT NULL AND EXISTS (
-          SELECT 1 FROM team_practices tp
-          JOIN practice_series ps ON ps.id = tp.series_id
-          WHERE tp.id = availabilities.practice_id
-            AND is_group_member(ps.group_id)
-        )
+    )
+    OR (
+      match_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM team_matches tm
+        WHERE tm.id = availabilities.match_id
+          AND has_group_role(tm.group_id, 'captain'::group_role)
       )
     )
   );
@@ -5124,6 +5135,103 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.seed_event_bracket(uuid, jsonb) FROM public;
 GRANT EXECUTE ON FUNCTION public.seed_event_bracket(uuid, jsonb) TO authenticated;
+
+-- post_event_rotation_round() is the mixer counterpart to
+-- seed_event_bracket: organizer-only, mixer-only, atomic insert of all
+-- pairings for one round. Idempotent — refuses if any event_matches
+-- row already exists for (event_id, round). Pairs come from
+-- src/lib/eventCompetitive.ts::mixerPairings so the deterministic
+-- shuffle lives in one place and clients can retry without producing
+-- duplicate or shifted assignments. p_bye is informational only — the
+-- bye player isn't recorded as a match; callers display it from the
+-- RPC's response.
+CREATE OR REPLACE FUNCTION public.post_event_rotation_round(
+  p_event_id uuid,
+  p_round    integer,
+  p_pairs    jsonb,
+  p_bye      uuid DEFAULT NULL
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller   uuid := auth.uid();
+  v_event    events%ROWTYPE;
+  v_existing integer;
+  v_total    integer;
+  v_idx      integer;
+  v_pair     jsonb;
+  v_p1       uuid;
+  v_p2       uuid;
+  v_inserted integer := 0;
+BEGIN
+  IF v_caller IS NULL THEN
+    RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  SELECT * INTO v_event FROM events WHERE id = p_event_id;
+  IF v_event.id IS NULL THEN
+    RAISE EXCEPTION 'Event not found' USING ERRCODE = 'no_data_found';
+  END IF;
+  IF v_event.owner_id <> v_caller THEN
+    RAISE EXCEPTION 'Only the organizer can post rotations'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF v_event.event_type <> 'mixer' THEN
+    RAISE EXCEPTION 'Rotations are only for mixers'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF p_round IS NULL OR p_round < 1 THEN
+    RAISE EXCEPTION 'round must be >= 1' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  SELECT count(*) INTO v_existing
+    FROM event_matches
+   WHERE event_id = p_event_id AND round = p_round;
+  IF v_existing > 0 THEN
+    RAISE EXCEPTION 'Round % already exists', p_round
+      USING ERRCODE = 'unique_violation';
+  END IF;
+
+  IF p_pairs IS NULL OR jsonb_typeof(p_pairs) <> 'array' THEN
+    RAISE EXCEPTION 'pairs must be a JSON array'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  v_total := jsonb_array_length(p_pairs);
+  IF v_total < 1 THEN
+    RAISE EXCEPTION 'Need at least one pair'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  FOR v_idx IN 0 .. v_total - 1 LOOP
+    v_pair := p_pairs->v_idx;
+    IF jsonb_typeof(v_pair) <> 'array' OR jsonb_array_length(v_pair) <> 2 THEN
+      RAISE EXCEPTION 'pairs[%] must be a 2-element array', v_idx
+        USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_p1 := NULLIF(v_pair->>0, '')::uuid;
+    v_p2 := NULLIF(v_pair->>1, '')::uuid;
+    IF v_p1 IS NULL OR v_p2 IS NULL THEN
+      RAISE EXCEPTION 'pairs[%]: both slots required for a mixer pair', v_idx
+        USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_p1 = v_p2 THEN
+      RAISE EXCEPTION 'pairs[%]: a player cannot be paired with themselves', v_idx
+        USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    INSERT INTO event_matches (
+      event_id, player1_id, player2_id, status, round, court_assign
+    ) VALUES (
+      p_event_id, v_p1, v_p2, 'scheduled', p_round, 'Court ' || (v_idx + 1)::text
+    );
+    v_inserted := v_inserted + 1;
+  END LOOP;
+
+  RETURN jsonb_build_object('round', p_round, 'pairs', v_inserted, 'bye', p_bye);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.post_event_rotation_round(uuid, integer, jsonb, uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.post_event_rotation_round(uuid, integer, jsonb, uuid) TO authenticated;
 
 -- advance_event_match_to_next_round: shared helper containing the
 -- bracket advancement algorithm. Called both by the AFTER UPDATE

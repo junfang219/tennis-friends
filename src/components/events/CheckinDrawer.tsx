@@ -57,11 +57,18 @@ export default function CheckinDrawer({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      // zIndex 10000 sits above the iOS BottomNav (zIndex 9999, bumped
+      // there to overlay Leaflet on the courts page). At the default
+      // Tailwind z-50 the drawer's bottom rows hide behind the tab bar.
+      style={{ zIndex: 10000 }}
+      className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md max-h-[80vh] flex flex-col"
+        // pb-[env(safe-area-inset-bottom)] keeps the last roster row
+        // clear of the iOS home indicator when the drawer is full of
+        // players and pinned to the bottom edge.
+        className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md max-h-[80vh] flex flex-col pb-[env(safe-area-inset-bottom)]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between p-5 border-b border-gray-100">

@@ -230,6 +230,56 @@ export function bracketRoundLabel(round: number, totalRounds: number): string {
   return `Round of ${1 << (fromEnd + 1)}`;
 }
 
+// ---------------------------------------------------------------------
+// Mixer rotation pairing
+// ---------------------------------------------------------------------
+
+// FNV-1a hash → 32-bit unsigned int seed. Used to derive a deterministic
+// PRNG state from `${eventId}:${round}` so reissuing the same round
+// regenerates the same pairings.
+function hashSeed(s: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+
+// Fisher–Yates shuffle seeded by `seed`. Pure: same seed + input → same
+// output, so callers can preview the pairing client-side and have the
+// server insert the identical result.
+export function shuffleDeterministic<T>(items: readonly T[], seed: string): T[] {
+  const out = [...items];
+  let state = hashSeed(seed) || 1;
+  for (let i = out.length - 1; i > 0; i--) {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    const j = state % (i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+// Pair players for one mixer round. Odd count → last shuffled player
+// sits out (bye). The shuffle is seeded by (eventId, round) so a retry
+// after a transient network failure produces the same pairings.
+export function mixerPairings(
+  playerIds: readonly string[],
+  eventId: string,
+  round: number
+): { pairs: Array<[string, string]>; bye: string | null } {
+  const shuffled = shuffleDeterministic(playerIds, `${eventId}:${round}`);
+  let bye: string | null = null;
+  if (shuffled.length % 2 === 1) {
+    bye = shuffled.pop() ?? null;
+  }
+  const pairs: Array<[string, string]> = [];
+  for (let i = 0; i < shuffled.length; i += 2) {
+    pairs.push([shuffled[i], shuffled[i + 1]]);
+  }
+  return { pairs, bye };
+}
+
 // Ladder challenge gap config: parsed from events.config jsonb (or a
 // JSON string, for forward-compat). Default 3.
 export function ladderMaxGap(rawConfig: unknown): number {

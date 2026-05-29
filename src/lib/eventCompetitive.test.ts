@@ -8,6 +8,8 @@ import {
   bracketRounds,
   bracketRoundLabel,
   ladderMaxGap,
+  mixerPairings,
+  shuffleDeterministic,
 } from "./eventCompetitive";
 
 describe("parseScore", () => {
@@ -185,5 +187,57 @@ describe("ladderMaxGap", () => {
   it("falls back to default when the value is invalid", () => {
     expect(ladderMaxGap({ ladderMaxGap: -1 })).toBe(3);
     expect(ladderMaxGap({ ladderMaxGap: "five" })).toBe(3);
+  });
+});
+
+describe("shuffleDeterministic", () => {
+  it("returns the same order for the same seed", () => {
+    const items = ["a", "b", "c", "d", "e", "f"];
+    expect(shuffleDeterministic(items, "evt:1")).toEqual(
+      shuffleDeterministic(items, "evt:1")
+    );
+  });
+
+  it("returns a different order for a different seed", () => {
+    const items = ["a", "b", "c", "d", "e", "f"];
+    const r1 = shuffleDeterministic(items, "evt:1").join(",");
+    const r2 = shuffleDeterministic(items, "evt:2").join(",");
+    expect(r1).not.toBe(r2);
+  });
+
+  it("preserves the multiset", () => {
+    const items = ["a", "b", "c", "d", "e"];
+    const out = shuffleDeterministic(items, "evt:7");
+    expect([...out].sort()).toEqual([...items].sort());
+  });
+});
+
+describe("mixerPairings", () => {
+  it("pairs an even pool with no bye", () => {
+    const { pairs, bye } = mixerPairings(["a", "b", "c", "d"], "evt", 1);
+    expect(pairs.length).toBe(2);
+    expect(bye).toBeNull();
+    const flat = pairs.flat();
+    expect([...flat].sort()).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("assigns a single bye when the pool is odd", () => {
+    const { pairs, bye } = mixerPairings(["a", "b", "c", "d", "e"], "evt", 1);
+    expect(pairs.length).toBe(2);
+    expect(bye).not.toBeNull();
+    expect(["a", "b", "c", "d", "e"]).toContain(bye!);
+    const flat = [...pairs.flat(), bye!];
+    expect([...flat].sort()).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("is deterministic across calls (idempotent retry-safe)", () => {
+    const ids = ["a", "b", "c", "d", "e", "f", "g"];
+    const first = mixerPairings(ids, "evt-xyz", 3);
+    const second = mixerPairings(ids, "evt-xyz", 3);
+    expect(second).toEqual(first);
+  });
+
+  it("returns no pairs / null bye for an empty pool", () => {
+    expect(mixerPairings([], "evt", 1)).toEqual({ pairs: [], bye: null });
   });
 });

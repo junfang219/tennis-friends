@@ -2767,6 +2767,15 @@ export type Database = {
         Args: { p_court_id: string; p_has_empty: boolean; p_post_id?: string }
         Returns: Json
       }
+      post_event_rotation_round: {
+        Args: {
+          p_bye?: string
+          p_event_id: string
+          p_pairs: Json
+          p_round: number
+        }
+        Returns: Json
+      }
       seed_event_bracket: {
         Args: { p_event_id: string; p_pairs: Json }
         Returns: Json
