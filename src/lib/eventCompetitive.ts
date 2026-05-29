@@ -40,7 +40,10 @@ export function parseScore(score: string): ScoreSet[] {
     .map((set) => set.trim())
     .filter(Boolean)
     .map((set): ScoreSet | null => {
-      const m = set.match(/^(\d+)\s*[-:/]\s*(\d+)/);
+      // Alternation, not a [-:/] char class: Tailwind's content scanner reads
+      // "[-:/]" as an arbitrary-property class and emits invalid CSS that
+      // Turbopack's parser then rejects. (?:-|:|\/) matches identically.
+      const m = set.match(/^(\d+)\s*(?:-|:|\/)\s*(\d+)/);
       if (!m) return null;
       const a = parseInt(m[1], 10);
       const b = parseInt(m[2], 10);

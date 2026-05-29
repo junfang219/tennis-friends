@@ -174,7 +174,10 @@ function parseInitial(score: string): SetScore[] {
     .map((p) => p.trim())
     .filter(Boolean)
     .map((p) => {
-      const m = p.match(/^(\d+)\s*[-:/]\s*(\d+)/);
+      // Alternation, not a [-:/] char class: Tailwind's content scanner reads
+      // "[-:/]" as an arbitrary-property class and emits invalid CSS that
+      // Turbopack's parser then rejects. (?:-|:|\/) matches identically.
+      const m = p.match(/^(\d+)\s*(?:-|:|\/)\s*(\d+)/);
       return m ? { a: m[1], b: m[2] } : { a: "", b: "" };
     });
   return parts.length > 0 ? parts : [{ a: "", b: "" }];
