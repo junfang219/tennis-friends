@@ -160,6 +160,7 @@ async function sendOne(
         "authorization": `bearer ${jwt}`,
         "apns-topic": cfg.bundleId,
         "apns-push-type": "alert",
+        "apns-priority": "10",
         "content-type": "application/json",
       },
       body: JSON.stringify(body),
