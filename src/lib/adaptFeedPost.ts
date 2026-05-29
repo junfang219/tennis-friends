@@ -37,7 +37,7 @@ export type FeedPostView = {
   friendGroups?: { id: string; name: string }[];
   // Populated for posts cross-posted from a new event (post_type='event'
   // with event_id set). PostCard's EventChip uses this so the card
-  // renders date / venue / type without a follow-up fetch.
+  // renders date / venue / type / signups without a follow-up fetch.
   event?: {
     id: string;
     title: string;
@@ -45,7 +45,11 @@ export type FeedPostView = {
     startDate: string;
     endDate: string;
     venueName: string;
-    status: string;
+    maxParticipants: number | null;
+    ntrpMin: number | null;
+    ntrpMax: number | null;
+    coverImageUrl: string;
+    registeredCount: number;
   } | null;
 };
 
@@ -116,7 +120,11 @@ export function adaptFeedPost(p: FeedPost): FeedPostView {
           startDate: pgToIso(p.event.start_date),
           endDate: pgToIso(p.event.end_date),
           venueName: p.event.venue_name,
-          status: p.event.status,
+          maxParticipants: p.event.max_participants,
+          ntrpMin: p.event.ntrp_min,
+          ntrpMax: p.event.ntrp_max,
+          coverImageUrl: p.event.cover_image_url,
+          registeredCount: p.event.registered_count,
         }
       : null,
   };

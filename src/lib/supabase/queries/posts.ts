@@ -60,8 +60,10 @@ export type Post = PostRow & {
   friend_groups: { id: string; name: string }[];
   // Populated for cross-posts created when a new event is published
   // (post_type='event', event_id set). PostCard renders an EventChip
-  // from this so the card shows date / venue / type at a glance.
+  // from this so the card shows date / venue / type / signups at a glance.
   // Null for non-event posts and when the linked event was deleted.
+  // registered_count is computed (status='registered' participants), not a
+  // column — mirrors countRegisteredByEvent's semantics.
   event: {
     id: string;
     title: string;
@@ -69,7 +71,11 @@ export type Post = PostRow & {
     start_date: string;
     end_date: string;
     venue_name: string;
-    status: string;
+    max_participants: number | null;
+    ntrp_min: number | null;
+    ntrp_max: number | null;
+    cover_image_url: string;
+    registered_count: number;
   } | null;
 };
 
@@ -206,8 +212,15 @@ async function enrichPosts(
     )
   );
 
-  const [likesRes, commentsRes, myLikesRes, myRequestsRes, targetsRes, eventsRes] =
-    await Promise.all([
+  const [
+    likesRes,
+    commentsRes,
+    myLikesRes,
+    myRequestsRes,
+    targetsRes,
+    eventsRes,
+    eventCountsRes,
+  ] = await Promise.all([
       supabase.from("likes").select("post_id", { count: "exact", head: false }).in("post_id", ids),
       supabase
         .from("comments")
@@ -240,7 +253,7 @@ async function enrichPosts(
         ? supabase
             .from("events")
             .select(
-              "id, title, event_type, start_date, end_date, venue_name, status"
+              "id, title, event_type, start_date, end_date, venue_name, max_participants, ntrp_min, ntrp_max, cover_image_url"
             )
             .in("id", eventIds)
         : Promise.resolve({
@@ -251,10 +264,24 @@ async function enrichPosts(
               start_date: string;
               end_date: string;
               venue_name: string;
-              status: string;
+              max_participants: number | null;
+              ntrp_min: number | null;
+              ntrp_max: number | null;
+              cover_image_url: string;
             }[],
             error: null,
           }),
+      // Headline signup count for the linked events. Counts only
+      // status='registered' (waitlist/withdrawn excluded), matching
+      // countRegisteredByEvent — kept as a sibling query here to avoid an
+      // N+1 and stay inside this single Promise.all batch.
+      eventIds.length > 0
+        ? supabase
+            .from("event_participants")
+            .select("event_id")
+            .in("event_id", eventIds)
+            .eq("status", "registered")
+        : Promise.resolve({ data: [] as { event_id: string }[], error: null }),
     ]);
 
   if (targetsRes.error) throw targetsRes.error;
@@ -263,6 +290,7 @@ async function enrichPosts(
   if (myLikesRes.error) throw myLikesRes.error;
   if (myRequestsRes.error) throw myRequestsRes.error;
   if (eventsRes.error) throw eventsRes.error;
+  if (eventCountsRes.error) throw eventCountsRes.error;
 
   const likeCount = new Map<string, number>();
   for (const row of likesRes.data ?? []) {
@@ -297,20 +325,26 @@ async function enrichPosts(
     }
   }
 
-  const eventById = new Map<
-    string,
-    {
-      id: string;
-      title: string;
-      event_type: string;
-      start_date: string;
-      end_date: string;
-      venue_name: string;
-      status: string;
-    }
-  >();
+  const registeredByEvent = new Map<string, number>();
+  for (const row of eventCountsRes.data ?? []) {
+    registeredByEvent.set(row.event_id, (registeredByEvent.get(row.event_id) ?? 0) + 1);
+  }
+
+  const eventById = new Map<string, Post["event"]>();
   for (const e of eventsRes.data ?? []) {
-    eventById.set(e.id, e);
+    eventById.set(e.id, {
+      id: e.id,
+      title: e.title,
+      event_type: e.event_type,
+      start_date: e.start_date,
+      end_date: e.end_date,
+      venue_name: e.venue_name,
+      max_participants: e.max_participants,
+      ntrp_min: e.ntrp_min,
+      ntrp_max: e.ntrp_max,
+      cover_image_url: e.cover_image_url,
+      registered_count: registeredByEvent.get(e.id) ?? 0,
+    });
   }
 
   return posts.map((p) => ({
