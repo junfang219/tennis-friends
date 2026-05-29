@@ -44,9 +44,21 @@ export function AddMissingCourtModal({ myLocation, onClose }: Props) {
     document.addEventListener("keydown", onKey);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    // Leaflet's zoom control renders into its own stacking context, so even a
+    // high-z-index backdrop can leave it visible on top of the modal. Hide it
+    // outright while the modal is open and restore on close.
+    const zoomControls = document.querySelectorAll<HTMLElement>(".leaflet-control-zoom");
+    const prevDisplay: string[] = [];
+    zoomControls.forEach((el) => {
+      prevDisplay.push(el.style.display);
+      el.style.display = "none";
+    });
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
+      zoomControls.forEach((el, i) => {
+        el.style.display = prevDisplay[i] ?? "";
+      });
     };
   }, [onClose]);
 
@@ -74,7 +86,6 @@ export function AddMissingCourtModal({ myLocation, onClose }: Props) {
   const canSubmit =
     !submitting &&
     !done &&
-    trimmedName.length >= MIN_NAME &&
     trimmedName.length <= MAX_NAME &&
     locationValid;
 
@@ -82,7 +93,8 @@ export function AddMissingCourtModal({ myLocation, onClose }: Props) {
     if (!canSubmit) return;
     setSubmitting(true);
     setErrorMessage(null);
-    const payload: Record<string, unknown> = { courtName: trimmedName };
+    const payload: Record<string, unknown> = {};
+    if (trimmedName.length >= MIN_NAME) payload.courtName = trimmedName;
     if (locationMode === "current" && capturedLocation) {
       payload.latitude = capturedLocation.lat;
       payload.longitude = capturedLocation.lng;
@@ -128,12 +140,14 @@ export function AddMissingCourtModal({ myLocation, onClose }: Props) {
   if (typeof document === "undefined") return null;
   return createPortal(
     <div
-      className="fixed inset-0 z-[600] bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      className="fixed inset-0 z-[10000] bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4"
       onClick={onClose}
       role="presentation"
     >
       <div
-        className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md max-h-[92vh] flex flex-col overflow-hidden"
+        className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md flex flex-col overflow-hidden
+                   max-h-[calc(100dvh-4rem-env(safe-area-inset-bottom))] sm:max-h-[92vh]
+                   mb-[calc(4rem+env(safe-area-inset-bottom))] sm:mb-0"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
@@ -157,7 +171,7 @@ export function AddMissingCourtModal({ myLocation, onClose }: Props) {
         </div>
 
         {/* Body */}
-        <div className="px-4 py-3 overflow-y-auto">
+        <div className="px-4 py-3 overflow-y-auto flex-1 min-h-0">
           {done ? (
             <div className="py-6 text-center">
               <div className="text-2xl mb-1">✓</div>
@@ -169,14 +183,14 @@ export function AddMissingCourtModal({ myLocation, onClose }: Props) {
               {/* Court name */}
               <label className="block">
                 <span className="block text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-1">
-                  Court name <span className="text-red-500">*</span>
+                  Court name <span className="text-gray-400 normal-case tracking-normal">(if you know it)</span>
                 </span>
                 <input
                   ref={nameRef}
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value.slice(0, MAX_NAME))}
-                  placeholder="e.g. Magnuson Park West Courts"
+                  placeholder="e.g. Magnuson Park West Courts — or leave blank and describe it in Notes"
                   disabled={submitting}
                   className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-court-green focus:outline-none focus:ring-2 focus:ring-court-green/20 disabled:bg-gray-50"
                 />
