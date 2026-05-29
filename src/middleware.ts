@@ -4,13 +4,29 @@ import type { Database } from "./lib/database.types";
 
 // Supabase-only session refresh middleware.
 //
-// Runs on every matched request. Reads the auth cookie, asks Supabase to
-// refresh the access token if needed, and writes the new cookie back so
-// Server Components and Route Handlers can call `supabase.auth.getUser()`
-// without each one having to refresh itself.
+// Runs on every matched request — including every client-side <Link>
+// navigation (the RSC fetch hits the server and passes through here). Its
+// only job is to keep the auth cookie fresh so Server Components and Route
+// Handlers see a valid token.
+//
+// Why NOT getUser(): getUser() makes a network round-trip to Supabase's
+// /auth/v1/user endpoint on EVERY request to *validate* the token (~150-200ms
+// measured). That latency was added to every single navigation for signed-in
+// users — the dominant cause of "every tab/chat feels slow to open".
+//
+// We only actually need to *refresh* the token, and only near expiry. So we
+// read the session from the cookie locally (getSession — no network) and call
+// refreshSession() (the one network call) only inside the pre-expiry window.
+// Authorization still goes through getUser()/RLS in the pages and route
+// handlers themselves, so reading the cookie here without server validation
+// doesn't widen any trust boundary.
 //
 // Critical detail: the response object MUST carry the same cookies that
 // supabase wrote — otherwise the browser keeps the stale cookie.
+
+// Refresh when the access token has this many seconds (or fewer) left, so a
+// navigation never lands on an already-expired token.
+const REFRESH_THRESHOLD_SECONDS = 120;
 
 export async function middleware(req: NextRequest) {
   const response = NextResponse.next({ request: req });
@@ -33,8 +49,19 @@ export async function middleware(req: NextRequest) {
     },
   });
 
-  // Forces a token refresh if needed; writes new cookies onto `response`.
-  await supabase.auth.getUser();
+  // Local cookie read — no network in the common (token-still-fresh) case.
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (session) {
+    const secondsLeft = (session.expires_at ?? 0) - Math.floor(Date.now() / 1000);
+    if (secondsLeft < REFRESH_THRESHOLD_SECONDS) {
+      // Token is at/near expiry — rotate it and write the new cookies onto
+      // `response` via the setAll callback above. This is the only network call.
+      await supabase.auth.refreshSession();
+    }
+  }
 
   return response;
 }
