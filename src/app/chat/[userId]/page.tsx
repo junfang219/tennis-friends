@@ -98,7 +98,15 @@ export default function ChatPage() {
   const [inputBarHeight, setInputBarHeight] = useState(72);
   useLayoutEffect(() => {
     const el = inputBarRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
+    if (!el) return;
+    // Measure synchronously on first commit so the messages scroller's
+    // paddingBottom reflects the real bar height on initial paint. Without
+    // this the default (72) underestimates by ~30px once the home-indicator
+    // safe-area inset is added, leaving the last bubble (and its timestamp)
+    // cropped behind the input bar until the async ResizeObserver tick.
+    const initial = el.offsetHeight;
+    if (initial > 0) setInputBarHeight(initial);
+    if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver((entries) => {
       for (const e of entries) {
         const h = e.borderBoxSize?.[0]?.blockSize ?? e.contentRect.height;
