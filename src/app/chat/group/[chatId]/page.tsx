@@ -125,6 +125,10 @@ export default function GroupChatThreadPage() {
     // 72 default underestimates once the home-indicator safe-area inset
     // is added — without this the last bubble's timestamp gets cropped
     // behind the input bar until the async ResizeObserver tick lands.
+    // Deps include `mounted` because the first render returns null (the
+    // portal hasn't mounted yet) — the first effect pass would otherwise
+    // find inputBarRef.current === null and bail, leaving the observer
+    // unattached forever.
     const initial = el.offsetHeight;
     if (initial > 0) setInputBarHeight(initial);
     if (typeof ResizeObserver === "undefined") return;
@@ -136,7 +140,7 @@ export default function GroupChatThreadPage() {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [mounted]);
 
 
 

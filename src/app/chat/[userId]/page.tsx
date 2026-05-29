@@ -95,6 +95,15 @@ export default function ChatPage() {
   // useKeyboardHeight hook for the full design rationale.
   const keyboardHeight = useKeyboardHeight();
 
+  // `mounted` gates the createPortal call (SSR can't run portals).
+  // Declared early so the inputBarHeight effect below can list it as a
+  // dep — the first render returns null, so inputBarRef is unattached;
+  // the effect needs to re-run after the portal commits.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const [inputBarHeight, setInputBarHeight] = useState(72);
   useLayoutEffect(() => {
     const el = inputBarRef.current;
@@ -104,6 +113,10 @@ export default function ChatPage() {
     // this the default (72) underestimates by ~30px once the home-indicator
     // safe-area inset is added, leaving the last bubble (and its timestamp)
     // cropped behind the input bar until the async ResizeObserver tick.
+    // Deps include `mounted` because the first render returns null (the
+    // portal hasn't mounted yet), so this effect's first pass finds
+    // inputBarRef.current === null and bails; we need a re-run once the
+    // portaled DOM commits.
     const initial = el.offsetHeight;
     if (initial > 0) setInputBarHeight(initial);
     if (typeof ResizeObserver === "undefined") return;
@@ -115,7 +128,7 @@ export default function ChatPage() {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [mounted]);
 
   // Lock body scroll while the chat thread is mounted so iOS bounce /
   // pull-to-refresh doesn't drag the page around behind the fixed surface.
@@ -128,11 +141,6 @@ export default function ChatPage() {
       document.body.style.overflow = prevOverflow;
       document.body.style.overscrollBehavior = prevOverscroll;
     };
-  }, []);
-
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
   }, []);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
