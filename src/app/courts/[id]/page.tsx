@@ -9,6 +9,7 @@ import { CourtPhotoGrid } from "@/components/courts/CourtPhotoGrid";
 import { ReviewList, type Review } from "@/components/courts/ReviewList";
 import { ReviewComposer } from "@/components/courts/ReviewComposer";
 import { ReportIssueModal } from "@/components/courts/ReportIssueModal";
+import { DirectionsButton } from "@/components/courts/DirectionsButton";
 import { getFacilityByCourtId, getSeattleParksDashboardUrl } from "@/lib/facilities";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listCourtReviews } from "@/lib/supabase/queries";
@@ -110,9 +111,9 @@ export default function CourtDetailPage() {
   // cold load every open.
   const [mountDashboardIframe, setMountDashboardIframe] = useState(false);
   const availabilityButtonRef = useRef<HTMLButtonElement | null>(null);
-  // Geolocation for the Directions link's `origin` param — Google Maps then
-  // opens with the route already drawn instead of asking "from where?".
-  // Silent on denial; the link still works (Google falls back to prompting).
+  // Geolocation for the Directions chooser's `origin` param — the chosen
+  // map app opens with the route already drawn instead of asking "from
+  // where?". Silent on denial; the chooser still works (the app prompts).
   const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -737,24 +738,18 @@ export default function CourtDetailPage() {
       )}
 
       {/* Directions use the venue's stored lat/lng as destination — the
-          dataset is hand-maintained so coords are authoritative. When we
-          have the user's geolocation, pass it as `origin` so the map opens
-          with the route already drawn. */}
-      {court.latitude != null && court.longitude != null &&
-        (() => {
-          const params = new URLSearchParams({ api: "1" });
-          if (myLocation) {
-            params.set("origin", `${myLocation.lat},${myLocation.lng}`);
-          }
-          params.set("destination", `${court.latitude},${court.longitude}`);
-          const href = `https://www.google.com/maps/dir/?${params.toString()}`;
-          return (
+          dataset is hand-maintained so coords are authoritative. Tapping
+          opens a chooser between Apple Maps and Google Maps; either one
+          gets the user's geolocation as `origin` when available. */}
+      {court.latitude != null && court.longitude != null && (
         <div className="mb-6">
-          <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
+          <DirectionsButton
+            lat={court.latitude}
+            lng={court.longitude}
+            myLocation={myLocation}
+            destinationLabel={court.address ?? court.name}
             className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-court-green transition-colors"
+            ariaLabel={`Get directions to ${court.name}`}
           >
             <svg
               width="16"
@@ -769,10 +764,9 @@ export default function CourtDetailPage() {
               <circle cx="12" cy="10" r="3" />
             </svg>
             Get Directions
-          </a>
+          </DirectionsButton>
         </div>
-          );
-        })()}
+      )}
 
       {/* Report-an-issue: opens an in-app modal that POSTs to
           /api/report-issue → developer's email. Low-prominence footer link. */}

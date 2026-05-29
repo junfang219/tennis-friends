@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { StarRating } from "./StarRating";
+import { DirectionsButton } from "./DirectionsButton";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 export type CourtSummary = {
@@ -35,9 +36,8 @@ type Props = {
    *  page can pass it back, letting `/courts` restore the user's exact view
    *  instead of jumping to street-level. */
   mapView?: { lat: number; lng: number; zoom: number } | null;
-  /** User's current geolocation. When set, the Directions link includes it
-   *  as the origin so Google Maps opens with the route already drawn
-   *  instead of prompting "from where?". */
+  /** User's current geolocation. When set, the chosen map app opens with
+   *  the route already drawn instead of prompting "from where?". */
   myLocation?: { lat: number; lng: number } | null;
   onClose: () => void;
 };
@@ -135,16 +135,6 @@ export function CourtSummaryCard({
       cancelled = true;
     };
   }, [courtId, eligibleForReports]);
-  // Both pin and directions use the venue's stored lat/lng (data/tennis_courts.json
-  // is hand-maintained, so coordinates are authoritative). When we have the
-  // user's geolocation, include it as `origin` so Google Maps opens with the
-  // route already calculated.
-  const directionsParams = new URLSearchParams({ api: "1" });
-  if (myLocation) {
-    directionsParams.set("origin", `${myLocation.lat},${myLocation.lng}`);
-  }
-  directionsParams.set("destination", `${lat},${lng}`);
-  const directionsUrl = `https://www.google.com/maps/dir/?${directionsParams.toString()}`;
   // Encode the user's current map view into the Details link so the detail
   // page can pass it back via the breadcrumb — preserves zoom level on
   // return (city → city, street → street).
@@ -270,18 +260,20 @@ export function CourtSummaryCard({
                 bookingUrl ? "grid-cols-3" : "grid-cols-2"
               }`}
             >
-              <a
-                href={directionsUrl}
-                target="_blank"
-                rel="noopener noreferrer"
+              <DirectionsButton
+                lat={lat}
+                lng={lng}
+                myLocation={myLocation}
+                destinationLabel={address ?? name}
                 className="flex items-center justify-center gap-1 px-2 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-xs sm:text-sm font-medium text-gray-700"
+                ariaLabel={`Get directions to ${name}`}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                   <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
                   <circle cx="12" cy="10" r="3" />
                 </svg>
                 Directions
-              </a>
+              </DirectionsButton>
               {bookingUrl && (
                 <a
                   href={bookingUrl}
