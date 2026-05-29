@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { getGroup } from "@/lib/supabase/queries";
+import { getGroup, getCachedGroup } from "@/lib/supabase/queries";
 
 type TeamMatch = {
   id: string;
@@ -84,18 +84,21 @@ export default function TeamCalendarPage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const loadAll = async () => {
-    setLoading(true);
-    try {
-      const supabase = createSupabaseBrowserClient();
-      const team = await getGroup(supabase, groupId);
-      if (!team) {
-        setError("You are not a member of this team.");
-        setLoading(false);
-        return;
-      }
-      setTeamName(team.name);
+    const supabase = createSupabaseBrowserClient();
 
-      const [{ data: matchRows }, { data: seriesRows }] = await Promise.all([
+    // Paint the team name instantly from the cache the team page primed.
+    const cachedGroup = getCachedGroup(groupId);
+    if (cachedGroup) {
+      setTeamName(cachedGroup.name);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    try {
+      // Group, matches, and practice series are independent — one round-trip.
+      const [team, { data: matchRows }, { data: seriesRows }] = await Promise.all([
+        getGroup(supabase, groupId),
         supabase
           .from("team_matches")
           .select(
@@ -114,6 +117,12 @@ export default function TeamCalendarPage() {
           .eq("group_id", groupId)
           .order("created_at", { ascending: false }),
       ]);
+      if (!team) {
+        setError("You are not a member of this team.");
+        setLoading(false);
+        return;
+      }
+      setTeamName(team.name);
 
       type RawMatch = {
         id: string;

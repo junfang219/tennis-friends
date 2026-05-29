@@ -6,7 +6,7 @@ import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
 import { isAtLeast, ROLE } from "@/lib/groupRoles";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
+import { fetchGroupBundle, getCachedGroupBundle } from "@/lib/supabase/queries";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 
 type GroupFile = {
@@ -106,10 +106,17 @@ export default function GroupFilesPage() {
 
   const loadGroup = useCallback(async () => {
     const supabase = createSupabaseBrowserClient();
-    const [g, members] = await Promise.all([
-      getGroup(supabase, groupId),
-      listGroupMembers(supabase, groupId),
-    ]);
+    // Paint instantly from the cache the team page primed; revalidate below.
+    const cached = getCachedGroupBundle(groupId);
+    if (cached) {
+      setGroup({
+        id: cached.group.id,
+        name: cached.group.name,
+        members: cached.members.map((m) => ({ userId: m.user_id, role: m.role })),
+      } as unknown as typeof group);
+      setLoading(false);
+    }
+    const { group: g, members } = await fetchGroupBundle(supabase, groupId);
     if (g) {
       setGroup({
         id: g.id,

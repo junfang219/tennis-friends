@@ -3,6 +3,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../types";
 import { getMyIdFast } from "./_authFast";
+import { getCached, setCached } from "../../queryCache";
 
 export interface Group {
   id: string;
@@ -74,6 +75,30 @@ export async function listMyGroups(
   return (data ?? []) as Group[];
 }
 
+// Cross-tab cache for the team header data. The team page primes these when
+// it loads; the action tabs (chat, availability, practice, calendar, albums,
+// files) read them synchronously for an instant first paint and revalidate in
+// the background. Wiped on sign-out via clearAllCached().
+const GROUP_KEY = (id: string) => `group:${id}`;
+const GROUP_MEMBERS_KEY = (id: string) => `group-members:${id}`;
+
+export function getCachedGroup(id: string): Group | undefined {
+  return getCached<Group>(GROUP_KEY(id));
+}
+
+export function getCachedGroupMembers(groupId: string): GroupMember[] | undefined {
+  return getCached<GroupMember[]>(GROUP_MEMBERS_KEY(groupId));
+}
+
+/** Cached group + members, or null if either side hasn't been fetched yet. */
+export function getCachedGroupBundle(
+  id: string
+): { group: Group; members: GroupMember[] } | null {
+  const group = getCachedGroup(id);
+  const members = getCachedGroupMembers(id);
+  return group && members ? { group, members } : null;
+}
+
 export async function getGroup(
   supabase: SupabaseClient<Database>,
   id: string
@@ -84,7 +109,9 @@ export async function getGroup(
     .eq("id", id)
     .maybeSingle();
   if (error) throw error;
-  return (data as Group | null) ?? null;
+  const group = (data as Group | null) ?? null;
+  if (group) setCached(GROUP_KEY(id), group);
+  return group;
 }
 
 export async function listGroupMembers(
@@ -100,7 +127,25 @@ export async function listGroupMembers(
     .eq("group_id", groupId)
     .is("archived_at", null);
   if (error) throw error;
-  return (data ?? []) as unknown as GroupMember[];
+  const members = (data ?? []) as unknown as GroupMember[];
+  setCached(GROUP_MEMBERS_KEY(groupId), members);
+  return members;
+}
+
+/**
+ * Fetch group + members in parallel, populating the cross-tab cache. Pair with
+ * getCachedGroupBundle() for stale-while-revalidate: render the cached bundle
+ * immediately, then call this to refresh.
+ */
+export async function fetchGroupBundle(
+  supabase: SupabaseClient<Database>,
+  id: string
+): Promise<{ group: Group | null; members: GroupMember[] }> {
+  const [group, members] = await Promise.all([
+    getGroup(supabase, id),
+    listGroupMembers(supabase, id),
+  ]);
+  return { group, members };
 }
 
 export interface GroupMessage {

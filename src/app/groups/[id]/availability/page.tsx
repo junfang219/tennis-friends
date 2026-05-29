@@ -10,7 +10,7 @@ import RsvpPicker, { pickerOptionMeta } from "@/components/attendance/RsvpPicker
 import AttendanceTally from "@/components/attendance/AttendanceTally";
 import { normalizeMatchStatus, RSVP } from "@/lib/rsvpStatus";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { getGroup, listGroupMembers, sendGroupMessage } from "@/lib/supabase/queries";
+import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage } from "@/lib/supabase/queries";
 import { errorMessage } from "@/lib/errorMessage";
 
 type Member = {
@@ -134,43 +134,60 @@ export default function AvailabilityPage() {
 
   const isCaptain = team ? myId === team.ownerId : false;
 
+  const toTeam = (
+    g: { id: string; name: string; owner_id: string },
+    members: { id: string; user: { id: string; name: string; profile_image_url: string } }[]
+  ) =>
+    ({
+      id: g.id,
+      name: g.name,
+      ownerId: g.owner_id,
+      members: members.map((m) => ({
+        id: m.id,
+        user: {
+          id: m.user.id,
+          name: m.user.name,
+          profileImageUrl: m.user.profile_image_url,
+          skillLevel: "",
+        },
+      })),
+    }) as unknown as Team;
+
   const loadAll = async () => {
-    setLoading(true);
+    const supabase = createSupabaseBrowserClient();
+
+    // Paint instantly from the cache the team page primed; revalidate below.
+    const cached = getCachedGroupBundle(groupId);
+    if (cached) {
+      setTeam(toTeam(cached.group, cached.members));
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
     try {
-      const supabase = createSupabaseBrowserClient();
-      const [g, members] = await Promise.all([
-        getGroup(supabase, groupId),
-        listGroupMembers(supabase, groupId),
+      // Team header and matches don't depend on each other — fetch together
+      // so the tab opens in one round-trip instead of two.
+      const [bundle, matchRes] = await Promise.all([
+        fetchGroupBundle(supabase, groupId),
+        supabase
+          .from("team_matches")
+          .select(
+            `id, match_date, match_time, location, notes,
+             availabilities ( id, user_id, status, match_types, lineup_slot,
+               user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url ) )`
+          )
+          .eq("group_id", groupId)
+          .order("match_date", { ascending: true }),
       ]);
-      if (!g) {
+      if (!bundle.group) {
         setError("You are not a member of this team.");
         setLoading(false);
         return;
       }
-      setTeam({
-        id: g.id,
-        name: g.name,
-        ownerId: g.owner_id,
-        members: members.map((m) => ({
-          id: m.id,
-          user: {
-            id: m.user.id,
-            name: m.user.name,
-            profileImageUrl: m.user.profile_image_url,
-            skillLevel: "",
-          },
-        })),
-      } as unknown as Team);
+      setTeam(toTeam(bundle.group, bundle.members));
 
-      const { data: matchRows } = await supabase
-        .from("team_matches")
-        .select(
-          `id, match_date, match_time, location, notes,
-           availabilities ( id, user_id, status, match_types, lineup_slot,
-             user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url ) )`
-        )
-        .eq("group_id", groupId)
-        .order("match_date", { ascending: true });
+      const matchRows = matchRes.data;
       type RawAvail = {
         id: string;
         user_id: string;
