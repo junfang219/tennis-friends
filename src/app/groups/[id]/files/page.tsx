@@ -87,10 +87,11 @@ export default function GroupFilesPage() {
         sizeBytes: f.size_bytes,
         description: f.description,
         createdAt: f.created_at,
+        uploadedById: f.uploadedBy?.id ?? "",
         uploadedBy: {
-          id: f.uploadedBy.id,
-          name: f.uploadedBy.name,
-          profileImageUrl: f.uploadedBy.profile_image_url,
+          id: f.uploadedBy?.id ?? "",
+          name: f.uploadedBy?.name ?? "Unknown",
+          profileImageUrl: f.uploadedBy?.profile_image_url ?? "",
         },
       })) as unknown as GroupFile[]
     );
@@ -255,17 +256,14 @@ export default function GroupFilesPage() {
             return (
               <div key={f.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-3 flex items-center gap-3">
                 <span className="text-2xl shrink-0" aria-hidden>{fileEmoji(f.mimeType)}</span>
-                {/* target=_self + ?name= so the serving route sends
-                    Content-Disposition: attachment with the user-facing
-                    filename. iOS WebView then shows a save/share sheet
-                    instead of rendering the raw file content in-place
-                    (which had no close affordance). */}
-                <a
-                  href={`${f.url}?name=${encodeURIComponent(f.filename)}`}
-                  target="_self"
-                  rel="noopener"
+                {/* Open the in-app viewer (which embeds the file and keeps a
+                    Back button) rather than navigating to the raw file. The
+                    `files` bucket is private, so the viewer fetches it through
+                    /api/groups/[id]/files/[fileId]. Navigating straight to the
+                    file stranded the user with no way back. */}
+                <Link
+                  href={`/groups/${groupId}/files/${f.id}`}
                   className="flex-1 min-w-0 group"
-                  download={f.filename}
                 >
                   <p className="text-sm font-semibold text-gray-800 truncate group-hover:text-court-green">{f.filename}</p>
                   <p className="text-[11px] text-gray-500">
@@ -274,7 +272,7 @@ export default function GroupFilesPage() {
                   {f.description && (
                     <p className="text-[11px] text-gray-600 truncate mt-0.5">{f.description}</p>
                   )}
-                </a>
+                </Link>
                 {canRemove && (
                   <button
                     onClick={() => removeFile(f.id)}

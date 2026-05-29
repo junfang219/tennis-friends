@@ -4,6 +4,7 @@ import {
   bucketAcceptsMime,
   buildObjectKey,
   inferMediaTypeFromMime,
+  objectKeyFromPublicUrl,
   publicStorageThumbUrl,
 } from "./storage";
 
@@ -121,6 +122,37 @@ describe("storage helpers", () => {
       for (const url of passthroughs) {
         expect(publicStorageThumbUrl(url, { width: 400, height: 400 })).toBe(url);
       }
+    });
+  });
+
+  describe("objectKeyFromPublicUrl", () => {
+    const ORIGIN = "https://fqopzafmnaviipumsmfm.supabase.co";
+
+    it("recovers the object key for the matching bucket", () => {
+      const url = `${ORIGIN}/storage/v1/object/public/files/uid-1/1700000000-abc.pdf`;
+      expect(objectKeyFromPublicUrl(url, "files")).toBe("uid-1/1700000000-abc.pdf");
+    });
+
+    it("decodes percent-encoded segments", () => {
+      const url = `${ORIGIN}/storage/v1/object/public/files/uid-1/my%20file%20name.pdf`;
+      expect(objectKeyFromPublicUrl(url, "files")).toBe("uid-1/my file name.pdf");
+    });
+
+    it("returns null when the bucket segment doesn't match", () => {
+      const url = `${ORIGIN}/storage/v1/object/public/albums/uid-1/photo.jpg`;
+      expect(objectKeyFromPublicUrl(url, "files")).toBeNull();
+    });
+
+    it("returns null for signed or non-public-object URLs", () => {
+      expect(
+        objectKeyFromPublicUrl(`${ORIGIN}/storage/v1/object/sign/files/uid-1/x.pdf?token=abc`, "files")
+      ).toBeNull();
+      expect(objectKeyFromPublicUrl("https://example.com/x.pdf", "files")).toBeNull();
+      expect(objectKeyFromPublicUrl("", "files")).toBeNull();
+    });
+
+    it("returns null when the key would be empty", () => {
+      expect(objectKeyFromPublicUrl(`${ORIGIN}/storage/v1/object/public/files/`, "files")).toBeNull();
     });
   });
 

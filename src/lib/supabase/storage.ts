@@ -102,6 +102,24 @@ export function inferMediaTypeFromMime(mime: string): "image" | "video" | null {
 // can safely pipe every image URL through this helper.
 const PUBLIC_OBJECT_MARKER = "/storage/v1/object/public/";
 
+// Extract the storage object key from a public-object URL produced by
+// getPublicUrl(). Returns null for anything not shaped like a public-object
+// URL for the given bucket — callers should treat that as a malformed row.
+//
+// e.g. https://x.supabase.co/storage/v1/object/public/files/uid/123.pdf
+//      → "uid/123.pdf"   (for bucket "files")
+export function objectKeyFromPublicUrl(
+  url: string,
+  bucket: StorageBucket
+): string | null {
+  const marker = `${PUBLIC_OBJECT_MARKER}${bucket}/`;
+  const idx = url.indexOf(marker);
+  if (idx === -1) return null;
+  const rest = url.slice(idx + marker.length);
+  if (!rest) return null;
+  return decodeURIComponent(rest);
+}
+
 export function publicStorageThumbUrl(
   url: string,
   opts: {
