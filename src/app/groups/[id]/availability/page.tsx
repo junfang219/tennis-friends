@@ -364,7 +364,6 @@ export default function AvailabilityPage() {
           match_id: matchId,
           user_id: userId,
           lineup_slot: slot,
-          status: "",
         },
         { onConflict: "match_id,user_id" }
       )
@@ -373,7 +372,11 @@ export default function AvailabilityPage() {
          user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url )`
       )
       .single();
-    if (!upErr && data) {
+    if (upErr) {
+      alert(errorMessage(upErr, "Failed to set lineup slot"));
+      return;
+    }
+    if (data) {
       const a = data as unknown as {
         id: string;
         user_id: string;

@@ -2812,36 +2812,25 @@ CREATE POLICY availabilities_select_member ON availabilities
     )
   );
 
--- INSERT: self for matches/practices in their group; captains+ on matches can
--- also insert rows on behalf of any group member (so they can assign a lineup
--- slot before the member has RSVP'd themselves — mirrors the UPDATE policy).
-CREATE POLICY availabilities_insert_self_or_captain ON availabilities
+-- INSERT: only self, and only if member of the parent group.
+CREATE POLICY availabilities_upsert_self ON availabilities
   FOR INSERT TO authenticated WITH CHECK (
-    (
-      user_id = auth.uid()
-      AND (
-        (
-          match_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM team_matches tm
-            WHERE tm.id = availabilities.match_id
-              AND is_group_member(tm.group_id)
-          )
-        )
-        OR (
-          practice_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM team_practices tp
-            JOIN practice_series ps ON ps.id = tp.series_id
-            WHERE tp.id = availabilities.practice_id
-              AND is_group_member(ps.group_id)
-          )
+    user_id = auth.uid()
+    AND (
+      (
+        match_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM team_matches tm
+          WHERE tm.id = availabilities.match_id
+            AND is_group_member(tm.group_id)
         )
       )
-    )
-    OR (
-      match_id IS NOT NULL AND EXISTS (
-        SELECT 1 FROM team_matches tm
-        WHERE tm.id = availabilities.match_id
-          AND has_group_role(tm.group_id, 'captain'::group_role)
+      OR (
+        practice_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM team_practices tp
+          JOIN practice_series ps ON ps.id = tp.series_id
+          WHERE tp.id = availabilities.practice_id
+            AND is_group_member(ps.group_id)
+        )
       )
     )
   );
@@ -3793,17 +3782,25 @@ CREATE POLICY booking_players_write_organizer ON booking_players FOR ALL TO auth
 
 -- ============== availabilities + device_tokens ==============
 
+-- Renamed from availabilities_upsert_self and extended with a captain bypass
+-- for matches, so captains can pre-assign a lineup slot to a member who
+-- hasn't RSVP'd yet (mirrors the UPDATE policy below).
 DROP POLICY availabilities_upsert_self ON availabilities;
-CREATE POLICY availabilities_upsert_self ON availabilities FOR INSERT TO authenticated
-  WITH CHECK (user_id = (SELECT auth.uid()) AND (
-    (match_id IS NOT NULL AND EXISTS (
-      SELECT 1 FROM team_matches tm WHERE tm.id = availabilities.match_id AND is_group_member(tm.group_id)
+CREATE POLICY availabilities_insert_self_or_captain ON availabilities FOR INSERT TO authenticated
+  WITH CHECK (
+    (user_id = (SELECT auth.uid()) AND (
+      (match_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM team_matches tm WHERE tm.id = availabilities.match_id AND is_group_member(tm.group_id)
+      ))
+      OR (practice_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM team_practices tp JOIN practice_series ps ON ps.id = tp.series_id
+        WHERE tp.id = availabilities.practice_id AND is_group_member(ps.group_id)
+      ))
     ))
-    OR (practice_id IS NOT NULL AND EXISTS (
-      SELECT 1 FROM team_practices tp JOIN practice_series ps ON ps.id = tp.series_id
-      WHERE tp.id = availabilities.practice_id AND is_group_member(ps.group_id)
+    OR (match_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM team_matches tm WHERE tm.id = availabilities.match_id AND has_group_role(tm.group_id, 'captain'::group_role)
     ))
-  ));
+  );
 
 DROP POLICY availabilities_update_self_or_captain ON availabilities;
 CREATE POLICY availabilities_update_self_or_captain ON availabilities FOR UPDATE TO authenticated
