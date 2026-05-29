@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import PrivacyNotice from "@/components/courts/PrivacyNotice";
@@ -101,13 +101,15 @@ export default function CourtDetailPage() {
   const [error, setError] = useState("");
   const [tab, setTab] = useState<Tab>("overview");
   const [dashboardOpen, setDashboardOpen] = useState(false);
-  // Pre-warm the Power BI iframe on first hover/touch/focus of the
-  // availability button so its (cacheable) JS/CSS land in the browser cache
-  // before the modal mounts. The modal's iframe still loads its own
-  // instance, but Power BI's static assets are reused from cache — cutting
-  // perceived load by ~1–2s on the modal click. Set-once: subsequent hovers
-  // are no-ops, so we don't thrash the network.
-  const [prewarmDashboard, setPrewarmDashboard] = useState(false);
+  // Mount the Power BI iframe as soon as the availability button scrolls
+  // into view, well before the user taps. We then toggle the modal's
+  // visibility (display:none ↔ flex) instead of unmounting the iframe, so
+  // Power BI's bundle is fetched once per page-load and reopens are instant.
+  // On iOS especially, the old hover/focus gate effectively fired at the
+  // same time as the tap (no real hover), so users paid the full ~2–4s
+  // cold load every open.
+  const [mountDashboardIframe, setMountDashboardIframe] = useState(false);
+  const availabilityButtonRef = useRef<HTMLButtonElement | null>(null);
   // Geolocation for the Directions link's `origin` param — Google Maps then
   // opens with the route already drawn instead of asking "from where?".
   // Silent on denial; the link still works (Google falls back to prompting).
@@ -237,6 +239,73 @@ export default function CourtDetailPage() {
       dns.remove();
     };
   }, [court?.dashboardUrl]);
+
+  // Mount the (hidden) dashboard iframe as soon as the availability button
+  // is visible, so Power BI's bundle is downloading while the user reads
+  // the rest of the page. rootMargin gives a small head-start when the
+  // button is just below the fold. Disconnects after firing once.
+  useEffect(() => {
+    if (!court?.dashboardUrl) return;
+    if (mountDashboardIframe) return;
+    const el = availabilityButtonRef.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setMountDashboardIframe(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setMountDashboardIframe(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [court?.dashboardUrl, mountDashboardIframe]);
+
+  // Lock the device to landscape while the dashboard modal is open: the
+  // Power BI report is built for ≈16:10 landscape and is tiny in a
+  // portrait phone. iOS rotates the entire WebView, so the modal lays
+  // out wide and Power BI fills it at full size. Plugin only loads on
+  // native Capacitor; on web the calls silently no-op so we preserve
+  // today's behavior in the browser build. Cleanup unlocks on close,
+  // unmount, or navigation away — leaving the rest of the app free to
+  // be portrait again.
+  useEffect(() => {
+    if (!dashboardOpen) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { Capacitor } = await import("@capacitor/core");
+        if (cancelled || !Capacitor.isNativePlatform()) return;
+        const { ScreenOrientation } = await import(
+          "@capacitor/screen-orientation"
+        );
+        await ScreenOrientation.lock({ orientation: "landscape" });
+      } catch {
+        // Plugin unavailable or lock rejected — fall back to no-op.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      (async () => {
+        try {
+          const { Capacitor } = await import("@capacitor/core");
+          if (!Capacitor.isNativePlatform()) return;
+          const { ScreenOrientation } = await import(
+            "@capacitor/screen-orientation"
+          );
+          await ScreenOrientation.unlock();
+        } catch {
+          // Unlock failure isn't worth surfacing — orientation will
+          // settle on whatever the parent screen requests.
+        }
+      })();
+    };
+  }, [dashboardOpen]);
 
   useEffect(() => {
     if (!court) return;
@@ -514,10 +583,11 @@ export default function CourtDetailPage() {
               </a>
               {court.dashboardUrl && (
                 <button
-                  onClick={() => setDashboardOpen(true)}
-                  onPointerEnter={() => setPrewarmDashboard(true)}
-                  onPointerDown={() => setPrewarmDashboard(true)}
-                  onFocus={() => setPrewarmDashboard(true)}
+                  ref={availabilityButtonRef}
+                  onClick={() => {
+                    setMountDashboardIframe(true);
+                    setDashboardOpen(true);
+                  }}
                   className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-ball-yellow/30 hover:bg-ball-yellow/50 text-amber-800 font-semibold text-sm"
                 >
                   📊 Check court availability
@@ -755,21 +825,28 @@ export default function CourtDetailPage() {
         />
       )}
 
-      {/* Seattle Parks Power BI availability dashboard (lazy iframe).
-          The dashboard is built for desktop landscape (≈16:10) but Power BI
-          collapses to a short intrinsic height when given only max-h, so we
-          pin a definite height to keep the iframe usable on both layouts. */}
-      {dashboardOpen && court.dashboardUrl && (
+      {/* Seattle Parks Power BI availability dashboard.
+          Mounted once `mountDashboardIframe` flips (button on screen or
+          tapped) and kept alive across opens — closing the modal just
+          hides the wrapper with display:none so the second open is
+          instant. The iframe document keeps running inside a hidden
+          parent, so Power BI's bundle stays warm. Modal height is pinned
+          because Power BI collapses to a tiny intrinsic height given
+          only max-h. */}
+      {mountDashboardIframe && court.dashboardUrl && (
         <div
-          className="fixed inset-0 z-[600] bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4"
+          className={`${
+            dashboardOpen ? "flex" : "hidden"
+          } fixed inset-0 z-[600] bg-black/60 items-end sm:items-center justify-center p-0 sm:p-4 [@media(max-height:500px)]:p-0`}
+          aria-hidden={!dashboardOpen}
           onClick={() => setDashboardOpen(false)}
         >
           <div
-            className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-5xl h-[90vh] sm:h-[85vh] flex flex-col overflow-hidden"
+            className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-5xl h-[90vh] sm:h-[85vh] flex flex-col overflow-hidden [@media(max-height:500px)]:h-screen [@media(max-height:500px)]:max-w-none [@media(max-height:500px)]:rounded-none"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-              <div>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 [@media(max-height:500px)]:py-1">
+              <div className="[@media(max-height:500px)]:hidden">
                 <h3 className="font-semibold text-gray-900 text-sm">Court availability</h3>
                 <p className="text-[11px] text-gray-500">
                   Powered by Seattle Parks &amp; Recreation
@@ -777,7 +854,7 @@ export default function CourtDetailPage() {
               </div>
               <button
                 onClick={() => setDashboardOpen(false)}
-                className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center"
+                className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center [@media(max-height:500px)]:ml-auto"
                 aria-label="Close availability"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -794,30 +871,6 @@ export default function CourtDetailPage() {
             />
           </div>
         </div>
-      )}
-
-      {/* Hidden pre-warmer: kicks off Power BI's static asset load on first
-          hover/touch of the button. The modal's own iframe will then hit
-          the browser cache for the (~MB) bundle and render markedly
-          faster. Off-DOM positioned + aria-hidden so it's invisible and
-          inert to assistive tech. */}
-      {court?.dashboardUrl && prewarmDashboard && !dashboardOpen && (
-        <iframe
-          src={court.dashboardUrl}
-          title=""
-          aria-hidden="true"
-          tabIndex={-1}
-          style={{
-            position: "fixed",
-            left: "-9999px",
-            top: 0,
-            width: "1024px",
-            height: "768px",
-            border: 0,
-            visibility: "hidden",
-            pointerEvents: "none",
-          }}
-        />
       )}
     </div>
   );

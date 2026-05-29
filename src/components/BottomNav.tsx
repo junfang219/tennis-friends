@@ -116,19 +116,26 @@ export default function BottomNav() {
     pathname.startsWith("/chat/group/") ||
     /^\/groups\/[^/]+\/chat(?:\/|$)/.test(pathname);
 
+  // Court detail page: reclaim the bottom strip so the Power BI
+  // availability modal (which goes full-bleed in landscape) and the
+  // detail content itself get the extra ~80px. Users navigate back to
+  // /courts via the page's own back button. List view at /courts
+  // itself keeps the nav.
+  const isCourtDetail = /^\/courts\/[^/]+/.test(pathname);
+
   // Add bottom padding to body so content isn't hidden behind the nav —
   // but only when the nav is actually rendered. On chat threads the nav
   // is hidden and the extra padding would just open a dead gap under
   // the chat container.
   useEffect(() => {
-    if (status !== "authenticated" || !isNative || isChatThread) return;
+    if (status !== "authenticated" || !isNative || isChatThread || isCourtDetail) return;
     document.body.style.paddingBottom = "5rem";
     return () => { document.body.style.paddingBottom = ""; };
-  }, [status, isNative, isChatThread]);
+  }, [status, isNative, isChatThread, isCourtDetail]);
 
   // All hooks above — safe to return early now
   if (status !== "authenticated" || !isNative) return null;
-  if (isChatThread) return null;
+  if (isChatThread || isCourtDetail) return null;
 
   const tabs = [
     {
