@@ -2,29 +2,36 @@
 
 import { useEffect, useState } from "react";
 import Avatar from "@/components/Avatar";
-import type { BracketView as BracketViewT } from "./types";
+import type { BracketView as BracketViewT, PlayerMini } from "./types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
   listEventMatches,
   listEventParticipants,
   type EventMatchRow,
 } from "@/lib/supabase/queries";
-import { seedBracket } from "@/lib/eventCompetitive";
+import { orderForTournamentSeed, seedBracket } from "@/lib/eventCompetitive";
 import { errorMessage } from "@/lib/errorMessage";
 
 // Group event_matches by round into the shape BracketViewT expects.
-function groupByRound(rows: EventMatchRow[]): BracketViewT["rounds"] {
+// playerById attaches profile info so the Slot renderer below can show
+// real names/avatars instead of falling through to "TBD".
+function groupByRound(
+  rows: EventMatchRow[],
+  playerById: Map<string, PlayerMini>
+): BracketViewT["rounds"] {
   const byRound = new Map<number, EventMatchRow[]>();
   for (const r of rows) {
     const round = r.round ?? 0;
     if (!byRound.has(round)) byRound.set(round, []);
     byRound.get(round)!.push(r);
   }
+  // Round 1 is round=1 in the DB, but the bracket header labels are
+  // 1-based regardless of internal indexing — just say "Round N".
   return Array.from(byRound.entries())
     .sort(([a], [b]) => a - b)
     .map(([round, matches]) => ({
       round,
-      label: round === 0 ? "Round 1" : `Round ${round + 1}`,
+      label: `Round ${round}`,
       matches: matches.map((m) => ({
         id: m.id,
         player1Id: m.player1_id,
@@ -32,6 +39,8 @@ function groupByRound(rows: EventMatchRow[]): BracketViewT["rounds"] {
         score: m.score,
         winnerSide: m.winner_side,
         status: m.status,
+        player1: playerById.get(m.player1_id) ?? null,
+        player2: m.player2_id ? playerById.get(m.player2_id) ?? null : null,
       })),
     })) as unknown as BracketViewT["rounds"];
 }
@@ -55,13 +64,27 @@ export default function BracketView({
     (async () => {
       try {
         const supabase = createSupabaseBrowserClient();
-        const rows = await listEventMatches(supabase, eventId);
+        const [rows, parts] = await Promise.all([
+          listEventMatches(supabase, eventId),
+          listEventParticipants(supabase, eventId),
+        ]);
+        const playerById = new Map<string, PlayerMini>(
+          parts.map((p) => [
+            p.user_id,
+            {
+              id: p.user.id,
+              name: p.user.name,
+              profileImageUrl: p.user.profile_image_url,
+              ntrpRating: p.user.ntrp_rating,
+            },
+          ])
+        );
         const seeded = rows.length > 0;
         setData(
           seeded
             ? ({
                 seeded: true,
-                rounds: groupByRound(rows),
+                rounds: groupByRound(rows, playerById),
               } as unknown as BracketViewT)
             : ({ seeded: false } as unknown as BracketViewT)
         );
@@ -89,15 +112,17 @@ export default function BracketView({
       // seedBracket). The SECURITY DEFINER RPC validates organizer
       // ownership + idempotency, then writes the round-1 matches.
       const parts = await listEventParticipants(supabase, eventId);
-      const registered = parts
-        .filter((p) => p.status === "registered")
-        .map((p) => p.user_id);
+      const registered = parts.filter((p) => p.status === "registered");
       if (registered.length < 2) {
         setError("Need at least 2 registered players to seed a bracket.");
         setSeeding(false);
         return;
       }
-      const pairs = seedBracket(registered);
+      // NTRP-ranked seeding: highest seed at the top of the bracket so
+      // the standard top-vs-bottom pairs are skill-meaningful. Matches
+      // the Matches-tab "Generate" CTA.
+      const ordered = orderForTournamentSeed(registered);
+      const pairs = seedBracket(ordered.map((p) => p.user_id));
       const { error: rpcErr } = await supabase.rpc("seed_event_bracket", {
         p_event_id: eventId,
         p_pairs: pairs as unknown as never,

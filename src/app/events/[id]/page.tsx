@@ -23,6 +23,7 @@ import LadderList from "@/components/events/LadderList";
 import RotationCard from "@/components/events/RotationCard";
 import RoundRobinScheduleControls from "@/components/events/RoundRobinScheduleControls";
 import LadderLineupControls from "@/components/events/LadderLineupControls";
+import TournamentBracketControls from "@/components/events/TournamentBracketControls";
 import CheckinDrawer from "@/components/events/CheckinDrawer";
 import { errorMessage } from "@/lib/errorMessage";
 
@@ -529,6 +530,12 @@ export default function EventDetailPage() {
               <RoundRobinScheduleControls
                 eventId={event.id}
                 onGenerated={load}
+              />
+            )}
+            {event.eventType === "tournament" && isOwner && (
+              <TournamentBracketControls
+                eventId={event.id}
+                onSeeded={load}
               />
             )}
             <MatchList

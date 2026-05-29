@@ -280,6 +280,32 @@ export function mixerPairings(
   return { pairs, bye };
 }
 
+// Order registered participants for tournament seeding. Highest NTRP
+// takes seed #1 (top of the bracket) so the standard "top vs bottom"
+// pairings produced by seedBracket are skill-meaningful. Unrated
+// players slot to the bottom; signup time + user id break ties so the
+// order is deterministic across calls (matters for the RPC's
+// idempotency error message).
+export function orderForTournamentSeed<
+  T extends {
+    user_id: string;
+    registered_at: string;
+    user: { ntrp_rating: number | null };
+  }
+>(participants: readonly T[]): T[] {
+  return [...participants].sort((a, b) => {
+    const ar = a.user.ntrp_rating;
+    const br = b.user.ntrp_rating;
+    if (ar != null && br != null && ar !== br) return br - ar;
+    if (ar != null && br == null) return -1;
+    if (ar == null && br != null) return 1;
+    const at = Date.parse(a.registered_at);
+    const bt = Date.parse(b.registered_at);
+    if (at !== bt) return at - bt;
+    return a.user_id.localeCompare(b.user_id);
+  });
+}
+
 // ---------------------------------------------------------------------
 // Round-robin schedule (singles)
 // ---------------------------------------------------------------------

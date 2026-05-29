@@ -10,6 +10,8 @@ import {
   ladderMaxGap,
   mixerPairings,
   shuffleDeterministic,
+  roundRobinSinglesSchedule,
+  orderForTournamentSeed,
 } from "./eventCompetitive";
 
 describe("parseScore", () => {
@@ -239,5 +241,76 @@ describe("mixerPairings", () => {
 
   it("returns no pairs / null bye for an empty pool", () => {
     expect(mixerPairings([], "evt", 1)).toEqual({ pairs: [], bye: null });
+  });
+});
+
+describe("roundRobinSinglesSchedule", () => {
+  it("produces N-1 rounds with N/2 pairs each for even N", () => {
+    const { rounds } = roundRobinSinglesSchedule(["a", "b", "c", "d"]);
+    expect(rounds.length).toBe(3);
+    for (const r of rounds) {
+      expect(r.pairs.length).toBe(2);
+      expect(r.bye).toBeNull();
+    }
+  });
+
+  it("rotates the bye through every player for odd N", () => {
+    const { rounds } = roundRobinSinglesSchedule(["a", "b", "c"]);
+    expect(rounds.length).toBe(3);
+    const byes = new Set(rounds.map((r) => r.bye));
+    expect(byes).toEqual(new Set(["a", "b", "c"]));
+  });
+
+  it("pairs every player with every other player exactly once", () => {
+    const ids = ["a", "b", "c", "d", "e", "f"];
+    const { rounds } = roundRobinSinglesSchedule(ids);
+    const seen = new Set<string>();
+    for (const r of rounds) {
+      for (const [x, y] of r.pairs) {
+        const key = [x, y].sort().join("|");
+        expect(seen.has(key)).toBe(false);
+        seen.add(key);
+      }
+    }
+    // C(6,2) = 15 unique pairs.
+    expect(seen.size).toBe(15);
+  });
+
+  it("returns no rounds for fewer than 2 players", () => {
+    expect(roundRobinSinglesSchedule([]).rounds).toEqual([]);
+    expect(roundRobinSinglesSchedule(["solo"]).rounds).toEqual([]);
+  });
+});
+
+describe("orderForTournamentSeed", () => {
+  const mk = (id: string, ntrp: number | null, ts: string) => ({
+    user_id: id,
+    registered_at: ts,
+    user: { ntrp_rating: ntrp },
+  });
+
+  it("ranks by NTRP descending, signup time ascending as tiebreaker", () => {
+    const out = orderForTournamentSeed([
+      mk("b", 4.0, "2026-01-02T00:00:00Z"),
+      mk("a", 4.5, "2026-01-03T00:00:00Z"),
+      mk("c", 4.0, "2026-01-01T00:00:00Z"),
+    ]);
+    expect(out.map((p) => p.user_id)).toEqual(["a", "c", "b"]);
+  });
+
+  it("slots unrated players below rated ones", () => {
+    const out = orderForTournamentSeed([
+      mk("unrated", null, "2026-01-01T00:00:00Z"),
+      mk("rated", 3.5, "2026-01-02T00:00:00Z"),
+    ]);
+    expect(out.map((p) => p.user_id)).toEqual(["rated", "unrated"]);
+  });
+
+  it("is stable for fully tied input (uuid tiebreaker)", () => {
+    const out = orderForTournamentSeed([
+      mk("b", 4.0, "2026-01-01T00:00:00Z"),
+      mk("a", 4.0, "2026-01-01T00:00:00Z"),
+    ]);
+    expect(out.map((p) => p.user_id)).toEqual(["a", "b"]);
   });
 });
