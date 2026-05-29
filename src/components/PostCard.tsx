@@ -214,7 +214,9 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
   const [savingEdit, setSavingEdit] = useState(false);
   const [commentsOff, setCommentsOff] = useState(post.commentsDisabled || false);
 
-  // Editable find-player fields
+  // Editable find-player fields (also reused for propose_team: court_location
+  // doubles as team name, game_type as team type, play_date as free-text
+  // schedule, players_needed as members-needed).
   const [editPlayDate, setEditPlayDate] = useState(post.playDate || "");
   const [editPlayTime, setEditPlayTime] = useState(post.playTime || "");
   const [editPlayDuration, setEditPlayDuration] = useState(post.playDuration || 90);
@@ -222,6 +224,12 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
   const [editGameType, setEditGameType] = useState(post.gameType || "singles");
   const [editPlayersNeeded, setEditPlayersNeeded] = useState(post.playersNeeded || 1);
   const [editCourtBooked, setEditCourtBooked] = useState(post.courtBooked || false);
+  // Propose-team skill range. Stored in posts.play_time as "NTRP:3.0-4.0" or
+  // "UTR:5-8" by PostComposer (see body.playTime = `${skillSystem}:${min}-${max}`
+  // in src/components/PostComposer.tsx). Parsed open / encoded on save.
+  const [editSkillSystem, setEditSkillSystem] = useState<"NTRP" | "UTR">("NTRP");
+  const [editSkillMin, setEditSkillMin] = useState("3.0");
+  const [editSkillMax, setEditSkillMax] = useState("4.0");
 
   // Audience editing
   const [availableTeams, setAvailableTeams] = useState<{ id: string; name: string; _count?: { members: number } }[]>([]);
@@ -1564,6 +1572,21 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                   setEditGameType(liveGameType);
                   setEditPlayersNeeded(livePlayersNeeded);
                   setEditCourtBooked(liveCourtBooked);
+                  // Parse the propose_team skill range out of livePlayTime
+                  // ("NTRP:3.0-4.0" or "UTR:5-8"). Falls back to NTRP 3.0–4.0
+                  // if the post predates the encoded format or fields are blank.
+                  if (isProposeTeam) {
+                    const raw = livePlayTime || "";
+                    const colonIdx = raw.indexOf(":");
+                    const sys = (colonIdx > 0 ? raw.slice(0, colonIdx) : "NTRP") as "NTRP" | "UTR";
+                    const range = colonIdx > 0 ? raw.slice(colonIdx + 1) : "3.0-4.0";
+                    const dashIdx = range.indexOf("-");
+                    const min = dashIdx > 0 ? range.slice(0, dashIdx) : "3.0";
+                    const max = dashIdx > 0 ? range.slice(dashIdx + 1) : "4.0";
+                    setEditSkillSystem(sys === "UTR" ? "UTR" : "NTRP");
+                    setEditSkillMin(min || (sys === "UTR" ? "5" : "3.0"));
+                    setEditSkillMax(max || (sys === "UTR" ? "8" : "4.0"));
+                  }
                   setEditSelectedTeamIds(new Set(liveGroups.map((g) => g.id)));
                   setEditSelectedFriendGroupIds(new Set(liveFriendGroups.map((g) => g.id)));
                   const sb = createSupabaseBrowserClient();
@@ -1655,7 +1678,9 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
             </div>
             <div className="flex-1 p-5 space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Post Content</label>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">
+                  {isProposeTeam ? "Team Purpose / Description" : "Post Content"}
+                </label>
                 <textarea
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
@@ -1664,6 +1689,111 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                   autoFocus
                 />
               </div>
+
+              {/* Propose Team fields. Stored on the same columns as find_players
+                  (court_location → team name, game_type → team type, play_date
+                  → free-text schedule, players_needed → members needed). */}
+              {isProposeTeam && (
+                <div className="bg-gradient-to-br from-clay/5 to-clay-light/10 border border-clay/30 rounded-xl p-4 space-y-3">
+                  <h4 className="text-sm font-bold text-clay flex items-center gap-1.5 mb-1">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
+                      <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
+                      <path d="M4 22h16" />
+                      <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+                    </svg>
+                    Team Details
+                  </h4>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Team Name</label>
+                    <input
+                      type="text"
+                      value={editCourtLocation}
+                      onChange={(e) => setEditCourtLocation(e.target.value)}
+                      placeholder="e.g. Sunday Doubles Crew"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Members Needed</label>
+                      <select
+                        value={editPlayersNeeded}
+                        onChange={(e) => setEditPlayersNeeded(Number(e.target.value))}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none"
+                      >
+                        {[2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20].map((n) => (
+                          <option key={n} value={n}>{n} members</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Team Type</label>
+                      <select
+                        value={editGameType}
+                        onChange={(e) => setEditGameType(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none"
+                      >
+                        <option value="casual">Casual Practice</option>
+                        <option value="league">Competitive League</option>
+                        <option value="tournament">Tournament Prep</option>
+                        <option value="social">Social / Fun</option>
+                        <option value="drilling">Drilling / Training</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Skill Level</label>
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="inline-flex bg-gray-100 rounded-lg p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => { setEditSkillSystem("NTRP"); setEditSkillMin("3.0"); setEditSkillMax("4.0"); }}
+                          className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${editSkillSystem === "NTRP" ? "bg-white text-court-green shadow-sm" : "text-gray-500"}`}
+                        >
+                          NTRP
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setEditSkillSystem("UTR"); setEditSkillMin("5"); setEditSkillMax("8"); }}
+                          className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${editSkillSystem === "UTR" ? "bg-white text-court-green shadow-sm" : "text-gray-500"}`}
+                        >
+                          UTR
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {editSkillSystem === "NTRP" ? (
+                        <>
+                          <select value={editSkillMin} onChange={(e) => setEditSkillMin(e.target.value)} className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none">
+                            {["2.0", "2.5", "3.0", "3.5", "4.0", "4.5", "5.0", "5.5"].map((v) => (<option key={v} value={v}>{v}</option>))}
+                          </select>
+                          <span className="text-xs text-gray-400">to</span>
+                          <select value={editSkillMax} onChange={(e) => setEditSkillMax(e.target.value)} className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none">
+                            {["2.5", "3.0", "3.5", "4.0", "4.5", "5.0", "5.5", "6.0+"].map((v) => (<option key={v} value={v}>{v}</option>))}
+                          </select>
+                        </>
+                      ) : (
+                        <>
+                          <input type="number" value={editSkillMin} onChange={(e) => setEditSkillMin(e.target.value)} min="1" max="16" step="0.5" className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" placeholder="Min" />
+                          <span className="text-xs text-gray-400">to</span>
+                          <input type="number" value={editSkillMax} onChange={(e) => setEditSkillMax(e.target.value)} min="1" max="16" step="0.5" className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" placeholder="Max" />
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Schedule</label>
+                    <input
+                      type="text"
+                      value={editPlayDate}
+                      onChange={(e) => setEditPlayDate(e.target.value)}
+                      placeholder="e.g. Weekends, Tuesdays 6-8pm, Twice a month"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Find Players fields */}
               {isFindPlayers && (
@@ -1760,6 +1890,8 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                     game_type?: string;
                     players_needed?: number;
                     court_booked?: boolean;
+                    skill_min?: number | null;
+                    skill_max?: number | null;
                   } = { content: editContent };
                   if (isFindPlayers) {
                     updates.play_date = editPlayDate;
@@ -1769,6 +1901,20 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                     updates.game_type = editGameType;
                     updates.players_needed = editPlayersNeeded;
                     updates.court_booked = editCourtBooked;
+                  }
+                  if (isProposeTeam) {
+                    updates.court_location = editCourtLocation; // team name
+                    updates.game_type = editGameType; // team type
+                    updates.play_date = editPlayDate; // schedule (free text)
+                    updates.play_time = `${editSkillSystem}:${editSkillMin}-${editSkillMax}`;
+                    updates.players_needed = editPlayersNeeded; // members needed
+                    // Numeric skill columns kept in sync with the encoded
+                    // play_time so RLS / filter queries that read skill_min/max
+                    // see the right values. "6.0+" → 6.0.
+                    const minNum = parseFloat(editSkillMin);
+                    const maxNum = parseFloat(String(editSkillMax).replace("+", ""));
+                    updates.skill_min = Number.isFinite(minNum) ? minNum : null;
+                    updates.skill_max = Number.isFinite(maxNum) ? maxNum : null;
                   }
                   const { error: upErr } = await supabase
                     .from("posts")
@@ -1796,6 +1942,13 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                       setLiveGameType(editGameType);
                       setLivePlayersNeeded(editPlayersNeeded);
                       setLiveCourtBooked(editCourtBooked);
+                    }
+                    if (isProposeTeam) {
+                      setLivePlayDate(editPlayDate);
+                      setLivePlayTime(`${editSkillSystem}:${editSkillMin}-${editSkillMax}`);
+                      setLiveCourtLocation(editCourtLocation);
+                      setLiveGameType(editGameType);
+                      setLivePlayersNeeded(editPlayersNeeded);
                     }
                     const newGroups = availableTeams.filter((g) => editSelectedTeamIds.has(g.id)).map((g) => ({ id: g.id, name: g.name }));
                     const newFriendGroups = availableFriendGroups.filter((g) => editSelectedFriendGroupIds.has(g.id)).map((g) => ({ id: g.id, name: g.name }));
