@@ -257,6 +257,10 @@ export default function CourtsPage() {
   const [selectedCourtId, setSelectedCourtId] = useState<string | null>(null);
   // Drives the "Report a missing court" modal launched from the legend.
   const [addCourtOpen, setAddCourtOpen] = useState(false);
+  // Active legend filter. null = show all buckets; otherwise only pins whose
+  // bucket matches are drawn (OSM gap-fill pins are hidden too, since they
+  // have no bucket).
+  const [bucketFilter, setBucketFilter] = useState<ManagedByBucket | null>(null);
 
   // Current map center + zoom. The card uses this to encode the user's
   // exact view into the Details link so we can restore it on return.
@@ -748,6 +752,9 @@ export default function CourtsPage() {
 
     for (const c of courts) {
       if (c.source === "osm") {
+        // OSM gap-fill pins have no bucket; suppress them when any bucket
+        // filter is active so the legend filter behaves consistently.
+        if (bucketFilter !== null) continue;
         // Inert marker — drop pin only, no click handler, no id→marker
         // entry (the edit-pin path only applies to facilities anyway).
         const marker = L.marker([c.lat, c.lng], {
@@ -758,6 +765,7 @@ export default function CourtsPage() {
         continue;
       }
       const bucket: ManagedByBucket = c.bucket ?? "city";
+      if (bucketFilter !== null && bucket !== bucketFilter) continue;
       const marker = L.marker([c.lat, c.lng], { icon: iconFor(bucket) }).addTo(map);
       // Tap → open the slide-up summary card. Replaces the old Leaflet popup
       // so we can render React (photos, ratings, actions) inside it.
@@ -765,7 +773,7 @@ export default function CourtsPage() {
       markersRef.current.push(marker);
       markersByIdRef.current.set(c.id, marker);
     }
-  }, [courts, mapReady, editingCourtId]);
+  }, [courts, mapReady, editingCourtId, bucketFilter]);
 
   // Enable/disable drag on the marker currently being edited.
   useEffect(() => {
@@ -1182,17 +1190,29 @@ export default function CourtsPage() {
             </div>
           )}
 
-          {/* Court count */}
-          {mapReady && courts.length > 0 && !selectedCourt && (
-            <div
-              className="absolute right-4 z-[400] bg-white rounded-full shadow-md border border-court-green-pale/30 px-3 py-1 text-[11px] text-gray-500"
-              style={{ bottom: "calc(3.5rem + env(safe-area-inset-bottom) + 1rem)" }}
-            >
-              {courts.length} court{courts.length === 1 ? "" : "s"}
-            </div>
-          )}
+          {/* Court count — reflects the active legend filter. */}
+          {mapReady && courts.length > 0 && !selectedCourt && (() => {
+            const visibleCount =
+              bucketFilter === null
+                ? courts.length
+                : courts.filter(
+                    (c) => c.source !== "osm" && (c.bucket ?? "city") === bucketFilter
+                  ).length;
+            return (
+              <div
+                className="absolute right-4 z-[400] bg-white rounded-full shadow-md border border-court-green-pale/30 px-3 py-1 text-[11px] text-gray-500"
+                style={{ bottom: "calc(3.5rem + env(safe-area-inset-bottom) + 1rem)" }}
+              >
+                {visibleCount} court{visibleCount === 1 ? "" : "s"}
+                {bucketFilter !== null && (
+                  <span className="text-gray-400"> (filtered)</span>
+                )}
+              </div>
+            );
+          })()}
 
-          {/* Marker color legend — explains the bucket coloring of pins. */}
+          {/* Marker color legend — also a category filter. Tap a row to show
+              only that bucket; tap the active row again to clear. */}
           {mapReady && !selectedCourt && editingCourtId === null && (
             <div
               className="absolute left-4 z-[400] bg-white rounded-xl shadow-md border border-court-green-pale/30 px-2.5 py-2"
@@ -1205,23 +1225,48 @@ export default function CourtsPage() {
                     { bucket: "club", label: "Clubs" },
                     { bucket: "school", label: "Schools" },
                   ] as const
-                ).map(({ bucket, label }) => (
-                  <li
-                    key={bucket}
-                    className="flex items-center gap-2 text-[11px] leading-none text-gray-700"
-                  >
-                    <span
-                      style={{
-                        background: BUCKET_MARKER_BG[bucket],
-                        border: `2px solid ${BUCKET_MARKER_BORDER[bucket]}`,
-                      }}
-                      className="inline-block w-3 h-3 rounded-full flex-shrink-0"
-                      aria-hidden="true"
-                    />
-                    {label}
-                  </li>
-                ))}
+                ).map(({ bucket, label }) => {
+                  const active = bucketFilter === bucket;
+                  const dimmed = bucketFilter !== null && !active;
+                  return (
+                    <li key={bucket}>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setBucketFilter((cur) => (cur === bucket ? null : bucket))
+                        }
+                        aria-pressed={active}
+                        className={`flex items-center gap-2 text-[11px] leading-none w-full text-left rounded-md px-1.5 py-1 -mx-1.5 transition-colors ${
+                          active
+                            ? "bg-court-green-pale/40 text-court-green font-semibold"
+                            : dimmed
+                              ? "text-gray-400 hover:bg-gray-50"
+                              : "text-gray-700 hover:bg-gray-50"
+                        }`}
+                      >
+                        <span
+                          style={{
+                            background: BUCKET_MARKER_BG[bucket],
+                            border: `2px solid ${BUCKET_MARKER_BORDER[bucket]}`,
+                          }}
+                          className="inline-block w-3 h-3 rounded-full flex-shrink-0"
+                          aria-hidden="true"
+                        />
+                        {label}
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
+              {bucketFilter !== null && (
+                <button
+                  type="button"
+                  onClick={() => setBucketFilter(null)}
+                  className="mt-1 w-full text-left text-[10px] font-medium text-court-green hover:text-court-green-light"
+                >
+                  Show all
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setAddCourtOpen(true)}
