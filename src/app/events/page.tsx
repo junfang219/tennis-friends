@@ -11,8 +11,10 @@ import {
   listMyEvents,
   countRegisteredByEvent,
   getMyProfile,
+  updateMyProfile,
 } from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
+import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 
 type EventListItem = {
   id: string;
@@ -43,6 +45,8 @@ type FilterId = (typeof FILTER_TABS)[number]["id"];
 
 export default function EventsListPage() {
   const [filter, setFilter] = useState<FilterId>("upcoming");
+  const [locationSaving, setLocationSaving] = useState(false);
+  const [locationError, setLocationError] = useState("");
 
   const eventsQuery = useCachedQuery<EventListItem[]>(
     `events:list:${filter}`,
@@ -97,6 +101,33 @@ export default function EventsListPage() {
       ? null
       : profileQuery.data.latitude != null && profileQuery.data.longitude != null;
 
+  const useMyLocation = async () => {
+    setLocationError("");
+    setLocationSaving(true);
+    const pos = await getCurrentPosition();
+    if (isPositionError(pos)) {
+      setLocationSaving(false);
+      setLocationError(
+        pos.code === "permission_denied"
+          ? "Location permission denied."
+          : pos.code === "unsupported"
+            ? "Your browser doesn't support geolocation."
+            : "Could not get your location."
+      );
+      return;
+    }
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await updateMyProfile(supabase, { latitude: pos.latitude, longitude: pos.longitude });
+      profileQuery.mutate({ latitude: pos.latitude, longitude: pos.longitude });
+      // Refetch events so newly visible public events appear.
+      await eventsQuery.refetch();
+    } catch {
+      setLocationError("Could not save location.");
+    }
+    setLocationSaving(false);
+  };
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <CommunitiesTabs />
@@ -123,13 +154,25 @@ export default function EventsListPage() {
         <div className="mb-4 bg-ball-yellow/20 border border-ball-yellow/40 rounded-xl px-4 py-3 text-sm text-gray-700 flex items-start gap-3">
           <span className="text-base">📍</span>
           <div className="flex-1">
-            <div className="font-semibold text-gray-900 mb-0.5">Set your location</div>
-            <p className="text-xs text-gray-600">
-              Add a home location in your profile to see public events near you.{" "}
-              <Link href="/profile/settings" className="text-court-green underline">
-                Update profile
-              </Link>
+            <div className="font-semibold text-gray-900 mb-0.5">Turn on your location</div>
+            <p className="text-xs text-gray-600 mb-2">
+              Local public events near you are hidden until you share your location.
             </p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={useMyLocation}
+                disabled={locationSaving}
+                className="btn-primary btn-sm disabled:opacity-60"
+              >
+                {locationSaving ? "Getting location…" : "Use my location"}
+              </button>
+              <Link href="/profile/settings" className="text-xs text-court-green underline">
+                Or set it in profile
+              </Link>
+            </div>
+            {locationError && (
+              <p className="text-xs text-red-500 mt-2">{locationError}</p>
+            )}
           </div>
         </div>
       )}
