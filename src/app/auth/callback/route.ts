@@ -9,13 +9,41 @@ export async function GET(request: NextRequest) {
   const code = url.searchParams.get("code");
   const next = url.searchParams.get("next") ?? "/";
 
+  // OAuth can't tell us up front whether this is a brand-new account or a
+  // returning user — both arrive through signInWithOAuth. So the page-supplied
+  // `next` (e.g. /onboarding from the register button) is only a hint. Once we
+  // have a session we route by the profile's onboarding state, so an existing
+  // Google user isn't dumped back into "Tell us about your game".
+  let dest = next;
+
   if (code) {
     const supabase = await createSupabaseServerClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (error) {
       return NextResponse.redirect(new URL(`/auth/login?error=${encodeURIComponent(error.message)}`, url.origin));
     }
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (user) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("onboarding_complete")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (!profile?.onboarding_complete) {
+        // New or half-finished account — always send them through onboarding.
+        dest = "/onboarding";
+      } else if (dest === "/onboarding") {
+        // Returning user who happened to come in via the register button —
+        // send them home instead of re-running onboarding.
+        dest = "/";
+      }
+    }
   }
 
-  return NextResponse.redirect(new URL(next, url.origin));
+  return NextResponse.redirect(new URL(dest, url.origin));
 }
