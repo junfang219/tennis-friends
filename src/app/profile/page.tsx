@@ -167,6 +167,9 @@ export default function ProfilePage() {
   const [tagError, setTagError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState("");
 
   // Click-outside + Escape to close the options menu
   useEffect(() => {
@@ -488,6 +491,43 @@ export default function ProfilePage() {
     e.target.value = "";
   };
 
+  // Tap-to-upload from the view-mode avatar (mirrors the team header).
+  // Persists immediately rather than going through the edit form.
+  const handleAvatarSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAvatarError("");
+    if (!file.type.startsWith("image/")) {
+      setAvatarError("Photo must be an image.");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setAvatarError("Photo must be under 10 MB.");
+      e.target.value = "";
+      return;
+    }
+    setAvatarUploading(true);
+    try {
+      const upResult = await uploadToBucket(file, "avatars");
+      if (isUploadError(upResult)) {
+        setAvatarError(upResult.message);
+      } else {
+        const supabase = createSupabaseBrowserClient();
+        const updated = await updateMyProfile(supabase, { profile_image_url: upResult.url });
+        const url = updated.profile_image_url || upResult.url;
+        setProfile((prev) => (prev ? { ...prev, profileImageUrl: url } : prev));
+        setForm((f) => ({ ...f, profileImageUrl: url }));
+        await updateSession();
+        void cachedProfile.refetch();
+      }
+    } catch {
+      setAvatarError("Network error.");
+    }
+    setAvatarUploading(false);
+    e.target.value = "";
+  };
+
   const persistTags = async (tags: string[]) => {
     setProfile((prev) => (prev ? { ...prev, customTags: tags } : prev));
     try {
@@ -786,15 +826,51 @@ export default function ProfilePage() {
             <p className="text-xs text-red-600 px-8 pt-2">{coverError}</p>
           )}
 
-          {/* Avatar overlapping banner */}
+          {/* Avatar overlapping banner — tap to change photo (view mode);
+              in edit mode the form's Upload Photo control owns this. */}
           <div className="px-8 -mt-12 relative">
-            <div className="inline-block ring-4 ring-white rounded-full shadow-lg">
-              <Avatar
-                name={profile.name}
-                image={profile.profileImageUrl}
-                size="xl"
-              />
-            </div>
+            {editing ? (
+              <div className="inline-block ring-4 ring-white rounded-full shadow-lg">
+                <Avatar name={profile.name} image={profile.profileImageUrl} size="xl" />
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => avatarInputRef.current?.click()}
+                  disabled={avatarUploading}
+                  className="group relative inline-block rounded-full ring-4 ring-white shadow-lg focus:outline-none focus:ring-court-green-soft"
+                  aria-label="Change profile photo"
+                >
+                  <Avatar name={profile.name} image={profile.profileImageUrl} size="xl" />
+                  <span className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
+                      <circle cx="12" cy="13" r="4" />
+                    </svg>
+                  </span>
+                  {avatarUploading && (
+                    <span className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center pointer-events-none">
+                      <svg className="animate-spin w-6 h-6 text-white" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
+                        <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                      </svg>
+                    </span>
+                  )}
+                </button>
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/gif,image/webp"
+                  onChange={handleAvatarSelect}
+                  disabled={avatarUploading}
+                  className="hidden"
+                />
+                {avatarError && (
+                  <p className="text-xs text-red-600 mt-2">{avatarError}</p>
+                )}
+              </>
+            )}
           </div>
 
           <div className="px-8 pb-8 pt-4">
