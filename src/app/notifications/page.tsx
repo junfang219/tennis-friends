@@ -1,13 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Avatar from "@/components/Avatar";
 import PostDetailModal from "@/components/PostDetailModal";
 import { emojiFor } from "@/lib/reactions";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { listNotifications, markAllNotificationsRead } from "@/lib/supabase/queries";
+import {
+  deleteNotification,
+  listNotifications,
+  markAllNotificationsRead,
+} from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 
 type Notification = {
@@ -152,6 +156,7 @@ export default function NotificationsPage() {
   // same — important for iOS where /notifications is the primary path.
   const [openPostId, setOpenPostId] = useState<string | null>(null);
   const [openWithComments, setOpenWithComments] = useState(false);
+  const [swipedKey, setSwipedKey] = useState<string | null>(null);
 
   const notifQuery = useCachedQuery<Notification[]>(
     status === "authenticated" ? "notifications:all" : null,
@@ -189,6 +194,32 @@ export default function NotificationsPage() {
     const supabase = createSupabaseBrowserClient();
     void markAllNotificationsRead(supabase);
   }, [status, notifQuery.data]);
+
+  // Escape closes any open swipe row.
+  useEffect(() => {
+    if (!swipedKey) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSwipedKey(null);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [swipedKey]);
+
+  const mutateNotifs = notifQuery.mutate;
+  const refetchNotifs = notifQuery.refetch;
+  const handleDelete = async (id: string) => {
+    setSwipedKey(null);
+    const previous = notifQuery.data;
+    mutateNotifs((prev) => (prev ?? []).filter((n) => n.id !== id));
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await deleteNotification(supabase, id);
+    } catch {
+      // Roll back the optimistic removal and refetch to resync.
+      mutateNotifs(previous ?? []);
+      void refetchNotifs();
+    }
+  };
 
   if (status === "loading" || loading) {
     return (
@@ -259,34 +290,46 @@ export default function NotificationsPage() {
           <p className="text-gray-500 text-sm">When someone interacts with your posts, you&apos;ll see it here.</p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {notifications.map((n) => (
-            <button
-              key={n.id}
-              onClick={() => handleTap(n)}
-              className={`w-full text-left flex items-start gap-3 p-4 rounded-xl transition-colors ${
-                n.read ? "bg-white" : "bg-court-green/5"
-              } shadow-sm border border-court-green-pale/20 active:bg-gray-50`}
-            >
-              <div className="relative shrink-0">
-                <Avatar name={n.actor.name} image={n.actor.profileImageUrl} size="md" />
-                <div className="absolute -bottom-1 -right-1">
-                  {notificationIcon(n.type)}
+        <>
+          <p className="text-xs text-gray-400 px-1 mb-2">
+            Tip: swipe left on a notification to delete it.
+          </p>
+          <div className="space-y-2">
+            {notifications.map((n) => (
+              <SwipeNotificationRow
+                key={n.id}
+                rowKey={n.id}
+                swipedKey={swipedKey}
+                setSwipedKey={setSwipedKey}
+                onTap={() => handleTap(n)}
+                onDelete={() => handleDelete(n.id)}
+              >
+                <div
+                  className={`flex items-start gap-3 p-4 ${
+                    n.read ? "bg-white" : "bg-court-green/5"
+                  }`}
+                >
+                  <div className="relative shrink-0">
+                    <Avatar name={n.actor.name} image={n.actor.profileImageUrl} size="md" />
+                    <div className="absolute -bottom-1 -right-1">
+                      {notificationIcon(n.type)}
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-gray-800">
+                      <span className="font-semibold">{n.actor.name}</span>{" "}
+                      {notificationText(n)}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-1">{timeAgo(n.createdAt)}</p>
+                  </div>
+                  {!n.read && (
+                    <div className="w-2.5 h-2.5 rounded-full bg-court-green shrink-0 mt-1.5" />
+                  )}
                 </div>
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-gray-800">
-                  <span className="font-semibold">{n.actor.name}</span>{" "}
-                  {notificationText(n)}
-                </p>
-                <p className="text-xs text-gray-400 mt-1">{timeAgo(n.createdAt)}</p>
-              </div>
-              {!n.read && (
-                <div className="w-2.5 h-2.5 rounded-full bg-court-green shrink-0 mt-1.5" />
-              )}
-            </button>
-          ))}
-        </div>
+              </SwipeNotificationRow>
+            ))}
+          </div>
+        </>
       )}
 
       <PostDetailModal
@@ -294,6 +337,151 @@ export default function NotificationsPage() {
         withComments={openWithComments}
         onClose={() => setOpenPostId(null)}
       />
+    </div>
+  );
+}
+
+/* ───────── SwipeNotificationRow ─────────
+ * Modeled on SwipeTeamRow in src/app/groups/page.tsx — drag the card
+ * leftward to reveal a red "Delete" action; release past the open
+ * threshold latches the row open, tap-on-card while open closes it
+ * instead of navigating.
+ */
+function SwipeNotificationRow({
+  rowKey,
+  swipedKey,
+  setSwipedKey,
+  onTap,
+  onDelete,
+  children,
+}: {
+  rowKey: string;
+  swipedKey: string | null;
+  setSwipedKey: (k: string | null) => void;
+  onTap: () => void;
+  onDelete: () => void;
+  children: React.ReactNode;
+}) {
+  const ACTION_WIDTH = 96;
+  const OPEN_THRESHOLD = 50;
+  const swiped = swipedKey === rowKey;
+
+  const [dragX, setDragX] = useState(0);
+  const startXRef = useRef<number | null>(null);
+  const startOffsetRef = useRef(0);
+  const currentDragRef = useRef(0);
+  const draggingRef = useRef(false);
+  const movedRef = useRef(false);
+  const suppressClickRef = useRef(false);
+
+  const handleStart = (clientX: number) => {
+    startXRef.current = clientX;
+    startOffsetRef.current = swiped ? -ACTION_WIDTH : 0;
+    currentDragRef.current = startOffsetRef.current;
+    draggingRef.current = true;
+    movedRef.current = false;
+  };
+  const handleMove = (clientX: number) => {
+    if (!draggingRef.current || startXRef.current === null) return;
+    const delta = clientX - startXRef.current;
+    if (Math.abs(delta) > 5) movedRef.current = true;
+    const next = Math.max(-ACTION_WIDTH, Math.min(0, startOffsetRef.current + delta));
+    currentDragRef.current = next;
+    setDragX(next);
+  };
+  const handleEnd = () => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    const finalDrag = currentDragRef.current;
+    const wasSwiped = swiped;
+    const moved = movedRef.current;
+    startXRef.current = null;
+
+    if (moved) {
+      suppressClickRef.current = true;
+      setTimeout(() => { suppressClickRef.current = false; }, 350);
+    }
+
+    if (!moved) return;
+
+    if (wasSwiped) {
+      if (finalDrag > -ACTION_WIDTH + OPEN_THRESHOLD) {
+        setDragX(0);
+        setSwipedKey(null);
+      } else {
+        setDragX(-ACTION_WIDTH);
+      }
+    } else {
+      if (finalDrag < -OPEN_THRESHOLD) {
+        setDragX(-ACTION_WIDTH);
+        setSwipedKey(rowKey);
+      } else {
+        setDragX(0);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (swiped) setDragX(-ACTION_WIDTH);
+    else setDragX(0);
+  }, [swiped]);
+
+  const offset = draggingRef.current ? dragX : swiped ? -ACTION_WIDTH : 0;
+
+  return (
+    <div className="relative overflow-hidden rounded-xl shadow-sm border border-court-green-pale/20 bg-white">
+      <div className="absolute inset-y-0 right-0 flex items-stretch" style={{ width: ACTION_WIDTH }}>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          style={{ width: ACTION_WIDTH }}
+          className="bg-red-500 text-white text-[11px] font-semibold flex flex-col items-center justify-center gap-1"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6l-2 14a2 2 0 01-2 2H9a2 2 0 01-2-2L5 6" />
+            <path d="M10 11v6" />
+            <path d="M14 11v6" />
+            <path d="M9 6V4a2 2 0 012-2h2a2 2 0 012 2v2" />
+          </svg>
+          Delete
+        </button>
+      </div>
+
+      <div
+        className="relative bg-white"
+        style={{
+          transform: `translateX(${offset}px)`,
+          transition: draggingRef.current ? "none" : "transform 0.25s ease-out",
+          touchAction: "pan-y",
+        }}
+        onTouchStart={(e) => handleStart(e.touches[0].clientX)}
+        onTouchMove={(e) => handleMove(e.touches[0].clientX)}
+        onTouchEnd={handleEnd}
+        onTouchCancel={handleEnd}
+        onMouseDown={(e) => { handleStart(e.clientX); }}
+        onMouseMove={(e) => { if (draggingRef.current) handleMove(e.clientX); }}
+        onMouseUp={handleEnd}
+      >
+        <button
+          type="button"
+          onClick={(e) => {
+            if (suppressClickRef.current) {
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
+            if (swiped) {
+              setSwipedKey(null);
+              return;
+            }
+            onTap();
+          }}
+          className="w-full text-left active:bg-gray-50"
+        >
+          {children}
+        </button>
+      </div>
     </div>
   );
 }

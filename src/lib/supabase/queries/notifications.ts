@@ -102,3 +102,14 @@ export async function markAllNotificationsRead(
     .eq("read", false);
   if (error) throw error;
 }
+
+export async function deleteNotification(
+  supabase: SupabaseClient<Database>,
+  id: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("notifications")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
+}
