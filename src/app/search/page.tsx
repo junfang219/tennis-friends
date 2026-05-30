@@ -9,6 +9,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getMyProfile, searchProfiles, updateMyProfile } from "@/lib/supabase/queries";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 import { rankPlayers } from "@/lib/discoverRanking";
+import { useIsNative } from "@/hooks/useIsNative";
 
 type Bucket = "beginner" | "intermediate" | "advanced" | "pro";
 type AgeKey = "under_18" | "18_29" | "30_49" | "50_plus";
@@ -86,6 +87,8 @@ export default function SearchPage() {
 
   // Whether the browse-state cap has been expanded via "Show more".
   const [showAll, setShowAll] = useState(false);
+
+  const isNative = useIsNative();
 
   // Viewer's location — drives the consent banner and is the origin point
   // for the distance ranking. We keep the coords (not just a boolean) so the
@@ -235,6 +238,13 @@ export default function SearchPage() {
   const capActive = !showAll && query.trim() === "" && !hasFilters;
   const visible = capActive ? displayed.slice(0, DEFAULT_VISIBLE) : displayed;
   const hiddenCount = displayed.length - visible.length;
+
+  // On the native app, the plain browse lists (distance/recent) drop free-form
+  // custom tags and show only the three structured badges (rating, age,
+  // gender) so every card is the same height. The moment the user searches or
+  // filters they're scanning specifics, so the full tag set comes back (and
+  // web always shows everything).
+  const trimBadges = isNative && query.trim() === "" && !hasFilters;
 
   // Changing the search text or any filter re-collapses the list to the cap, so
   // returning to a clean browse shows the top 20 again rather than staying
@@ -466,11 +476,12 @@ export default function SearchPage() {
                       {GENDER_LABELS[user.gender] || user.gender}
                     </span>
                   )}
-                  {(user.customTags || []).map((tag) => (
-                    <span key={tag} className="text-xs font-medium text-court-green-light bg-court-green-pale/15 px-2 py-0.5 rounded-full">
-                      {tag}
-                    </span>
-                  ))}
+                  {!trimBadges &&
+                    (user.customTags || []).map((tag) => (
+                      <span key={tag} className="text-xs font-medium text-court-green-light bg-court-green-pale/15 px-2 py-0.5 rounded-full">
+                        {tag}
+                      </span>
+                    ))}
                 </div>
               </div>
               <FriendRequestButton
