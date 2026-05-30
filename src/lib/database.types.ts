@@ -2312,6 +2312,7 @@ export type Database = {
           handle: string | null
           id: string
           is_private: boolean
+          last_active: string
           latitude: number | null
           location: unknown
           longitude: number | null
@@ -2343,6 +2344,7 @@ export type Database = {
           handle?: string | null
           id: string
           is_private?: boolean
+          last_active?: string
           latitude?: number | null
           location?: unknown
           longitude?: number | null
@@ -2374,6 +2376,7 @@ export type Database = {
           handle?: string | null
           id?: string
           is_private?: boolean
+          last_active?: string
           latitude?: number | null
           location?: unknown
           longitude?: number | null

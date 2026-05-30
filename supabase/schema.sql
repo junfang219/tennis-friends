@@ -141,13 +141,19 @@ create table public.profiles (
   onboarding_complete  boolean not null default false,
   is_private           boolean not null default false,
   created_at           timestamptz not null default now(),
-  updated_at           timestamptz not null default now()
+  updated_at           timestamptz not null default now(),
+  -- Presence heartbeat (last seen using the app), distinct from updated_at
+  -- (last content edit). Powers the Discover "recently active" sort. Written
+  -- by a throttled client heartbeat; the profiles_updated_at trigger below is
+  -- scoped so these writes don't bump updated_at.
+  last_active          timestamptz not null default now()
 );
 
 create index profiles_location_idx     on public.profiles using gist (location) where location is not null;
 create index profiles_handle_idx       on public.profiles (handle) where handle is not null;
 create index profiles_ntrp_idx         on public.profiles (ntrp_rating) where ntrp_rating is not null;
 create index profiles_created_at_idx   on public.profiles (created_at desc);
+create index profiles_last_active_idx  on public.profiles (last_active desc);
 
 -- Auto-create a profile row when a new auth user signs up. Runs as
 -- security definer so it can write to public.profiles regardless of RLS.
@@ -1034,7 +1040,9 @@ create index device_tokens_user_idx on public.device_tokens (user_id);
 -- updated_at triggers
 -- =========================================================================
 
-create trigger profiles_updated_at                before update on public.profiles                for each row execute function public.set_updated_at();
+-- Scoped so a last_active-only write (the presence heartbeat) does NOT bump
+-- updated_at; the trigger fires only when last_active is unchanged (real edits).
+create trigger profiles_updated_at                before update on public.profiles                for each row when (old.last_active is not distinct from new.last_active) execute function public.set_updated_at();
 create trigger groups_updated_at                  before update on public.groups                  for each row execute function public.set_updated_at();
 create trigger group_invites_updated_at           before update on public.group_invites           for each row execute function public.set_updated_at();
 create trigger seasons_updated_at                 before update on public.seasons                 for each row execute function public.set_updated_at();

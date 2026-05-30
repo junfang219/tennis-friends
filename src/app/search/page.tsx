@@ -55,6 +55,7 @@ type UserResult = {
   customTags: string[];
   latitude: number | null;
   longitude: number | null;
+  lastActive: string | null;
   updatedAt: string;
   distanceMiles: number | null;
   friendshipId: string | null;
@@ -161,6 +162,7 @@ export default function SearchPage() {
           handle: p.handle,
           latitude: p.latitude,
           longitude: p.longitude,
+          lastActive: p.last_active,
           updatedAt: p.updated_at,
           distanceMiles: null,
           friendshipId: p.friendshipId,

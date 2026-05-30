@@ -35,12 +35,13 @@ export interface Profile {
   is_private: boolean;
   created_at: string;
   updated_at: string;
+  last_active: string;
 }
 
 export type ProfileUpdate = Updates<"profiles">;
 
 const PROFILE_COLUMNS =
-  "id, email, phone, name, bio, skill_level, favorite_surface, profile_image_url, cover_image_url, cover_offset_y, cover_scale, custom_tags, latitude, longitude, gender, age_range, rating_system, ntrp_rating, utr_rating, handle, venmo_handle, paypal_handle, cashapp_handle, zelle_handle, onboarding_complete, is_private, created_at, updated_at";
+  "id, email, phone, name, bio, skill_level, favorite_surface, profile_image_url, cover_image_url, cover_offset_y, cover_scale, custom_tags, latitude, longitude, gender, age_range, rating_system, ntrp_rating, utr_rating, handle, venmo_handle, paypal_handle, cashapp_handle, zelle_handle, onboarding_complete, is_private, created_at, updated_at, last_active";
 
 // Shared column subset for any join that displays a profile alongside
 // their payment handles. Any creditor/debtor view (SplitCostSheet today;
@@ -110,6 +111,23 @@ export async function updateMyProfile(
     await supabase.auth.updateUser({ data: metadata });
   }
   return data as Profile;
+}
+
+// Stamp the signed-in user's last_active to "now". This is a presence
+// heartbeat — kept separate from updated_at (the profiles_updated_at trigger
+// skips last_active-only writes), so it powers the Discover "recently active"
+// sort without making every profile look freshly edited. Best-effort: callers
+// shouldn't await it on a critical path. RLS (profiles_update_self) lets a
+// user write their own row.
+export async function touchLastActive(
+  supabase: SupabaseClient<Database>
+): Promise<void> {
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return;
+  await supabase
+    .from("profiles")
+    .update({ last_active: new Date().toISOString() })
+    .eq("id", auth.user.id);
 }
 
 export async function completeOnboarding(

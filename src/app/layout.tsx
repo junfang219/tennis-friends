@@ -5,6 +5,7 @@ import BottomNav from "@/components/BottomNav";
 import PushRegistrar from "@/components/PushRegistrar";
 import KeyboardInit from "@/components/KeyboardInit";
 import ArrivalDetector from "@/components/ArrivalDetector";
+import LastActiveHeartbeat from "@/components/LastActiveHeartbeat";
 
 // SessionProvider is gone: Supabase's auth state is hydrated per-component
 // via useSupabaseUser / the nextauth-compat shim. ArrivalDetector is
@@ -41,6 +42,7 @@ export default function RootLayout({
         <PushRegistrar />
         <KeyboardInit />
         <ArrivalDetector />
+        <LastActiveHeartbeat />
         <Navbar />
         <main className="flex-1">{children}</main>
         <BottomNav />

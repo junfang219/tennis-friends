@@ -47,6 +47,7 @@ describe("snake_case → camelCase adapters", () => {
       is_private: false,
       created_at: "2026-05-21T00:00:00Z",
       updated_at: "2026-05-21T00:00:00Z",
+      last_active: "2026-05-21T00:00:00Z",
     });
     expect(result.profileImageUrl).toBe("https://x.png");
     expect(result.skillLevel).toBe("intermediate");
@@ -64,7 +65,7 @@ describe("snake_case → camelCase adapters", () => {
       age_range: "", rating_system: "", ntrp_rating: null, utr_rating: null,
       handle: null, venmo_handle: null, paypal_handle: null,
       cashapp_handle: null, zelle_handle: null, onboarding_complete: false,
-      is_private: false, created_at: "x", updated_at: "x",
+      is_private: false, created_at: "x", updated_at: "x", last_active: "x",
     });
     expect(result.customTags).toEqual([]);
     expect(result.email).toBe("");

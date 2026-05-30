@@ -12,6 +12,9 @@ export interface RankablePlayer {
   customTags: string[];
   latitude: number | null;
   longitude: number | null;
+  // Presence heartbeat — drives "recent". Falls back to updatedAt when absent
+  // (e.g. older rows before last_active existed).
+  lastActive: string | null;
   updatedAt: string;
 }
 
@@ -32,8 +35,8 @@ export interface RankOptions {
  * applies the text + tag filters, then sorts.
  *
  *  - "distance": closest first; rows with no computable distance sink last.
- *  - "recent":   most recently updated profile first — our best "recently
- *                active" proxy absent dedicated session tracking.
+ *  - "recent":   most recently active first (last_active, falling back to
+ *                updatedAt for rows without a heartbeat yet).
  */
 export function rankPlayers<T extends RankablePlayer>(
   players: T[],
@@ -66,6 +69,8 @@ export function rankPlayers<T extends RankablePlayer>(
       if (b.distanceMiles == null) return -1;
       return a.distanceMiles - b.distanceMiles;
     }
-    return b.updatedAt.localeCompare(a.updatedAt);
+    const aRecent = a.lastActive ?? a.updatedAt;
+    const bRecent = b.lastActive ?? b.updatedAt;
+    return bRecent.localeCompare(aRecent);
   });
 }

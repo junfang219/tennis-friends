@@ -10,6 +10,7 @@ function player(overrides: Partial<RankablePlayer> & { name: string }): Rankable
     customTags: [],
     latitude: null,
     longitude: null,
+    lastActive: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
   };
@@ -40,12 +41,36 @@ describe("rankPlayers — distance sort", () => {
 });
 
 describe("rankPlayers — recent sort", () => {
-  it("orders most recently updated first", () => {
-    const old = player({ name: "Old", updatedAt: "2025-01-01T00:00:00Z" });
-    const fresh = player({ name: "Fresh", updatedAt: "2026-05-01T00:00:00Z" });
-    const mid = player({ name: "Mid", updatedAt: "2026-02-01T00:00:00Z" });
+  it("orders most recently active first (by lastActive)", () => {
+    const old = player({ name: "Old", lastActive: "2025-01-01T00:00:00Z" });
+    const fresh = player({ name: "Fresh", lastActive: "2026-05-01T00:00:00Z" });
+    const mid = player({ name: "Mid", lastActive: "2026-02-01T00:00:00Z" });
     const ranked = rankPlayers([old, fresh, mid], { viewer: null, sort: "recent" });
     expect(ranked.map((p) => p.name)).toEqual(["Fresh", "Mid", "Old"]);
+  });
+
+  it("uses lastActive over updatedAt — an actively-present but unedited profile ranks first", () => {
+    // Edited long ago but active today.
+    const active = player({
+      name: "Active",
+      updatedAt: "2025-01-01T00:00:00Z",
+      lastActive: "2026-05-30T00:00:00Z",
+    });
+    // Edited profile recently but hasn't opened the app since.
+    const edited = player({
+      name: "Edited",
+      updatedAt: "2026-05-20T00:00:00Z",
+      lastActive: "2026-01-15T00:00:00Z",
+    });
+    const ranked = rankPlayers([edited, active], { viewer: null, sort: "recent" });
+    expect(ranked.map((p) => p.name)).toEqual(["Active", "Edited"]);
+  });
+
+  it("falls back to updatedAt when lastActive is null", () => {
+    const a = player({ name: "A", lastActive: null, updatedAt: "2026-05-01T00:00:00Z" });
+    const b = player({ name: "B", lastActive: null, updatedAt: "2026-02-01T00:00:00Z" });
+    const ranked = rankPlayers([b, a], { viewer: null, sort: "recent" });
+    expect(ranked.map((p) => p.name)).toEqual(["A", "B"]);
   });
 });
 

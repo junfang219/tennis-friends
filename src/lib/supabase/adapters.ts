@@ -61,6 +61,7 @@ export interface ProfileCamel {
   isPrivate: boolean;
   createdAt: string;
   updatedAt: string;
+  lastActive: string;
 }
 
 export function toProfileCamel(p: Profile): ProfileCamel {
@@ -93,6 +94,7 @@ export function toProfileCamel(p: Profile): ProfileCamel {
     isPrivate: p.is_private,
     createdAt: pgToIso(p.created_at),
     updatedAt: pgToIso(p.updated_at),
+    lastActive: pgToIso(p.last_active),
   };
 }
 
