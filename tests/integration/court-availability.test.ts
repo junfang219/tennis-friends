@@ -2,11 +2,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   adminClient,
   anonClient,
+  befriend,
   deleteTestUsers,
   integrationEnvReady,
   makeTestUser,
   type TestUser,
 } from "./_helpers";
+import { createPost } from "../../src/lib/supabase/queries";
 
 // The manual court-status reporter (CourtStatusReporter) calls
 // report_court_availability with NO p_post_id — there's no game context, just
@@ -95,6 +97,142 @@ describe.skipIf(!integrationEnvReady)("report_court_availability — manual path
     const { error } = await anonClient().rpc("report_court_availability", {
       p_court_id: courtId,
       p_has_empty: true,
+    });
+    expect(error).not.toBeNull();
+  });
+});
+
+// The in-chat GameCourtPrompt reports WITH a p_post_id — the game context. The
+// RPC then verifies the caller is a participant (author or approved player) and
+// that "now" is inside the game window, instead of trusting a GPS reading.
+describe.skipIf(!integrationEnvReady)("report_court_availability — game-scoped path (live Supabase)", () => {
+  let author: TestUser; // creates the game
+  let player: TestUser; // approved participant
+  let outsider: TestUser; // not in the game
+  let livePostId = ""; // game whose window contains "now"
+  let futurePostId = ""; // game that hasn't opened yet
+  const courtId = `test-court-game-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  // Build play_date/play_time in UTC so the window math is independent of the
+  // test machine's timezone (we pin play_timezone to "UTC" on the post).
+  function utcDateTime(offsetMs: number): { playDate: string; playTime: string } {
+    const d = new Date(Date.now() + offsetMs);
+    const iso = d.toISOString();
+    return { playDate: iso.slice(0, 10), playTime: iso.slice(11, 16) };
+  }
+
+  beforeAll(async () => {
+    [author, player, outsider] = await Promise.all([
+      makeTestUser("cag-author"),
+      makeTestUser("cag-player"),
+      makeTestUser("cag-outsider"),
+    ]);
+
+    // Live game: started 5 min ago, 90-min duration → "now" is inside
+    // [start-30, end]. play_timezone UTC so the RPC parses our UTC strings.
+    const started = utcDateTime(-5 * 60 * 1000);
+    const live = await createPost(author.client, {
+      content: "Game-window report test",
+      post_type: "find_players",
+      play_date: started.playDate,
+      play_time: started.playTime,
+      play_duration: 90,
+      play_timezone: "UTC",
+      court_location: "Game Window Court",
+      game_type: "singles",
+      players_needed: 1,
+    });
+    livePostId = live.id;
+
+    // Future game: starts in 2 days → "now" is before start-30.
+    const soon = utcDateTime(2 * 24 * 60 * 60 * 1000);
+    const future = await createPost(author.client, {
+      content: "Future game report test",
+      post_type: "find_players",
+      play_date: soon.playDate,
+      play_time: soon.playTime,
+      play_duration: 90,
+      play_timezone: "UTC",
+      court_location: "Game Window Court",
+      game_type: "singles",
+      players_needed: 1,
+    });
+    futurePostId = future.id;
+
+    // The join-request RLS requires the post be visible to the requester
+    // (can_see_post). Befriend so `player` can see `author`'s game and join.
+    await befriend(author, player);
+
+    // Approve `player` on the live game (author approves their own grant).
+    const reqIns = await player.client
+      .from("play_requests")
+      .insert({ post_id: livePostId, user_id: player.id, status: "pending" });
+    if (reqIns.error) throw new Error(`play_request insert: ${reqIns.error.message}`);
+    const reqUpd = await author.client
+      .from("play_requests")
+      .update({ status: "approved" })
+      .eq("post_id", livePostId)
+      .eq("user_id", player.id)
+      .select("id, status");
+    if (reqUpd.error) throw new Error(`play_request approve: ${reqUpd.error.message}`);
+    if (!reqUpd.data || reqUpd.data.length !== 1 || reqUpd.data[0].status !== "approved") {
+      throw new Error(`play_request approve affected ${reqUpd.data?.length ?? 0} rows: ${JSON.stringify(reqUpd.data)}`);
+    }
+  }, 60_000);
+
+  afterAll(async () => {
+    const admin = adminClient();
+    for (const id of [livePostId, futurePostId].filter(Boolean)) {
+      try {
+        await admin.from("posts").delete().eq("id", id);
+      } catch {
+        /* best-effort */
+      }
+    }
+    await deleteTestUsers([author, player, outsider].filter(Boolean));
+  }, 60_000);
+
+  it("the author can report inside the game window, linked to the post", async () => {
+    const { data, error } = await author.client.rpc("report_court_availability", {
+      p_court_id: courtId,
+      p_has_empty: true,
+      p_post_id: livePostId,
+    });
+    expect(error).toBeNull();
+    expect((data as { ok?: boolean })?.ok).toBe(true);
+
+    const { data: rows } = await adminClient()
+      .from("court_availability_reports")
+      .select("post_id, has_empty")
+      .eq("court_id", courtId)
+      .eq("user_id", author.id);
+    expect(rows).toHaveLength(1);
+    expect(rows![0].post_id).toBe(livePostId);
+  });
+
+  it("an approved player can also report for the game", async () => {
+    const { error } = await player.client.rpc("report_court_availability", {
+      p_court_id: courtId,
+      p_has_empty: false,
+      p_post_id: livePostId,
+    });
+    expect(error).toBeNull();
+  });
+
+  it("rejects a non-participant", async () => {
+    const { error } = await outsider.client.rpc("report_court_availability", {
+      p_court_id: courtId,
+      p_has_empty: true,
+      p_post_id: livePostId,
+    });
+    expect(error).not.toBeNull();
+  });
+
+  it("rejects a report outside the game window", async () => {
+    const { error } = await author.client.rpc("report_court_availability", {
+      p_court_id: courtId,
+      p_has_empty: true,
+      p_post_id: futurePostId,
     });
     expect(error).not.toBeNull();
   });

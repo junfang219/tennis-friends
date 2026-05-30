@@ -5,6 +5,7 @@ import Link from "next/link";
 import { StarRating } from "./StarRating";
 import { DirectionsButton } from "./DirectionsButton";
 import { CourtStatusReporter } from "./CourtStatusReporter";
+import { isReportEligibleCategory } from "@/lib/courtPrompt";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 export type CourtSummary = {
@@ -53,9 +54,6 @@ const CATEGORY_LABEL: Record<string, string> = {
   indoor_facility: "Indoor facility",
 };
 
-// Categories where players crowd-source empty-court reports on arrival.
-const REPORT_ELIGIBLE_CATEGORIES = new Set(["public_park", "school", "college"]);
-
 type RecentReportsSummary = {
   count: number;
   emptyCount: number;
@@ -88,7 +86,7 @@ export function CourtSummaryCard({
   onClose,
 }: Props) {
   const hasReviews = (summary?.count ?? 0) > 0;
-  const eligibleForReports = !!category && REPORT_ELIGIBLE_CATEGORIES.has(category);
+  const eligibleForReports = isReportEligibleCategory(category);
   const [recentReports, setRecentReports] = useState<RecentReportsSummary | null>(null);
 
   const refreshReports = useCallback(async () => {

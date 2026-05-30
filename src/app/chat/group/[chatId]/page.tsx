@@ -16,11 +16,15 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useRealtimeTable } from "@/lib/supabase/realtime";
 import {
   getChatBundle,
+  getChatGameContext,
   sendChatMessage,
   addReaction,
 } from "@/lib/supabase/queries";
 import { toChatMessageCamel } from "@/lib/supabase/adapters";
 import { errorMessage } from "@/lib/errorMessage";
+import { resolveFacilityByName } from "@/lib/facilities";
+import { gameWindowMs, isReportEligibleCategory } from "@/lib/courtPrompt";
+import { GameCourtPrompt } from "@/components/courts/GameCourtPrompt";
 
 // Page Message is the shared ChatMessageCamel adapter (which handles
 // snake→camel + pgToIso on createdAt) plus the per-message reaction list
@@ -60,6 +64,14 @@ export default function GroupChatThreadPage() {
   const { data: session } = useSession();
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatInfo, setChatInfo] = useState<ChatInfo | null>(null);
+  // Court-availability prompt context — set only for confirmed find_players
+  // games at a report-eligible venue. Drives the in-thread GameCourtPrompt.
+  const [courtPrompt, setCourtPrompt] = useState<{
+    postId: string;
+    courtId: string;
+    startMs: number;
+    endMs: number;
+  } | null>(null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
@@ -241,6 +253,33 @@ export default function GroupChatThreadPage() {
         setMessages(
           msgs.map((m) => ({ ...toChatMessageCamel(m), reactions: [] }))
         );
+
+        // Confirmed-game chats carry a post_id. If the game is at a
+        // report-eligible court, surface the in-thread availability prompt.
+        if (c.post_id) {
+          const postId = c.post_id;
+          getChatGameContext(supabase, postId)
+            .then((game) => {
+              if (!game) return;
+              const facility = resolveFacilityByName(game.courtLocation);
+              if (!facility || !isReportEligibleCategory(facility.category)) return;
+              const win = gameWindowMs({
+                playDate: game.playDate,
+                playTime: game.playTime,
+                playDuration: game.playDuration,
+              });
+              if (!win) return;
+              setCourtPrompt({
+                postId,
+                courtId: facility.courtId,
+                startMs: win.startMs,
+                endMs: win.endMs,
+              });
+            })
+            .catch(() => {
+              /* prompt is best-effort; ignore */
+            });
+        }
       })
       .catch(() => setError("You are not a participant of this chat."));
   }, [chatId]);
@@ -728,6 +767,15 @@ export default function GroupChatThreadPage() {
             })}
           </div>
         ))}
+        {courtPrompt && (
+          <GameCourtPrompt
+            chatId={chatId}
+            postId={courtPrompt.postId}
+            courtId={courtPrompt.courtId}
+            startMs={courtPrompt.startMs}
+            endMs={courtPrompt.endMs}
+          />
+        )}
         <div ref={messagesEndRef} />
         </div>
       </div>

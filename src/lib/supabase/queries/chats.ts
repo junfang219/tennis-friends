@@ -76,6 +76,41 @@ export async function getChat(
   return (data as Chat | null) ?? null;
 }
 
+export interface ChatGameContext {
+  playDate: string;
+  playTime: string;
+  playTimezone: string;
+  playDuration: number | null;
+  courtLocation: string;
+}
+
+/**
+ * Game timing + venue for the find_players post a chat is attached to. Powers
+ * the in-chat court-availability prompt (window + court resolution); the chat
+ * bundle itself doesn't carry the post's play fields. Returns null when the
+ * post isn't a find_players game (e.g. friend-group chats have no post).
+ */
+export async function getChatGameContext(
+  supabase: SupabaseClient<Database>,
+  postId: string
+): Promise<ChatGameContext | null> {
+  const { data, error } = await supabase
+    .from("posts")
+    .select("play_date, play_time, play_timezone, play_duration, court_location")
+    .eq("id", postId)
+    .eq("post_type", "find_players")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    playDate: data.play_date ?? "",
+    playTime: data.play_time ?? "",
+    playTimezone: data.play_timezone ?? "",
+    playDuration: data.play_duration ?? null,
+    courtLocation: data.court_location ?? "",
+  };
+}
+
 /**
  * One-shot fetch for the chat thread page. Replaces three separate round
  * trips (getChat + listChatParticipants + listChatMessages) with a single

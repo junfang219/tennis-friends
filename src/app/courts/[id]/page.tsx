@@ -10,6 +10,7 @@ import { ReviewList, type Review } from "@/components/courts/ReviewList";
 import { ReviewComposer } from "@/components/courts/ReviewComposer";
 import { ReportIssueModal } from "@/components/courts/ReportIssueModal";
 import { CourtStatusReporter } from "@/components/courts/CourtStatusReporter";
+import { isReportEligibleCategory } from "@/lib/courtPrompt";
 import { DirectionsButton } from "@/components/courts/DirectionsButton";
 import { getFacilityByCourtId, getSeattleParksDashboardUrl } from "@/lib/facilities";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -309,10 +310,7 @@ export default function CourtDetailPage() {
     };
   }, [dashboardOpen]);
 
-  const eligibleForReports =
-    court?.category === "public_park" ||
-    court?.category === "school" ||
-    court?.category === "college";
+  const eligibleForReports = isReportEligibleCategory(court?.category);
 
   const refreshReports = useCallback(async () => {
     try {
