@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useSession, signOut } from "@/lib/supabase/nextauth-compat";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
@@ -14,7 +15,6 @@ import {
 import { toPostCamel } from "@/lib/supabase/adapters";
 import { categorizePosts } from "@/lib/postCategorize";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
-import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
@@ -109,7 +109,6 @@ export default function ProfilePage() {
       rating_system: string; ntrp_rating: number | null; utr_rating: number | null;
       venmo_handle: string | null; paypal_handle: string | null;
       cashapp_handle: string | null; zelle_handle: string | null;
-      is_private: boolean;
     }; } | undefined)?.__rawProfile;
     return raw
       ? {
@@ -127,7 +126,6 @@ export default function ProfilePage() {
           paypalHandle: raw.paypal_handle ?? "",
           cashappHandle: raw.cashapp_handle ?? "",
           zelleHandle: raw.zelle_handle ?? "",
-          isPrivate: raw.is_private,
         }
       : {
           name: "",
@@ -144,7 +142,6 @@ export default function ProfilePage() {
           paypalHandle: "",
           cashappHandle: "",
           zelleHandle: "",
-          isPrivate: false,
         };
   });
   const [handleError, setHandleError] = useState("");
@@ -167,53 +164,8 @@ export default function ProfilePage() {
   const [addingTag, setAddingTag] = useState(false);
   const [newTag, setNewTag] = useState("");
   const [tagError, setTagError] = useState("");
-  const [isNative, setIsNative] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [locationSaving, setLocationSaving] = useState(false);
-  const [locationError, setLocationError] = useState("");
-  const [confirmingTurnOffLocation, setConfirmingTurnOffLocation] = useState(false);
-
-  const turnOnLocation = async () => {
-    setLocationError("");
-    setLocationSaving(true);
-    const pos = await getCurrentPosition();
-    if (isPositionError(pos)) {
-      setLocationSaving(false);
-      setLocationError(
-        pos.code === "permission_denied" ? "Location permission denied." :
-        pos.code === "unsupported" ? "Your browser doesn't support geolocation." :
-        "Could not get your location."
-      );
-      return;
-    }
-    try {
-      const supabase = createSupabaseBrowserClient();
-      await updateMyProfile(supabase, { latitude: pos.latitude, longitude: pos.longitude });
-      setProfile((p) => p ? { ...p, latitude: pos.latitude, longitude: pos.longitude } : p);
-    } catch {
-      setLocationError("Could not save location.");
-    }
-    setLocationSaving(false);
-  };
-
-  const turnOffLocation = async () => {
-    setLocationError("");
-    setLocationSaving(true);
-    try {
-      const supabase = createSupabaseBrowserClient();
-      await updateMyProfile(supabase, { latitude: null, longitude: null });
-      setProfile((p) => p ? { ...p, latitude: null, longitude: null } : p);
-      setConfirmingTurnOffLocation(false);
-    } catch {
-      setLocationError("Could not turn off location.");
-    }
-    setLocationSaving(false);
-  };
-
-  useEffect(() => {
-    setIsNative(!!(window as unknown as { Capacitor?: unknown }).Capacitor);
-  }, []);
 
   // Click-outside + Escape to close the options menu
   useEffect(() => {
@@ -317,7 +269,6 @@ export default function ProfilePage() {
       rating_system: string; ntrp_rating: number | null; utr_rating: number | null;
       venmo_handle: string | null; paypal_handle: string | null;
       cashapp_handle: string | null; zelle_handle: string | null;
-      is_private: boolean;
     }; }).__rawProfile;
     if (raw) {
       setForm({
@@ -335,7 +286,6 @@ export default function ProfilePage() {
         paypalHandle: raw.paypal_handle ?? "",
         cashappHandle: raw.cashapp_handle ?? "",
         zelleHandle: raw.zelle_handle ?? "",
-        isPrivate: raw.is_private,
       });
     }
   }, [cachedProfile.data, editing, saving, router]);
@@ -364,7 +314,6 @@ export default function ProfilePage() {
       paypal_handle: form.paypalHandle.trim() || null,
       cashapp_handle: form.cashappHandle.trim() || null,
       zelle_handle: form.zelleHandle.trim() || null,
-      is_private: form.isPrivate,
     };
     try {
       const supabase = createSupabaseBrowserClient();
@@ -887,14 +836,6 @@ export default function ProfilePage() {
                 onCancel={() => setEditing(false)}
                 saving={saving}
                 handleError={handleError}
-                latitude={profile.latitude}
-                longitude={profile.longitude}
-                locationSaving={locationSaving}
-                locationError={locationError}
-                confirmingTurnOffLocation={confirmingTurnOffLocation}
-                onTurnOnLocation={turnOnLocation}
-                onTurnOffLocation={turnOffLocation}
-                onSetConfirmingTurnOff={setConfirmingTurnOffLocation}
               />
             ) : (
               <>
@@ -907,16 +848,7 @@ export default function ProfilePage() {
                       <p className="text-gray-500 text-sm font-medium">@{profile.handle}</p>
                     )}
                   </div>
-                  {isNative ? (
-                    <button onClick={() => setEditing(true)} className="btn-secondary btn-sm">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
-                        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
-                      </svg>
-                      Edit
-                    </button>
-                  ) : (
-                    <div ref={menuRef} className="relative">
+                  <div ref={menuRef} className="relative">
                       <button
                         onClick={() => setMenuOpen((o) => !o)}
                         className="btn-secondary btn-sm"
@@ -953,6 +885,20 @@ export default function ProfilePage() {
                             role="menuitem"
                             onClick={() => {
                               setMenuOpen(false);
+                              router.push("/profile/settings");
+                            }}
+                            className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="3" />
+                              <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+                            </svg>
+                            Settings
+                          </button>
+                          <button
+                            role="menuitem"
+                            onClick={() => {
+                              setMenuOpen(false);
                               signOut({ callbackUrl: "/login" });
                             }}
                             className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 border-t border-gray-100"
@@ -967,7 +913,6 @@ export default function ProfilePage() {
                         </div>
                       )}
                     </div>
-                  )}
                 </div>
 
                 {profile.bio && (
@@ -1447,14 +1392,6 @@ function EditForm({
   onCancel,
   saving,
   handleError,
-  latitude,
-  longitude,
-  locationSaving,
-  locationError,
-  confirmingTurnOffLocation,
-  onTurnOnLocation,
-  onTurnOffLocation,
-  onSetConfirmingTurnOff,
 }: {
   form: {
     name: string;
@@ -1471,23 +1408,13 @@ function EditForm({
     paypalHandle: string;
     cashappHandle: string;
     zelleHandle: string;
-    isPrivate: boolean;
   };
   setForm: (f: typeof form) => void;
   onSave: () => void;
   onCancel: () => void;
   saving: boolean;
   handleError?: string;
-  latitude: number | null;
-  longitude: number | null;
-  locationSaving: boolean;
-  locationError: string;
-  confirmingTurnOffLocation: boolean;
-  onTurnOnLocation: () => void;
-  onTurnOffLocation: () => Promise<void>;
-  onSetConfirmingTurnOff: (v: boolean) => void;
 }) {
-  const locationOn = latitude != null && longitude != null;
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
 
@@ -1721,98 +1648,14 @@ function EditForm({
           />
         </div>
       </div>
-      <div>
-        <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-          Privacy
-        </label>
-        <div className="rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-3">
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={form.isPrivate}
-              onChange={(e) => setForm({ ...form, isPrivate: e.target.checked })}
-              className="mt-0.5 h-5 w-5 accent-court-green shrink-0"
-            />
-            <span className="flex-1 min-w-0">
-              <span className="block text-sm font-semibold text-gray-800">Private account</span>
-              <span className="block text-xs text-gray-500 mt-0.5">
-                Only friends can see your posts. Your profile card and highlights stay visible to everyone. Posts you share to teams or as nearby broadcasts still reach their audience.
-              </span>
-            </span>
-          </label>
-        </div>
-      </div>
-      <div>
-        <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-          Location <span className="font-normal text-gray-400">(used to match by distance for nearby broadcasts)</span>
-        </label>
-        <div className="rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-3">
-          <div className="flex items-center gap-3">
-            <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${locationOn ? "bg-court-green-pale/30 text-court-green" : "bg-gray-200 text-gray-500"}`}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
-                <circle cx="12" cy="10" r="3" />
-              </svg>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-gray-800">
-                Location sharing {locationOn ? "is on" : "is off"}
-              </p>
-              <p className="text-xs text-gray-500">
-                {locationOn
-                  ? "Players nearby can match with your broadcasts."
-                  : "Turn on to see broadcasts and match by distance."}
-              </p>
-            </div>
-            {locationOn ? (
-              <button
-                type="button"
-                onClick={() => onSetConfirmingTurnOff(true)}
-                disabled={locationSaving}
-                className="btn-secondary btn-sm whitespace-nowrap disabled:opacity-60"
-              >
-                Turn off
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={onTurnOnLocation}
-                disabled={locationSaving}
-                className="btn-primary btn-sm whitespace-nowrap disabled:opacity-60"
-              >
-                {locationSaving ? "..." : "Turn on"}
-              </button>
-            )}
-          </div>
-          {locationError && (
-            <p className="text-xs text-red-500 mt-2">{locationError}</p>
-          )}
-          {confirmingTurnOffLocation && (
-            <div className="mt-3 pt-3 border-t border-gray-200">
-              <p className="text-xs text-gray-600 mb-2">
-                This will also turn off any active broadcasts you have. You can re-share later.
-              </p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={onTurnOffLocation}
-                  disabled={locationSaving}
-                  className="btn-danger btn-sm disabled:opacity-60"
-                >
-                  {locationSaving ? "Turning off..." : "Turn off location"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSetConfirmingTurnOff(false)}
-                  disabled={locationSaving}
-                  className="btn-secondary btn-sm"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+      <div className="rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-3">
+        <p className="text-xs text-gray-500">
+          Privacy and location settings have moved to{" "}
+          <Link href="/profile/settings" className="font-semibold text-court-green hover:underline">
+            Settings
+          </Link>
+          .
+        </p>
       </div>
 
       <div className="flex items-center gap-3 pt-2">
