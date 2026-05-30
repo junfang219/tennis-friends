@@ -2721,6 +2721,7 @@ export type Database = {
     }
     Functions: {
       accept_group_invite: { Args: { p_token: string }; Returns: Json }
+      email_exists: { Args: { p_email: string }; Returns: boolean }
       advance_event_match_to_next_round: {
         Args: { p_match_id: string }
         Returns: undefined

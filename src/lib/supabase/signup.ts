@@ -1,3 +1,28 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "./types";
+
+/**
+ * Reliable "is this email already registered?" check, used before signUp.
+ *
+ * isExistingEmailSignUp (below) only catches emails that already have a
+ * PASSWORD identity — signUp's anti-enumeration response doesn't flag an
+ * email that exists solely via an OAuth identity (e.g. a Google account
+ * with no password), so it would send the user to the OTP step for an
+ * account that already exists. This calls the email_exists SECURITY
+ * DEFINER RPC (see migration add_email_exists_rpc), which checks
+ * auth.users directly and catches every case.
+ */
+export async function emailExists(
+  supabase: SupabaseClient<Database>,
+  email: string
+): Promise<boolean> {
+  const { data, error } = await supabase.rpc("email_exists", {
+    p_email: email.trim(),
+  });
+  if (error) throw error;
+  return data === true;
+}
+
 /**
  * Detects Supabase's "email already registered" signUp response.
  *

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { isExistingEmailSignUp } from "./signup";
+import { emailExists, isExistingEmailSignUp } from "./signup";
+
+// Minimal fake of the parts of the Supabase client emailExists touches.
+type RpcImpl = (
+  fn: string,
+  args: { p_email: string }
+) => Promise<{ data: unknown; error: unknown }>;
+const fakeClient = (rpc: RpcImpl) =>
+  ({ rpc }) as unknown as Parameters<typeof emailExists>[0];
 
 // The helper only reads `identities` + `session`, so plain stubs suffice.
 const user = (identities: unknown[] | undefined) => ({ id: "u1", identities });
@@ -29,5 +37,35 @@ describe("isExistingEmailSignUp", () => {
     expect(
       isExistingEmailSignUp({ user: user(undefined), session: null })
     ).toBe(false);
+  });
+});
+
+describe("emailExists", () => {
+  it("returns true when the RPC reports the email exists", async () => {
+    const client = fakeClient(async () => ({ data: true, error: null }));
+    expect(await emailExists(client, "a@b.com")).toBe(true);
+  });
+
+  it("returns false when the RPC reports no match", async () => {
+    const client = fakeClient(async () => ({ data: false, error: null }));
+    expect(await emailExists(client, "a@b.com")).toBe(false);
+  });
+
+  it("trims the email before sending it to the RPC", async () => {
+    let sent: { p_email: string } | undefined;
+    const client = fakeClient(async (_fn, args) => {
+      sent = args;
+      return { data: false, error: null };
+    });
+    await emailExists(client, "  a@b.com  ");
+    expect(sent).toEqual({ p_email: "a@b.com" });
+  });
+
+  it("throws when the RPC returns an error", async () => {
+    const client = fakeClient(async () => ({
+      data: null,
+      error: { message: "boom" },
+    }));
+    await expect(emailExists(client, "a@b.com")).rejects.toBeTruthy();
   });
 });

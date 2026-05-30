@@ -5,7 +5,7 @@ import { AppleIcon, GoogleIcon } from "@/app/components/ui/icons";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { isExistingEmailSignUp } from "@/lib/supabase/signup";
+import { emailExists, isExistingEmailSignUp } from "@/lib/supabase/signup";
 import { authErrorMessage } from "@/lib/supabase/authError";
 
 // Sign-up is social-first: Google + Apple are the headline buttons and
@@ -37,6 +37,18 @@ export default function SupabaseRegisterPage() {
     setBusy(true);
     try {
       const supabase = createSupabaseBrowserClient();
+
+      // Reliable duplicate check before signUp. signUp's anti-enumeration
+      // response doesn't flag emails that exist only via an OAuth identity
+      // (e.g. a Google account with no password), so without this an
+      // already-registered email would be sent to the OTP step.
+      if (await emailExists(supabase, email)) {
+        setError(
+          "An account with this email already exists. Try logging in instead."
+        );
+        return;
+      }
+
       const { data, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
