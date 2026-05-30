@@ -1,19 +1,24 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import FriendRequestButton from "@/components/FriendRequestButton";
-import { looksLikeEmail, looksLikePhone, normalizeE164 } from "@/lib/phone";
 import { AGE_LABELS, GENDER_LABELS, formatRating } from "@/lib/profileLabels";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getMyProfile, searchProfiles, updateMyProfile } from "@/lib/supabase/queries";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
+import { rankPlayers } from "@/lib/discoverRanking";
 
 type Bucket = "beginner" | "intermediate" | "advanced" | "pro";
 type AgeKey = "under_18" | "18_29" | "30_49" | "50_plus";
 type GenderKey = "male" | "female";
 type SortKey = "distance" | "recent";
+
+// How many recommendations to show before the "Show more" button. The cap only
+// applies to the plain browse state; an active search or filter shows every
+// match (see capActive below).
+const DEFAULT_VISIBLE = 20;
 
 const BUCKET_OPTIONS: { value: Bucket; label: string }[] = [
   { value: "beginner", label: "NTRP 2.5–3.0" },
@@ -48,6 +53,9 @@ type UserResult = {
   utrRating: number | null;
   handle: string | null;
   customTags: string[];
+  latitude: number | null;
+  longitude: number | null;
+  updatedAt: string;
   distanceMiles: number | null;
   friendshipId: string | null;
   friendshipStatus: string | null;
@@ -75,7 +83,13 @@ export default function SearchPage() {
   // Sort
   const [sort, setSort] = useState<SortKey>("distance");
 
-  // Viewer's location state — drives the location consent banner.
+  // Whether the browse-state cap has been expanded via "Show more".
+  const [showAll, setShowAll] = useState(false);
+
+  // Viewer's location — drives the consent banner and is the origin point
+  // for the distance ranking. We keep the coords (not just a boolean) so the
+  // list can compute "X mi away" for every result client-side.
+  const [myLoc, setMyLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [hasLocation, setHasLocation] = useState<boolean | null>(null); // null = unknown
   const [locationSaving, setLocationSaving] = useState(false);
   const [locationError, setLocationError] = useState("");
@@ -87,12 +101,17 @@ export default function SearchPage() {
       .then((p) => {
         const has = p?.latitude != null && p?.longitude != null;
         setHasLocation(has);
-        if (!has) setSort("recent");
+        if (has) setMyLoc({ lat: p!.latitude!, lng: p!.longitude! });
+        else setSort("recent");
       })
       .catch(() => setHasLocation(false));
   }, []);
 
-  const search = useCallback(async (_raw: string) => {
+  // Fetches the candidate pool from the server using the filters Postgres can
+  // do cheaply (NTRP / gender / age). Text search, tag match, distance, and
+  // sort are all applied client-side in the `displayed` memo below — they
+  // operate on data already in hand, so they stay instant and don't refetch.
+  const search = useCallback(async () => {
     setLoading(true);
     const supabase = createSupabaseBrowserClient();
     // Map the UI's ntrp buckets to the searchProfiles range filter.
@@ -140,6 +159,9 @@ export default function SearchPage() {
           utrRating: p.utr_rating,
           customTags: p.custom_tags ? p.custom_tags.split(",").filter(Boolean) : [],
           handle: p.handle,
+          latitude: p.latitude,
+          longitude: p.longitude,
+          updatedAt: p.updated_at,
           distanceMiles: null,
           friendshipId: p.friendshipId,
           friendshipStatus: p.friendshipStatus,
@@ -151,15 +173,22 @@ export default function SearchPage() {
     }
     setLoading(false);
     setSearched(true);
-  }, [buckets, ages, genders, tagFilter, sort]);
+  }, [buckets, ages, genders]);
 
-  // Debounced fetch on any input change.
+  // Refetch when a server-side filter changes (debounced so rapid chip
+  // toggling doesn't fire a request per click). Also runs once on mount.
   useEffect(() => {
-    const timer = setTimeout(() => {
-      search(query);
-    }, 300);
+    const timer = setTimeout(search, 300);
     return () => clearTimeout(timer);
-  }, [query, search]);
+  }, [search]);
+
+  // Annotate with distance, apply text/tag filters, and sort. See
+  // rankPlayers — all client-side over the already-fetched pool, so toggling
+  // sort or typing is instant and never refetches.
+  const displayed = useMemo(
+    () => rankPlayers(results, { viewer: myLoc, sort, query, tag: tagFilter }),
+    [results, myLoc, sort, query, tagFilter]
+  );
 
   const useMyLocation = async () => {
     setLocationError("");
@@ -179,6 +208,7 @@ export default function SearchPage() {
     try {
       const supabase = createSupabaseBrowserClient();
       await updateMyProfile(supabase, { latitude: pos.latitude, longitude: pos.longitude });
+      setMyLoc({ lat: pos.latitude, lng: pos.longitude });
       setHasLocation(true);
       setSort("distance");
     } catch {
@@ -197,11 +227,25 @@ export default function SearchPage() {
   const hasFilters =
     buckets.size > 0 || ages.size > 0 || genders.size > 0 || tagFilter.trim().length > 0;
 
+  // The cap only applies to the plain browse state. Once the user types a
+  // search or applies any filter they're looking for specific people, so we
+  // show every match — a name match ranked beyond #20 must not be hidden.
+  const capActive = !showAll && query.trim() === "" && !hasFilters;
+  const visible = capActive ? displayed.slice(0, DEFAULT_VISIBLE) : displayed;
+  const hiddenCount = displayed.length - visible.length;
+
+  // Changing the search text or any filter re-collapses the list to the cap, so
+  // returning to a clean browse shows the top 20 again rather than staying
+  // expanded from an earlier "Show more". Goes through these handlers (not an
+  // effect) to keep the reset out of render.
+  const collapse = () => setShowAll(false);
+
   const clearFilters = () => {
     setBuckets(new Set());
     setAges(new Set());
     setGenders(new Set());
     setTagFilter("");
+    collapse();
   };
 
   const showLocationBanner = hasLocation === false && !locationDismissed;
@@ -257,7 +301,7 @@ export default function SearchPage() {
         <input
           type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => { setQuery(e.target.value); collapse(); }}
           placeholder="Search by name, @handle, email, or phone"
           className="w-full pl-11 pr-4 py-3.5 border border-court-green-pale/30 rounded-2xl text-sm bg-white shadow-sm focus:shadow-md transition-shadow"
         />
@@ -278,7 +322,7 @@ export default function SearchPage() {
             <FilterChip
               key={opt.value}
               active={buckets.has(opt.value)}
-              onClick={() => setBuckets(toggle(buckets, opt.value))}
+              onClick={() => { setBuckets(toggle(buckets, opt.value)); collapse(); }}
             >
               {opt.label}
             </FilterChip>
@@ -289,7 +333,7 @@ export default function SearchPage() {
             <FilterChip
               key={opt.value}
               active={ages.has(opt.value)}
-              onClick={() => setAges(toggle(ages, opt.value))}
+              onClick={() => { setAges(toggle(ages, opt.value)); collapse(); }}
             >
               {opt.label}
             </FilterChip>
@@ -300,7 +344,7 @@ export default function SearchPage() {
             <FilterChip
               key={opt.value}
               active={genders.has(opt.value)}
-              onClick={() => setGenders(toggle(genders, opt.value))}
+              onClick={() => { setGenders(toggle(genders, opt.value)); collapse(); }}
             >
               {opt.label}
             </FilterChip>
@@ -310,7 +354,7 @@ export default function SearchPage() {
           <input
             type="text"
             value={tagFilter}
-            onChange={(e) => setTagFilter(e.target.value)}
+            onChange={(e) => { setTagFilter(e.target.value); collapse(); }}
             placeholder="Filter by tag, e.g. Seattle"
             className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
             maxLength={30}
@@ -329,7 +373,9 @@ export default function SearchPage() {
       {/* Sort toggle */}
       <div className="flex items-center justify-between mb-3 px-1">
         <p className="text-xs text-gray-500">
-          {results.length} {results.length === 1 ? "player" : "players"}
+          {capActive && hiddenCount > 0
+            ? `Showing ${visible.length} of ${displayed.length}`
+            : `${displayed.length} ${displayed.length === 1 ? "player" : "players"}`}
         </p>
         <div className="inline-flex rounded-full bg-court-green-pale/15 p-0.5 text-[11px] font-bold">
           <button
@@ -359,7 +405,7 @@ export default function SearchPage() {
 
       {/* Results */}
       <div className="space-y-3">
-        {!loading && searched && results.length === 0 ? (
+        {!loading && searched && displayed.length === 0 ? (
           <div className="text-center py-16 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
             <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
@@ -379,7 +425,7 @@ export default function SearchPage() {
             </p>
           </div>
         ) : (
-          results.map((user) => (
+          visible.map((user) => (
             <div
               key={user.id}
               className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 flex items-center gap-4 card-hover"
@@ -435,6 +481,15 @@ export default function SearchPage() {
               />
             </div>
           ))
+        )}
+
+        {capActive && hiddenCount > 0 && (
+          <button
+            onClick={() => setShowAll(true)}
+            className="w-full bg-white rounded-2xl shadow-sm border border-court-green-pale/20 py-3.5 text-sm font-bold text-court-green hover:bg-court-green-pale/10 transition-colors"
+          >
+            Show {hiddenCount} more
+          </button>
         )}
       </div>
     </div>
