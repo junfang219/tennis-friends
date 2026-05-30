@@ -6,6 +6,7 @@ import { useSession } from "@/lib/supabase/nextauth-compat";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
+import CoverEditMenu from "@/components/CoverEditMenu";
 import PostCard from "@/components/PostCard";
 import EmojiPicker from "@/components/EmojiPicker";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -543,42 +544,11 @@ function TeamCoverEditor({
         )}
 
         {canEdit && !repositioning && (
-          <>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="absolute bottom-3 right-3 z-10 w-9 h-9 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur text-white flex items-center justify-center transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              title="Change cover photo"
-              aria-label="Change cover photo"
-            >
-              {uploading ? (
-                <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
-                  <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                </svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
-                  <circle cx="12" cy="13" r="4" />
-                </svg>
-              )}
-            </button>
-            {coverImageUrl && (
-              <button
-                type="button"
-                onClick={startRepositioning}
-                className="absolute bottom-3 right-14 z-10 w-8 h-8 rounded-full bg-black/25 hover:bg-black/45 backdrop-blur text-white/80 hover:text-white flex items-center justify-center transition-colors"
-                title="Edit cover"
-                aria-label="Edit cover"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
-                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
-                </svg>
-              </button>
-            )}
-          </>
+          <CoverEditMenu
+            onChangePhoto={() => fileInputRef.current?.click()}
+            onReposition={coverImageUrl ? startRepositioning : undefined}
+            uploading={uploading}
+          />
         )}
 
         {canEdit && repositioning && (
