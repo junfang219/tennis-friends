@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { StarRating } from "./StarRating";
 import { DirectionsButton } from "./DirectionsButton";
+import { CourtStatusReporter } from "./CourtStatusReporter";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 export type CourtSummary = {
@@ -90,51 +91,45 @@ export function CourtSummaryCard({
   const eligibleForReports = !!category && REPORT_ELIGIBLE_CATEGORIES.has(category);
   const [recentReports, setRecentReports] = useState<RecentReportsSummary | null>(null);
 
+  const refreshReports = useCallback(async () => {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const sinceIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const { data } = await supabase
+        .from("court_availability_reports")
+        .select("has_empty, reported_at")
+        .eq("court_id", courtId)
+        .gte("reported_at", sinceIso);
+      const rows = (data ?? []) as Array<{ has_empty: boolean; reported_at: string }>;
+      if (rows.length === 0) {
+        setRecentReports(null);
+        return;
+      }
+      // Roll up: how many reported empty courts in the last hour.
+      let emptyCount = 0;
+      for (const r of rows) {
+        if (r.has_empty) emptyCount += 1;
+      }
+      const latest = rows.reduce((acc, r) =>
+        r.reported_at > acc.reported_at ? r : acc
+      );
+      setRecentReports({
+        count: rows.length,
+        emptyCount,
+        lastReportedAt: latest.reported_at,
+      });
+    } catch {
+      // ignore
+    }
+  }, [courtId]);
+
   useEffect(() => {
     if (!eligibleForReports) {
       setRecentReports(null);
       return;
     }
-    let cancelled = false;
-    (async () => {
-      try {
-        const supabase = createSupabaseBrowserClient();
-        const sinceIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-        const { data } = await supabase
-          .from("court_availability_reports")
-          .select("has_empty, reported_at")
-          .eq("court_id", courtId)
-          .gte("reported_at", sinceIso);
-        if (cancelled) return;
-        const rows = (data ?? []) as Array<{ has_empty: boolean; reported_at: string }>;
-        if (rows.length === 0) {
-          setRecentReports(null);
-          return;
-        }
-        // Roll up: how many said "courts available" vs "busy" recently.
-        let available = 0;
-        let busy = 0;
-        for (const r of rows) {
-          if (r.has_empty) available += 1;
-          else busy += 1;
-        }
-        const latest = rows.reduce((acc, r) =>
-          r.reported_at > acc.reported_at ? r : acc
-        );
-        setRecentReports({
-          counts: { available, busy, unknown: 0 },
-          latestStatus: latest.has_empty ? "available" : "busy",
-          latestAt: latest.reported_at,
-          totalReports: rows.length,
-        } as unknown as RecentReportsSummary);
-      } catch {
-        // ignore
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [courtId, eligibleForReports]);
+    void refreshReports();
+  }, [eligibleForReports, refreshReports]);
   // Encode the user's current map view into the Details link so the detail
   // page can pass it back via the breadcrumb — preserves zoom level on
   // return (city → city, street → street).
@@ -301,6 +296,21 @@ export function CourtSummaryCard({
                 </svg>
               </Link>
             </div>
+
+            {/* Crowd-sourced status reporter — single on-tap GPS check, no
+                background polling. Only on report-eligible categories. */}
+            {eligibleForReports && (
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                <CourtStatusReporter
+                  courtId={courtId}
+                  venueName={name}
+                  lat={lat}
+                  lng={lng}
+                  variant="card"
+                  onReported={refreshReports}
+                />
+              </div>
+            )}
 
             {/* Dev-only: drag-to-edit affordance. The parent flips the map
                 into edit mode for this pin; we close the card to give the

@@ -9,6 +9,7 @@ import { CourtPhotoGrid } from "@/components/courts/CourtPhotoGrid";
 import { ReviewList, type Review } from "@/components/courts/ReviewList";
 import { ReviewComposer } from "@/components/courts/ReviewComposer";
 import { ReportIssueModal } from "@/components/courts/ReportIssueModal";
+import { CourtStatusReporter } from "@/components/courts/CourtStatusReporter";
 import { DirectionsButton } from "@/components/courts/DirectionsButton";
 import { getFacilityByCourtId, getSeattleParksDashboardUrl } from "@/lib/facilities";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -308,49 +309,47 @@ export default function CourtDetailPage() {
     };
   }, [dashboardOpen]);
 
+  const eligibleForReports =
+    court?.category === "public_park" ||
+    court?.category === "school" ||
+    court?.category === "college";
+
+  const refreshReports = useCallback(async () => {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const sinceIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const { data } = await supabase
+        .from("court_availability_reports")
+        .select("has_empty, reported_at")
+        .eq("court_id", id)
+        .gte("reported_at", sinceIso);
+      const rows = (data ?? []) as Array<{ has_empty: boolean; reported_at: string }>;
+      if (rows.length === 0) {
+        setRecentReports(null);
+        return;
+      }
+      let emptyCount = 0;
+      for (const r of rows) {
+        if (r.has_empty) emptyCount += 1;
+      }
+      const latest = rows.reduce((acc, r) => (r.reported_at > acc.reported_at ? r : acc));
+      setRecentReports({
+        count: rows.length,
+        emptyCount,
+        lastReportedAt: latest.reported_at,
+      });
+    } catch {
+      // ignore
+    }
+  }, [id]);
+
   useEffect(() => {
-    if (!court) return;
-    if (court.category !== "public_park" && court.category !== "school" && court.category !== "college") {
+    if (!eligibleForReports) {
       setRecentReports(null);
       return;
     }
-    let cancelled = false;
-    (async () => {
-      try {
-        const supabase = createSupabaseBrowserClient();
-        const sinceIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-        const { data } = await supabase
-          .from("court_availability_reports")
-          .select("has_empty, reported_at")
-          .eq("court_id", id)
-          .gte("reported_at", sinceIso);
-        if (cancelled) return;
-        const rows = (data ?? []) as Array<{ has_empty: boolean; reported_at: string }>;
-        if (rows.length === 0) {
-          setRecentReports(null);
-          return;
-        }
-        let available = 0;
-        let busy = 0;
-        for (const r of rows) {
-          if (r.has_empty) available += 1;
-          else busy += 1;
-        }
-        const latest = rows.reduce((acc, r) => (r.reported_at > acc.reported_at ? r : acc));
-        setRecentReports({
-          counts: { available, busy, unknown: 0 },
-          latestStatus: latest.has_empty ? "available" : "busy",
-          latestAt: latest.reported_at,
-          totalReports: rows.length,
-        } as unknown as typeof recentReports);
-      } catch {
-        // ignore
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [court, id]);
+    void refreshReports();
+  }, [eligibleForReports, refreshReports]);
 
   const deleteReview = useCallback(async () => {
     try {
@@ -639,26 +638,38 @@ export default function CourtDetailPage() {
             </Section>
           )}
 
-          {/* Crowd-sourced empty-court reports (last 60 min). Only shows
-              when players have actually reported open courts recently. */}
-          {recentReports && recentReports.emptyCount > 0 && recentReports.lastReportedAt && (
-            <Section title="Recent activity">
-              <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2.5">
-                <span className="mt-1 w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
-                <p className="text-sm text-amber-900">
-                  {recentReports.emptyCount === 1
-                    ? "1 player reported empty courts here in the last hour"
-                    : `${recentReports.emptyCount} players reported empty courts here in the last hour`}
-                  {" — "}
-                  <span className="text-amber-700">
-                    most recent at{" "}
-                    {new Date(recentReports.lastReportedAt).toLocaleTimeString([], {
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                </p>
-              </div>
+          {/* Crowd-sourced court status — a recent-reports banner (last 60
+              min) plus a manual reporter. The reporter does a single on-tap
+              GPS check to confirm the user is on-site; there's no background
+              location polling. Shown on all report-eligible categories. */}
+          {eligibleForReports && (
+            <Section title="Court status">
+              {recentReports && recentReports.emptyCount > 0 && recentReports.lastReportedAt && (
+                <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2.5 mb-3">
+                  <span className="mt-1 w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                  <p className="text-sm text-amber-900">
+                    {recentReports.emptyCount === 1
+                      ? "1 player reported empty courts here in the last hour"
+                      : `${recentReports.emptyCount} players reported empty courts here in the last hour`}
+                    {" — "}
+                    <span className="text-amber-700">
+                      most recent at{" "}
+                      {new Date(recentReports.lastReportedAt).toLocaleTimeString([], {
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </p>
+                </div>
+              )}
+              <CourtStatusReporter
+                courtId={id}
+                venueName={court.name}
+                lat={court.latitude}
+                lng={court.longitude}
+                variant="detail"
+                onReported={refreshReports}
+              />
             </Section>
           )}
 
