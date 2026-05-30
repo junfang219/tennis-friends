@@ -1,6 +1,6 @@
 # Supabase Auth — dashboard configuration
 
-## Status as of 2026-05-21
+## Status as of 2026-05-30
 
 | Item | Status |
 |---|---|
@@ -8,32 +8,41 @@
 | Redirect URLs: localhost, capacitor, mytennisfriends.com, www, `*.vercel.app` | ✅ configured |
 | Email provider (confirm email on, signups on, anonymous off) | ✅ configured |
 | Password hardening (HIBP + reauth + min 8 chars) | ✅ configured |
-| Google OAuth (using existing `.env` creds) | ✅ configured |
-| Google Cloud Console: add Supabase callback to authorized URIs | ⏳ user action — see below |
-| Apple OAuth | ⏸️ deferred per user (2026-05-21) |
+| Email rate limit | ✅ 100/h (raised from default 30/h on 2026-05-30) |
+| Google OAuth | ✅ configured |
+| Apple OAuth | ✅ configured (Services ID + key, JWT good until ~2026-11-28) |
 | Phone OTP (Twilio) | ⏸️ deferred per user (2026-05-21) |
-| Custom SMTP (Resend) | ✅ configured — needs domain verification in Resend |
+| Custom SMTP (Resend) | ✅ configured & domain verified, end-to-end delivery tested 2026-05-30 |
 
-## Google Cloud Console — still needed
+## Apple OAuth — JWT rotation
 
-The Google OAuth client needs `https://fqopzafmnaviipumsmfm.supabase.co/auth/v1/callback`
-in its **Authorized redirect URIs**. Open
-https://console.cloud.google.com/apis/credentials, click your OAuth 2.0
-client, and paste that URL.
+The Apple OAuth secret is a JWT signed with the Sign in with Apple key
+`.p8`. Apple's max JWT lifetime is ~6 months. **The current JWT expires
+around 2026-11-28.** Before then, mint a new JWT and paste it into
+Supabase Auth → Providers → Apple → Secret Key.
 
-## Resend — verify mytennisfriends.com
+To re-mint:
 
-SMTP is wired to send from `noreply@mytennisfriends.com` via Resend, but
-emails will bounce until you verify the domain in Resend:
+```bash
+node -e "
+const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const pk = fs.readFileSync(process.env.HOME + '/Downloads/AuthKey_9YFSD8SSQR.p8', 'utf8');
+const now = Math.floor(Date.now() / 1000);
+console.log(jwt.sign({
+  iss: 'QJ62YDMGLF',         // Team ID
+  iat: now,
+  exp: now + 15777000,        // ~6 months
+  aud: 'https://appleid.apple.com',
+  sub: 'com.tennisfriend.auth', // Services ID
+}, pk, { algorithm: 'ES256', header: { alg: 'ES256', kid: '9YFSD8SSQR' } }));
+"
+```
 
-1. Go to https://resend.com/domains and click "Add Domain".
-2. Enter `mytennisfriends.com`.
-3. Resend gives you DNS records (SPF, DKIM, MX). Add them in Cloudflare
-   for the domain.
-4. Wait for Resend to detect them (~minutes), then mark the domain verified.
-
-Until then, the only emails that will deliver are to your own Resend
-account email. After verification, all signup/reset/confirm flows work.
+The `.p8` file must remain in `~/Downloads/AuthKey_9YFSD8SSQR.p8` (or
+update the path). It's the private key; Apple does not let you
+re-download it. If lost, revoke the key in the Apple Developer portal
+and create a new one (see §4).
 
 ---
 
@@ -81,11 +90,35 @@ Toggle **Google** on, then paste:
 
 ## 4. Apple OAuth
 
-Same provider page → enable **Apple**.
+Apple Sign-In requires a Services ID + a JWT signed with a Sign In with
+Apple key from the Apple Developer portal. There is no `APPLE_ID` /
+`APPLE_SECRET` in `.env` yet — the docs that referenced those were
+aspirational. Real steps:
 
-- `Services ID` = existing `APPLE_ID` from `.env`
-- `Secret Key` = existing `APPLE_SECRET` (the pre-minted JWT)
-- Add the Supabase callback URL to your Apple Services ID's "Return URLs".
+**Apple Developer Portal** (https://developer.apple.com/account):
+1. **Identifiers → App IDs**: create or pick the Tennis Friends App ID;
+   tick **Sign In with Apple** under Capabilities.
+2. **Identifiers → Services IDs**: create one (e.g.
+   `com.mytennisfriends.auth`); configure Sign In with Apple with
+   Primary App ID = the App ID above, Domains =
+   `mytennisfriends.com,fqopzafmnaviipumsmfm.supabase.co`, Return URL =
+   `https://fqopzafmnaviipumsmfm.supabase.co/auth/v1/callback`.
+3. **Keys**: create a key with Sign In with Apple enabled; download the
+   `.p8` immediately (one-shot download); note the Key ID and your Team
+   ID (top-right of the portal).
+
+**Supabase dashboard**
+(https://supabase.com/dashboard/project/fqopzafmnaviipumsmfm/auth/providers
+→ Apple):
+- Enable, paste the Services ID as the Client ID.
+- For Secret Key (a JWT), use Supabase's built-in JWT generator on the
+  same page — paste the `.p8` contents, Team ID, Key ID, Services ID.
+  The generated JWT expires every ≤6 months; calendar a reminder.
+
+The web/Capacitor button is already wired (`onOAuth("apple")` in
+`src/app/{login,register}/page.tsx`). For native iOS, swap to
+`@capacitor-community/apple-sign-in` later — out of scope for the
+initial wire-up.
 
 ## 5. Phone OTP (Twilio Verify)
 
