@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { GoogleIcon } from "@/app/components/ui/icons";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -95,8 +96,9 @@ export default function SupabaseLoginPage() {
           type="button"
           onClick={() => onOAuth("google")}
           disabled={busy}
-          className="w-full px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+          className="w-full flex items-center justify-center gap-3 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
         >
+          <GoogleIcon />
           Continue with Google
         </button>
         {/* Apple OAuth is provisioned but not yet configured in Supabase
