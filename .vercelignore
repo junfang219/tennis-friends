@@ -1,0 +1,17 @@
+node_modules
+.next
+out
+ios
+public/uploads
+dev.db
+dev.db-journal
+*.db
+*.db-journal
+e2e
+tests
+docs
+secrets
+.env*
+!.env.example
+*.tsbuildinfo
+coverage
