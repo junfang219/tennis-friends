@@ -9,10 +9,12 @@ import { useRealtimeTable } from "@/lib/supabase/realtime";
 import { markDmRead, markChatRead, markTeamRead } from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 import { loadInbox } from "@/lib/inboxLoader";
+import { useIsDesktopChat } from "@/hooks/useIsDesktopChat";
 
 export default function ChatPage() {
   const { status, data: session } = useSession();
   const router = useRouter();
+  const isDesktop = useIsDesktopChat();
   const [openRowKey, setOpenRowKey] = useState<string | null>(null);
 
   // Cached inbox: paints instantly on revisit, refetches in background.
@@ -151,6 +153,26 @@ export default function ChatPage() {
       // Best-effort
     }
   };
+
+  // Desktop two-pane: the layout already renders the conversation list in
+  // the left sidebar, so /chat itself becomes a right-pane empty state.
+  if (isDesktop) {
+    return (
+      <div className="flex h-full items-center justify-center px-6 text-center">
+        <div className="max-w-sm">
+          <div className="w-16 h-16 bg-court-green-pale/30 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-court-green" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+            </svg>
+          </div>
+          <h2 className="font-display text-lg font-bold text-gray-800 mb-1">Your messages</h2>
+          <p className="text-sm text-gray-500">
+            Select a conversation from the list to start chatting.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (status === "loading" || loading) {
     return (

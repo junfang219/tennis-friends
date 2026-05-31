@@ -13,6 +13,7 @@ import MessageReactions, { type MessageReaction as MsgReaction } from "@/compone
 import { useLongPress } from "@/hooks/useLongPress";
 import { useKeyboardHeight } from "@/hooks/useKeyboardHeight";
 import type { ReactionKey } from "@/lib/reactions";
+import { useIsDesktopChat } from "@/hooks/useIsDesktopChat";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useRealtimeTable } from "@/lib/supabase/realtime";
 import {
@@ -66,6 +67,7 @@ function formatDateSeparator(date: string) {
 export default function ChatPage() {
   const params = useParams();
   const { data: session } = useSession();
+  const isDesktop = useIsDesktopChat();
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatUser, setChatUser] = useState<ChatUser | null>(null);
   const [input, setInput] = useState("");
@@ -132,7 +134,10 @@ export default function ChatPage() {
 
   // Lock body scroll while the chat thread is mounted so iOS bounce /
   // pull-to-refresh doesn't drag the page around behind the fixed surface.
+  // Skip on desktop — the chat surface is contained in the right pane there,
+  // so locking the body would also lock the sidebar's row list.
   useEffect(() => {
+    if (isDesktop) return;
     const prevOverflow = document.body.style.overflow;
     const prevOverscroll = document.body.style.overscrollBehavior;
     document.body.style.overflow = "hidden";
@@ -141,7 +146,7 @@ export default function ChatPage() {
       document.body.style.overflow = prevOverflow;
       document.body.style.overscrollBehavior = prevOverscroll;
     };
-  }, []);
+  }, [isDesktop]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -478,25 +483,29 @@ export default function ChatPage() {
 
   if (!mounted) return null;
 
-  // Portaled fixed full-viewport chat surface — see
-  // chat/group/[chatId]/page.tsx for full rationale. The portal under
-  // <body> bypasses any ancestor that might create a containing block
-  // (transform / filter / contain) and break `position: fixed`.
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex flex-col bg-surface">
+  // Portaled fixed full-viewport chat surface on mobile; inline absolute
+  // surface inside the desktop two-pane right pane.
+  // The portal under <body> on mobile bypasses any ancestor that might
+  // create a containing block (transform / filter / contain) and break
+  // `position: fixed`. On desktop the parent right pane is `relative`, so
+  // `absolute inset-0` contains the chat surface to that pane.
+  const surface = (
+    <div className={isDesktop ? "absolute inset-0 flex flex-col bg-surface" : "fixed inset-0 z-50 flex flex-col bg-surface"}>
       {/* Chat header */}
       <div
         className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shrink-0"
-        style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
+        style={{ paddingTop: isDesktop ? undefined : "calc(0.75rem + env(safe-area-inset-top))" }}
       >
-        <Link
-          href="/friends"
-          className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <polyline points="15,18 9,12 15,6" />
-          </svg>
-        </Link>
+        {!isDesktop && (
+          <Link
+            href="/friends"
+            className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <polyline points="15,18 9,12 15,6" />
+            </svg>
+          </Link>
+        )}
         {chatUser ? (
           <>
             <Link href={`/profile/${chatUser.id}`} className="flex items-center gap-3 flex-1 min-w-0">
@@ -789,8 +798,9 @@ export default function ChatPage() {
             : undefined
         }
       />
-    </div>,
-    document.body
+    </div>
   );
+
+  return isDesktop ? surface : createPortal(surface, document.body);
 }
 

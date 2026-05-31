@@ -11,6 +11,7 @@ import MessageReactionBar from "@/components/MessageReactionBar";
 import MessageReactions, { type MessageReaction as MsgReaction } from "@/components/MessageReactions";
 import { useLongPress } from "@/hooks/useLongPress";
 import { useKeyboardHeight } from "@/hooks/useKeyboardHeight";
+import { useIsDesktopChat } from "@/hooks/useIsDesktopChat";
 import type { ReactionKey } from "@/lib/reactions";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useRealtimeTable } from "@/lib/supabase/realtime";
@@ -63,6 +64,7 @@ export default function GroupChatThreadPage() {
   const params = useParams();
   const router = useRouter();
   const { data: session } = useSession();
+  const isDesktop = useIsDesktopChat();
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatInfo, setChatInfo] = useState<ChatInfo | null>(null);
   // Court-availability prompt context — set only for confirmed find_players
@@ -101,8 +103,10 @@ export default function GroupChatThreadPage() {
 
   // Lock body scroll while the chat thread is mounted so iOS bounce /
   // pull-to-refresh doesn't drag the page around behind the fixed chat
-  // surface. Restored on unmount so other routes still scroll normally.
+  // surface. Skip on desktop — the chat surface is contained in the right
+  // pane there, and locking the body would also freeze the sidebar.
   useEffect(() => {
+    if (isDesktop) return;
     const prevOverflow = document.body.style.overflow;
     const prevOverscroll = document.body.style.overscrollBehavior;
     document.body.style.overflow = "hidden";
@@ -111,7 +115,7 @@ export default function GroupChatThreadPage() {
       document.body.style.overflow = prevOverflow;
       document.body.style.overscrollBehavior = prevOverscroll;
     };
-  }, []);
+  }, [isDesktop]);
 
   // `mounted` gates the createPortal call so the server render produces
   // nothing for this branch (createPortal can't run during SSR — there's
@@ -562,22 +566,24 @@ export default function GroupChatThreadPage() {
   // to the viewport corners (`fixed inset-0`) and the messages scroller
   // + input bar follow the keyboardHeight from useKeyboardHeight
   // (Capacitor events on native, VisualViewport on web).
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex flex-col bg-surface">
+  const surface = (
+    <div className={isDesktop ? "absolute inset-0 flex flex-col bg-surface" : "fixed inset-0 z-50 flex flex-col bg-surface"}>
       {/* Header. paddingTop pulls in the iOS top safe area
           (notch / dynamic island). */}
       <div
         className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shrink-0"
-        style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
+        style={{ paddingTop: isDesktop ? undefined : "calc(0.75rem + env(safe-area-inset-top))" }}
       >
-        <button
-          onClick={() => router.push("/friends")}
-          className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <polyline points="15,18 9,12 15,6" />
-          </svg>
-        </button>
+        {!isDesktop && (
+          <button
+            onClick={() => router.push("/friends")}
+            className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <polyline points="15,18 9,12 15,6" />
+            </svg>
+          </button>
+        )}
         {chatInfo ? (
           <div className="flex items-center gap-3 flex-1 min-w-0">
             {/* Avatar stack — tap to see members */}
@@ -1068,7 +1074,8 @@ export default function GroupChatThreadPage() {
         }}
         onClose={() => setReactionPopover(null)}
       />
-    </div>,
-    document.body
+    </div>
   );
+
+  return isDesktop ? surface : createPortal(surface, document.body);
 }

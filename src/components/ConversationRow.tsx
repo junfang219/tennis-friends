@@ -74,6 +74,8 @@ type Props = {
   /** Swipe action tapped. Parent handles the API call + optimistic state. */
   onAction: (action: InboxAction) => void;
   layout?: "dropdown" | "page";
+  /** Desktop two-pane: highlight this row as the currently-open conversation. */
+  isSelected?: boolean;
 };
 
 // Action panel widths. Small on the 320px dropdown, slightly wider with labels on the /chat page.
@@ -90,6 +92,7 @@ export default function ConversationRow({
   onSelect,
   onAction,
   layout = "dropdown",
+  isSelected = false,
 }: Props) {
   const buttonW = layout === "page" ? BUTTON_W_PAGE : BUTTON_W_DROPDOWN;
   const ACTIONS_WIDTH = buttonW * 4;
@@ -201,7 +204,9 @@ export default function ConversationRow({
   // For unread items we use a solid pale tint instead of a translucent overlay.
   const isSession = item.type === "group" && item.kind === "session";
   const isTeam = item.type === "team";
-  const rowBg = isSession
+  const rowBg = isSelected
+    ? "bg-[#D6EAD3]"
+    : isSession
     ? item.unreadCount > 0
       ? "bg-[#E3F1E1]"
       : "bg-[#EFF7ED]"
@@ -213,7 +218,11 @@ export default function ConversationRow({
     ? "bg-[#F1F7F0]"
     : "bg-white";
   const rowPadding = layout === "page" ? "px-4 py-4" : "px-4 py-3";
-  const sideBorder = isSession
+  // When selected, the left accent always shows court-green regardless of item type
+  // (mirrors Instagram's "active thread" indicator). Otherwise keep the per-type accent.
+  const sideBorder = isSelected
+    ? "border-l-4 border-l-court-green"
+    : isSession
     ? "border-l-4 border-l-court-green"
     : isTeam
     ? "border-l-4 border-l-clay"

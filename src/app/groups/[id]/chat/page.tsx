@@ -30,6 +30,7 @@ import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { toGroupMessageCamel } from "@/lib/supabase/adapters";
 import { errorMessage } from "@/lib/errorMessage";
 import { useKeyboardHeight } from "@/hooks/useKeyboardHeight";
+import { useIsDesktopChat } from "@/hooks/useIsDesktopChat";
 
 // Page Message is the shared GroupMessageCamel adapter (snake→camel +
 // pgToIso on createdAt and pinnedAt) plus the resolved shared-post body,
@@ -73,6 +74,7 @@ function formatDateSeparator(date: string) {
 }
 
 export default function GroupChatPage() {
+  const isDesktop = useIsDesktopChat();
   const params = useParams();
   const router = useRouter();
   const { data: session } = useSession();
@@ -446,15 +448,17 @@ export default function GroupChatPage() {
 
   return (
     <div
-      className="max-w-2xl mx-auto flex flex-col relative"
+      className={isDesktop ? "absolute inset-0 flex flex-col bg-surface" : "max-w-2xl mx-auto flex flex-col relative"}
       // Don't subtract safe-area-inset-bottom here — the input bar absorbs
       // the home-indicator inset via its own padding-bottom so its
       // background extends edge-to-edge (iMessage/WhatsApp convention).
-      style={{ height: "calc(100dvh - 4rem - env(safe-area-inset-top))" }}
+      // On desktop the parent right pane already sizes us; absolute inset-0
+      // fills it without re-computing viewport math.
+      style={isDesktop ? undefined : { height: "calc(100dvh - 4rem - env(safe-area-inset-top))" }}
     >
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shrink-0">
-        {(() => {
+        {!isDesktop && (() => {
           const parentHref = groupInfo?.event?.id
             ? `/events/${groupInfo.event.id}`
             : `/groups/${groupId}`;
