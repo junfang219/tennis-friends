@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { completeOnboarding } from "@/lib/supabase/queries";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
@@ -29,6 +29,14 @@ const NTRP_VALUES = [2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0];
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Restrict to on-site, relative paths so we never land users on an
+  // attacker-supplied host.
+  const rawNext = searchParams.get("next");
+  const nextPath =
+    rawNext && rawNext.startsWith("/") && !rawNext.startsWith("//")
+      ? rawNext
+      : "/";
 
   const [gender, setGender] = useState<Gender | "">("");
   const [ageRange, setAgeRange] = useState<AgeRange | "">("");
@@ -96,7 +104,7 @@ export default function OnboardingPage() {
     try {
       const supabase = createSupabaseBrowserClient();
       await completeOnboarding(supabase, patch);
-      router.replace("/");
+      router.replace(nextPath);
       router.refresh();
     } catch (err) {
       setError(errorMessage(err, "Something went wrong"));

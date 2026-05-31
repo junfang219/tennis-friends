@@ -36,7 +36,12 @@ export async function GET(request: NextRequest) {
 
       if (!profile?.onboarding_complete) {
         // New or half-finished account — always send them through onboarding.
-        dest = "/onboarding";
+        // Preserve the original `next` so onboarding can land them there
+        // afterward (e.g. a public /p/[id] share link that triggered signup).
+        dest =
+          next && next !== "/onboarding"
+            ? `/onboarding?next=${encodeURIComponent(next)}`
+            : "/onboarding";
       } else if (dest === "/onboarding") {
         // Returning user who happened to come in via the register button —
         // send them home instead of re-running onboarding.

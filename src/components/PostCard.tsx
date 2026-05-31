@@ -26,6 +26,7 @@ import {
 } from "@/lib/supabase/queries";
 import { toCommentCamel } from "@/lib/supabase/adapters";
 import { errorMessage } from "@/lib/errorMessage";
+import { buildLfpShare, shareLfp, type ShareOutcome } from "@/lib/lfpShare";
 import { computeCourtFacilityId } from "@/lib/facilities";
 import CourtLocationPicker from "./CourtLocationPicker";
 
@@ -2199,6 +2200,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
       {showSendToFriend && createPortal(
         <SendToModal
           postId={post.id}
+          post={post}
           onClose={() => setShowSendToFriend(false)}
         />,
         document.body
@@ -2213,9 +2215,11 @@ type SendTarget = { kind: "friend" | "group"; id: string };
 
 function SendToModal({
   postId,
+  post,
   onClose,
 }: {
   postId: string;
+  post: Post;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -2225,6 +2229,43 @@ function SendToModal({
   const [sendingKey, setSendingKey] = useState<string | null>(null);
   const [sentKeys, setSentKeys] = useState<Set<string>>(new Set());
   const [sendError, setSendError] = useState<string>("");
+  const [shareNotice, setShareNotice] = useState<string>("");
+  const [sharing, setSharing] = useState(false);
+  const isLfp = post.postType === "find_players";
+
+  const handleNativeShare = async () => {
+    setSharing(true);
+    setSendError("");
+    setShareNotice("");
+    try {
+      const payload = buildLfpShare({
+        id: post.id,
+        postType: post.postType,
+        playDate: post.playDate,
+        playTime: post.playTime,
+        playDuration: post.playDuration,
+        courtLocation: post.courtLocation,
+        gameType: post.gameType,
+        playersNeeded: post.playersNeeded,
+        skillMin: post.skillMin,
+        skillMax: post.skillMax,
+        authorName: post.author?.name,
+      });
+      const outcome: ShareOutcome = await shareLfp(payload);
+      if (outcome === "shared") {
+        onClose();
+        return;
+      }
+      if (outcome === "copied") {
+        setShareNotice("Link copied to clipboard — paste it anywhere.");
+      } else if (outcome === "failed") {
+        setSendError("Couldn't open the share sheet. Try again or copy the link manually.");
+      }
+      // "cancelled" → silent no-op
+    } finally {
+      setSharing(false);
+    }
+  };
 
   const targetKey = (t: SendTarget) => `${t.kind}:${t.id}`;
 
@@ -2329,6 +2370,35 @@ function SendToModal({
           <div className="px-5 py-2 bg-red-50 border-b border-red-100">
             <p className="text-xs text-red-600">{sendError}</p>
           </div>
+        )}
+        {shareNotice && (
+          <div className="px-5 py-2 bg-green-50 border-b border-green-100">
+            <p className="text-xs text-green-700">{shareNotice}</p>
+          </div>
+        )}
+
+        {isLfp && (
+          <button
+            type="button"
+            onClick={handleNativeShare}
+            disabled={sharing}
+            className="w-full flex items-center gap-3 px-5 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors text-left disabled:opacity-60"
+          >
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-court-green to-court-green-soft flex items-center justify-center text-white shadow-md shrink-0">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8" />
+                <polyline points="16 6 12 2 8 6" />
+                <line x1="12" y1="2" x2="12" y2="15" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-800">Share to other apps…</p>
+              <p className="text-[11px] text-gray-400 mt-0.5">Messages, WhatsApp, email, anyone outside Tennis Friends</p>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-gray-300 shrink-0">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </button>
         )}
 
         <div className="max-h-96 overflow-y-auto">

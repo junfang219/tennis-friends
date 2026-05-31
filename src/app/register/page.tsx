@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { AppleIcon, GoogleIcon } from "@/app/components/ui/icons";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { emailExists, isExistingEmailSignUp } from "@/lib/supabase/signup";
@@ -21,8 +21,18 @@ import { authErrorMessage } from "@/lib/supabase/authError";
 
 type Step = "choose" | "email-form" | "code";
 
+// Only honor on-site, relative paths. Lets us pass a `next=/p/abc` from a
+// public share landing without ever bouncing the user to an external host.
+function safeNext(value: string | null | undefined): string {
+  if (!value) return "/onboarding";
+  if (value.startsWith("/") && !value.startsWith("//")) return value;
+  return "/onboarding";
+}
+
 export default function SupabaseRegisterPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextPath = safeNext(searchParams.get("next"));
   const [step, setStep] = useState<Step>("choose");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -74,7 +84,7 @@ export default function SupabaseRegisterPage() {
       }
       if (data.session) {
         // Email confirmation disabled at the project level — straight to onboarding.
-        router.push("/onboarding");
+        router.push(`/onboarding?next=${encodeURIComponent(nextPath)}`);
         router.refresh();
         return;
       }
@@ -102,7 +112,7 @@ export default function SupabaseRegisterPage() {
         setError(authErrorMessage(verifyError));
         return;
       }
-      router.push("/onboarding");
+      router.push(`/onboarding?next=${encodeURIComponent(nextPath)}`);
       router.refresh();
     } catch (err) {
       setError(authErrorMessage(err));
@@ -135,7 +145,7 @@ export default function SupabaseRegisterPage() {
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent("/onboarding")}`,
+        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
       },
     });
     if (oauthError) {
