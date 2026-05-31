@@ -13,6 +13,7 @@ type CalendarEvent = {
   playTime: string;
   playDuration: number;
   courtLocation: string;
+  courtFacilityId: string | null;
   gameType: string;
   playersNeeded: number;
   playersConfirmed: number;
@@ -22,6 +23,14 @@ type CalendarEvent = {
   role: "creator" | "player" | "none";
   author: { id: string; name: string; profileImageUrl: string };
   groups: { id: string; name: string }[];
+  // Roster used by the calendar export, ordered creator → approved
+  // play_request users → manually-added guests (posts.manual_players).
+  // Seeded in adaptPost with creator + manuals; the approved-roster merge
+  // step inserts approved players between them.
+  playerNames: string[];
+  // Raw posts.manual_players string carried through so the merge step can
+  // reparse it without re-querying the post.
+  manualPlayers: string;
 };
 
 type TeamMatchEvent = {
@@ -60,6 +69,13 @@ function parseDate(dateStr: string): Date | null {
   if (!dateStr) return null;
   const d = new Date(dateStr + "T00:00:00");
   return isNaN(d.getTime()) ? null : d;
+}
+
+// posts.manual_players is a comma-separated string of guest names — see
+// the column comment in supabase/schema.sql. Mirrors PostCard.tsx parsing.
+function parseManualPlayers(s: string | null | undefined): string[] {
+  if (!s) return [];
+  return s.split(",").map((n) => n.trim()).filter(Boolean);
 }
 
 function dateKey(d: Date): string {
@@ -130,9 +146,9 @@ export default function CalendarPage() {
       supabase
         .from("posts")
         .select(
-          `id, play_date, play_time, play_duration, court_location,
+          `id, play_date, play_time, play_duration, court_location, court_facility_id,
            game_type, players_needed, players_confirmed, court_booked,
-           is_complete, content, author_id,
+           is_complete, content, manual_players, author_id,
            author:profiles!posts_author_id_fkey ( id, name, profile_image_url ),
            post_targets ( groups ( id, name ) )`
         )
@@ -143,9 +159,9 @@ export default function CalendarPage() {
         .select(
           `status,
            post:posts!play_requests_post_id_fkey (
-             id, play_date, play_time, play_duration, court_location,
+             id, play_date, play_time, play_duration, court_location, court_facility_id,
              game_type, players_needed, players_confirmed, court_booked,
-             is_complete, content, author_id, post_type,
+             is_complete, content, manual_players, author_id, post_type,
              author:profiles!posts_author_id_fkey ( id, name, profile_image_url ),
              post_targets ( groups ( id, name ) )
            )`
@@ -162,12 +178,14 @@ export default function CalendarPage() {
       play_time: string;
       play_duration: number;
       court_location: string;
+      court_facility_id: string | null;
       game_type: string;
       players_needed: number;
       players_confirmed: number;
       court_booked: boolean;
       is_complete: boolean;
       content: string;
+      manual_players: string;
       author_id: string;
       post_type?: string;
       author: { id: string; name: string; profile_image_url: string } | null;
@@ -180,6 +198,7 @@ export default function CalendarPage() {
       playTime: p.play_time,
       playDuration: p.play_duration,
       courtLocation: p.court_location,
+      courtFacilityId: p.court_facility_id,
       gameType: p.game_type,
       playersNeeded: p.players_needed,
       playersConfirmed: p.players_confirmed,
@@ -195,6 +214,15 @@ export default function CalendarPage() {
       groups: (p.post_targets ?? [])
         .map((pt) => pt.groups)
         .filter((g): g is { id: string; name: string } => g !== null),
+      // Seed with creator + manually-added guests so we have a sensible
+      // roster even before the approved-roster merge runs. The merge step
+      // rebuilds this with approved players inserted between creator and
+      // manuals.
+      playerNames: [
+        ...(p.author?.name ? [p.author.name] : []),
+        ...parseManualPlayers(p.manual_players),
+      ],
+      manualPlayers: p.manual_players ?? "",
     });
 
     const seenIds = new Set<string>();
@@ -214,6 +242,47 @@ export default function CalendarPage() {
     const filteredEvents = groupFilterId
       ? events.filter((e) => e.groups.some((g) => g.id === groupFilterId))
       : events;
+
+    // Approved-player roster for the events we'll return. Calendar export
+    // shows "Players (filled/total): Creator, Approved" — adaptPost seeded
+    // the creator; this query adds approved play_request users. De-dupe by
+    // user_id so a creator who somehow shows up in their own play_requests
+    // isn't listed twice.
+    const eventIds = filteredEvents.map((e) => e.id);
+    if (eventIds.length > 0) {
+      const approvedRes = await supabase
+        .from("play_requests")
+        .select(
+          `post_id, user_id,
+           user:profiles!play_requests_user_id_fkey ( id, name )`
+        )
+        .in("post_id", eventIds)
+        .eq("status", "approved");
+      if (approvedRes.error) throw approvedRes.error;
+
+      type ApprovedRow = {
+        post_id: string;
+        user_id: string;
+        user: { id: string; name: string } | null;
+      };
+      const approvedByPost = new Map<string, Array<{ id: string; name: string }>>();
+      for (const r of (approvedRes.data ?? []) as unknown as ApprovedRow[]) {
+        if (!r.user || !r.user.name) continue;
+        const list = approvedByPost.get(r.post_id) ?? [];
+        list.push({ id: r.user.id, name: r.user.name });
+        approvedByPost.set(r.post_id, list);
+      }
+      for (const ev of filteredEvents) {
+        const approved = approvedByPost.get(ev.id) ?? [];
+        ev.playerNames = [
+          ev.author.name,
+          ...approved
+            .filter((u) => u.id !== ev.author.id && u.name.trim().length > 0)
+            .map((u) => u.name),
+          ...parseManualPlayers(ev.manualPlayers),
+        ].filter(Boolean);
+      }
+    }
 
     // 3) Team matches — for the eligible team set. Embed availabilities
     // so we can surface my own lineupSlot. (The embed alias is
@@ -619,7 +688,10 @@ function EventCard({ event: ev }: { event: CalendarEvent }) {
               <Avatar name={ev.author.name} image={ev.author.profileImageUrl} size="sm" />
               <span className="text-xs text-gray-500">{ev.author.name}</span>
             </div>
-            <span className="text-xs text-gray-400">{ev.playersConfirmed}/{ev.playersNeeded} players</span>
+            {/* +1 on both sides counts the creator (who isn't tracked in
+                posts.players_confirmed / players_needed). Calendar-only —
+                feed PostCard intentionally keeps the raw "additional" math. */}
+            <span className="text-xs text-gray-400">{ev.playersConfirmed + 1}/{ev.playersNeeded + 1} players</span>
             {ev.courtBooked && (
               <span className="text-xs text-green-600 font-medium">Court booked</span>
             )}
