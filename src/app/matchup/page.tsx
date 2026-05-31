@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
-import { isAtLeast, ROLE } from "@/lib/groupRoles";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listTeamListings, listMyGroups, createTeamListing } from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
@@ -117,7 +116,6 @@ export default function MatchUpPage() {
   // member; here we surface only teams the user owns (the simplest pre-MVP
   // guard until we wire has_group_role-style helper to the client).
   const teamsICanPostFor = myTeams.filter((t) => t.ownerId === userId);
-  void isAtLeast; void ROLE; // legacy gate vars retained for follow-up wiring
 
   const createListing = async () => {
     if (!createTitle.trim() || !createTeamId) return;

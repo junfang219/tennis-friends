@@ -774,7 +774,7 @@ function MembersButton({
         const rows = Array.from(selected).map((uid) => ({
           group_id: groupId,
           user_id: uid,
-          role: "member" as const,
+          roles: [] as ("manager" | "captain")[],
         }));
         await supabase.from("group_members").insert(rows);
       }

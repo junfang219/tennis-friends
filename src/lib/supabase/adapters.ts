@@ -398,7 +398,7 @@ export interface GroupMemberCamel {
   id: string;
   groupId: string;
   userId: string;
-  role: string;
+  roles: ("manager" | "captain")[];
   memberType: string;
   user: { id: string; name: string; profileImageUrl: string; ntrpRating: number | null };
 }
@@ -408,7 +408,7 @@ export function toGroupMemberCamel(m: GroupMember): GroupMemberCamel {
     id: m.id,
     groupId: m.group_id,
     userId: m.user_id,
-    role: m.role,
+    roles: m.roles,
     memberType: m.member_type,
     user: {
       id: m.user.id,

@@ -126,7 +126,7 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
       await adminClient()
         .from("group_members")
         .insert([
-          { group_id: groupId, user_id: carol.id, role: "member" },
+          { group_id: groupId, user_id: carol.id, roles: [] },
         ]);
 
       const { data: gp } = await alice.client
@@ -353,6 +353,155 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
       } else {
         expect(data?.length ?? 0).toBe(0);
       }
+    });
+  });
+
+  // Independent multi-role model: manager = ADMIN, captain = OPS, owner = both.
+  // Exercises can_admin_group / can_run_group, the role-change guard trigger,
+  // and the transfer_group_ownership RPC against the live DB.
+  describe("team role capabilities + guards", () => {
+    let groupId: string;
+
+    beforeAll(async () => {
+      const admin = adminClient();
+      const { data: g } = await admin
+        .from("groups")
+        .insert({ name: "Role Caps Test", owner_id: alice.id })
+        .select("id")
+        .single();
+      groupId = g!.id;
+      // owner row auto-added by the trigger; add bob + carol as plain members.
+      await admin.from("group_members").insert([
+        { group_id: groupId, user_id: bob.id, roles: [] },
+        { group_id: groupId, user_id: carol.id, roles: [] },
+      ]);
+    }, 60_000);
+
+    afterAll(async () => {
+      if (groupId) await adminClient().from("groups").delete().eq("id", groupId);
+    });
+
+    const rolesOf = (u: TestUser) =>
+      adminClient()
+        .from("group_members")
+        .select("roles")
+        .eq("group_id", groupId)
+        .eq("user_id", u.id)
+        .single();
+
+    it("a member cannot grant themselves the Manager role", async () => {
+      const { error } = await bob.client
+        .from("group_members")
+        .update({ roles: ["manager"] })
+        .eq("group_id", groupId)
+        .eq("user_id", bob.id);
+      expect(error).not.toBeNull();
+      const { data } = await rolesOf(bob);
+      expect(data?.roles).toEqual([]);
+    });
+
+    it("only the owner can grant Manager — a manager cannot", async () => {
+      const admin = adminClient();
+      await admin
+        .from("group_members")
+        .update({ roles: ["manager"] })
+        .eq("group_id", groupId)
+        .eq("user_id", bob.id);
+
+      // Manager bob tries to make carol a manager → blocked by the guard.
+      const mgr = await bob.client
+        .from("group_members")
+        .update({ roles: ["manager"] })
+        .eq("group_id", groupId)
+        .eq("user_id", carol.id);
+      expect(mgr.error).not.toBeNull();
+
+      // But bob (a manager = admin) CAN grant carol the captain role.
+      const cap = await bob.client
+        .from("group_members")
+        .update({ roles: ["captain"] })
+        .eq("group_id", groupId)
+        .eq("user_id", carol.id);
+      expect(cap.error).toBeNull();
+      const { data } = await rolesOf(carol);
+      expect(data?.roles).toEqual(["captain"]);
+    });
+
+    it("Manager (admin) and Captain (ops) capabilities are independent", async () => {
+      const admin = adminClient();
+      // bob = captain only, carol = manager only.
+      await admin.from("group_members").update({ roles: ["captain"] }).eq("group_id", groupId).eq("user_id", bob.id);
+      await admin.from("group_members").update({ roles: ["manager"] }).eq("group_id", groupId).eq("user_id", carol.id);
+
+      // OPS: a captain can create a season; a manager-only member cannot.
+      const capSeason = await bob.client
+        .from("seasons")
+        .insert({ group_id: groupId, name: "Captain Season" })
+        .select("id")
+        .single();
+      expect(capSeason.error).toBeNull();
+      const mgrSeason = await carol.client
+        .from("seasons")
+        .insert({ group_id: groupId, name: "Manager Season" });
+      expect(mgrSeason.error).not.toBeNull();
+
+      // ADMIN: a manager can rename the team; a captain-only member cannot.
+      const rename = await carol.client.from("groups").update({ name: "Renamed by Manager" }).eq("id", groupId);
+      expect(rename.error).toBeNull();
+      await bob.client.from("groups").update({ name: "Captain Rename Attempt" }).eq("id", groupId);
+      const { data: grp } = await admin.from("groups").select("name").eq("id", groupId).single();
+      expect(grp?.name).toBe("Renamed by Manager");
+
+      if (capSeason.data?.id) await admin.from("seasons").delete().eq("id", capSeason.data.id);
+    });
+
+    it("the owner keeps both capabilities with an empty role set", async () => {
+      const admin = adminClient();
+      const { data: ownerRow } = await rolesOf(alice);
+      expect(ownerRow?.roles).toEqual([]);
+
+      const season = await alice.client
+        .from("seasons")
+        .insert({ group_id: groupId, name: "Owner Season" })
+        .select("id")
+        .single();
+      expect(season.error).toBeNull(); // OPS
+      const rename = await alice.client.from("groups").update({ name: "Renamed by Owner" }).eq("id", groupId);
+      expect(rename.error).toBeNull(); // ADMIN
+
+      if (season.data?.id) await admin.from("seasons").delete().eq("id", season.data.id);
+    });
+
+    it("transfer_group_ownership: owner-only, member target, founder kept on", async () => {
+      // A non-owner cannot transfer.
+      const denied = await bob.client.rpc("transfer_group_ownership", {
+        p_group_id: groupId,
+        p_new_owner_id: bob.id,
+      });
+      expect(denied.error).not.toBeNull();
+
+      // The owner cannot transfer to a non-member.
+      const stranger = await makeTestUser("stranger");
+      const badTarget = await alice.client.rpc("transfer_group_ownership", {
+        p_group_id: groupId,
+        p_new_owner_id: stranger.id,
+      });
+      expect(badTarget.error).not.toBeNull();
+      await deleteTestUsers([stranger]);
+
+      // The owner transfers to bob (a member).
+      const ok = await alice.client.rpc("transfer_group_ownership", {
+        p_group_id: groupId,
+        p_new_owner_id: bob.id,
+      });
+      expect(ok.error).toBeNull();
+
+      const admin = adminClient();
+      const { data: grp } = await admin.from("groups").select("owner_id").eq("id", groupId).single();
+      expect(grp?.owner_id).toBe(bob.id);
+      // The outgoing owner is retained as manager + captain.
+      const { data: aliceRow } = await rolesOf(alice);
+      expect(new Set(aliceRow?.roles)).toEqual(new Set(["manager", "captain"]));
     });
   });
 });

@@ -6708,3 +6708,377 @@ CREATE POLICY chat_messages_update_sender ON public.chat_messages
   FOR UPDATE TO authenticated
   USING (sender_id = (SELECT auth.uid()))
   WITH CHECK (sender_id = (SELECT auth.uid()));
+
+-- =====================================================================
+-- Migration: independent multi-role team membership.
+--
+-- Replaces the single hierarchical group_role (owner>manager>captain>member)
+-- on group_members.role with an independent role SET (group_members.roles).
+--   * manager  -> ADMIN  capabilities (roster, settings, invites, roles)
+--   * captain  -> OPS    capabilities (matches, practices, availability,
+--                                      announcements, files, albums)
+-- The two are independent — neither implies the other. Ownership stays a
+-- single, transferable groups.owner_id that ALWAYS grants both capabilities,
+-- so owners need no entry in their roles array.
+-- has_group_role(g, min_role) is replaced by can_admin_group(g)/can_run_group(g).
+-- =====================================================================
+
+CREATE TYPE public.group_member_role AS ENUM ('manager', 'captain');
+
+-- group_members.roles (set). Backfill preserves each member's effective powers
+-- (an old manager outranked captain, so it gets both); then drop role.
+ALTER TABLE public.group_members ADD COLUMN roles public.group_member_role[];
+UPDATE public.group_members
+SET roles = CASE role
+  WHEN 'manager' THEN ARRAY['manager','captain']::public.group_member_role[]
+  WHEN 'captain' THEN ARRAY['captain']::public.group_member_role[]
+  ELSE                ARRAY[]::public.group_member_role[]
+END;
+ALTER TABLE public.group_members
+  ALTER COLUMN roles SET DEFAULT ARRAY[]::public.group_member_role[],
+  ALTER COLUMN roles SET NOT NULL;
+
+ALTER TABLE public.group_invites ADD COLUMN roles public.group_member_role[];
+UPDATE public.group_invites
+SET roles = CASE role
+  WHEN 'manager' THEN ARRAY['manager','captain']::public.group_member_role[]
+  WHEN 'captain' THEN ARRAY['captain']::public.group_member_role[]
+  WHEN 'owner'   THEN ARRAY['manager','captain']::public.group_member_role[]
+  ELSE                ARRAY[]::public.group_member_role[]
+END;
+ALTER TABLE public.group_invites
+  ALTER COLUMN roles SET DEFAULT ARRAY[]::public.group_member_role[],
+  ALTER COLUMN roles SET NOT NULL;
+
+-- Capability functions (SECURITY DEFINER so they don't recurse into
+-- group_members RLS when used inside its own policies).
+CREATE OR REPLACE FUNCTION public.can_admin_group(g uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (SELECT 1 FROM public.groups gr
+                 WHERE gr.id = g AND gr.owner_id = (SELECT auth.uid()))
+      OR EXISTS (SELECT 1 FROM public.group_members gm
+                 WHERE gm.group_id = g AND gm.user_id = (SELECT auth.uid())
+                   AND 'manager' = ANY(gm.roles));
+$$;
+CREATE OR REPLACE FUNCTION public.can_run_group(g uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (SELECT 1 FROM public.groups gr
+                 WHERE gr.id = g AND gr.owner_id = (SELECT auth.uid()))
+      OR EXISTS (SELECT 1 FROM public.group_members gm
+                 WHERE gm.group_id = g AND gm.user_id = (SELECT auth.uid())
+                   AND 'captain' = ANY(gm.roles));
+$$;
+REVOKE EXECUTE ON FUNCTION public.can_admin_group(uuid) FROM anon, public;
+REVOKE EXECUTE ON FUNCTION public.can_run_group(uuid)   FROM anon, public;
+GRANT  EXECUTE ON FUNCTION public.can_admin_group(uuid) TO authenticated;
+GRANT  EXECUTE ON FUNCTION public.can_run_group(uuid)   TO authenticated;
+
+-- Recreate every policy that referenced has_group_role.
+-- ADMIN (can_admin_group):
+DROP POLICY IF EXISTS groups_update_managers ON public.groups;
+CREATE POLICY groups_update_managers ON public.groups
+  FOR UPDATE TO authenticated
+  USING (public.can_admin_group(id)) WITH CHECK (public.can_admin_group(id));
+DROP POLICY IF EXISTS group_members_insert_manager ON public.group_members;
+CREATE POLICY group_members_insert_manager ON public.group_members
+  FOR INSERT TO authenticated WITH CHECK (public.can_admin_group(group_id));
+DROP POLICY IF EXISTS group_members_update_self_or_manager ON public.group_members;
+CREATE POLICY group_members_update_self_or_manager ON public.group_members
+  FOR UPDATE TO authenticated
+  USING ((user_id = (SELECT auth.uid())) OR public.can_admin_group(group_id))
+  WITH CHECK ((user_id = (SELECT auth.uid())) OR public.can_admin_group(group_id));
+DROP POLICY IF EXISTS group_members_delete_self_or_manager ON public.group_members;
+CREATE POLICY group_members_delete_self_or_manager ON public.group_members
+  FOR DELETE TO authenticated
+  USING ((user_id = (SELECT auth.uid())) OR public.can_admin_group(group_id));
+DROP POLICY IF EXISTS group_invites_select_manager ON public.group_invites;
+CREATE POLICY group_invites_select_manager ON public.group_invites
+  FOR SELECT TO authenticated USING (public.can_admin_group(group_id));
+DROP POLICY IF EXISTS group_invites_insert_manager ON public.group_invites;
+CREATE POLICY group_invites_insert_manager ON public.group_invites
+  FOR INSERT TO authenticated WITH CHECK (public.can_admin_group(group_id));
+DROP POLICY IF EXISTS group_invites_update_manager ON public.group_invites;
+CREATE POLICY group_invites_update_manager ON public.group_invites
+  FOR UPDATE TO authenticated
+  USING (public.can_admin_group(group_id)) WITH CHECK (public.can_admin_group(group_id));
+DROP POLICY IF EXISTS group_invites_delete_manager ON public.group_invites;
+CREATE POLICY group_invites_delete_manager ON public.group_invites
+  FOR DELETE TO authenticated USING (public.can_admin_group(group_id));
+DROP POLICY IF EXISTS group_messages_delete_sender_or_manager ON public.group_messages;
+CREATE POLICY group_messages_delete_sender_or_manager ON public.group_messages
+  FOR DELETE TO authenticated
+  USING ((sender_id = (SELECT auth.uid())) OR public.can_admin_group(group_id));
+DROP POLICY IF EXISTS events_update_owner ON public.events;
+CREATE POLICY events_update_owner ON public.events
+  FOR UPDATE TO authenticated
+  USING ((owner_id = (SELECT auth.uid())) OR ((host_group_id IS NOT NULL) AND public.can_admin_group(host_group_id)))
+  WITH CHECK ((owner_id = (SELECT auth.uid())) OR ((host_group_id IS NOT NULL) AND public.can_admin_group(host_group_id)));
+
+-- OPS (can_run_group):
+DROP POLICY IF EXISTS seasons_insert_captain ON public.seasons;
+CREATE POLICY seasons_insert_captain ON public.seasons
+  FOR INSERT TO authenticated WITH CHECK (public.can_run_group(group_id));
+DROP POLICY IF EXISTS seasons_update_captain ON public.seasons;
+CREATE POLICY seasons_update_captain ON public.seasons
+  FOR UPDATE TO authenticated USING (public.can_run_group(group_id)) WITH CHECK (public.can_run_group(group_id));
+DROP POLICY IF EXISTS seasons_delete_captain ON public.seasons;
+CREATE POLICY seasons_delete_captain ON public.seasons
+  FOR DELETE TO authenticated USING (public.can_run_group(group_id));
+DROP POLICY IF EXISTS team_listings_insert_captain ON public.team_listings;
+CREATE POLICY team_listings_insert_captain ON public.team_listings
+  FOR INSERT TO authenticated WITH CHECK (public.can_run_group(group_id));
+DROP POLICY IF EXISTS team_listings_update_captain ON public.team_listings;
+CREATE POLICY team_listings_update_captain ON public.team_listings
+  FOR UPDATE TO authenticated USING (public.can_run_group(group_id)) WITH CHECK (public.can_run_group(group_id));
+DROP POLICY IF EXISTS team_listings_delete_captain ON public.team_listings;
+CREATE POLICY team_listings_delete_captain ON public.team_listings
+  FOR DELETE TO authenticated USING (public.can_run_group(group_id));
+DROP POLICY IF EXISTS team_matches_insert_captain ON public.team_matches;
+CREATE POLICY team_matches_insert_captain ON public.team_matches
+  FOR INSERT TO authenticated WITH CHECK (public.can_run_group(group_id));
+DROP POLICY IF EXISTS team_matches_update_captain ON public.team_matches;
+CREATE POLICY team_matches_update_captain ON public.team_matches
+  FOR UPDATE TO authenticated USING (public.can_run_group(group_id)) WITH CHECK (public.can_run_group(group_id));
+DROP POLICY IF EXISTS team_matches_delete_captain ON public.team_matches;
+CREATE POLICY team_matches_delete_captain ON public.team_matches
+  FOR DELETE TO authenticated USING (public.can_run_group(group_id));
+DROP POLICY IF EXISTS practice_series_insert_captain ON public.practice_series;
+CREATE POLICY practice_series_insert_captain ON public.practice_series
+  FOR INSERT TO authenticated WITH CHECK (public.can_run_group(group_id));
+DROP POLICY IF EXISTS practice_series_update_captain ON public.practice_series;
+CREATE POLICY practice_series_update_captain ON public.practice_series
+  FOR UPDATE TO authenticated USING (public.can_run_group(group_id)) WITH CHECK (public.can_run_group(group_id));
+DROP POLICY IF EXISTS practice_series_delete_captain ON public.practice_series;
+CREATE POLICY practice_series_delete_captain ON public.practice_series
+  FOR DELETE TO authenticated USING (public.can_run_group(group_id));
+DROP POLICY IF EXISTS team_practices_insert_captain ON public.team_practices;
+CREATE POLICY team_practices_insert_captain ON public.team_practices
+  FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM public.practice_series ps
+                      WHERE ps.id = team_practices.series_id AND public.can_run_group(ps.group_id)));
+DROP POLICY IF EXISTS team_practices_update_captain ON public.team_practices;
+CREATE POLICY team_practices_update_captain ON public.team_practices
+  FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM public.practice_series ps
+                 WHERE ps.id = team_practices.series_id AND public.can_run_group(ps.group_id)))
+  WITH CHECK (EXISTS (SELECT 1 FROM public.practice_series ps
+                      WHERE ps.id = team_practices.series_id AND public.can_run_group(ps.group_id)));
+DROP POLICY IF EXISTS team_practices_delete_captain ON public.team_practices;
+CREATE POLICY team_practices_delete_captain ON public.team_practices
+  FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM public.practice_series ps
+                 WHERE ps.id = team_practices.series_id AND public.can_run_group(ps.group_id)));
+DROP POLICY IF EXISTS albums_update_captain ON public.albums;
+CREATE POLICY albums_update_captain ON public.albums
+  FOR UPDATE TO authenticated USING (public.can_run_group(group_id)) WITH CHECK (public.can_run_group(group_id));
+DROP POLICY IF EXISTS albums_delete_captain ON public.albums;
+CREATE POLICY albums_delete_captain ON public.albums
+  FOR DELETE TO authenticated USING (public.can_run_group(group_id));
+DROP POLICY IF EXISTS album_items_delete_owner_or_captain ON public.album_items;
+CREATE POLICY album_items_delete_owner_or_captain ON public.album_items
+  FOR DELETE TO authenticated
+  USING ((added_by_id = (SELECT auth.uid()))
+         OR EXISTS (SELECT 1 FROM public.albums a
+                    WHERE a.id = album_items.album_id AND public.can_run_group(a.group_id)));
+DROP POLICY IF EXISTS group_files_delete_owner_or_captain ON public.group_files;
+CREATE POLICY group_files_delete_owner_or_captain ON public.group_files
+  FOR DELETE TO authenticated
+  USING ((uploaded_by_id = (SELECT auth.uid())) OR public.can_run_group(group_id));
+DROP POLICY IF EXISTS availabilities_update_self_or_captain ON public.availabilities;
+CREATE POLICY availabilities_update_self_or_captain ON public.availabilities
+  FOR UPDATE TO authenticated
+  USING ((user_id = (SELECT auth.uid()))
+         OR ((match_id IS NOT NULL) AND EXISTS (SELECT 1 FROM public.team_matches tm
+              WHERE tm.id = availabilities.match_id AND public.can_run_group(tm.group_id))))
+  WITH CHECK ((user_id = (SELECT auth.uid()))
+         OR ((match_id IS NOT NULL) AND EXISTS (SELECT 1 FROM public.team_matches tm
+              WHERE tm.id = availabilities.match_id AND public.can_run_group(tm.group_id))));
+DROP POLICY IF EXISTS availabilities_insert_self_or_captain ON public.availabilities;
+CREATE POLICY availabilities_insert_self_or_captain ON public.availabilities
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    ((user_id = (SELECT auth.uid()))
+       AND (((match_id IS NOT NULL) AND EXISTS (SELECT 1 FROM public.team_matches tm
+              WHERE tm.id = availabilities.match_id AND public.is_group_member(tm.group_id)))
+            OR ((practice_id IS NOT NULL) AND EXISTS (SELECT 1 FROM public.team_practices tp
+              JOIN public.practice_series ps ON ps.id = tp.series_id
+              WHERE tp.id = availabilities.practice_id AND public.is_group_member(ps.group_id)))))
+    OR ((match_id IS NOT NULL) AND EXISTS (SELECT 1 FROM public.team_matches tm
+              WHERE tm.id = availabilities.match_id AND public.can_run_group(tm.group_id)))
+  );
+
+-- Role writers switched from role to roles.
+CREATE OR REPLACE FUNCTION public.auto_add_group_owner_member()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  INSERT INTO public.group_members (group_id, user_id, roles)
+  VALUES (NEW.id, NEW.owner_id, ARRAY[]::group_member_role[])
+  ON CONFLICT (group_id, user_id) DO NOTHING;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.create_team_group_on_complete()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_group_id    uuid;
+  v_team_name   text;
+  v_author_name text;
+  v_message     text;
+BEGIN
+  IF NEW.is_complete IS NOT TRUE OR NEW.post_type <> 'propose_team' THEN RETURN NEW; END IF;
+  IF NEW.team_group_id IS NOT NULL AND NEW.team_group_id <> '' THEN RETURN NEW; END IF;
+
+  SELECT NULLIF(trim(name), '') INTO v_author_name FROM profiles WHERE id = NEW.author_id;
+  v_team_name := COALESCE(
+    NULLIF(trim(NEW.court_location), ''),
+    CASE WHEN v_author_name IS NULL THEN 'Team' ELSE v_author_name || '''s Team' END
+  );
+
+  INSERT INTO groups (name, owner_id) VALUES (v_team_name, NEW.author_id) RETURNING id INTO v_group_id;
+
+  INSERT INTO group_members (group_id, user_id, roles)
+  SELECT v_group_id, NEW.author_id, ARRAY[]::group_member_role[]
+  UNION
+  SELECT v_group_id, pr.user_id, ARRAY[]::group_member_role[]
+  FROM play_requests pr
+  WHERE pr.post_id = NEW.id AND pr.status = 'approved'
+  ON CONFLICT (group_id, user_id) DO NOTHING;
+
+  v_message := E'🏆 Team formed!\n' || 'Welcome to ' || v_team_name || E' — let''s organize practice and matches.';
+  INSERT INTO group_messages (group_id, sender_id, content) VALUES (v_group_id, NEW.author_id, v_message);
+  UPDATE posts SET team_group_id = v_group_id::text WHERE id = NEW.id;
+  RETURN NEW;
+END;
+$$;
+
+-- accept_group_invite: write roles from the invite; pre-existing membership
+-- wins (DO NOTHING preserves the member's current roles — an admin adjusts later).
+CREATE OR REPLACE FUNCTION public.accept_group_invite(p_token text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_caller uuid := auth.uid();
+  v_email  text;
+  v_inv    group_invites%ROWTYPE;
+BEGIN
+  IF v_caller IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+  IF p_token IS NULL OR length(trim(p_token)) = 0 THEN RAISE EXCEPTION 'Missing token' USING ERRCODE = 'invalid_parameter_value'; END IF;
+  SELECT email INTO v_email FROM auth.users WHERE id = v_caller;
+  SELECT * INTO v_inv FROM group_invites WHERE token = p_token;
+  IF v_inv.id IS NULL THEN RAISE EXCEPTION 'Invite not found' USING ERRCODE = 'no_data_found'; END IF;
+  IF v_inv.status = 'accepted' THEN RETURN jsonb_build_object('ok', true, 'already_accepted', true); END IF;
+  IF v_inv.status = 'cancelled' THEN RAISE EXCEPTION 'This invite was cancelled' USING ERRCODE = 'invalid_parameter_value'; END IF;
+  IF v_inv.expires_at IS NOT NULL AND v_inv.expires_at < now() THEN RAISE EXCEPTION 'This invite has expired' USING ERRCODE = 'invalid_parameter_value'; END IF;
+  IF lower(v_email) <> lower(v_inv.email::text) THEN RAISE EXCEPTION 'This invite is for a different email address' USING ERRCODE = 'insufficient_privilege'; END IF;
+
+  INSERT INTO group_members (group_id, user_id, roles, member_type)
+  VALUES (v_inv.group_id, v_caller, v_inv.roles, COALESCE(v_inv.member_type, ''))
+  ON CONFLICT (group_id, user_id) DO NOTHING;
+
+  UPDATE group_invites SET status = 'accepted', accepted_by_id = v_caller, accepted_at = now() WHERE id = v_inv.id;
+  INSERT INTO notifications (user_id, actor_id, type)
+  VALUES (v_inv.invited_by_id, v_caller, 'group_invite_accepted'::notification_type);
+  RETURN jsonb_build_object('ok', true, 'group_id', v_inv.group_id);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_invite_by_token(p_token text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_inv     group_invites%ROWTYPE;
+  v_group   groups%ROWTYPE;
+  v_inviter text;
+BEGIN
+  IF p_token IS NULL OR length(trim(p_token)) = 0 THEN RETURN NULL; END IF;
+  SELECT * INTO v_inv FROM group_invites WHERE token = p_token;
+  IF v_inv.id IS NULL THEN RETURN NULL; END IF;
+  SELECT * INTO v_group FROM groups WHERE id = v_inv.group_id;
+  SELECT name INTO v_inviter FROM profiles WHERE id = v_inv.invited_by_id;
+  RETURN jsonb_build_object(
+    'id', v_inv.id, 'group_id', v_inv.group_id, 'invited_by_id', v_inv.invited_by_id,
+    'token', v_inv.token, 'roles', v_inv.roles, 'member_type', v_inv.member_type,
+    'status', v_inv.status, 'expires_at', v_inv.expires_at, 'accepted_by_id', v_inv.accepted_by_id,
+    'accepted_at', v_inv.accepted_at, 'created_at', v_inv.created_at, 'updated_at', v_inv.updated_at,
+    'group', jsonb_build_object('id', v_group.id, 'name', v_group.name, 'image_url', v_group.image_url),
+    'inviter_name', COALESCE(v_inviter, '')
+  );
+END;
+$$;
+
+-- Guard: only an admin may change a member's roles; only the owner may
+-- grant/revoke the Manager role. Non-role self-updates pass untouched.
+CREATE OR REPLACE FUNCTION public.guard_group_member_roles()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_is_owner boolean;
+BEGIN
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF; -- trusted backend / service role
+  IF NEW.roles IS NOT DISTINCT FROM OLD.roles THEN RETURN NEW; END IF;
+  IF NOT public.can_admin_group(OLD.group_id) THEN
+    RAISE EXCEPTION 'Only a team admin can change member roles' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF (('manager' = ANY(NEW.roles)) IS DISTINCT FROM ('manager' = ANY(OLD.roles))) THEN
+    SELECT EXISTS (SELECT 1 FROM public.groups g WHERE g.id = OLD.group_id AND g.owner_id = auth.uid())
+      INTO v_is_owner;
+    IF NOT v_is_owner THEN
+      RAISE EXCEPTION 'Only the team owner can change the Manager role' USING ERRCODE = 'insufficient_privilege';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.guard_group_member_roles() FROM anon, authenticated, public;
+DROP TRIGGER IF EXISTS group_members_guard_roles ON public.group_members;
+CREATE TRIGGER group_members_guard_roles
+  BEFORE UPDATE ON public.group_members
+  FOR EACH ROW EXECUTE FUNCTION public.guard_group_member_roles();
+
+-- Guard: owner_id changes only when the current owner initiates them
+-- (via transfer_group_ownership). Admins editing other group fields can't.
+CREATE OR REPLACE FUNCTION public.guard_group_owner_id()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF; -- trusted backend / service role
+  IF NEW.owner_id IS DISTINCT FROM OLD.owner_id AND OLD.owner_id <> auth.uid() THEN
+    RAISE EXCEPTION 'Only the current owner can transfer ownership' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.guard_group_owner_id() FROM anon, authenticated, public;
+DROP TRIGGER IF EXISTS groups_guard_owner_id ON public.groups;
+CREATE TRIGGER groups_guard_owner_id
+  BEFORE UPDATE ON public.groups
+  FOR EACH ROW EXECUTE FUNCTION public.guard_group_owner_id();
+
+-- Explicit ownership transfer. New owner must be a member; the outgoing owner
+-- is kept on as manager+captain so the founder isn't stranded.
+CREATE OR REPLACE FUNCTION public.transfer_group_ownership(p_group_id uuid, p_new_owner_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_caller uuid := auth.uid();
+  v_owner  uuid;
+BEGIN
+  IF v_caller IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+  SELECT owner_id INTO v_owner FROM public.groups WHERE id = p_group_id;
+  IF v_owner IS NULL THEN RAISE EXCEPTION 'Team not found' USING ERRCODE = 'no_data_found'; END IF;
+  IF v_owner <> v_caller THEN RAISE EXCEPTION 'Only the current owner can transfer ownership' USING ERRCODE = 'insufficient_privilege'; END IF;
+  IF p_new_owner_id = v_owner THEN RETURN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.group_members WHERE group_id = p_group_id AND user_id = p_new_owner_id) THEN
+    RAISE EXCEPTION 'New owner must be a member of the team' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  UPDATE public.group_members
+    SET roles = ARRAY['manager','captain']::group_member_role[]
+    WHERE group_id = p_group_id AND user_id = v_owner;
+  UPDATE public.groups SET owner_id = p_new_owner_id WHERE id = p_group_id;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.transfer_group_ownership(uuid, uuid) FROM anon, public;
+GRANT  EXECUTE ON FUNCTION public.transfer_group_ownership(uuid, uuid) TO authenticated;
+
+-- Drop legacy hierarchy fn + columns (has_group_role is a SQL fn that depends
+-- on the role column, so it must go first).
+DROP FUNCTION IF EXISTS public.has_group_role(uuid, group_role);
+DROP INDEX IF EXISTS public.group_members_group_role_idx;
+ALTER TABLE public.group_members DROP COLUMN role;
+ALTER TABLE public.group_invites DROP COLUMN role;

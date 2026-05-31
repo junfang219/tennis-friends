@@ -2,6 +2,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../types";
+import type { TeamRole } from "../../groupRoles";
 import { getMyIdFast } from "./_authFast";
 import { getCached, setCached } from "../../queryCache";
 
@@ -23,7 +24,10 @@ export interface GroupMember {
   id: string;
   group_id: string;
   user_id: string;
-  role: "owner" | "manager" | "captain" | "member";
+  // Independent role set. Owner is not represented here (ownership lives on
+  // groups.owner_id and always grants both capabilities); an owner's array
+  // is empty unless they were also assigned manager/captain.
+  roles: TeamRole[];
   member_type: string;
   created_at: string;
   last_read_at: string;
@@ -144,7 +148,7 @@ export async function listGroupMembers(
   const { data, error } = await supabase
     .from("group_members")
     .select(
-      `id, group_id, user_id, role, member_type, created_at, last_read_at, muted, pinned_at, hidden_at, cleared_at, archived_at,
+      `id, group_id, user_id, roles, member_type, created_at, last_read_at, muted, pinned_at, hidden_at, cleared_at, archived_at,
        user:profiles!group_members_user_id_fkey ( id, name, profile_image_url, ntrp_rating )`
     )
     .eq("group_id", groupId)

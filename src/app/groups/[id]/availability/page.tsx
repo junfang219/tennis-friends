@@ -11,10 +11,12 @@ import AttendanceTally from "@/components/attendance/AttendanceTally";
 import { normalizeMatchStatus, RSVP } from "@/lib/rsvpStatus";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage } from "@/lib/supabase/queries";
+import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { errorMessage } from "@/lib/errorMessage";
 
 type Member = {
   id: string;
+  roles: TeamRole[];
   user: { id: string; name: string; profileImageUrl: string; skillLevel: string };
 };
 
@@ -132,11 +134,14 @@ export default function AvailabilityPage() {
   const [sendingLineupId, setSendingLineupId] = useState<string | null>(null);
   const [lineupSentId, setLineupSentId] = useState<string | null>(null);
 
-  const isCaptain = team ? myId === team.ownerId : false;
+  // Captain (OPS) powers: the owner always, plus anyone holding the captain
+  // role. Previously this was locked to the owner only.
+  const myMember = team?.members.find((m) => m.user.id === myId);
+  const isCaptain = !!team && canCaptain({ isOwner: myId === team.ownerId, roles: myMember?.roles ?? [] });
 
   const toTeam = (
     g: { id: string; name: string; owner_id: string },
-    members: { id: string; user: { id: string; name: string; profile_image_url: string } }[]
+    members: { id: string; roles: TeamRole[]; user: { id: string; name: string; profile_image_url: string } }[]
   ) =>
     ({
       id: g.id,
@@ -144,6 +149,7 @@ export default function AvailabilityPage() {
       ownerId: g.owner_id,
       members: members.map((m) => ({
         id: m.id,
+        roles: m.roles,
         user: {
           id: m.user.id,
           name: m.user.name,

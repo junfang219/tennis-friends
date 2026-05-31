@@ -295,7 +295,7 @@ describe.skipIf(!integrationEnvReady)("extended query helpers (live Supabase)", 
       // owner row auto-added by groups_auto_add_owner.
       const admin = adminClient();
       await admin.from("group_members").insert([
-        { group_id: groupId, user_id: bob.id, role: "member" },
+        { group_id: groupId, user_id: bob.id, roles: [] },
       ]);
       const { data: m } = await alice.client
         .from("group_messages")

@@ -1,28 +1,52 @@
-// Pure role-hierarchy helpers. Database-touching helpers (getMemberRole,
-// hasRole) were deleted when we burned down the Prisma layer — rebuild them
-// against Supabase as needed.
+// Pure team-role helpers. Roles are an INDEPENDENT set (not a hierarchy):
+// a member can hold any combination of "manager" and "captain", or neither.
+//   - manager → ADMIN  capabilities (roster, settings, invites, role assignment)
+//   - captain → OPS     capabilities (matches, practices, availability,
+//                                     announcements, files, albums)
+// Ownership is separate (groups.owner_id) and ALWAYS grants both — so an owner
+// needs no entry in their roles array. Mirrors the Postgres group_member_role
+// enum + the can_admin_group / can_run_group capability functions.
 
-// Hierarchy (highest privilege first): owner > manager > captain > member.
-// Lowercase to match the Postgres group_role enum.
-export const ROLE = {
-  OWNER: "owner",
-  MANAGER: "manager",
-  CAPTAIN: "captain",
-  MEMBER: "member",
-} as const;
+export type TeamRole = "manager" | "captain";
 
-export type GroupRole = (typeof ROLE)[keyof typeof ROLE];
+export const TEAM_ROLES: { value: TeamRole; label: string }[] = [
+  { value: "manager", label: "Manager" },
+  { value: "captain", label: "Captain" },
+];
 
-const RANK: Record<GroupRole, number> = {
-  owner: 4,
-  manager: 3,
-  captain: 2,
-  member: 1,
-};
+const VALID_ROLES = new Set<TeamRole>(["manager", "captain"]);
 
-export function isAtLeast(role: string, min: GroupRole): boolean {
-  const r = (RANK as Record<string, number>)[role] ?? 0;
-  return r >= RANK[min];
+// Parse a member's roles from the jsonb/array shape Supabase returns (or a
+// JSON-encoded string), keeping only recognized roles. Unknown values are
+// dropped so a stale role can't linger as a phantom capability.
+export function parseRoles(raw: string | unknown[] | null | undefined): TeamRole[] {
+  const arr = Array.isArray(raw)
+    ? raw
+    : typeof raw === "string"
+      ? safeJsonArray(raw)
+      : [];
+  return arr.filter((r): r is TeamRole => typeof r === "string" && VALID_ROLES.has(r as TeamRole));
+}
+
+function safeJsonArray(raw: string): unknown[] {
+  try {
+    const parsed = JSON.parse(raw || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+type Capability = { isOwner: boolean; roles: TeamRole[] };
+
+// ADMIN: owner or anyone holding the manager role.
+export function canAdmin({ isOwner, roles }: Capability): boolean {
+  return isOwner || roles.includes("manager");
+}
+
+// OPS: owner or anyone holding the captain role.
+export function canCaptain({ isOwner, roles }: Capability): boolean {
+  return isOwner || roles.includes("captain");
 }
 
 // Default member-type list applied when a team hasn't customized its

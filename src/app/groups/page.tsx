@@ -596,7 +596,7 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
         const memberRows = Array.from(selectedIds).map((fid) => ({
           group_id: g.id,
           user_id: fid,
-          role: "member" as const,
+          roles: [] as ("manager" | "captain")[],
         }));
         const { error: memErr } = await supabase
           .from("group_members")

@@ -52,7 +52,7 @@ describe.skipIf(!integrationEnvReady)("consolidated schemas (migrations 0010 / 0
       groupId = g!.id;
       // owner row auto-added by groups_auto_add_owner.
       await admin.from("group_members").insert([
-        { group_id: groupId, user_id: bob.id, role: "member" },
+        { group_id: groupId, user_id: bob.id, roles: [] },
       ]);
 
       // One match + one practice to RSVP against.
@@ -275,7 +275,7 @@ describe.skipIf(!integrationEnvReady)("consolidated schemas (migrations 0010 / 0
       groupId = g!.id;
       // owner row auto-added by groups_auto_add_owner.
       await admin.from("group_members").insert([
-        { group_id: groupId, user_id: bob.id, role: "member" },
+        { group_id: groupId, user_id: bob.id, roles: [] },
       ]);
 
       const { data: fg } = await alice.client

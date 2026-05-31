@@ -1360,7 +1360,7 @@ export type Database = {
           id: string
           invited_by_id: string
           member_type: string
-          role: Database["public"]["Enums"]["group_role"]
+          roles: Database["public"]["Enums"]["group_member_role"][]
           status: Database["public"]["Enums"]["group_invite_status"]
           token: string
           updated_at: string
@@ -1375,7 +1375,7 @@ export type Database = {
           id?: string
           invited_by_id: string
           member_type?: string
-          role?: Database["public"]["Enums"]["group_role"]
+          roles?: Database["public"]["Enums"]["group_member_role"][]
           status?: Database["public"]["Enums"]["group_invite_status"]
           token: string
           updated_at?: string
@@ -1390,7 +1390,7 @@ export type Database = {
           id?: string
           invited_by_id?: string
           member_type?: string
-          role?: Database["public"]["Enums"]["group_role"]
+          roles?: Database["public"]["Enums"]["group_member_role"][]
           status?: Database["public"]["Enums"]["group_invite_status"]
           token?: string
           updated_at?: string
@@ -1431,7 +1431,7 @@ export type Database = {
           member_type: string
           muted: boolean
           pinned_at: string | null
-          role: Database["public"]["Enums"]["group_role"]
+          roles: Database["public"]["Enums"]["group_member_role"][]
           user_id: string
         }
         Insert: {
@@ -1445,7 +1445,7 @@ export type Database = {
           member_type?: string
           muted?: boolean
           pinned_at?: string | null
-          role?: Database["public"]["Enums"]["group_role"]
+          roles?: Database["public"]["Enums"]["group_member_role"][]
           user_id: string
         }
         Update: {
@@ -1459,7 +1459,7 @@ export type Database = {
           member_type?: string
           muted?: boolean
           pinned_at?: string | null
-          role?: Database["public"]["Enums"]["group_role"]
+          roles?: Database["public"]["Enums"]["group_member_role"][]
           user_id?: string
         }
         Relationships: [
@@ -2724,11 +2724,12 @@ export type Database = {
     }
     Functions: {
       accept_group_invite: { Args: { p_token: string }; Returns: Json }
-      email_exists: { Args: { p_email: string }; Returns: boolean }
       advance_event_match_to_next_round: {
         Args: { p_match_id: string }
         Returns: undefined
       }
+      can_admin_group: { Args: { g: string }; Returns: boolean }
+      can_run_group: { Args: { g: string }; Returns: boolean }
       can_see_event: {
         Args: { e: Database["public"]["Tables"]["events"]["Row"] }
         Returns: boolean
@@ -2739,15 +2740,12 @@ export type Database = {
       }
       cleanup_user_for_test: { Args: { uid: string }; Returns: undefined }
       count_user_friends: { Args: { user_id: string }; Returns: number }
+      email_exists: { Args: { p_email: string }; Returns: boolean }
       generate_round_robin_schedule: {
         Args: { p_event_id: string; p_schedule: Json }
         Returns: Json
       }
       get_invite_by_token: { Args: { p_token: string }; Returns: Json }
-      has_group_role: {
-        Args: { g: string; min_role: Database["public"]["Enums"]["group_role"] }
-        Returns: boolean
-      }
       invite_to_event: {
         Args: { p_event_id: string; p_user_ids: string[] }
         Returns: Json
@@ -2795,6 +2793,10 @@ export type Database = {
         Returns: Json
       }
       seed_ladder_lineup: { Args: { p_event_id: string }; Returns: Json }
+      transfer_group_ownership: {
+        Args: { p_group_id: string; p_new_owner_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       availability_event_kind: "match" | "practice"
@@ -2813,6 +2815,7 @@ export type Database = {
       event_visibility: "public" | "group"
       friendship_status: "pending" | "accepted" | "rejected"
       group_invite_status: "pending" | "accepted" | "cancelled" | "expired"
+      group_member_role: "manager" | "captain"
       group_role: "owner" | "manager" | "captain" | "member"
       message_kind: "chat" | "announcement"
       notification_type:
@@ -2988,6 +2991,7 @@ export const Constants = {
       event_visibility: ["public", "group"],
       friendship_status: ["pending", "accepted", "rejected"],
       group_invite_status: ["pending", "accepted", "cancelled", "expired"],
+      group_member_role: ["manager", "captain"],
       group_role: ["owner", "manager", "captain", "member"],
       message_kind: ["chat", "announcement"],
       notification_type: [

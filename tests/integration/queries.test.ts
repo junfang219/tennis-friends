@@ -630,10 +630,12 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
 
       const members = await alice.client
         .from("group_members")
-        .select("user_id, role")
+        .select("user_id, roles")
         .eq("group_id", teamGroupId!);
       expect(members.data?.map((m) => m.user_id)).toEqual([alice.id]);
-      expect(members.data?.[0].role).toBe("owner");
+      // Ownership lives on groups.owner_id (asserted above); the owner's
+      // role set is empty — they get both capabilities implicitly.
+      expect(members.data?.[0].roles).toEqual([]);
 
       const messages = await alice.client
         .from("group_messages")
@@ -807,7 +809,7 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       // only add the extra member here.
       const admin = adminClient();
       await admin.from("group_members").insert([
-        { group_id: groupId, user_id: bob.id, role: "member" },
+        { group_id: groupId, user_id: bob.id, roles: [] },
       ]);
     });
 
@@ -1200,7 +1202,7 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       // Add bob as a member; carol stays outside.
       await admin
         .from("group_members")
-        .insert({ group_id: grpId, user_id: bob.id, role: "member" });
+        .insert({ group_id: grpId, user_id: bob.id, roles: [] });
 
       const evIns = await admin
         .from("events")
@@ -2364,8 +2366,8 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       const groupId = grp!.id;
       // alice (owner) is added by the groups_auto_add_owner trigger.
       await admin.from("group_members").insert([
-        { group_id: groupId, user_id: bob.id, role: "member" as const },
-        { group_id: groupId, user_id: carol.id, role: "member" as const },
+        { group_id: groupId, user_id: bob.id, roles: [] },
+        { group_id: groupId, user_id: carol.id, roles: [] },
       ]);
       await admin
         .from("edge_function_dispatch_log")
@@ -2694,14 +2696,14 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       expect(ok.error).toBeNull();
       expect((ok.data as { ok?: boolean; group_id?: string } | null)?.ok).toBe(true);
 
-      // Membership row landed.
+      // Membership row landed (with the invite's role set — empty here).
       const { data: member } = await admin
         .from("group_members")
-        .select("role")
+        .select("roles")
         .eq("group_id", groupId)
         .eq("user_id", bob.id)
         .single();
-      expect(member?.role).toBeTruthy();
+      expect(member?.roles).toEqual([]);
 
       // Invite row flipped to accepted with accepted_by_id set.
       const { data: inv } = await admin
@@ -2727,11 +2729,10 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       await admin.from("groups").delete().eq("id", groupId);
     });
 
-    // Hardening for accept_group_invite: a pending invite at the
-    // base 'member' role must NOT demote a user who is already a
-    // member at a higher role (manager/captain). The conflict path
-    // should preserve the existing role.
-    it("accept_group_invite does not overwrite an existing member's higher role", async () => {
+    // Hardening for accept_group_invite: redeeming a low-privilege
+    // invite must NOT strip roles a user already holds. The ON CONFLICT
+    // DO NOTHING path preserves the existing role set.
+    it("accept_group_invite does not overwrite an existing member's roles", async () => {
       const admin = adminClient();
       const { data: grp } = await alice.client
         .from("groups")
@@ -2743,7 +2744,7 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       // Bob is already a manager (e.g. promoted out-of-band before
       // the older invite is redeemed).
       await admin.from("group_members").upsert(
-        { group_id: groupId, user_id: bob.id, role: "manager" },
+        { group_id: groupId, user_id: bob.id, roles: ["manager"] },
         { onConflict: "group_id,user_id" }
       );
 
@@ -2759,7 +2760,7 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
         email: bobEmail,
         invited_by_id: alice.id,
         token,
-        role: "member",
+        roles: [],
         expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
       });
 
@@ -2768,11 +2769,11 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
 
       const { data: member } = await admin
         .from("group_members")
-        .select("role")
+        .select("roles")
         .eq("group_id", groupId)
         .eq("user_id", bob.id)
         .single();
-      expect(member?.role).toBe("manager");
+      expect(member?.roles).toEqual(["manager"]);
 
       await admin.from("groups").delete().eq("id", groupId);
     });
@@ -2794,26 +2795,26 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
 
       const { data: ownerRow } = await alice.client
         .from("group_members")
-        .select("role")
+        .select("roles")
         .eq("group_id", groupId)
         .eq("user_id", alice.id)
         .single();
-      expect(ownerRow?.role).toBe("owner");
+      // Auto-added owner row carries an empty role set (owner powers come
+      // from groups.owner_id, not the roles array).
+      expect(ownerRow?.roles).toEqual([]);
 
       // The new owner can now add a friend without RLS rejection.
       const { error: addErr } = await alice.client
         .from("group_members")
-        .insert({ group_id: groupId, user_id: bob.id, role: "member" });
+        .insert({ group_id: groupId, user_id: bob.id, roles: [] });
       expect(addErr).toBeNull();
 
       const { data: members } = await alice.client
         .from("group_members")
-        .select("user_id, role")
+        .select("user_id")
         .eq("group_id", groupId);
-      expect(
-        new Set((members ?? []).map((m) => `${m.user_id}:${m.role}`))
-      ).toEqual(
-        new Set([`${alice.id}:owner`, `${bob.id}:member`])
+      expect(new Set((members ?? []).map((m) => m.user_id))).toEqual(
+        new Set([alice.id, bob.id])
       );
 
       await alice.client.from("groups").delete().eq("id", groupId);

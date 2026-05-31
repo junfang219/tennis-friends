@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
-import { isAtLeast, ROLE } from "@/lib/groupRoles";
+import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
@@ -32,7 +32,7 @@ type Album = {
   items: Item[];
 };
 
-type Member = { userId: string; role: string };
+type Member = { userId: string; roles: TeamRole[] };
 
 type Group = {
   id: string;
@@ -134,7 +134,8 @@ export default function AlbumDetailPage() {
       setGroup({
         id: g.id,
         name: g.name,
-        members: members.map((m) => ({ userId: m.user_id, role: m.role })),
+        ownerId: g.owner_id,
+        members: members.map((m) => ({ userId: m.user_id, roles: m.roles })),
       } as unknown as typeof group);
     }
   }, [groupId]);
@@ -146,10 +147,10 @@ export default function AlbumDetailPage() {
   }, [loadAlbum, loadGroup]);
 
   const myId = session?.user?.id || "";
-  const myRole = group && myId
-    ? group.members.find((m) => m.userId === myId)?.role ?? null
-    : null;
-  const isCaptainOrAbove = !!myRole && isAtLeast(myRole, ROLE.CAPTAIN);
+  const me = group?.members.find((m) => m.userId === myId);
+  const isMember = !!me;
+  const isOwner = !!myId && group?.ownerId === myId;
+  const isCaptainOrAbove = canCaptain({ isOwner, roles: me?.roles ?? [] });
   const isAlbumCreator = !!album && album.createdById === myId;
   const canDeleteAlbum = isCaptainOrAbove || isAlbumCreator;
 
@@ -266,7 +267,7 @@ export default function AlbumDetailPage() {
       )}
 
       {/* Uploader (any member) */}
-      {myRole && (
+      {isMember && (
         <div className="mb-4">
           <input
             ref={fileInputRef}

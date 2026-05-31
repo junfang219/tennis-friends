@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
-import { DEFAULT_MEMBER_TYPES, isAtLeast, ROLE } from "@/lib/groupRoles";
+import { canAdmin, parseMemberTypes, TEAM_ROLES, type TeamRole } from "@/lib/groupRoles";
 import { parseReminderPrefs, REMINDER_HOUR_CHOICES, type ReminderPrefs } from "@/lib/reminderPrefs";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
@@ -14,7 +14,7 @@ import { errorMessage } from "@/lib/errorMessage";
 type Member = {
   id: string;
   userId: string;
-  role: string;
+  roles: TeamRole[];
   memberType: string;
   user: { id: string; name: string; profileImageUrl: string; skillLevel: string };
 };
@@ -23,7 +23,7 @@ type Group = {
   id: string;
   name: string;
   ownerId: string;
-  memberTypes: string; // JSON-encoded string[]
+  memberTypes: string[]; // jsonb array from groups.member_types
   reminderPrefs: string; // JSON-encoded { matchHours, practiceHours }
   members: Member[];
 };
@@ -45,18 +45,6 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "notifications", label: "Notifications" },
 ];
 
-function parseMemberTypesJson(raw: string): string[] {
-  try {
-    const parsed = JSON.parse(raw || "[]");
-    if (Array.isArray(parsed) && parsed.every((s) => typeof s === "string")) {
-      return parsed.length > 0 ? parsed : [...DEFAULT_MEMBER_TYPES];
-    }
-  } catch {
-    // fall through
-  }
-  return [...DEFAULT_MEMBER_TYPES];
-}
-
 export default function GroupSettingsPage() {
   const params = useParams();
   const router = useRouter();
@@ -70,10 +58,9 @@ export default function GroupSettingsPage() {
   const [loading, setLoading] = useState(true);
 
   const userId = session?.user?.id;
-  const myRole = group && userId
-    ? group.members.find((m) => m.userId === userId)?.role ?? null
-    : null;
-  const canManage = !!myRole && isAtLeast(myRole, ROLE.MANAGER);
+  const myRoles = group?.members.find((m) => m.userId === userId)?.roles ?? [];
+  const isOwner = !!userId && group?.ownerId === userId;
+  const canManage = canAdmin({ isOwner, roles: myRoles });
 
   const loadGroup = useCallback(async () => {
     try {
@@ -97,7 +84,7 @@ export default function GroupSettingsPage() {
         members: members.map((m) => ({
           id: m.id,
           userId: m.user_id,
-          role: m.role,
+          roles: m.roles,
           memberType: m.member_type,
           user: {
             id: m.user.id,
@@ -254,7 +241,7 @@ function TeamTab({
   // when the underlying group identity changes (avoids clobbering in-flight edits
   // when the parent refetches after a save).
   const [name, setName] = useState(group.name);
-  const [types, setTypes] = useState<string[]>(parseMemberTypesJson(group.memberTypes));
+  const [types, setTypes] = useState<string[]>(parseMemberTypes(group.memberTypes));
   const [newType, setNewType] = useState("");
   const [savingName, setSavingName] = useState(false);
   const [savingTypes, setSavingTypes] = useState(false);
@@ -395,12 +382,18 @@ function TeamTab({
 type Invite = {
   id: string;
   email: string;
-  role: string;
+  roles: TeamRole[];
   memberType: string;
   status: string;
   createdAt: string;
   invitedBy: { id: string; name: string };
 };
+
+// Human label for a role set: "Manager · Captain", or "Member" when empty.
+function rolesLabel(roles: TeamRole[]): string {
+  if (roles.length === 0) return "Member";
+  return TEAM_ROLES.filter((r) => roles.includes(r.value)).map((r) => r.label).join(" · ");
+}
 
 function RosterTab({
   group,
@@ -413,7 +406,7 @@ function RosterTab({
   currentUserId: string;
   onSaved: () => void;
 }) {
-  const types = parseMemberTypesJson(group.memberTypes);
+  const types = parseMemberTypes(group.memberTypes);
   const callerIsOwner = currentUserId === group.ownerId;
   const [busyId, setBusyId] = useState("");
   const [err, setErr] = useState("");
@@ -421,7 +414,7 @@ function RosterTab({
   // Invites — fetched once and refreshed after send/cancel.
   const [invites, setInvites] = useState<Invite[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<string>(ROLE.MEMBER);
+  const [inviteRoles, setInviteRoles] = useState<TeamRole[]>([]);
   const [inviteType, setInviteType] = useState("");
   const [sending, setSending] = useState(false);
   const [inviteMsg, setInviteMsg] = useState("");
@@ -432,7 +425,7 @@ function RosterTab({
     const { data } = await supabase
       .from("group_invites")
       .select(
-        "id, email, role, member_type, status, expires_at, accepted_by_id, accepted_at, created_at, invited_by_id, token"
+        "id, email, roles, member_type, status, expires_at, accepted_by_id, accepted_at, created_at, invited_by_id, token"
       )
       .eq("group_id", group.id)
       .order("created_at", { ascending: false });
@@ -440,7 +433,7 @@ function RosterTab({
       (data ?? []).map((i) => ({
         id: i.id,
         email: i.email,
-        role: i.role,
+        roles: i.roles,
         memberType: i.member_type,
         status: i.status,
         expiresAt: i.expires_at,
@@ -473,7 +466,7 @@ function RosterTab({
       const { error: insErr } = await supabase.from("group_invites").insert({
         group_id: group.id,
         email: inviteEmail.trim(),
-        role: inviteRole as "owner" | "manager" | "captain" | "member",
+        roles: inviteRoles,
         member_type: inviteType,
         token,
         invited_by_id: auth.user.id,
@@ -484,6 +477,7 @@ function RosterTab({
       setInviteMsg(`Invite saved for ${inviteEmail.trim()}. Email dispatch is owned by an Edge Function — needs reinstatement before launch.`);
       setInviteEmail("");
       setInviteType("");
+      setInviteRoles([]);
       void loadInvites();
     } catch (err) {
       setInviteErr(errorMessage(err, "Failed to send invite."));
@@ -506,12 +500,12 @@ function RosterTab({
     }
   };
 
-  const updateMember = async (memberId: string, patch: { role?: string; memberType?: string }) => {
+  const updateMember = async (memberId: string, patch: { roles?: TeamRole[]; memberType?: string }) => {
     setBusyId(memberId);
     setErr("");
     const supabase = createSupabaseBrowserClient();
-    const dbPatch: { role?: "owner" | "manager" | "captain" | "member"; member_type?: string } = {};
-    if (patch.role) dbPatch.role = patch.role as "owner" | "manager" | "captain" | "member";
+    const dbPatch: { roles?: TeamRole[]; member_type?: string } = {};
+    if (patch.roles !== undefined) dbPatch.roles = patch.roles;
     if (patch.memberType !== undefined) dbPatch.member_type = patch.memberType;
     const { error: upErr } = await supabase
       .from("group_members")
@@ -519,6 +513,36 @@ function RosterTab({
       .eq("id", memberId);
     if (upErr) {
       setErr(upErr.message || "Failed to save.");
+    } else {
+      onSaved();
+    }
+    setBusyId("");
+  };
+
+  // Add/remove one role from a member's set. Manager is owner-gated below.
+  const toggleRole = (m: Member, role: TeamRole) => {
+    const next = m.roles.includes(role)
+      ? m.roles.filter((r) => r !== role)
+      : [...m.roles, role];
+    void updateMember(m.id, { roles: next });
+  };
+
+  const transferOwnership = async (m: Member) => {
+    if (
+      !window.confirm(
+        `Make ${m.user.name} the owner of this team? You'll stay on as a manager and captain, but ${m.user.name} will control the team and can remove anyone.`
+      )
+    )
+      return;
+    setBusyId(m.id);
+    setErr("");
+    const supabase = createSupabaseBrowserClient();
+    const { error: rpcErr } = await supabase.rpc("transfer_group_ownership", {
+      p_group_id: group.id,
+      p_new_owner_id: m.userId,
+    });
+    if (rpcErr) {
+      setErr(rpcErr.message || "Failed to transfer ownership.");
     } else {
       onSaved();
     }
@@ -533,13 +557,6 @@ function RosterTab({
       <div className="divide-y divide-gray-100">
         {group.members.map((m) => {
           const isOwnerRow = m.userId === group.ownerId;
-          // Anyone above MEMBER may receive the MANAGER role — but only the
-          // OWNER may grant MANAGER (gated server-side, mirrored client-side).
-          const roleOptions: { value: string; label: string }[] = [
-            { value: ROLE.MEMBER, label: "Member" },
-            { value: ROLE.CAPTAIN, label: "Captain" },
-            ...(callerIsOwner ? [{ value: ROLE.MANAGER, label: "Manager" }] : []),
-          ];
 
           return (
             <div key={m.id} className="flex items-center gap-3 py-3">
@@ -559,28 +576,50 @@ function RosterTab({
                 {m.memberType && (
                   <p className="text-[11px] text-gray-500 mt-0.5">{m.memberType}</p>
                 )}
+                {/* Ownership transfer — only the current owner sees this, and
+                    only on other members' rows. */}
+                {callerIsOwner && !isOwnerRow && (
+                  <button
+                    type="button"
+                    onClick={() => transferOwnership(m)}
+                    disabled={busyId === m.id}
+                    className="text-[11px] font-semibold text-court-green hover:underline mt-0.5 disabled:opacity-50"
+                  >
+                    Make owner
+                  </button>
+                )}
               </div>
 
-              {/* Role picker */}
-              {!isOwnerRow && canManage ? (
-                <select
-                  value={m.role}
-                  onChange={(e) => updateMember(m.id, { role: e.target.value })}
-                  disabled={busyId === m.id}
-                  className="text-xs px-2 py-1 border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-court-green"
-                >
-                  {roleOptions.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                  {/* Show the member's current role even if it's not assignable
-                      by the caller (e.g. a CAPTAIN viewing a MANAGER row). */}
-                  {!roleOptions.some((o) => o.value === m.role) && (
-                    <option value={m.role}>{m.role}</option>
-                  )}
-                </select>
+              {/* Role toggles — independent: Manager = admin, Captain = ops.
+                  The owner always has both, but their row stays editable so
+                  they can also carry an explicit role. Manager is owner-gated. */}
+              {canManage ? (
+                <div className="flex items-center gap-1">
+                  {TEAM_ROLES.map((r) => {
+                    const on = m.roles.includes(r.value);
+                    const lockedManager = r.value === "manager" && !callerIsOwner;
+                    return (
+                      <button
+                        key={r.value}
+                        type="button"
+                        onClick={() => toggleRole(m, r.value)}
+                        disabled={busyId === m.id || lockedManager}
+                        title={lockedManager ? "Only the team owner can assign Manager" : undefined}
+                        aria-pressed={on}
+                        className={`text-[11px] font-semibold px-2 py-1 rounded-full border transition-colors ${
+                          on
+                            ? "bg-court-green text-white border-court-green"
+                            : "bg-white text-gray-500 border-gray-200 hover:border-court-green"
+                        } ${lockedManager ? "opacity-40 cursor-not-allowed" : ""}`}
+                      >
+                        {r.label}
+                      </button>
+                    );
+                  })}
+                </div>
               ) : (
                 <span className="text-[10px] font-semibold text-gray-500 px-2 py-0.5 bg-gray-100 rounded-full uppercase tracking-wider">
-                  {isOwnerRow ? "Owner" : m.role.toLowerCase()}
+                  {isOwnerRow ? "Owner" : rolesLabel(m.roles)}
                 </span>
               )}
 
@@ -596,6 +635,11 @@ function RosterTab({
                   {types.map((t) => (
                     <option key={t} value={t}>{t}</option>
                   ))}
+                  {/* Preserve a label that was removed from the team's list but
+                      is still assigned to this member, so the picker isn't blank. */}
+                  {m.memberType && !types.includes(m.memberType) && (
+                    <option value={m.memberType}>{m.memberType} (removed)</option>
+                  )}
                 </select>
               )}
             </div>
@@ -624,7 +668,7 @@ function RosterTab({
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-800 truncate">{inv.email}</p>
                   <p className="text-[11px] text-gray-500">
-                    Invited by {inv.invitedBy.name} · {inv.role.toLowerCase()}{inv.memberType ? ` · ${inv.memberType}` : ""}
+                    Invited by {inv.invitedBy.name} · {rolesLabel(inv.roles)}{inv.memberType ? ` · ${inv.memberType}` : ""}
                   </p>
                 </div>
                 {canManage && (
@@ -656,15 +700,35 @@ function RosterTab({
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-court-green"
             />
             <div className="grid grid-cols-2 gap-2">
-              <select
-                value={inviteRole}
-                onChange={(e) => setInviteRole(e.target.value)}
-                className="text-xs px-2 py-2 border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-court-green"
-              >
-                <option value={ROLE.MEMBER}>Member</option>
-                <option value={ROLE.CAPTAIN}>Captain</option>
-                {callerIsOwner && <option value={ROLE.MANAGER}>Manager</option>}
-              </select>
+              <div className="flex items-center gap-1">
+                {TEAM_ROLES.map((r) => {
+                  const on = inviteRoles.includes(r.value);
+                  const lockedManager = r.value === "manager" && !callerIsOwner;
+                  return (
+                    <button
+                      key={r.value}
+                      type="button"
+                      onClick={() =>
+                        setInviteRoles((prev) =>
+                          prev.includes(r.value)
+                            ? prev.filter((x) => x !== r.value)
+                            : [...prev, r.value]
+                        )
+                      }
+                      disabled={lockedManager}
+                      title={lockedManager ? "Only the team owner can assign Manager" : undefined}
+                      aria-pressed={on}
+                      className={`text-[11px] font-semibold px-2 py-1 rounded-full border transition-colors ${
+                        on
+                          ? "bg-court-green text-white border-court-green"
+                          : "bg-white text-gray-500 border-gray-200 hover:border-court-green"
+                      } ${lockedManager ? "opacity-40 cursor-not-allowed" : ""}`}
+                    >
+                      {r.label}
+                    </button>
+                  );
+                })}
+              </div>
               <select
                 value={inviteType}
                 onChange={(e) => setInviteType(e.target.value)}

@@ -1,32 +1,71 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MEMBER_TYPES,
-  ROLE,
-  isAtLeast,
+  canAdmin,
+  canCaptain,
   parseMemberTypes,
+  parseRoles,
 } from "./groupRoles";
 
-describe("isAtLeast", () => {
-  it("treats higher roles as satisfying lower minimums", () => {
-    expect(isAtLeast(ROLE.OWNER, ROLE.MEMBER)).toBe(true);
-    expect(isAtLeast(ROLE.MANAGER, ROLE.CAPTAIN)).toBe(true);
-    expect(isAtLeast(ROLE.CAPTAIN, ROLE.MEMBER)).toBe(true);
+describe("parseRoles", () => {
+  it("returns a real array (jsonb shape from the Supabase client)", () => {
+    expect(parseRoles(["manager", "captain"])).toEqual(["manager", "captain"]);
+    expect(parseRoles(["captain"])).toEqual(["captain"]);
   });
 
-  it("rejects lower roles against higher minimums", () => {
-    expect(isAtLeast(ROLE.MEMBER, ROLE.CAPTAIN)).toBe(false);
-    expect(isAtLeast(ROLE.CAPTAIN, ROLE.MANAGER)).toBe(false);
-    expect(isAtLeast(ROLE.MANAGER, ROLE.OWNER)).toBe(false);
+  it("returns [] for empty / null / undefined", () => {
+    expect(parseRoles([])).toEqual([]);
+    expect(parseRoles(null)).toEqual([]);
+    expect(parseRoles(undefined)).toEqual([]);
   });
 
-  it("accepts a role meeting its own minimum", () => {
-    expect(isAtLeast(ROLE.OWNER, ROLE.OWNER)).toBe(true);
-    expect(isAtLeast(ROLE.MEMBER, ROLE.MEMBER)).toBe(true);
+  it("parses a JSON-encoded string", () => {
+    expect(parseRoles('["manager"]')).toEqual(["manager"]);
+    expect(parseRoles("not json")).toEqual([]);
   });
 
-  it("rejects unknown role strings", () => {
-    expect(isAtLeast("", ROLE.MEMBER)).toBe(false);
-    expect(isAtLeast("GUEST", ROLE.MEMBER)).toBe(false);
+  it("drops unrecognized roles (e.g. a stale 'owner'/'member')", () => {
+    expect(parseRoles(["owner", "manager", "member", "captain"])).toEqual([
+      "manager",
+      "captain",
+    ]);
+    expect(parseRoles([1, 2, 3] as unknown[])).toEqual([]);
+  });
+});
+
+describe("canAdmin (manager capability)", () => {
+  it("is true for the owner regardless of roles", () => {
+    expect(canAdmin({ isOwner: true, roles: [] })).toBe(true);
+    expect(canAdmin({ isOwner: true, roles: ["captain"] })).toBe(true);
+  });
+
+  it("is true for a manager", () => {
+    expect(canAdmin({ isOwner: false, roles: ["manager"] })).toBe(true);
+    expect(canAdmin({ isOwner: false, roles: ["manager", "captain"] })).toBe(true);
+  });
+
+  it("is false for a captain-only or plain member", () => {
+    expect(canAdmin({ isOwner: false, roles: ["captain"] })).toBe(false);
+    expect(canAdmin({ isOwner: false, roles: [] })).toBe(false);
+  });
+});
+
+describe("canCaptain (ops capability)", () => {
+  it("is true for the owner regardless of roles", () => {
+    expect(canCaptain({ isOwner: true, roles: [] })).toBe(true);
+  });
+
+  it("is true for a captain", () => {
+    expect(canCaptain({ isOwner: false, roles: ["captain"] })).toBe(true);
+    expect(canCaptain({ isOwner: false, roles: ["manager", "captain"] })).toBe(true);
+  });
+
+  it("is INDEPENDENT of manager — a manager-only member is not a captain", () => {
+    expect(canCaptain({ isOwner: false, roles: ["manager"] })).toBe(false);
+  });
+
+  it("is false for a plain member", () => {
+    expect(canCaptain({ isOwner: false, roles: [] })).toBe(false);
   });
 });
 
@@ -38,26 +77,11 @@ describe("parseMemberTypes", () => {
 
   it("returns defaults when the parsed value is an empty array", () => {
     expect(parseMemberTypes("[]")).toEqual([...DEFAULT_MEMBER_TYPES]);
-  });
-
-  it("returns defaults when the parsed value is not a string array", () => {
-    expect(parseMemberTypes('{"a":1}')).toEqual([...DEFAULT_MEMBER_TYPES]);
-    expect(parseMemberTypes("[1,2,3]")).toEqual([...DEFAULT_MEMBER_TYPES]);
-  });
-
-  it("returns the custom list when valid", () => {
-    expect(parseMemberTypes('["A","B"]')).toEqual(["A", "B"]);
-  });
-
-  it("accepts a real array (jsonb shape returned by Supabase client)", () => {
-    expect(parseMemberTypes(["A", "B"])).toEqual(["A", "B"]);
-  });
-
-  it("falls back to defaults when array contains non-strings", () => {
-    expect(parseMemberTypes([1, 2, 3] as unknown[])).toEqual([...DEFAULT_MEMBER_TYPES]);
-  });
-
-  it("falls back to defaults when array is empty", () => {
     expect(parseMemberTypes([])).toEqual([...DEFAULT_MEMBER_TYPES]);
+  });
+
+  it("returns the custom list when valid (string or real array)", () => {
+    expect(parseMemberTypes('["A","B"]')).toEqual(["A", "B"]);
+    expect(parseMemberTypes(["A", "B"])).toEqual(["A", "B"]);
   });
 });

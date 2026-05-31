@@ -86,7 +86,7 @@ export interface GroupInvite {
   // accept_group_invite (against auth.users.email).
   invited_by_id: string;
   token: string;
-  role: "owner" | "manager" | "captain" | "member";
+  roles: ("manager" | "captain")[];
   member_type: string;
   status: "pending" | "accepted" | "cancelled" | "expired";
   expires_at: string;

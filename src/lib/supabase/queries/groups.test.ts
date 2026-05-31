@@ -57,7 +57,7 @@ describe("group header caching", () => {
   it("listGroupMembers caches the member list (even when empty)", async () => {
     const client = makeClient({
       group: null,
-      members: [{ id: "m1", user_id: "u1", role: "owner" }],
+      members: [{ id: "m1", user_id: "u1", roles: [] }],
     });
     await listGroupMembers(client, "g1");
     expect(getCachedGroupMembers("g1")).toHaveLength(1);
@@ -66,7 +66,7 @@ describe("group header caching", () => {
   it("getCachedGroupBundle returns null until BOTH sides are cached", async () => {
     const client = makeClient({
       group: { id: "g1", name: "Aces", owner_id: "u1" },
-      members: [{ id: "m1", user_id: "u1", role: "owner" }],
+      members: [{ id: "m1", user_id: "u1", roles: [] }],
     });
     await getGroup(client, "g1");
     // members not fetched yet → bundle incomplete

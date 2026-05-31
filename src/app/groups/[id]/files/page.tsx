@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
-import { isAtLeast, ROLE } from "@/lib/groupRoles";
+import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { fetchGroupBundle, getCachedGroupBundle } from "@/lib/supabase/queries";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
@@ -21,7 +21,7 @@ type GroupFile = {
   uploadedById: string;
 };
 
-type Member = { userId: string; role: string };
+type Member = { userId: string; roles: TeamRole[] };
 
 type Group = {
   id: string;
@@ -112,7 +112,8 @@ export default function GroupFilesPage() {
       setGroup({
         id: cached.group.id,
         name: cached.group.name,
-        members: cached.members.map((m) => ({ userId: m.user_id, role: m.role })),
+        ownerId: cached.group.owner_id,
+        members: cached.members.map((m) => ({ userId: m.user_id, roles: m.roles })),
       } as unknown as typeof group);
       setLoading(false);
     }
@@ -121,7 +122,8 @@ export default function GroupFilesPage() {
       setGroup({
         id: g.id,
         name: g.name,
-        members: members.map((m) => ({ userId: m.user_id, role: m.role })),
+        ownerId: g.owner_id,
+        members: members.map((m) => ({ userId: m.user_id, roles: m.roles })),
       } as unknown as typeof group);
     }
     setLoading(false);
@@ -134,10 +136,9 @@ export default function GroupFilesPage() {
   }, [loadGroup, loadFiles]);
 
   const myId = session?.user?.id || "";
-  const myRole = group && myId
-    ? group.members.find((m) => m.userId === myId)?.role ?? null
-    : null;
-  const canUpload = !!myRole && isAtLeast(myRole, ROLE.CAPTAIN);
+  const myRoles = group?.members.find((m) => m.userId === myId)?.roles ?? [];
+  const isOwner = !!myId && group?.ownerId === myId;
+  const canUpload = canCaptain({ isOwner, roles: myRoles });
 
   // Insert a group_files row pointing at an already-uploaded object. Shared by
   // the file-upload and write-a-note flows. Returns an error message, or null
@@ -373,7 +374,7 @@ export default function GroupFilesPage() {
       ) : (
         <div className="space-y-2">
           {files.map((f) => {
-            const canRemove = f.uploadedById === myId || (myRole && isAtLeast(myRole, ROLE.CAPTAIN));
+            const canRemove = f.uploadedById === myId || canUpload;
             return (
               <div key={f.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-3 flex items-center gap-3">
                 <span className="text-2xl shrink-0" aria-hidden>{fileEmoji(f.mimeType)}</span>

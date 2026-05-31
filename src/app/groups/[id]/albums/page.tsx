@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
-import { isAtLeast, ROLE } from "@/lib/groupRoles";
+import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { fetchGroupBundle, getCachedGroupBundle } from "@/lib/supabase/queries";
 import { publicStorageThumbUrl } from "@/lib/supabase/storage";
@@ -19,7 +19,7 @@ type Album = {
   cover: { id: string; url: string; mediaType: string } | null;
 };
 
-type Member = { userId: string; role: string };
+type Member = { userId: string; roles: TeamRole[] };
 
 type Group = {
   id: string;
@@ -97,7 +97,7 @@ export default function AlbumsListPage() {
         id: cached.group.id,
         name: cached.group.name,
         ownerId: cached.group.owner_id,
-        members: cached.members.map((m) => ({ userId: m.user_id, role: m.role })),
+        members: cached.members.map((m) => ({ userId: m.user_id, roles: m.roles })),
       });
       setLoading(false);
     }
@@ -107,7 +107,7 @@ export default function AlbumsListPage() {
         id: g.id,
         name: g.name,
         ownerId: g.owner_id,
-        members: members.map((m) => ({ userId: m.user_id, role: m.role })),
+        members: members.map((m) => ({ userId: m.user_id, roles: m.roles })),
       });
     }
     setLoading(false);
@@ -119,10 +119,10 @@ export default function AlbumsListPage() {
     void loadAlbums();
   }, [loadGroup, loadAlbums]);
 
-  const myRole = group && session?.user?.id
-    ? group.members.find((m) => m.userId === session.user!.id)?.role ?? null
-    : null;
-  const canCreate = !!myRole && isAtLeast(myRole, ROLE.CAPTAIN);
+  const myId = session?.user?.id;
+  const myRoles = group?.members.find((m) => m.userId === myId)?.roles ?? [];
+  const isOwner = !!myId && group?.ownerId === myId;
+  const canCreate = canCaptain({ isOwner, roles: myRoles });
 
   const createAlbum = async () => {
     if (!newName.trim()) return;

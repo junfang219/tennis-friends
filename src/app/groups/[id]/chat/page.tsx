@@ -11,7 +11,7 @@ import MessageReactionBar from "@/components/MessageReactionBar";
 import MessageReactions, { type MessageReaction as MsgReaction } from "@/components/MessageReactions";
 import { useLongPress } from "@/hooks/useLongPress";
 import type { ReactionKey } from "@/lib/reactions";
-import { isAtLeast, ROLE } from "@/lib/groupRoles";
+import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import PollCard, { type PollData } from "@/components/PollCard";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
@@ -43,7 +43,7 @@ type Message = ReturnType<typeof toGroupMessageCamel> & {
   reactions?: MsgReaction[];
 };
 
-type Member = { userId: string; role: string };
+type Member = { userId: string; roles: TeamRole[] };
 
 type GroupInfo = {
   id: string;
@@ -185,7 +185,7 @@ export default function GroupChatPage() {
         const adaptedMembers = members.map((m) => ({
           id: m.id,
           userId: m.user_id,
-          role: m.role,
+          roles: m.roles,
           user: {
             id: m.user.id,
             name: m.user.name,
@@ -322,11 +322,10 @@ export default function GroupChatPage() {
   };
 
   const myId = session?.user?.id || "";
-  const myRole = myId && groupInfo
-    ? groupInfo.members.find((m) => m.userId === myId)?.role ?? null
-    : null;
-  const canPostAnnouncement = !!myRole && isAtLeast(myRole, ROLE.CAPTAIN);
-  const canManagePoll = !!myRole && isAtLeast(myRole, ROLE.CAPTAIN);
+  const myRoles = groupInfo?.members.find((m) => m.userId === myId)?.roles ?? [];
+  const isOwner = !!myId && groupInfo?.ownerId === myId;
+  const canPostAnnouncement = canCaptain({ isOwner, roles: myRoles });
+  const canManagePoll = canCaptain({ isOwner, roles: myRoles });
 
   const sendPoll = async () => {
     const cleanOptions = pollOptions.map((o) => o.trim()).filter((o) => o.length > 0);
