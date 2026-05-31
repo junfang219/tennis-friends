@@ -12,6 +12,7 @@ import {
   listPendingRequests,
   acceptFriendRequest as sbAcceptFriendRequest,
   rejectFriendRequest as sbRejectFriendRequest,
+  deleteNotification,
   getNotification,
   listNotifications,
   markAllNotificationsRead,
@@ -220,6 +221,20 @@ export default function NotificationBell() {
     setOpen(false);
     setOpenWithComments(withComments);
     setOpenPostId(postId);
+  };
+
+  const handleDelete = async (id: string) => {
+    const previous = notifications;
+    const wasUnread = notifications.find((n) => n.id === id)?.read === false;
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+    if (wasUnread) setUnreadCount((c) => Math.max(0, c - 1));
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await deleteNotification(supabase, id);
+    } catch {
+      setNotifications(previous);
+      if (wasUnread) setUnreadCount((c) => c + 1);
+    }
   };
 
   const handleNotificationClick = (n: Notification) => {
@@ -614,30 +629,42 @@ export default function NotificationBell() {
                   </div>
                 ) : (
                   notifications.filter((n) => n.type !== "friend_request").map((n) => (
-                    <button
-                      key={n.id}
-                      onClick={() => handleNotificationClick(n)}
-                      className={`w-full text-left flex items-start gap-3 px-4 py-3 hover:bg-gray-50 transition-colors ${
-                        !n.read ? "bg-court-green-soft/5" : ""
-                      }`}
-                    >
-                      <div className="relative shrink-0">
-                        <Avatar name={n.actor.name} image={n.actor.profileImageUrl} size="md" />
-                        <div className="absolute -bottom-1 -right-1">
-                          {notificationIcon(n.type)}
+                    <div key={n.id} className="group relative">
+                      <button
+                        onClick={() => handleNotificationClick(n)}
+                        className={`w-full text-left flex items-start gap-3 px-4 py-3 hover:bg-gray-50 transition-colors ${
+                          !n.read ? "bg-court-green-soft/5" : ""
+                        }`}
+                      >
+                        <div className="relative shrink-0">
+                          <Avatar name={n.actor.name} image={n.actor.profileImageUrl} size="md" />
+                          <div className="absolute -bottom-1 -right-1">
+                            {notificationIcon(n.type)}
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-gray-700">
-                          <span className="font-semibold text-gray-900">{n.actor.name}</span>{" "}
-                          {notificationText(n)}
-                        </p>
-                        <p className="text-xs text-gray-400 mt-0.5">{timeAgo(n.createdAt)}</p>
-                      </div>
-                      {!n.read && (
-                        <div className="w-2 h-2 rounded-full bg-court-green-soft mt-2 shrink-0" />
-                      )}
-                    </button>
+                        <div className="flex-1 min-w-0 pr-6">
+                          <p className="text-sm text-gray-700">
+                            <span className="font-semibold text-gray-900">{n.actor.name}</span>{" "}
+                            {notificationText(n)}
+                          </p>
+                          <p className="text-xs text-gray-400 mt-0.5">{timeAgo(n.createdAt)}</p>
+                        </div>
+                        {!n.read && (
+                          <div className="w-2 h-2 rounded-full bg-court-green-soft mt-2 shrink-0" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleDelete(n.id); }}
+                        aria-label="Delete notification"
+                        className="hidden md:flex absolute top-2 right-2 z-10 w-7 h-7 items-center justify-center rounded-full bg-gray-200 text-gray-700 shadow-md hover:bg-red-500 hover:text-white opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </div>
                   ))
                 )}
               </div>

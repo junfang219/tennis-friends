@@ -292,7 +292,8 @@ export default function NotificationsPage() {
       ) : (
         <>
           <p className="text-xs text-gray-400 px-1 mb-2">
-            Tip: swipe left on a notification to delete it.
+            <span className="md:hidden">Tip: swipe left on a notification to delete it.</span>
+            <span className="hidden md:inline">Tip: hover over a notification to delete it.</span>
           </p>
           <div className="space-y-2">
             {notifications.map((n) => (
@@ -449,7 +450,7 @@ function SwipeNotificationRow({
       </div>
 
       <div
-        className="relative bg-white"
+        className="group relative bg-white"
         style={{
           transform: `translateX(${offset}px)`,
           transition: draggingRef.current ? "none" : "transform 0.25s ease-out",
@@ -480,6 +481,20 @@ function SwipeNotificationRow({
           className="w-full text-left active:bg-gray-50"
         >
           {children}
+        </button>
+        {/* Desktop-only hover X. Touch users get the swipe gesture instead;
+            hiding on small screens avoids a stuck-visible button after a
+            tap (mobile browsers latch :hover on the last-tapped element). */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          aria-label="Delete notification"
+          className={`hidden md:flex absolute top-2 right-2 z-10 w-8 h-8 items-center justify-center rounded-full bg-gray-200 text-gray-700 shadow-md hover:bg-red-500 hover:text-white transition-opacity ${swiped ? "opacity-0 pointer-events-none" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
         </button>
       </div>
     </div>
