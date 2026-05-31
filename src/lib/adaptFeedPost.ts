@@ -14,6 +14,7 @@ export type FeedPostView = {
   playDate?: string;
   playTime?: string;
   courtLocation?: string;
+  courtFacilityId?: string | null;
   gameType?: string;
   playersNeeded?: number;
   playersConfirmed?: number;
@@ -70,6 +71,7 @@ export function adaptFeedPost(p: FeedPost): FeedPostView {
     playDate: p.play_date,
     playTime: p.play_time,
     courtLocation: p.court_location,
+    courtFacilityId: p.court_facility_id,
     gameType: p.game_type,
     playersNeeded: p.players_needed,
     playersConfirmed: p.players_confirmed,

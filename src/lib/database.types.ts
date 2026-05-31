@@ -2144,6 +2144,7 @@ export type Database = {
           comments_disabled: boolean
           content: string
           court_booked: boolean
+          court_facility_id: string | null
           court_location: string
           created_at: string
           event_id: string | null
@@ -2175,6 +2176,7 @@ export type Database = {
           comments_disabled?: boolean
           content?: string
           court_booked?: boolean
+          court_facility_id?: string | null
           court_location?: string
           created_at?: string
           event_id?: string | null
@@ -2206,6 +2208,7 @@ export type Database = {
           comments_disabled?: boolean
           content?: string
           court_booked?: boolean
+          court_facility_id?: string | null
           court_location?: string
           created_at?: string
           event_id?: string | null

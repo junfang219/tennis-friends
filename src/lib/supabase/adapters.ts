@@ -113,6 +113,11 @@ export interface PostCamel {
   playTime: string;
   playDuration: number;
   courtLocation: string;
+  // Catalog id ("tf-N" matching Facility.courtId) when the author either
+  // picked a court from the composer typeahead or their free text
+  // resolved to a known facility. PostCard renders courtLocation as a
+  // /courts?selected=tf-N deep link when this is set, plain text when null.
+  courtFacilityId: string | null;
   gameType: string;
   playersNeeded: number;
   playersConfirmed: number;
@@ -171,6 +176,7 @@ export function toPostCamel(p: Post): PostCamel {
     playTime: p.play_time,
     playDuration: p.play_duration,
     courtLocation: p.court_location,
+    courtFacilityId: p.court_facility_id,
     gameType: p.game_type,
     playersNeeded: p.players_needed,
     playersConfirmed: p.players_confirmed,

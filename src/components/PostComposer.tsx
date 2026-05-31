@@ -19,6 +19,8 @@ import { buildObjectKey, type StorageBucket } from "@/lib/supabase/storage";
 import { toPostCamel } from "@/lib/supabase/adapters";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 import { errorMessage } from "@/lib/errorMessage";
+import { computeCourtFacilityId } from "@/lib/facilities";
+import CourtLocationPicker from "./CourtLocationPicker";
 
 const PLACEHOLDERS = [
   "Just finished a great match...",
@@ -217,6 +219,11 @@ function ComposerModal({
   const [playDate, setPlayDate] = useState("");
   const [playTime, setPlayTime] = useState("");
   const [courtLocation, setCourtLocation] = useState("");
+  // Set when the author picks a catalog court from the typeahead. Cleared
+  // whenever they edit the text afterwards so the picked id doesn't drift
+  // away from what the input now reads. computeCourtFacilityId() on submit
+  // gives a free-text entry one last chance to resolve to a catalog id.
+  const [courtFacilityId, setCourtFacilityId] = useState<string | null>(null);
   const [gameType, setGameType] = useState("singles");
   const [playersNeeded, setPlayersNeeded] = useState(1);
   const [skillBucket, setSkillBucket] = useState<"any" | "beginner" | "intermediate" | "advanced" | "pro">("any");
@@ -493,6 +500,10 @@ function ComposerModal({
       body.playDate = playDate;
       body.playTime = playTime;
       body.courtLocation = courtLocation;
+      // Resolver runs even when the user typed free text — "Magnuson" still
+      // links to the catalog court. Explicit picks always win because the
+      // helper short-circuits when courtFacilityId is set.
+      body.courtFacilityId = computeCourtFacilityId(courtLocation, courtFacilityId);
       body.gameType = gameType;
       body.playersNeeded = playersNeeded;
       body.playDuration = playDuration;
@@ -558,6 +569,11 @@ function ComposerModal({
             Intl.DateTimeFormat().resolvedOptions().timeZone) ||
           "America/Los_Angeles",
         court_location: typeof body.courtLocation === "string" ? body.courtLocation : "",
+        // Only persist a court id for find_players posts. propose_team
+        // overloads court_location to carry the team name (not a venue),
+        // so courtFacilityId stays unset there.
+        court_facility_id:
+          typeof body.courtFacilityId === "string" ? body.courtFacilityId : null,
         game_type: typeof body.gameType === "string" ? body.gameType : "",
         players_needed: typeof body.playersNeeded === "number" ? body.playersNeeded : 0,
         skill_min: typeof body.skillMin === "number" ? body.skillMin : null,
@@ -845,12 +861,14 @@ function ComposerModal({
                 </div>
                 <div className="sm:col-span-2">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Court Location</label>
-                  <input
-                    type="text"
+                  <CourtLocationPicker
                     value={courtLocation}
-                    onChange={(e) => setCourtLocation(e.target.value)}
-                    placeholder="e.g. Central Park Tennis Center"
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                    facilityId={courtFacilityId}
+                    onChange={(text, fid) => {
+                      setCourtLocation(text);
+                      setCourtFacilityId(fid);
+                    }}
+                    placeholder="e.g. Magnuson Park Tennis Courts"
                   />
                 </div>
                 <div>

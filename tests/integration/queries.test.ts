@@ -464,6 +464,49 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       expect(p).toBeNull();
     });
 
+    it("createPost round-trips court_facility_id and returns it on the post", async () => {
+      // Explicit picks from the composer typeahead must persist through
+      // createPost → POST_COLUMNS → getPost without being dropped. The
+      // post card renders /courts?selected=tf-N off this column.
+      const p = await createPost(alice.client, {
+        content: "court facility id round trip",
+        post_type: "find_players",
+        play_date: "2026-05-30",
+        play_time: "10:00",
+        play_duration: 90,
+        court_location: "Lower Woodland Playfield Tennis Courts",
+        court_facility_id: "tf-20",
+        game_type: "singles",
+        players_needed: 1,
+      });
+      expect(p.court_facility_id).toBe("tf-20");
+
+      // Re-fetch to confirm POST_COLUMNS includes the column (not just
+      // the insert RETURNING; PostCard reads via getPost / listFeed).
+      const fetched = await getPost(alice.client, p.id);
+      expect(fetched?.court_facility_id).toBe("tf-20");
+
+      await deletePost(alice.client, p.id);
+    });
+
+    it("createPost leaves court_facility_id null when the caller omits it", async () => {
+      // Free-text entries that don't get a resolver match in the composer
+      // arrive at createPost with court_facility_id unset. The DB column
+      // is nullable; the row must come back with null, not "".
+      const p = await createPost(alice.client, {
+        content: "free text court location",
+        post_type: "find_players",
+        play_date: "2026-05-30",
+        play_time: "10:00",
+        play_duration: 90,
+        court_location: "My friend's secret backyard court",
+        game_type: "singles",
+        players_needed: 1,
+      });
+      expect(p.court_facility_id).toBeNull();
+      await deletePost(alice.client, p.id);
+    });
+
     // Regression: the pre-Supabase /api/posts/join/respond route auto-
     // created a session group chat when a find-players post filled, and
     // PostCard's collapsed "Open chat" CTA reads from it. The migration

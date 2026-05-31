@@ -26,6 +26,8 @@ import {
 } from "@/lib/supabase/queries";
 import { toCommentCamel } from "@/lib/supabase/adapters";
 import { errorMessage } from "@/lib/errorMessage";
+import { computeCourtFacilityId } from "@/lib/facilities";
+import CourtLocationPicker from "./CourtLocationPicker";
 
 type PlayRequestInfo = { id: string; status: string; note: string } | null;
 
@@ -51,6 +53,7 @@ type Post = {
   skillMin?: number | null;
   skillMax?: number | null;
   courtLocation?: string;
+  courtFacilityId?: string | null;
   gameType?: string;
   playersNeeded?: number;
   playersConfirmed?: number;
@@ -222,6 +225,11 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
   const [editPlayTime, setEditPlayTime] = useState(post.playTime || "");
   const [editPlayDuration, setEditPlayDuration] = useState(post.playDuration || 90);
   const [editCourtLocation, setEditCourtLocation] = useState(post.courtLocation || "");
+  // Inline-edit version of the picker. Mirrors the composer's state shape
+  // (see PostComposer.tsx). Picked id clears when the text is re-edited;
+  // computeCourtFacilityId() reattaches a catalog id on save when the new
+  // text still matches a known court.
+  const [editCourtFacilityId, setEditCourtFacilityId] = useState<string | null>(post.courtFacilityId ?? null);
   const [editGameType, setEditGameType] = useState(post.gameType || "singles");
   const [editPlayersNeeded, setEditPlayersNeeded] = useState(post.playersNeeded || 1);
   const [editCourtBooked, setEditCourtBooked] = useState(post.courtBooked || false);
@@ -246,6 +254,9 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
   const [livePlayTime, setLivePlayTime] = useState(post.playTime || "");
   const [livePlayDuration, setLivePlayDuration] = useState(post.playDuration || 90);
   const [liveCourtLocation, setLiveCourtLocation] = useState(post.courtLocation || "");
+  // Tracks the live catalog id alongside liveCourtLocation so inline edits
+  // re-render the map-link target without a page reload.
+  const [liveCourtFacilityId, setLiveCourtFacilityId] = useState<string | null>(post.courtFacilityId ?? null);
   const [liveGameType, setLiveGameType] = useState(post.gameType || "");
   const [livePlayersNeeded, setLivePlayersNeeded] = useState(post.playersNeeded || 0);
   const [liveCourtBooked, setLiveCourtBooked] = useState(post.courtBooked || false);
@@ -871,7 +882,18 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                 {complete ? "Team Formed" : "Recruiting Team"}
               </span>
               {liveCourtLocation && (
-                <h3 className="font-display text-xl font-bold text-gray-900 mt-2">{liveCourtLocation}</h3>
+                <h3 className="font-display text-xl font-bold text-gray-900 mt-2">
+                  {liveCourtFacilityId ? (
+                    <Link
+                      href={`/courts?selected=${encodeURIComponent(liveCourtFacilityId)}`}
+                      className="text-court-green hover:underline"
+                    >
+                      {liveCourtLocation}
+                    </Link>
+                  ) : (
+                    liveCourtLocation
+                  )}
+                </h3>
               )}
             </div>
           )}
@@ -891,7 +913,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
               <div className="grid grid-cols-2 gap-3">
                 {livePlayDate && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Date</p><p className="text-sm font-semibold text-gray-800">{livePlayDate}</p></div></div>)}
                 {livePlayTime && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Time</p><p className="text-sm font-semibold text-gray-800">{livePlayTime}{endTime ? ` – ${endTime}` : ""}{livePlayDuration ? ` (${livePlayDuration} min)` : ""}</p></div></div>)}
-                {liveCourtLocation && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Court</p><p className="text-sm font-semibold text-gray-800">{liveCourtLocation}</p></div></div>)}
+                {liveCourtLocation && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Court</p>{liveCourtFacilityId ? (<Link href={`/courts?selected=${encodeURIComponent(liveCourtFacilityId)}`} className="text-sm font-semibold text-court-green hover:underline">{liveCourtLocation}</Link>) : (<p className="text-sm font-semibold text-gray-800">{liveCourtLocation}</p>)}</div></div>)}
                 {liveGameType && (<div className="flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-court-green-soft" strokeLinecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" />{liveGameType === "doubles" && <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />}</svg></div><div><p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Type</p><p className="text-sm font-semibold text-gray-800 capitalize">{liveGameType}</p></div></div>)}
                 {(post.skillMin != null || post.skillMax != null) && (() => {
                   const min = post.skillMin ?? 2.5;
@@ -1570,6 +1592,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                   setEditPlayDate(livePlayDate);
                   setEditPlayTime(livePlayTime);
                   setEditCourtLocation(liveCourtLocation);
+                  setEditCourtFacilityId(liveCourtFacilityId);
                   setEditGameType(liveGameType);
                   setEditPlayersNeeded(livePlayersNeeded);
                   setEditCourtBooked(liveCourtBooked);
@@ -1820,7 +1843,14 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                     </div>
                     <div className="col-span-2">
                       <label className="block text-xs font-semibold text-gray-600 mb-1">Court Location</label>
-                      <input type="text" value={editCourtLocation} onChange={(e) => setEditCourtLocation(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
+                      <CourtLocationPicker
+                        value={editCourtLocation}
+                        facilityId={editCourtFacilityId}
+                        onChange={(text, fid) => {
+                          setEditCourtLocation(text);
+                          setEditCourtFacilityId(fid);
+                        }}
+                      />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-1">Game Type</label>
@@ -1888,23 +1918,34 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                     play_time?: string;
                     play_duration?: number;
                     court_location?: string;
+                    court_facility_id?: string | null;
                     game_type?: string;
                     players_needed?: number;
                     court_booked?: boolean;
                     skill_min?: number | null;
                     skill_max?: number | null;
                   } = { content: editContent };
+                  // Resolve the catalog id once here so both branches share
+                  // the same fallback logic as PostComposer. Only set it on
+                  // find_players posts — propose_team uses court_location
+                  // as the team name, not a venue.
+                  const resolvedFacilityId = computeCourtFacilityId(
+                    editCourtLocation,
+                    editCourtFacilityId
+                  );
                   if (isFindPlayers) {
                     updates.play_date = editPlayDate;
                     updates.play_time = editPlayTime;
                     updates.play_duration = editPlayDuration;
                     updates.court_location = editCourtLocation;
+                    updates.court_facility_id = resolvedFacilityId;
                     updates.game_type = editGameType;
                     updates.players_needed = editPlayersNeeded;
                     updates.court_booked = editCourtBooked;
                   }
                   if (isProposeTeam) {
                     updates.court_location = editCourtLocation; // team name
+                    updates.court_facility_id = null; // team name, not a venue
                     updates.game_type = editGameType; // team type
                     updates.play_date = editPlayDate; // schedule (free text)
                     updates.play_time = `${editSkillSystem}:${editSkillMin}-${editSkillMax}`;
@@ -1940,6 +1981,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                       setLivePlayTime(editPlayTime);
                       setLivePlayDuration(editPlayDuration);
                       setLiveCourtLocation(editCourtLocation);
+                      setLiveCourtFacilityId(resolvedFacilityId);
                       setLiveGameType(editGameType);
                       setLivePlayersNeeded(editPlayersNeeded);
                       setLiveCourtBooked(editCourtBooked);
@@ -1948,6 +1990,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                       setLivePlayDate(editPlayDate);
                       setLivePlayTime(`${editSkillSystem}:${editSkillMin}-${editSkillMax}`);
                       setLiveCourtLocation(editCourtLocation);
+                      setLiveCourtFacilityId(null);
                       setLiveGameType(editGameType);
                       setLivePlayersNeeded(editPlayersNeeded);
                     }

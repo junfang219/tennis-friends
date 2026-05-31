@@ -16,6 +16,7 @@ export interface PostRow {
   play_time: string;
   play_duration: number;
   court_location: string;
+  court_facility_id: string | null;
   game_type: string;
   players_needed: number;
   players_confirmed: number;
@@ -98,7 +99,7 @@ export interface Comment {
 
 const POST_COLUMNS = `
   id, author_id, content, media_url, media_type, post_type,
-  play_date, play_time, play_duration, court_location, game_type,
+  play_date, play_time, play_duration, court_location, court_facility_id, game_type,
   players_needed, players_confirmed, skill_min, skill_max, court_booked,
   is_complete, comments_disabled, manual_players, team_group_id,
   is_broadcast, broadcast_radius_mi, broadcast_lat, broadcast_lng,

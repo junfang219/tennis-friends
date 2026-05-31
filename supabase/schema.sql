@@ -482,6 +482,13 @@ create table public.posts (
   play_time           text not null default '',
   play_duration       integer not null default 90,
   court_location      text not null default '',
+  -- When the author picked a court from the composer's typeahead, this
+  -- stores the catalog id (Facility.courtId in src/lib/facilities.ts, of
+  -- the form "tf-N"). Null for free-text entries that didn't match a
+  -- catalog court. The display label always lives in court_location;
+  -- this column only carries the link target so PostCard can render the
+  -- court name as a /courts?selected=tf-N deep link.
+  court_facility_id   text,
   game_type           text not null default '',
   players_needed      integer not null default 0,
   players_confirmed   integer not null default 0,
@@ -4285,6 +4292,7 @@ DECLARE
   v_message      text;
   v_duration     integer;
   v_location     text;
+  v_location_md  text;
 BEGIN
   IF NEW.is_complete IS NOT TRUE OR NEW.post_type <> 'find_players' THEN
     RETURN NEW;
@@ -4303,6 +4311,15 @@ BEGIN
   v_duration := COALESCE(NULLIF(NEW.play_duration, 0), 90);
   v_session_end := v_play_dt + (v_duration || ' minutes')::interval;
   v_location := COALESCE(NULLIF(NEW.court_location, ''), 'TBD');
+  -- When the post is tied to a catalog court, embed a markdown-style
+  -- link in the chat message so the renderer in renderChatMessage.tsx
+  -- can turn the location line into a clickable jump to /courts. Plain
+  -- text fallback for free-text locations and the 'TBD' placeholder.
+  v_location_md := CASE
+    WHEN NEW.court_facility_id IS NOT NULL AND NULLIF(NEW.court_location, '') IS NOT NULL
+      THEN '[' || NEW.court_location || '](/courts?selected=' || NEW.court_facility_id || ')'
+    ELSE v_location
+  END;
 
   -- Render the chat title in the user's zone so the displayed time
   -- matches what they typed.
@@ -4349,7 +4366,7 @@ BEGIN
   v_message := E'🎾 Game confirmed!\n'
             || E'📅 ' || trim(to_char(v_play_dt AT TIME ZONE COALESCE(NULLIF(NEW.play_timezone, ''), 'America/Los_Angeles'), 'Mon FMDD at FMHH12:MI AM'))
             || ' (' || v_duration || E' min)\n'
-            || E'📍 ' || v_location || E'\n'
+            || E'📍 ' || v_location_md || E'\n'
             || 'Players: ' || COALESCE(v_players, '') || E'\n\n'
             || 'See you on court!';
 

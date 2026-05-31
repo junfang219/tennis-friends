@@ -23,6 +23,7 @@ import {
 import { toChatMessageCamel } from "@/lib/supabase/adapters";
 import { errorMessage } from "@/lib/errorMessage";
 import { resolveFacilityByName } from "@/lib/facilities";
+import { renderChatMessage } from "@/lib/renderChatMessage";
 import { gameWindowMs, isReportEligibleCategory } from "@/lib/courtPrompt";
 import { GameCourtPrompt } from "@/components/courts/GameCourtPrompt";
 
@@ -739,7 +740,7 @@ export default function GroupChatThreadPage() {
                             : "bg-white text-gray-800 rounded-2xl rounded-bl-md shadow-sm border border-gray-100"
                         }`}
                       >
-                        <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                        <p className="whitespace-pre-wrap break-words">{renderChatMessage(msg.content)}</p>
                         <p className={`text-[10px] mt-1 ${isMe ? "text-white/60" : "text-gray-400"}`}>
                           {formatTime(msg.createdAt)}
                         </p>

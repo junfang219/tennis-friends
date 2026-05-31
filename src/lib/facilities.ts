@@ -255,6 +255,29 @@ export function resolveFacilityByName(query: string): Facility | null {
   return best?.f ?? null;
 }
 
+/** Pick the right `court_facility_id` to persist for a "find players" post.
+ *
+ *  Callers (the composer, the inline edit on PostCard) pass:
+ *  - the current `courtLocation` display string the user typed
+ *  - the `explicitId` they captured when the user clicked a typeahead
+ *    suggestion, or null if they typed free-text without picking
+ *
+ *  Behavior:
+ *  - Explicit pick always wins (the user clicked exactly that facility).
+ *  - Otherwise we attempt `resolveFacilityByName` as a best-effort: a
+ *    user typing "Magnuson" without opening the dropdown still gets
+ *    their post linked to the catalog court.
+ *  - Returns null when neither path produces a match — the post just
+ *    renders as plain text. */
+export function computeCourtFacilityId(
+  courtLocation: string,
+  explicitId: string | null
+): string | null {
+  if (explicitId) return explicitId;
+  if (!courtLocation || !courtLocation.trim()) return null;
+  return resolveFacilityByName(courtLocation)?.courtId ?? null;
+}
+
 /** Top-K fuzzy name match for the courts-page search bar. Mirrors
  *  the scoring used by resolveFacilityByName so the picker and the
  *  search rank identically. Returns at most `limit` facilities sorted
