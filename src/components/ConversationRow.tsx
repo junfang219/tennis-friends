@@ -309,7 +309,7 @@ export default function ConversationRow({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        className={`relative z-10 ${rowBg} ${sideBorder} ${rowPadding} flex items-center gap-3 cursor-pointer select-none`}
+        className={`group relative z-10 ${rowBg} ${sideBorder} ${rowPadding} flex items-center gap-3 cursor-pointer select-none`}
         style={{
           transform: `translateX(${translateX}px)`,
           transition: drag?.active ? "none" : "transform 220ms ease",
@@ -415,7 +415,7 @@ export default function ConversationRow({
                 </svg>
               )}
             </p>
-            <span className={`text-[10px] text-gray-400 shrink-0 ${layout === "page" ? "text-xs" : ""}`}>
+            <span className={`text-[10px] text-gray-400 shrink-0 transition-opacity md:group-hover:opacity-0 ${layout === "page" ? "text-xs" : ""}`}>
               {item.lastMessage ? timeAgo(item.lastMessage.createdAt) : ""}
             </span>
           </div>
@@ -431,6 +431,24 @@ export default function ConversationRow({
             {item.unreadCount > 99 ? "99+" : item.unreadCount}
           </span>
         )}
+        {/* Desktop-only hover X for the Remove action. Touch users get
+            the full swipe panel (Unread / Pin / Mute / Remove). Marked
+            with data-swipe-action so the pointer-down handler ignores
+            taps on this button. */}
+        <button
+          data-swipe-action
+          type="button"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); handleActionTap("hide"); }}
+          aria-label="Remove conversation"
+          title="Remove"
+          className={`hidden md:flex absolute top-2 right-2 z-20 w-7 h-7 items-center justify-center rounded-full bg-gray-200 text-gray-700 shadow-md hover:bg-red-500 hover:text-white transition-opacity ${isOpen ? "opacity-0 pointer-events-none" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
       </div>
     </div>
   );
