@@ -12,7 +12,7 @@ import type { Database } from "./supabase/types";
 import type { InboxItem } from "@/components/ConversationRow";
 import {
   listDmThreads,
-  listMyChats,
+  listMyChatThreads,
   listMyTeamThreads,
 } from "./supabase/queries";
 import { pgToIso } from "./pgDate";
@@ -23,7 +23,7 @@ export async function loadInbox(
 ): Promise<InboxItem[]> {
   const [dms, chats, teams] = await Promise.all([
     listDmThreads(supabase),
-    listMyChats(supabase),
+    listMyChatThreads(supabase),
     listMyTeamThreads(supabase),
   ]);
 
@@ -48,16 +48,24 @@ export async function loadInbox(
     },
   }));
 
-  const chatItems: InboxItem[] = chats.map((c) => ({
+  const chatItems: InboxItem[] = chats.map((t) => ({
     type: "group" as const,
-    id: c.id,
-    title: c.name || "Session chat",
-    href: `/chat/group/${c.id}`,
-    unreadCount: 0,
-    muted: false,
-    pinnedAt: null,
+    id: t.chat.id,
+    title: t.chat.name || "Session chat",
+    href: `/chat/group/${t.chat.id}`,
+    unreadCount: t.unread_count,
+    muted: t.muted,
+    pinnedAt: t.pinned_at,
     kind: "session" as const,
-    lastMessage: null,
+    sessionEndAt: t.chat.session_end_at,
+    lastMessage: t.last_message
+      ? {
+          content: t.last_message.content,
+          createdAt: pgToIso(t.last_message.created_at),
+          fromSelf: t.last_message.sender_id === userId,
+          senderName: t.last_message.sender_name,
+        }
+      : null,
     participants: [],
   }));
 

@@ -63,6 +63,130 @@ export async function listMyChats(supabase: SupabaseClient<Database>): Promise<C
   return (data ?? []) as Chat[];
 }
 
+// Inbox row for a session/game chat — includes the latest message preview,
+// unread count, and per-user mute/pin state. Mirrors the shape of TeamThread
+// (queries/groups.ts) so the inbox loader can hydrate session and team
+// chats with the same lastMessage / unreadCount UI surface.
+export interface ChatThread {
+  chat: Chat;
+  last_message: {
+    id: string;
+    sender_id: string;
+    sender_name: string;
+    content: string;
+    created_at: string;
+  } | null;
+  unread_count: number;
+  muted: boolean;
+  pinned_at: string | null;
+}
+
+export async function listMyChatThreads(
+  supabase: SupabaseClient<Database>
+): Promise<ChatThread[]> {
+  const me = await getMyIdFast(supabase);
+  if (!me) return [];
+
+  // Per-user inbox state for every chat I haven't hidden.
+  const { data: parts, error: pErr } = await supabase
+    .from("chat_participants")
+    .select("chat_id, last_read_at, muted, pinned_at, cleared_at")
+    .eq("user_id", me)
+    .is("hidden_at", null);
+  if (pErr) throw pErr;
+  const partsByChat = new Map<
+    string,
+    { last_read_at: string | null; muted: boolean; pinned_at: string | null; cleared_at: string | null }
+  >();
+  for (const p of parts ?? []) {
+    partsByChat.set(p.chat_id, {
+      last_read_at: p.last_read_at ?? null,
+      muted: !!p.muted,
+      pinned_at: p.pinned_at ?? null,
+      cleared_at: p.cleared_at ?? null,
+    });
+  }
+  const chatIds = [...partsByChat.keys()];
+  if (chatIds.length === 0) return [];
+
+  // Chats + recent messages in parallel. Messages are fetched in one batch
+  // (500 cap matches listMyTeamThreads) and grouped client-side; takes the
+  // first per chat as the latest. For a single user this is a few KB.
+  const [chatsRes, msgsRes] = await Promise.all([
+    supabase
+      .from("chats")
+      .select(CHAT_COLS)
+      .in("id", chatIds)
+      .order("updated_at", { ascending: false }),
+    supabase
+      .from("chat_messages")
+      .select(
+        `id, chat_id, sender_id, content, created_at,
+         sender:profiles!chat_messages_sender_id_fkey ( id, name )`
+      )
+      .in("chat_id", chatIds)
+      .order("created_at", { ascending: false })
+      .limit(500),
+  ]);
+  if (chatsRes.error) throw chatsRes.error;
+  if (msgsRes.error) throw msgsRes.error;
+
+  type MsgRow = {
+    id: string;
+    chat_id: string;
+    sender_id: string;
+    content: string;
+    created_at: string;
+    sender: { id: string; name: string };
+  };
+  const byChat = new Map<string, MsgRow[]>();
+  for (const m of (msgsRes.data ?? []) as unknown as MsgRow[]) {
+    if (!byChat.has(m.chat_id)) byChat.set(m.chat_id, []);
+    byChat.get(m.chat_id)!.push(m);
+  }
+
+  const threads: ChatThread[] = [];
+  for (const chat of (chatsRes.data ?? []) as Chat[]) {
+    const state = partsByChat.get(chat.id);
+    if (!state) continue;
+    // `cleared_at` (per-user "clear conversation") hides anything older from
+    // the inbox preview but doesn't delete the underlying rows.
+    const clearedAt = state.cleared_at ?? "1970-01-01T00:00:00Z";
+    const msgs = (byChat.get(chat.id) ?? [])
+      .filter((m) => m.created_at > clearedAt)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const last = msgs[0] ?? null;
+    const lastReadAt = state.last_read_at ?? "1970-01-01T00:00:00Z";
+    const unread = msgs.filter(
+      (msg) => msg.sender_id !== me && msg.created_at > lastReadAt
+    ).length;
+    threads.push({
+      chat,
+      last_message: last
+        ? {
+            id: last.id,
+            sender_id: last.sender_id,
+            sender_name: last.sender.name,
+            content: last.content,
+            created_at: last.created_at,
+          }
+        : null,
+      unread_count: unread,
+      muted: state.muted,
+      pinned_at: state.pinned_at,
+    });
+  }
+
+  // Newest activity first; empty chats sort to the bottom by chats.updated_at.
+  threads.sort((a, b) => {
+    const at = a.last_message?.created_at ?? a.chat.updated_at;
+    const bt = b.last_message?.created_at ?? b.chat.updated_at;
+    return bt.localeCompare(at);
+  });
+
+  return threads;
+}
+
 export async function getChat(
   supabase: SupabaseClient<Database>,
   id: string
