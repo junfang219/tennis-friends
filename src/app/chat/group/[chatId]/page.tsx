@@ -819,7 +819,13 @@ export default function GroupChatThreadPage() {
         // iMessage / WhatsApp convention.
         style={{
           bottom: `${keyboardHeight}px`,
-          paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))",
+          // The home-indicator inset is only needed when the keyboard is
+          // down. When it's up the bar sits directly on the keyboard, so
+          // the inset would just be dead space — drop it to close the gap.
+          paddingBottom:
+            keyboardHeight > 0
+              ? "0.75rem"
+              : "calc(0.75rem + env(safe-area-inset-bottom))",
         }}
       >
         {pendingMedia && (
