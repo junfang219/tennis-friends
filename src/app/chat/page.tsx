@@ -242,7 +242,23 @@ export default function ChatPage() {
                   isOpen={openRowKey === key}
                   onOpen={() => setOpenRowKey(key)}
                   onClose={() => setOpenRowKey((k) => (k === key ? null : k))}
-                  onSelect={() => router.push(item.href)}
+                  onSelect={() => {
+                    // Clear the unread badge in-place the moment the user
+                    // taps. The destination chat page also calls markRead
+                    // on mount, but the inbox refetch can lag a beat —
+                    // without this the badge would flash back on for ~60s
+                    // until the realtime tick reconciles.
+                    if (item.unreadCount > 0) {
+                      inbox.mutate((prev) =>
+                        (prev ?? []).map((it) =>
+                          it.type === item.type && it.id === item.id
+                            ? { ...it, unreadCount: 0 }
+                            : it,
+                        ),
+                      );
+                    }
+                    router.push(item.href);
+                  }}
                   onAction={(action) => applyAction(item, action)}
                   layout="page"
                 />

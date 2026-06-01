@@ -18,6 +18,7 @@ import { useRealtimeTable } from "@/lib/supabase/realtime";
 import {
   getChatBundle,
   getChatGameContext,
+  markChatRead,
   sendChatMessage,
   addReaction,
 } from "@/lib/supabase/queries";
@@ -234,6 +235,10 @@ export default function GroupChatThreadPage() {
   // in via the realtime subscription below — no polling.
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
+    // Clear the unread badge as soon as the user opens the thread.
+    // Fire-and-forget; failures are tolerable (next mount or realtime tick
+    // will re-mark) and we don't want to block the initial paint on it.
+    void markChatRead(supabase, chatId).catch(() => {});
     getChatBundle(supabase, chatId)
       .then((bundle) => {
         if (!bundle) {
@@ -322,6 +327,13 @@ export default function GroupChatThreadPage() {
             media_type: string | null;
             created_at: string;
           };
+          // If a message arrives from someone else while the thread is open,
+          // bump last_read_at so the badge clears immediately instead of
+          // waiting for the next tab focus / re-open.
+          if (payload.eventType === "INSERT" && row.sender_id !== myId) {
+            const supabase = createSupabaseBrowserClient();
+            void markChatRead(supabase, chatId).catch(() => {});
+          }
           setMessages((prev) => {
             const existingIdx = prev.findIndex((m) => m.id === row.id);
             if (existingIdx >= 0) {

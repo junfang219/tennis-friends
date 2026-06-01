@@ -161,7 +161,20 @@ export default function ConversationSidebar() {
         isSelected={selectedKey === key}
         onOpen={() => setOpenRowKey(key)}
         onClose={() => setOpenRowKey((k) => (k === key ? null : k))}
-        onSelect={() => router.push(item.href)}
+        onSelect={() => {
+          // Optimistically clear the unread badge on tap; the destination
+          // chat page is the source of truth for last_read_at.
+          if (item.unreadCount > 0) {
+            inbox.mutate((prev) =>
+              (prev ?? []).map((it) =>
+                it.type === item.type && it.id === item.id
+                  ? { ...it, unreadCount: 0 }
+                  : it,
+              ),
+            );
+          }
+          router.push(item.href);
+        }}
         onAction={(action) => applyAction(item, action)}
         layout="page"
       />
