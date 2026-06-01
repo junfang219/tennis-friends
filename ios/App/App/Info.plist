@@ -20,8 +20,6 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
-	<!-- Native Google Sign-In callback: the iOS OAuth client's reversed client
-	     ID (mirrors NEXT_PUBLIC_GOOGLE_IOS_CLIENT_ID, project tennisfriends-495618). -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -37,6 +35,8 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Tennis Friends uses your location to ask if there are open courts when you arrive at a court for a confirmed game.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Tennis Friends uses your location to ask if there are open courts when you arrive at a court for a confirmed game.</string>
 	<key>UIBackgroundModes</key>
