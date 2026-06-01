@@ -7,6 +7,7 @@ import { FormEvent, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { emailExists, isExistingEmailSignUp } from "@/lib/supabase/signup";
 import { authErrorMessage } from "@/lib/supabase/authError";
+import { useIsNative } from "@/hooks/useIsNative";
 
 // Sign-up is social-first: Google + Apple are the headline buttons and
 // the email/password form is collapsed behind a toggle. Reason: email
@@ -33,6 +34,11 @@ export default function SupabaseRegisterPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = safeNext(searchParams.get("next"));
+  // Google blocks OAuth inside embedded WebViews (disallowed_useragent), so the
+  // "Continue with Google" redirect is a dead end in the Capacitor iOS/Android
+  // shell. Hide it on native; Apple sign-in + email/password still work. (Web
+  // is unchanged.)
+  const isNative = useIsNative();
   const [step, setStep] = useState<Step>("choose");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -214,15 +220,17 @@ export default function SupabaseRegisterPage() {
       <h1 className="text-2xl font-semibold text-gray-900 mb-6">Create account</h1>
 
       <div className="space-y-2">
-        <button
-          type="button"
-          onClick={() => onOAuth("google")}
-          disabled={busy}
-          className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 font-medium"
-        >
-          <GoogleIcon />
-          Continue with Google
-        </button>
+        {!isNative && (
+          <button
+            type="button"
+            onClick={() => onOAuth("google")}
+            disabled={busy}
+            className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 font-medium"
+          >
+            <GoogleIcon />
+            Continue with Google
+          </button>
+        )}
         <button
           type="button"
           onClick={() => onOAuth("apple")}

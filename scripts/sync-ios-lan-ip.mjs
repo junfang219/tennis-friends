@@ -55,9 +55,11 @@ if (!ip) {
 
 let config = readFileSync(CONFIG, "utf8");
 
-const urlMatch = config.match(/url:\s*'http:\/\/([^']+):3000'/);
+const urlMatch = config.match(/DEV_SERVER_URL = 'http:\/\/([^']+):3000'/);
 if (!urlMatch) {
-  console.error("✖ Couldn't find `url: 'http://...:3000'` in capacitor.config.ts");
+  console.error(
+    "✖ Couldn't find `DEV_SERVER_URL = 'http://...:3000'` in capacitor.config.ts"
+  );
   process.exit(1);
 }
 
@@ -78,16 +80,25 @@ if (!isIpv4) {
 if (currentHost === ip) {
   console.log(`✔ Already pointed at ${ip} — nothing to change.`);
 } else {
-  // Rewrite the dev-server URL and the matching allowNavigation IP entry.
-  config = config
-    .replace(/url:\s*'http:\/\/[^']+:3000'/, `url: 'http://${ip}:3000'`)
-    .replace(/allowNavigation:\s*\[\s*'[^']+'/, `allowNavigation: ['${ip}'`);
+  // Rewrite the dev-server URL literal. allowNavigation derives its host from
+  // DEV_SERVER_URL at runtime (new URL(...).hostname), so there's nothing else
+  // to patch here.
+  config = config.replace(
+    /DEV_SERVER_URL = 'http:\/\/[^']+:3000'/,
+    `DEV_SERVER_URL = 'http://${ip}:3000'`
+  );
   writeFileSync(CONFIG, config);
   console.log(`✔ Updated capacitor.config.ts: ${currentHost} → ${ip}`);
 }
 
 console.log("→ Running `cap copy ios` to refresh the iOS config…");
-execSync("npx cap copy ios", { cwd: ROOT, stdio: "inherit" });
+// CAP_ENV=development so capacitor.config.ts resolves to the dev server URL
+// (the default is production, which would otherwise bake in the prod URL).
+execSync("npx cap copy ios", {
+  cwd: ROOT,
+  stdio: "inherit",
+  env: { ...process.env, CAP_ENV: "development" },
+});
 console.log(
   `\n✔ Done. iOS app will load http://${ip}:3000 — rebuild/relaunch in Xcode.`
 );

@@ -8,6 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "ios:dev": "CAP_ENV=development npx cap sync ios",
+    "ios:prod": "npx cap sync ios",
     "ios:ip": "node scripts/sync-ios-lan-ip.mjs",
     "geocode:facilities": "node scripts/geocode-facilities.mjs",
     "test": "vitest run",
