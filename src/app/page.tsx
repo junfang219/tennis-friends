@@ -526,16 +526,39 @@ export default function HomePage() {
           }
 
           if (filtered.length === 0) {
+            const emptyCopy: Record<string, { title: string; body: string }> = {
+              all: {
+                title: "The court is quiet",
+                body: "This is your home feed — every post your community shares lands here. Be the first to post, find a partner, or propose a team.",
+              },
+              social: {
+                title: "No social posts yet",
+                body: "Social posts are casual updates from players — match recaps, photos, and tips. Share what's on your mind to get started.",
+              },
+              find_players: {
+                title: "No open games",
+                body: "Players post here when they're looking for a partner to hit, drill, or play a match. Tap “Find Players for a Game” above to post one.",
+              },
+              propose_team: {
+                title: "No team proposals",
+                body: "Players post here when they're forming doubles teams or league rosters. Tap “Propose Team” above to start one.",
+              },
+              nearby: {
+                title: "No nearby broadcasts",
+                body: "Nearby shows broadcast invites from players around you. Nothing in range right now — check back soon, or post a broadcast to draw players nearby.",
+              },
+            };
+            const { title, body } = emptyCopy[activeFilter ?? "all"];
             return (
               <div className="animate-fade-in-up text-center py-16 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
                 <div className="w-16 h-16 bg-ball-yellow/20 rounded-full flex items-center justify-center mx-auto mb-4">
                   <div className="w-8 h-8 rounded-full bg-ball-yellow animate-ball-bounce" />
                 </div>
                 <h3 className="font-display text-xl font-bold text-gray-800 mb-2">
-                  The court is quiet
+                  {title}
                 </h3>
                 <p className="text-gray-500 text-sm max-w-xs mx-auto mb-6">
-                  No posts match your filter. Try selecting more categories or create the first post!
+                  {body}
                 </p>
               </div>
             );
