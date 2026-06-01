@@ -351,21 +351,23 @@ function TeamTab({
           ))}
         </div>
         {canManage && (
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={newType}
-              onChange={(e) => setNewType(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addType(); } }}
-              placeholder="Add a label (e.g. Sub)"
-              maxLength={32}
-              className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-court-green"
-            />
-            <button onClick={addType} className="btn-secondary px-4" disabled={!newType.trim() || types.length >= 16}>
-              Add
-            </button>
-            <button onClick={saveTypes} className="btn-primary px-4" disabled={savingTypes}>
-              {savingTypes ? "Saving..." : "Save"}
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newType}
+                onChange={(e) => setNewType(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addType(); } }}
+                placeholder="Add a label (e.g. Sub)"
+                maxLength={32}
+                className="flex-1 min-w-0 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-court-green"
+              />
+              <button onClick={addType} className="btn-secondary px-4 shrink-0" disabled={!newType.trim() || types.length >= 16}>
+                Add
+              </button>
+            </div>
+            <button onClick={saveTypes} className="btn-primary w-full" disabled={savingTypes}>
+              {savingTypes ? "Saving..." : "Save member types"}
             </button>
           </div>
         )}
