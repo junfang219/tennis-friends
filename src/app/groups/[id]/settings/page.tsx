@@ -559,10 +559,11 @@ function RosterTab({
           const isOwnerRow = m.userId === group.ownerId;
 
           return (
-            <div key={m.id} className="flex items-center gap-3 py-3">
+            <div key={m.id} className="flex items-start gap-3 py-3">
               <Avatar name={m.user.name} image={m.user.profileImageUrl} size="md" />
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
+                {/* Identity */}
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-semibold text-sm text-gray-800 truncate">{m.user.name}</span>
                   {m.userId === currentUserId && (
                     <span className="text-[9px] font-medium text-gray-400">(you)</span>
@@ -573,75 +574,71 @@ function RosterTab({
                     </span>
                   )}
                 </div>
-                {m.memberType && (
-                  <p className="text-[11px] text-gray-500 mt-0.5">{m.memberType}</p>
-                )}
-                {/* Ownership transfer — only the current owner sees this, and
-                    only on other members' rows. */}
-                {callerIsOwner && !isOwnerRow && (
-                  <button
-                    type="button"
-                    onClick={() => transferOwnership(m)}
-                    disabled={busyId === m.id}
-                    className="text-[11px] font-semibold text-court-green hover:underline mt-0.5 disabled:opacity-50"
-                  >
-                    Make owner
-                  </button>
+
+                {canManage ? (
+                  <>
+                    {/* Role toggles + member-type wrap onto their own line so the
+                        name keeps full width. Manager = admin, Captain = ops;
+                        both independent. The owner always has both but their row
+                        stays editable. Manager is owner-gated. */}
+                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                      {TEAM_ROLES.map((r) => {
+                        const on = m.roles.includes(r.value);
+                        const lockedManager = r.value === "manager" && !callerIsOwner;
+                        return (
+                          <button
+                            key={r.value}
+                            type="button"
+                            onClick={() => toggleRole(m, r.value)}
+                            disabled={busyId === m.id || lockedManager}
+                            title={lockedManager ? "Only the team owner can assign Manager" : undefined}
+                            aria-pressed={on}
+                            className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border transition-colors ${
+                              on
+                                ? "bg-court-green text-white border-court-green"
+                                : "bg-white text-gray-500 border-gray-200 hover:border-court-green"
+                            } ${lockedManager ? "opacity-40 cursor-not-allowed" : ""}`}
+                          >
+                            {r.label}
+                          </button>
+                        );
+                      })}
+                      <select
+                        value={m.memberType}
+                        onChange={(e) => updateMember(m.id, { memberType: e.target.value })}
+                        disabled={busyId === m.id || types.length === 0}
+                        className="text-xs px-2 py-1 border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-court-green"
+                      >
+                        <option value="">—</option>
+                        {types.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                        {/* Preserve a label removed from the team's list but still
+                            assigned to this member, so the picker isn't blank. */}
+                        {m.memberType && !types.includes(m.memberType) && (
+                          <option value={m.memberType}>{m.memberType} (removed)</option>
+                        )}
+                      </select>
+                    </div>
+                    {/* Ownership transfer — only the current owner, on other rows. */}
+                    {callerIsOwner && !isOwnerRow && (
+                      <button
+                        type="button"
+                        onClick={() => transferOwnership(m)}
+                        disabled={busyId === m.id}
+                        className="text-[11px] font-semibold text-court-green hover:underline mt-1.5 disabled:opacity-50"
+                      >
+                        Make owner
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-[11px] text-gray-500 mt-0.5">
+                    {isOwnerRow ? "Owner" : rolesLabel(m.roles)}
+                    {m.memberType ? ` · ${m.memberType}` : ""}
+                  </p>
                 )}
               </div>
-
-              {/* Role toggles — independent: Manager = admin, Captain = ops.
-                  The owner always has both, but their row stays editable so
-                  they can also carry an explicit role. Manager is owner-gated. */}
-              {canManage ? (
-                <div className="flex items-center gap-1">
-                  {TEAM_ROLES.map((r) => {
-                    const on = m.roles.includes(r.value);
-                    const lockedManager = r.value === "manager" && !callerIsOwner;
-                    return (
-                      <button
-                        key={r.value}
-                        type="button"
-                        onClick={() => toggleRole(m, r.value)}
-                        disabled={busyId === m.id || lockedManager}
-                        title={lockedManager ? "Only the team owner can assign Manager" : undefined}
-                        aria-pressed={on}
-                        className={`text-[11px] font-semibold px-2 py-1 rounded-full border transition-colors ${
-                          on
-                            ? "bg-court-green text-white border-court-green"
-                            : "bg-white text-gray-500 border-gray-200 hover:border-court-green"
-                        } ${lockedManager ? "opacity-40 cursor-not-allowed" : ""}`}
-                      >
-                        {r.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <span className="text-[10px] font-semibold text-gray-500 px-2 py-0.5 bg-gray-100 rounded-full uppercase tracking-wider">
-                  {isOwnerRow ? "Owner" : rolesLabel(m.roles)}
-                </span>
-              )}
-
-              {/* Member-type picker */}
-              {canManage && (
-                <select
-                  value={m.memberType}
-                  onChange={(e) => updateMember(m.id, { memberType: e.target.value })}
-                  disabled={busyId === m.id || types.length === 0}
-                  className="text-xs px-2 py-1 border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-court-green"
-                >
-                  <option value="">—</option>
-                  {types.map((t) => (
-                    <option key={t} value={t}>{t}</option>
-                  ))}
-                  {/* Preserve a label that was removed from the team's list but
-                      is still assigned to this member, so the picker isn't blank. */}
-                  {m.memberType && !types.includes(m.memberType) && (
-                    <option value={m.memberType}>{m.memberType} (removed)</option>
-                  )}
-                </select>
-              )}
             </div>
           );
         })}
@@ -699,48 +696,49 @@ function RosterTab({
               placeholder="name@example.com"
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-court-green"
             />
-            <div className="grid grid-cols-2 gap-2">
-              <div className="flex items-center gap-1">
-                {TEAM_ROLES.map((r) => {
-                  const on = inviteRoles.includes(r.value);
-                  const lockedManager = r.value === "manager" && !callerIsOwner;
-                  return (
-                    <button
-                      key={r.value}
-                      type="button"
-                      onClick={() =>
-                        setInviteRoles((prev) =>
-                          prev.includes(r.value)
-                            ? prev.filter((x) => x !== r.value)
-                            : [...prev, r.value]
-                        )
-                      }
-                      disabled={lockedManager}
-                      title={lockedManager ? "Only the team owner can assign Manager" : undefined}
-                      aria-pressed={on}
-                      className={`text-[11px] font-semibold px-2 py-1 rounded-full border transition-colors ${
-                        on
-                          ? "bg-court-green text-white border-court-green"
-                          : "bg-white text-gray-500 border-gray-200 hover:border-court-green"
-                      } ${lockedManager ? "opacity-40 cursor-not-allowed" : ""}`}
-                    >
-                      {r.label}
-                    </button>
-                  );
-                })}
-              </div>
-              <select
-                value={inviteType}
-                onChange={(e) => setInviteType(e.target.value)}
-                disabled={types.length === 0}
-                className="text-xs px-2 py-2 border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-court-green"
-              >
-                <option value="">No member type</option>
-                {types.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+                Roles
+              </span>
+              {TEAM_ROLES.map((r) => {
+                const on = inviteRoles.includes(r.value);
+                const lockedManager = r.value === "manager" && !callerIsOwner;
+                return (
+                  <button
+                    key={r.value}
+                    type="button"
+                    onClick={() =>
+                      setInviteRoles((prev) =>
+                        prev.includes(r.value)
+                          ? prev.filter((x) => x !== r.value)
+                          : [...prev, r.value]
+                      )
+                    }
+                    disabled={lockedManager}
+                    title={lockedManager ? "Only the team owner can assign Manager" : undefined}
+                    aria-pressed={on}
+                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border transition-colors ${
+                      on
+                        ? "bg-court-green text-white border-court-green"
+                        : "bg-white text-gray-500 border-gray-200 hover:border-court-green"
+                    } ${lockedManager ? "opacity-40 cursor-not-allowed" : ""}`}
+                  >
+                    {r.label}
+                  </button>
+                );
+              })}
             </div>
+            <select
+              value={inviteType}
+              onChange={(e) => setInviteType(e.target.value)}
+              disabled={types.length === 0}
+              className="w-full text-xs px-2 py-2 border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-court-green"
+            >
+              <option value="">No member type</option>
+              {types.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
             <button
               onClick={sendInvite}
               disabled={sending || !inviteEmail.trim()}
