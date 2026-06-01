@@ -2,20 +2,25 @@ import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { postPushFanout } from "@/lib/pushFanout";
 import { parseReminderPrefs } from "@/lib/reminderPrefs";
+import { isInReminderWindow } from "@/lib/reminderWindow";
 import { sendReminderEmail } from "@/lib/reminderEmail";
 import { combineDateAndTime } from "@/lib/wallClock";
 
 /**
- * Hourly cron — declared in vercel.json. For each team with reminder
- * preferences set, finds upcoming matches/practices whose target reminder
- * window contains `now`, and notifies non-RSVP'd members via push + email.
+ * Reminder cron — triggered every 15 minutes by the `event-reminders-hourly`
+ * pg_cron job (schedule `0,15,30,45 * * * *`), which net.http_get's this route on
+ * prod with the CRON_SECRET bearer. (vercel.json declares no crons.) For each
+ * team, finds upcoming matches/practices that have reached a reminder lead
+ * time (see isInReminderWindow: never early, ≤~15 min late, with catch-up),
+ * and notifies non-RSVP'd members via push + email per the team's
+ * reminder_prefs.
  *
  * Idempotency: a `reminder_sent` row per (kind, refId, userId, hoursBefore)
- * guards against duplicate sends when the cron fires twice in the same
- * window (deploy + scheduled run, manual trigger, etc.).
+ * guards against duplicate sends across the multiple cron ticks that fall in
+ * a single reminder's grace window — only the first qualifying tick delivers.
  *
- * Auth: Vercel injects `Authorization: Bearer <CRON_SECRET>` on its calls;
- * we reject anything else so the route can't be abused as a relay.
+ * Auth: the pg_cron job sends `Authorization: Bearer <CRON_SECRET>`; we
+ * reject anything else so the route can't be abused as a relay.
  *
  * This is a port of the pre-Supabase Prisma route (deleted in 86f26a5),
  * now using the service-role admin client because cron runs without a
@@ -197,19 +202,9 @@ function isoDate(d: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-// combineDateAndTime moved to src/lib/wallClock.ts so it's unit-
-// testable without the cron route's server-only deps.
-
-/**
- * Hourly cron with a 1-hour-wide window centred on (target - hoursBefore):
- *   [target - hoursBefore - 30min, target - hoursBefore + 30min)
- * The reminder_sent unique guard prevents duplicates if windows overlap.
- */
-function isInReminderWindow(now: Date, target: Date, hoursBefore: number): boolean {
-  const reminderAt = target.getTime() - hoursBefore * 60 * 60 * 1000;
-  const delta = now.getTime() - reminderAt;
-  return delta >= -30 * 60 * 1000 && delta < 30 * 60 * 1000;
-}
+// combineDateAndTime moved to src/lib/wallClock.ts and isInReminderWindow to
+// src/lib/reminderWindow.ts so they're unit-testable without the cron route's
+// server-only deps.
 
 async function listUnrsvpedMembers(
   admin: Admin,

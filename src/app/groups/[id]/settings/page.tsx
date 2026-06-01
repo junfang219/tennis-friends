@@ -1015,7 +1015,7 @@ function NotificationsTab({
     <div className="space-y-5">
       <p className="text-xs text-gray-500">
         Members who haven&apos;t RSVPed get a push + email at each lead time you select.
-        Cron runs hourly — exact dispatch time can drift by up to 30 minutes.
+        Reminders go out within about 15 minutes of each lead time (never early).
       </p>
 
       <section>
