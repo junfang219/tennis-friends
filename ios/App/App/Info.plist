@@ -20,16 +20,14 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
-	<!-- Native Google Sign-In callback. Replace the placeholder with the
-	     "reversed client ID" of the iOS OAuth client from Google Cloud
-	     (it looks like com.googleusercontent.apps.XXXXXXXX-YYYY). Must match
-	     NEXT_PUBLIC_GOOGLE_IOS_CLIENT_ID. -->
+	<!-- Native Google Sign-In callback: the iOS OAuth client's reversed client
+	     ID (mirrors NEXT_PUBLIC_GOOGLE_IOS_CLIENT_ID, project tennisfriends-495618). -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.googleusercontent.apps.PLACEHOLDER_IOS_REVERSED_CLIENT_ID</string>
+				<string>com.googleusercontent.apps.519817188101-opi57qdtuoqa82i13hcs7lvci4l3lj6j</string>
 			</array>
 		</dict>
 	</array>
