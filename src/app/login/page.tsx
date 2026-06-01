@@ -9,6 +9,7 @@ import { authErrorMessage } from "@/lib/supabase/authError";
 import { useIsNative } from "@/hooks/useIsNative";
 import {
   signInWithGoogleNative,
+  signInWithAppleNative,
   destinationAfterNativeAuth,
   googleNativeConfigured,
 } from "@/lib/auth/googleNative";
@@ -65,13 +66,15 @@ export default function SupabaseLoginPage() {
     setBusy(true);
     const supabase = createSupabaseBrowserClient();
 
-    // Native Google can't use the WebView redirect (Google blocks embedded
-    // user agents) — go through the native Google sheet + signInWithIdToken,
-    // then route by onboarding state ourselves (no /auth/callback round-trip).
-    // Apple and all web sign-in keep the standard redirect.
-    if (provider === "google" && isNative) {
+    // In the native shell, OAuth can't use the WebView redirect (Google blocks
+    // embedded user agents; Apple's redirect hits a PKCE-verifier dead end) —
+    // go through the native sign-in sheet + signInWithIdToken, then route by
+    // onboarding state ourselves (no /auth/callback round-trip). Web keeps the
+    // standard redirect.
+    if (isNative && (provider === "google" || provider === "apple")) {
       try {
-        await signInWithGoogleNative(supabase);
+        if (provider === "google") await signInWithGoogleNative(supabase);
+        else await signInWithAppleNative(supabase);
         router.push(await destinationAfterNativeAuth(supabase, redirectTo));
       } catch (err) {
         // A user dismissing the Google sheet lands here too — stay quiet for

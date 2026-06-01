@@ -55,6 +55,10 @@ async function ensureInitialized(): Promise<void> {
       webClientId: GOOGLE_WEB_CLIENT_ID,
       iOSClientId: GOOGLE_IOS_CLIENT_ID,
     },
+    // Enabling Apple here registers the native provider. iOS Sign in with Apple
+    // is driven by the app's entitlement + bundle ID, so no clientId/redirect is
+    // needed (those fields are only for web/Android).
+    apple: {},
   });
   initialized = true;
 }
@@ -116,6 +120,42 @@ export async function signInWithGoogleNative(
 
   const { error } = await supabase.auth.signInWithIdToken({
     provider: "google",
+    token: idToken,
+    nonce: rawNonce,
+  });
+  if (error) throw error;
+}
+
+/**
+ * Run the native Sign in with Apple flow and exchange the ID token for a
+ * Supabase session. Same nonce handling as Google (Apple stores the nonce we
+ * pass verbatim; Supabase hashes the value we give it). Requires the
+ * `com.apple.developer.applesignin` entitlement in the build and the app's
+ * bundle id in Supabase's Apple "Authorized Client IDs". Throws on failure
+ * (including user-cancel); the caller owns the error UI.
+ */
+export async function signInWithAppleNative(
+  supabase: SupabaseClient<Database>
+): Promise<void> {
+  await ensureInitialized();
+  const { SocialLogin } = await import("@capgo/capacitor-social-login");
+
+  const rawNonce = randomNonce();
+  const hashedNonce = await sha256Hex(rawNonce);
+
+  const res = await SocialLogin.login({
+    provider: "apple",
+    options: { scopes: ["email", "name"], nonce: hashedNonce },
+  });
+
+  const result = res?.result as { idToken?: string | null } | undefined;
+  const idToken = result?.idToken;
+  if (!idToken) {
+    throw new Error("Apple sign-in didn't return an ID token.");
+  }
+
+  const { error } = await supabase.auth.signInWithIdToken({
+    provider: "apple",
     token: idToken,
     nonce: rawNonce,
   });
