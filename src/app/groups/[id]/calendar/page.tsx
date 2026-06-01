@@ -13,6 +13,7 @@ type TeamMatch = {
   matchTime: string;
   location: string;
   notes: string;
+  seasonId: string | null;
   availabilities: { userId: string; lineupSlot: string }[];
 };
 
@@ -22,8 +23,14 @@ type PracticeSeries = {
   location: string;
   practiceTime: string;
   notes: string;
+  seasonId: string | null;
   practices: { id: string; practiceDate: string; availabilities: { userId: string; status: string }[] }[];
 };
+
+type Season = { id: string; name: string; isActive: boolean };
+
+// "all" shows every match/practice; otherwise a specific season id.
+const ALL_SEASONS = "all";
 
 type CalendarEvent =
   | { kind: "match"; id: string; date: string; time: string; location: string; notes: string; imIn: boolean }
@@ -74,6 +81,8 @@ export default function TeamCalendarPage() {
   const [teamName, setTeamName] = useState("");
   const [matches, setMatches] = useState<TeamMatch[]>([]);
   const [seriesList, setSeriesList] = useState<PracticeSeries[]>([]);
+  const [seasons, setSeasons] = useState<Season[]>([]);
+  const [seasonFilter, setSeasonFilter] = useState<string>(ALL_SEASONS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -96,13 +105,13 @@ export default function TeamCalendarPage() {
     }
 
     try {
-      // Group, matches, and practice series are independent — one round-trip.
-      const [team, { data: matchRows }, { data: seriesRows }] = await Promise.all([
+      // Group, matches, practice series, and seasons are independent — one round-trip.
+      const [team, { data: matchRows }, { data: seriesRows }, { data: seasonRows }] = await Promise.all([
         getGroup(supabase, groupId),
         supabase
           .from("team_matches")
           .select(
-            `id, match_date, match_time, location, notes,
+            `id, match_date, match_time, location, notes, season_id,
              availabilities ( user_id, lineup_slot )`
           )
           .eq("group_id", groupId)
@@ -110,12 +119,17 @@ export default function TeamCalendarPage() {
         supabase
           .from("practice_series")
           .select(
-            `id, name, practice_time, location, notes,
+            `id, name, practice_time, location, notes, season_id,
              team_practices ( id, practice_date,
                availabilities ( user_id, status ) )`
           )
           .eq("group_id", groupId)
           .order("created_at", { ascending: false }),
+        supabase
+          .from("seasons")
+          .select("id, name, is_active")
+          .eq("group_id", groupId)
+          .order("start_date", { ascending: false }),
       ]);
       if (!team) {
         setError("You are not a member of this team.");
@@ -130,6 +144,7 @@ export default function TeamCalendarPage() {
         match_time: string;
         location: string;
         notes: string;
+        season_id: string | null;
         availabilities: { user_id: string; lineup_slot: string }[];
       };
       type RawSeries = {
@@ -138,6 +153,7 @@ export default function TeamCalendarPage() {
         practice_time: string;
         location: string;
         notes: string;
+        season_id: string | null;
         team_practices: {
           id: string;
           practice_date: string;
@@ -152,6 +168,7 @@ export default function TeamCalendarPage() {
           matchTime: m.match_time,
           location: m.location,
           notes: m.notes,
+          seasonId: m.season_id,
           availabilities: m.availabilities.map((a) => ({
             userId: a.user_id,
             lineupSlot: a.lineup_slot,
@@ -166,6 +183,7 @@ export default function TeamCalendarPage() {
           practiceTime: s.practice_time,
           location: s.location,
           notes: s.notes,
+          seasonId: s.season_id,
           practices: s.team_practices.map((p) => ({
             id: p.id,
             practiceDate: p.practice_date,
@@ -176,6 +194,14 @@ export default function TeamCalendarPage() {
           })),
         }))
       );
+
+      const seasonList = ((seasonRows ?? []) as { id: string; name: string; is_active: boolean }[]).map(
+        (s) => ({ id: s.id, name: s.name, isActive: s.is_active })
+      );
+      setSeasons(seasonList);
+      // Default the view to the current (active) season when there is one.
+      const active = seasonList.find((s) => s.isActive);
+      if (active) setSeasonFilter(active.id);
     } catch {
       setError("Something went wrong.");
     }
@@ -189,8 +215,10 @@ export default function TeamCalendarPage() {
 
   const eventsByDate = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
+    const inSeason = (seasonId: string | null) =>
+      seasonFilter === ALL_SEASONS || seasonId === seasonFilter;
     for (const m of matches) {
-      if (!m.matchDate) continue;
+      if (!m.matchDate || !inSeason(m.seasonId)) continue;
       const imIn = !!myId && m.availabilities.some(
         (a) => a.userId === myId && a.lineupSlot && a.lineupSlot.trim()
       );
@@ -207,6 +235,7 @@ export default function TeamCalendarPage() {
       map.set(m.matchDate, arr);
     }
     for (const series of seriesList) {
+      if (!inSeason(series.seasonId)) continue;
       for (const p of series.practices) {
         if (!p.practiceDate) continue;
         const imIn = !!myId && p.availabilities.some(
@@ -230,7 +259,7 @@ export default function TeamCalendarPage() {
       v.sort((a, b) => (a.time || "").localeCompare(b.time || ""));
     }
     return map;
-  }, [matches, seriesList, myId]);
+  }, [matches, seriesList, myId, seasonFilter]);
 
   // Build the cells for the current month
   const calendarCells = useMemo(() => {
@@ -296,6 +325,26 @@ export default function TeamCalendarPage() {
           <p className="text-xs text-gray-500">Calendar</p>
         </div>
       </div>
+
+      {/* Season filter — defaults to the current (active) season. */}
+      {seasons.length > 0 && (
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-xs font-semibold text-gray-500 shrink-0">Season</span>
+          <select
+            value={seasonFilter}
+            onChange={(e) => setSeasonFilter(e.target.value)}
+            className="flex-1 min-w-0 text-sm px-3 py-2 border border-gray-200 rounded-xl bg-white focus:outline-none focus:border-court-green"
+          >
+            <option value={ALL_SEASONS}>All seasons</option>
+            {seasons.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+                {s.isActive ? " (current)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Month nav */}
       <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-4 mb-4">

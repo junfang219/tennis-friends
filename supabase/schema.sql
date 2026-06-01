@@ -7082,3 +7082,57 @@ DROP FUNCTION IF EXISTS public.has_group_role(uuid, group_role);
 DROP INDEX IF EXISTS public.group_members_group_role_idx;
 ALTER TABLE public.group_members DROP COLUMN role;
 ALTER TABLE public.group_invites DROP COLUMN role;
+
+-- =====================================================================
+-- Migration: wire up Seasons. New team_matches / practice_series / events
+-- are auto-tagged with the host group's active season (season_id), so the
+-- calendar and future per-season views can scope by season.
+-- =====================================================================
+
+CREATE OR REPLACE FUNCTION public.active_season_id(g uuid)
+RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT id FROM public.seasons
+  WHERE group_id = g AND is_active
+  ORDER BY created_at DESC
+  LIMIT 1;
+$$;
+REVOKE EXECUTE ON FUNCTION public.active_season_id(uuid) FROM anon, public;
+
+-- team_matches + practice_series carry group_id directly.
+CREATE OR REPLACE FUNCTION public.set_active_season_from_group()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF NEW.season_id IS NULL THEN
+    NEW.season_id := public.active_season_id(NEW.group_id);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.set_active_season_from_group() FROM anon, authenticated, public;
+
+DROP TRIGGER IF EXISTS team_matches_set_season ON public.team_matches;
+CREATE TRIGGER team_matches_set_season
+  BEFORE INSERT ON public.team_matches
+  FOR EACH ROW EXECUTE FUNCTION public.set_active_season_from_group();
+
+DROP TRIGGER IF EXISTS practice_series_set_season ON public.practice_series;
+CREATE TRIGGER practice_series_set_season
+  BEFORE INSERT ON public.practice_series
+  FOR EACH ROW EXECUTE FUNCTION public.set_active_season_from_group();
+
+-- events are season-scoped only when hosted by a team.
+CREATE OR REPLACE FUNCTION public.set_active_season_from_host_group()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF NEW.season_id IS NULL AND NEW.host_group_id IS NOT NULL THEN
+    NEW.season_id := public.active_season_id(NEW.host_group_id);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.set_active_season_from_host_group() FROM anon, authenticated, public;
+
+DROP TRIGGER IF EXISTS events_set_season ON public.events;
+CREATE TRIGGER events_set_season
+  BEFORE INSERT ON public.events
+  FOR EACH ROW EXECUTE FUNCTION public.set_active_season_from_host_group();

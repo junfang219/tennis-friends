@@ -504,4 +504,54 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
       expect(new Set(aliceRow?.roles)).toEqual(new Set(["manager", "captain"]));
     });
   });
+
+  // New matches/practices are stamped with the team's active season so the
+  // calendar can scope by season.
+  describe("season auto-tagging", () => {
+    let groupId: string;
+
+    afterAll(async () => {
+      if (groupId) await adminClient().from("groups").delete().eq("id", groupId);
+    });
+
+    it("tags new matches/practices with the active season, null when none", async () => {
+      const { data: g } = await alice.client
+        .from("groups")
+        .insert({ name: "Season Tag Test", owner_id: alice.id })
+        .select("id")
+        .single();
+      groupId = g!.id;
+
+      // No active season yet → match stays unseasoned.
+      const m0 = await alice.client
+        .from("team_matches")
+        .insert({ group_id: groupId, match_date: "2026-06-01", match_time: "18:00", location: "Magnuson", opponent: "TBD" })
+        .select("season_id")
+        .single();
+      expect(m0.error).toBeNull();
+      expect(m0.data?.season_id).toBeNull();
+
+      // Activate a season.
+      const { data: season } = await alice.client
+        .from("seasons")
+        .insert({ group_id: groupId, name: "Summer 2026", is_active: true })
+        .select("id")
+        .single();
+
+      // New match + practice series pick up the active season automatically.
+      const m1 = await alice.client
+        .from("team_matches")
+        .insert({ group_id: groupId, match_date: "2026-07-01", match_time: "18:00", location: "Magnuson", opponent: "TBD" })
+        .select("season_id")
+        .single();
+      expect(m1.data?.season_id).toBe(season!.id);
+
+      const ps = await alice.client
+        .from("practice_series")
+        .insert({ group_id: groupId, name: "Drills", practice_time: "19:00", location: "Woodland" })
+        .select("season_id")
+        .single();
+      expect(ps.data?.season_id).toBe(season!.id);
+    });
+  });
 });
