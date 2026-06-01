@@ -59,6 +59,28 @@ async function ensureInitialized(): Promise<void> {
   initialized = true;
 }
 
+// OIDC nonce handling. Supabase verifies the nonce by SHA-256-hashing the value
+// we pass to signInWithIdToken and comparing it to the token's `nonce` claim,
+// while Google's native SDK stores whatever nonce we hand it verbatim. So we
+// hand Google the HASHED nonce (it becomes the claim) and Supabase the RAW
+// nonce (it hashes it back to match). They must be both-present-or-both-absent,
+// so we always send the pair.
+function randomNonce(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(input)
+  );
+  return Array.from(new Uint8Array(digest), (b) =>
+    b.toString(16).padStart(2, "0")
+  ).join("");
+}
+
 /**
  * Run the native Google sign-in flow and exchange the ID token for a Supabase
  * session. Throws on failure (including user-cancel) — the caller owns the
@@ -70,9 +92,19 @@ export async function signInWithGoogleNative(
   await ensureInitialized();
   const { SocialLogin } = await import("@capgo/capacitor-social-login");
 
+  const rawNonce = randomNonce();
+  const hashedNonce = await sha256Hex(rawNonce);
+
   const res = await SocialLogin.login({
     provider: "google",
-    options: { scopes: ["email", "profile"] },
+    options: {
+      scopes: ["email", "profile"],
+      nonce: hashedNonce,
+      // Force a fresh sign-in. Otherwise the plugin silently restores a cached
+      // Google session whose ID token predates this nonce, which Supabase then
+      // rejects as a nonce mismatch.
+      forcePrompt: true,
+    },
   });
 
   // The Google login result carries the OIDC ID token we trade for a session.
@@ -82,13 +114,10 @@ export async function signInWithGoogleNative(
     throw new Error("Google sign-in didn't return an ID token.");
   }
 
-  // No nonce: the native SDK isn't issued one here, so the ID token has no
-  // nonce claim and Supabase verifies it without one. (If Supabase ever
-  // rejects on a nonce mismatch, generate a raw nonce, pass it to
-  // SocialLogin.login, and forward the same raw value here.)
   const { error } = await supabase.auth.signInWithIdToken({
     provider: "google",
     token: idToken,
+    nonce: rawNonce,
   });
   if (error) throw error;
 }
