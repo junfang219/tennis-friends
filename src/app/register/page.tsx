@@ -8,6 +8,8 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { emailExists, isExistingEmailSignUp } from "@/lib/supabase/signup";
 import { authErrorMessage } from "@/lib/supabase/authError";
 import { useIsNative } from "@/hooks/useIsNative";
+import { useIsEmbeddedBrowser } from "@/hooks/useIsEmbeddedBrowser";
+import { EmbeddedBrowserNotice } from "@/components/EmbeddedBrowserNotice";
 import {
   signInWithGoogleNative,
   signInWithAppleNative,
@@ -46,7 +48,11 @@ export default function SupabaseRegisterPage() {
   // (googleNativeConfigured). Until then the button stays hidden on native so we
   // never show a guaranteed-to-fail button. (Web always shows it.)
   const isNative = useIsNative();
-  const showGoogle = !isNative || googleNativeConfigured;
+  // Detect in-app browsers (Instagram, Facebook, etc.) where Google's OAuth
+  // flow fails with `disallowed_useragent`. We hide the Google button there
+  // and show a banner pointing the user to Safari or email signup.
+  const embeddedBrowser = useIsEmbeddedBrowser();
+  const showGoogle = (!isNative || googleNativeConfigured) && !embeddedBrowser;
   const [step, setStep] = useState<Step>("choose");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -248,6 +254,8 @@ export default function SupabaseRegisterPage() {
   return (
     <main className="mx-auto max-w-md p-6 pt-16">
       <h1 className="text-2xl font-semibold text-gray-900 mb-6">Create account</h1>
+
+      {embeddedBrowser && <EmbeddedBrowserNotice appName={embeddedBrowser.app} />}
 
       <div className="space-y-2">
         {showGoogle && (
