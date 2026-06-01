@@ -26,7 +26,7 @@ import {
 } from "@/lib/supabase/queries";
 import { toCommentCamel } from "@/lib/supabase/adapters";
 import { errorMessage } from "@/lib/errorMessage";
-import { buildLfpShare, shareLfp, type ShareOutcome } from "@/lib/lfpShare";
+import { buildLfpShare, shareLfp } from "@/lib/lfpShare";
 import { computeCourtFacilityId } from "@/lib/facilities";
 import CourtLocationPicker from "./CourtLocationPicker";
 
@@ -2251,15 +2251,19 @@ function SendToModal({
         skillMax: post.skillMax,
         authorName: post.author?.name,
       });
-      const outcome: ShareOutcome = await shareLfp(payload);
-      if (outcome === "shared") {
+      const result = await shareLfp(payload);
+      if (result.outcome === "shared") {
         onClose();
         return;
       }
-      if (outcome === "copied") {
+      if (result.outcome === "copied") {
         setShareNotice("Link copied to clipboard — paste it anywhere.");
-      } else if (outcome === "failed") {
-        setSendError("Couldn't open the share sheet. Try again or copy the link manually.");
+      } else if (result.outcome === "failed") {
+        // Surface the underlying error so a real-device failure is debuggable
+        // without needing Safari Web Inspector. Falls back to the generic
+        // message if nothing was captured (shouldn't happen in practice).
+        const detail = result.error ? `: ${result.error}` : "";
+        setSendError(`Couldn't open the share sheet${detail}`);
       }
       // "cancelled" → silent no-op
     } finally {

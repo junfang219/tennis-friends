@@ -5,6 +5,7 @@ import BottomNav from "@/components/BottomNav";
 import PushRegistrar from "@/components/PushRegistrar";
 import KeyboardInit from "@/components/KeyboardInit";
 import LastActiveHeartbeat from "@/components/LastActiveHeartbeat";
+import AppUrlOpenListener from "@/components/AppUrlOpenListener";
 
 // SessionProvider is gone: Supabase's auth state is hydrated per-component
 // via useSupabaseUser / the nextauth-compat shim. Court-availability reports
@@ -41,6 +42,7 @@ export default function RootLayout({
         <PushRegistrar />
         <KeyboardInit />
         <LastActiveHeartbeat />
+        <AppUrlOpenListener />
         <Navbar />
         <main className="flex-1">{children}</main>
         <BottomNav />

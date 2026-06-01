@@ -99,8 +99,60 @@ export function canNativeShare(): boolean {
 }
 
 export type ShareOutcome = "shared" | "copied" | "cancelled" | "failed";
+export type ShareResult = { outcome: ShareOutcome; error?: string };
 
-export async function shareLfp(payload: LfpSharePayload): Promise<ShareOutcome> {
+function errMsg(err: unknown): string {
+  if (err instanceof Error) return err.message || err.name;
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+export async function shareLfp(payload: LfpSharePayload): Promise<ShareResult> {
+  // Native Capacitor first. Required on iOS because the dev server (and any
+  // non-HTTPS context) blocks navigator.share / navigator.clipboard — those
+  // are both secure-context-only Web APIs. The Capacitor Share plugin goes
+  // through the native bridge and has no such restriction, so it works in
+  // both dev (mDNS over HTTP) and prod (HTTPS) identically.
+  let lastError: string | undefined;
+  try {
+    const core = await import("@capacitor/core");
+    if (core.Capacitor.isNativePlatform()) {
+      // If the JS thinks Share is missing, the native plugin pod isn't
+      // registered — almost always means `npx cap sync ios` wasn't run after
+      // installing @capacitor/share, or Xcode didn't refresh the workspace.
+      if (!core.Capacitor.isPluginAvailable("Share")) {
+        const msg = "Share plugin not registered. Run `npx cap sync ios` and rebuild.";
+        console.error("[lfpShare]", msg);
+        return { outcome: "failed", error: msg };
+      }
+      try {
+        const { Share } = await import("@capacitor/share");
+        await Share.share({
+          title: payload.title,
+          text: payload.text,
+          url: payload.url,
+        });
+        return { outcome: "shared" };
+      } catch (err) {
+        // iOS rejects with "Share canceled" when the user dismisses the
+        // sheet; treat that as a quiet cancel, not a failure.
+        const msg = errMsg(err);
+        console.error("[lfpShare] Share.share threw:", msg, err);
+        if (/cancel/i.test(msg)) return { outcome: "cancelled" };
+        lastError = msg;
+        // Any other native error falls through to the web paths so we still
+        // have a chance to surface something useful — but if those also fail,
+        // we report this native error since it's the most actionable.
+      }
+    }
+  } catch (err) {
+    console.error("[lfpShare] @capacitor/core import failed:", errMsg(err));
+  }
+
   if (canNativeShare()) {
     try {
       await navigator.share({
@@ -108,9 +160,14 @@ export async function shareLfp(payload: LfpSharePayload): Promise<ShareOutcome> 
         text: payload.text,
         url: payload.url,
       });
-      return "shared";
+      return { outcome: "shared" };
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return "cancelled";
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return { outcome: "cancelled" };
+      }
+      const msg = errMsg(err);
+      console.error("[lfpShare] navigator.share threw:", msg, err);
+      lastError = lastError ?? msg;
       // Fall through to clipboard if the platform rejected the payload.
     }
   }
@@ -118,11 +175,13 @@ export async function shareLfp(payload: LfpSharePayload): Promise<ShareOutcome> 
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(`${payload.text}\n${payload.url}`);
-      return "copied";
-    } catch {
-      return "failed";
+      return { outcome: "copied" };
+    } catch (err) {
+      const msg = errMsg(err);
+      console.error("[lfpShare] clipboard.writeText threw:", msg, err);
+      lastError = lastError ?? msg;
     }
   }
 
-  return "failed";
+  return { outcome: "failed", error: lastError };
 }
