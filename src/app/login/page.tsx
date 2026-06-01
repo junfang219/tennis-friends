@@ -7,6 +7,11 @@ import { FormEvent, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { authErrorMessage } from "@/lib/supabase/authError";
 import { useIsNative } from "@/hooks/useIsNative";
+import {
+  signInWithGoogleNative,
+  destinationAfterNativeAuth,
+  googleNativeConfigured,
+} from "@/lib/auth/googleNative";
 
 // Login mirrors /register: social-first, email/password collapsed
 // behind a toggle. Same rationale — OAuth is instant; email is the
@@ -15,11 +20,13 @@ import { useIsNative } from "@/hooks/useIsNative";
 export default function SupabaseLoginPage() {
   const router = useRouter();
   const search = useSearchParams();
-  // Google blocks OAuth inside embedded WebViews (disallowed_useragent), so the
-  // "Continue with Google" redirect is a dead end in the Capacitor iOS/Android
-  // shell. Hide it on native; Apple sign-in + email/password still work. (Web
-  // is unchanged.)
+  // On the web, Google sign-in uses the standard OAuth redirect. In the native
+  // shell that redirect can't run (Google blocks embedded WebViews), so we use
+  // native Google Sign-In instead — but only once its client IDs are configured
+  // (googleNativeConfigured). Until then the button stays hidden on native so we
+  // never show a guaranteed-to-fail button. (Web always shows it.)
   const isNative = useIsNative();
+  const showGoogle = !isNative || googleNativeConfigured;
   const redirectTo = search.get("redirectTo") ?? "/";
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [email, setEmail] = useState("");
@@ -57,6 +64,26 @@ export default function SupabaseLoginPage() {
     setError(null);
     setBusy(true);
     const supabase = createSupabaseBrowserClient();
+
+    // Native Google can't use the WebView redirect (Google blocks embedded
+    // user agents) — go through the native Google sheet + signInWithIdToken,
+    // then route by onboarding state ourselves (no /auth/callback round-trip).
+    // Apple and all web sign-in keep the standard redirect.
+    if (provider === "google" && isNative) {
+      try {
+        await signInWithGoogleNative(supabase);
+        router.push(await destinationAfterNativeAuth(supabase, redirectTo));
+      } catch (err) {
+        // A user dismissing the Google sheet lands here too — stay quiet for
+        // cancels, surface everything else.
+        if (!/cancel/i.test(err instanceof Error ? err.message : "")) {
+          setError(authErrorMessage(err));
+        }
+        setBusy(false);
+      }
+      return;
+    }
+
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
@@ -74,7 +101,7 @@ export default function SupabaseLoginPage() {
       <h1 className="text-2xl font-semibold text-gray-900 mb-6">Log in</h1>
 
       <div className="space-y-2">
-        {!isNative && (
+        {showGoogle && (
           <button
             type="button"
             onClick={() => onOAuth("google")}

@@ -28,6 +28,7 @@
     "@capacitor/push-notifications": "^8.0.4",
     "@capacitor/screen-orientation": "^8.0.1",
     "@capacitor/share": "^8.0.1",
+    "@capgo/capacitor-social-login": "^8.3.22",
     "@sentry/nextjs": "^10.53.1",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.106.1",
