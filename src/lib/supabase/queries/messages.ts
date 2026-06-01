@@ -38,7 +38,19 @@ export async function listDirectMessages(
   // every chat open. See getMyIdFast for the trust-boundary rationale.
   const me = await getMyIdFast(supabase);
   if (!me) return [];
-  const { data, error } = await supabase
+
+  // Per-user "Clear chat history" soft-clear. direct_message_reads.cleared_at
+  // hides everything older than that timestamp from THIS user's view; the
+  // rows stay in the table so the other party still sees them.
+  const { data: read } = await supabase
+    .from("direct_message_reads")
+    .select("cleared_at")
+    .eq("user_id", me)
+    .eq("other_id", otherId)
+    .maybeSingle();
+  const clearedAt = read?.cleared_at ?? null;
+
+  let query = supabase
     .from("messages")
     .select(MESSAGE_COLUMNS)
     .or(
@@ -46,6 +58,9 @@ export async function listDirectMessages(
     )
     .order("created_at", { ascending: true })
     .limit(opts.limit ?? 200);
+  if (clearedAt) query = query.gt("created_at", clearedAt);
+
+  const { data, error } = await query;
   if (error) throw error;
   return (data ?? []) as DirectMessage[];
 }
@@ -122,14 +137,17 @@ export async function listDmThreads(
       .limit(500),
     supabase
       .from("direct_message_reads")
-      .select("other_id, last_read_at")
+      .select("other_id, last_read_at, cleared_at")
       .eq("user_id", me),
   ]);
   if (msgsRes.error) throw msgsRes.error;
   if (readsRes.error) throw readsRes.error;
 
   const readMap = new Map(
-    (readsRes.data ?? []).map((r) => [r.other_id, r.last_read_at])
+    (readsRes.data ?? []).map((r) => [
+      r.other_id,
+      { lastReadAt: r.last_read_at, clearedAt: r.cleared_at ?? null },
+    ])
   );
 
   type MessageWithProfiles = DirectMessage & {
@@ -147,10 +165,19 @@ export async function listDmThreads(
 
   const threads: DMThread[] = [];
   for (const [partnerId, msgs] of byPartner) {
-    msgs.sort((a, b) => b.created_at.localeCompare(a.created_at));
-    const last = msgs[0];
-    const lastReadAt = readMap.get(partnerId) ?? "1970-01-01T00:00:00Z";
-    const unread = msgs.filter(
+    const state = readMap.get(partnerId);
+    // Per-user "Clear chat history" soft-clear: drop everything older than
+    // cleared_at from the inbox preview. A thread with no surviving messages
+    // disappears entirely until a new message arrives.
+    const clearedAt = state?.clearedAt ?? null;
+    const visible = clearedAt
+      ? msgs.filter((m) => m.created_at > clearedAt)
+      : msgs;
+    if (visible.length === 0) continue;
+    visible.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const last = visible[0];
+    const lastReadAt = state?.lastReadAt ?? "1970-01-01T00:00:00Z";
+    const unread = visible.filter(
       (m) => m.receiver_id === me && m.created_at > lastReadAt
     ).length;
     threads.push({

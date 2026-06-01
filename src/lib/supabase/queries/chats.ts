@@ -279,10 +279,23 @@ export async function getChatBundle(
     messages: ChatMessage[];
   };
   const { participants, messages, ...chatFields } = row;
+
+  // Per-user "Clear chat history" soft-clear: hide everything older than
+  // the current user's chat_participants.cleared_at. Use the participant
+  // row we already fetched — no extra query.
+  const me = await getMyIdFast(supabase);
+  const myParticipant = me
+    ? (participants ?? []).find((p) => p.user_id === me)
+    : undefined;
+  const clearedAt = myParticipant?.cleared_at ?? null;
+  const visibleMessages = clearedAt
+    ? (messages ?? []).filter((m) => m.created_at > clearedAt)
+    : (messages ?? []);
+
   return {
     chat: chatFields as Chat,
     participants: participants ?? [],
-    messages: (messages ?? []).slice().reverse(),
+    messages: visibleMessages.slice().reverse(),
   };
 }
 
@@ -291,7 +304,13 @@ export async function listChatMessages(
   chatId: string,
   opts: { limit?: number } = {}
 ): Promise<ChatMessage[]> {
-  const { data, error } = await supabase
+  const me = await getMyIdFast(supabase);
+  // Per-user "Clear chat history" soft-clear via chat_participants.cleared_at.
+  // We still let unauthenticated paths fall through (filter is only applied
+  // when we can read the participant row), since RLS would block anyway.
+  const clearedAt = me ? await readChatClearedAt(supabase, chatId, me) : null;
+
+  let query = supabase
     .from("chat_messages")
     .select(
       `id, chat_id, sender_id, content, media_url, media_type, created_at,
@@ -300,8 +319,26 @@ export async function listChatMessages(
     .eq("chat_id", chatId)
     .order("created_at", { ascending: false })
     .limit(opts.limit ?? 100);
+  if (clearedAt) query = query.gt("created_at", clearedAt);
+
+  const { data, error } = await query;
   if (error) throw error;
   return ((data ?? []) as unknown as ChatMessage[]).reverse();
+}
+
+/** Read the current user's per-chat cleared_at (or null if no row). */
+async function readChatClearedAt(
+  supabase: SupabaseClient<Database>,
+  chatId: string,
+  userId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("chat_participants")
+    .select("cleared_at")
+    .eq("chat_id", chatId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  return data?.cleared_at ?? null;
 }
 
 export async function sendChatMessage(
