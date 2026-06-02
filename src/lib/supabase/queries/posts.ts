@@ -30,7 +30,12 @@ export interface PostRow {
   id: string;
   author_id: string;
   content: string;
-  post_type: "regular" | "find_players" | "propose_team" | "event";
+  post_type: "regular" | "find_players" | "propose_team" | "event" | "note";
+  // 'friends' (default) follows the can_see_post() friends/targets rules.
+  // 'private' is author-only and is the default for Playbook entries
+  // (post_type='note'). See can_see_post() — private short-circuits to
+  // false for everyone but the author, with no fall-through.
+  visibility: "friends" | "private";
   play_date: string;
   play_time: string;
   play_duration: number;
@@ -117,7 +122,7 @@ export interface Comment {
 }
 
 const POST_COLUMNS = `
-  id, author_id, content, post_type,
+  id, author_id, content, post_type, visibility,
   play_date, play_time, play_duration, court_location, court_facility_id, game_type,
   players_needed, players_confirmed, skill_min, skill_max, court_booked,
   is_complete, comments_disabled, manual_players, team_group_id,
@@ -140,6 +145,7 @@ export async function listFeed(
   let q = supabase
     .from("posts")
     .select(POST_COLUMNS)
+    .neq("post_type", "note")
     .order("created_at", { ascending: false })
     .limit(opts.limit ?? 50);
   if (opts.before) q = q.lt("created_at", opts.before);
@@ -167,6 +173,7 @@ export async function listGroupFeed(
     .select(`${POST_COLUMNS}, post_targets!inner ( group_id, target_kind )`)
     .eq("post_targets.target_kind", "group")
     .eq("post_targets.group_id", groupId)
+    .neq("post_type", "note")
     .order("created_at", { ascending: false })
     .limit(opts.limit ?? 50);
   if (opts.before) q = q.lt("created_at", opts.before);
@@ -202,8 +209,33 @@ export async function listPostsByAuthor(
     .from("posts")
     .select(POST_COLUMNS)
     .eq("author_id", authorId)
+    .neq("post_type", "note")
     .order("created_at", { ascending: false })
     .limit(opts.limit ?? 50);
+  if (error) throw error;
+  return enrichPosts(supabase, (data ?? []) as unknown as PostRow[]);
+}
+
+/**
+ * Fetch a user's Playbook entries (post_type='note'). RLS does the
+ * private/friends gating: own profile sees both private and friends entries,
+ * a friend sees only visibility='friends', and a stranger sees nothing.
+ * Pinned entries sort first, then by newest. Mirrors listPostsByAuthor's
+ * enrichment so PlaybookEntryCard can lean on the same author/media shape.
+ */
+export async function listPlaybookEntries(
+  supabase: SupabaseClient<Database>,
+  authorId: string,
+  opts: { limit?: number } = {}
+): Promise<Post[]> {
+  const { data, error } = await supabase
+    .from("posts")
+    .select(POST_COLUMNS)
+    .eq("author_id", authorId)
+    .eq("post_type", "note")
+    .order("pinned_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(opts.limit ?? 100);
   if (error) throw error;
   return enrichPosts(supabase, (data ?? []) as unknown as PostRow[]);
 }
@@ -433,6 +465,57 @@ export async function deletePost(
 ): Promise<void> {
   const { error } = await supabase.from("posts").delete().eq("id", id);
   if (error) throw error;
+}
+
+/**
+ * Update a Playbook entry: text, visibility, pin/unpin, and/or its attached
+ * media. When `media` is provided the photo set is replaced wholesale —
+ * existing photos rows for the post are deleted and the new array is
+ * re-inserted with `order` matching array index. Items that are unchanged
+ * keep their URL (storage objects are not re-uploaded) but get a new row id;
+ * this is intentional simplicity over a diff-based update.
+ *
+ * RLS (posts_update_author) gates the posts UPDATE to the author. The
+ * photos table has its own ON DELETE CASCADE + RLS that follows the parent
+ * post, so the wipe-and-reinsert respects authorship.
+ */
+export async function updatePlaybookEntry(
+  supabase: SupabaseClient<Database>,
+  id: string,
+  patch: {
+    content?: string;
+    visibility?: "friends" | "private";
+    pinned_at?: string | null;
+    media?: PostMediaInput[];
+  }
+): Promise<Post> {
+  const { media, ...rest } = patch;
+
+  if (Object.keys(rest).length > 0) {
+    const { error } = await supabase.from("posts").update(rest).eq("id", id);
+    if (error) throw error;
+  }
+
+  if (media !== undefined) {
+    const { error: delErr } = await supabase.from("photos").delete().eq("post_id", id);
+    if (delErr) throw delErr;
+    if (media.length > 0) {
+      const rows = media.map((m, i) => ({
+        post_id: id,
+        url: m.url,
+        order: i,
+        kind: m.kind,
+        thumbnail_url: m.thumbnailUrl ?? "",
+        duration_ms: m.durationMs ?? null,
+      }));
+      const { error: insErr } = await supabase.from("photos").insert(rows);
+      if (insErr) throw insErr;
+    }
+  }
+
+  const fetched = await getPost(supabase, id);
+  if (!fetched) throw new Error("Entry vanished after update");
+  return fetched;
 }
 
 export async function likePost(

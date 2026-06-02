@@ -118,7 +118,11 @@ export interface PostCamel {
   id: string;
   authorId: string;
   content: string;
-  postType: "regular" | "find_players" | "propose_team" | "event";
+  postType: "regular" | "find_players" | "propose_team" | "event" | "note";
+  // 'friends' (default) follows can_see_post's friends/targets rules.
+  // 'private' is author-only and is what Playbook entries default to.
+  // PlaybookEntryCard reads this to render the 🔒 / 👥 badge.
+  visibility: "friends" | "private";
   playDate: string;
   playTime: string;
   playDuration: number;
@@ -179,6 +183,7 @@ export function toPostCamel(p: Post): PostCamel {
     authorId: p.author_id,
     content: p.content,
     postType: p.post_type,
+    visibility: p.visibility,
     playDate: p.play_date,
     playTime: p.play_time,
     playDuration: p.play_duration,

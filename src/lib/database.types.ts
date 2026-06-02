@@ -2173,6 +2173,7 @@ export type Database = {
           skill_max: number | null
           skill_min: number | null
           team_group_id: string
+          visibility: string
         }
         Insert: {
           author_id: string
@@ -2203,6 +2204,7 @@ export type Database = {
           skill_max?: number | null
           skill_min?: number | null
           team_group_id?: string
+          visibility?: string
         }
         Update: {
           author_id?: string
@@ -2233,6 +2235,7 @@ export type Database = {
           skill_max?: number | null
           skill_min?: number | null
           team_group_id?: string
+          visibility?: string
         }
         Relationships: [
           {
@@ -2847,7 +2850,7 @@ export type Database = {
         | "withdrawn"
         | "removed"
       post_target_kind: "group" | "friend_group"
-      post_type: "regular" | "find_players" | "propose_team" | "event"
+      post_type: "regular" | "find_players" | "propose_team" | "event" | "note"
       reaction_target: "dm" | "group" | "chat"
       team_listing_format: "singles" | "doubles" | "mixed_doubles" | "any"
       team_listing_status: "open" | "filled" | "closed"
@@ -3025,7 +3028,7 @@ export const Constants = {
         "removed",
       ],
       post_target_kind: ["group", "friend_group"],
-      post_type: ["regular", "find_players", "propose_team", "event"],
+      post_type: ["regular", "find_players", "propose_team", "event", "note"],
       reaction_target: ["dm", "group", "chat"],
       team_listing_format: ["singles", "doubles", "mixed_doubles", "any"],
       team_listing_status: ["open", "filled", "closed"],

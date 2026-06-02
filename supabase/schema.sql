@@ -72,7 +72,9 @@ create type public.group_role                as enum ('owner', 'manager', 'capta
 create type public.group_invite_status       as enum ('pending', 'accepted', 'cancelled', 'expired');
 create type public.team_listing_status       as enum ('open', 'filled', 'closed');
 create type public.team_listing_format       as enum ('singles', 'doubles', 'mixed_doubles', 'any');
-create type public.post_type                 as enum ('regular', 'find_players', 'propose_team', 'event');
+-- 'note' is the Playbook entry: a personal journal entry that never appears
+-- in the home feed and is gated by posts.visibility (private | friends).
+create type public.post_type                 as enum ('regular', 'find_players', 'propose_team', 'event', 'note');
 create type public.play_request_status       as enum ('pending', 'approved', 'rejected', 'withdrawn', 'removed');
 create type public.event_status              as enum ('open', 'closed', 'active', 'completed', 'cancelled');
 create type public.event_visibility          as enum ('public', 'group');
@@ -515,12 +517,23 @@ create table public.posts (
   ) stored,
   event_id            uuid references public.events (id) on delete set null,
   pinned_at           timestamptz,
+  -- Per-post audience gate evaluated by can_see_post. 'friends' (default)
+  -- means the existing friends/targets/broadcast rules apply. 'private' is
+  -- author-only and is what Playbook entries (post_type='note') ship as,
+  -- short-circuiting can_see_post for non-authors with no fall-through.
+  visibility          text         not null default 'friends'
+                       check (visibility in ('friends', 'private')),
   created_at          timestamptz not null default now()
 );
 create index posts_author_created_idx     on public.posts (author_id, created_at desc);
 create index posts_event_idx              on public.posts (event_id) where event_id is not null;
 create index posts_broadcast_created_idx  on public.posts (created_at desc) where is_broadcast = true;
 create index posts_broadcast_location_idx on public.posts using gist (broadcast_location) where is_broadcast = true and broadcast_location is not null;
+-- Playbook tab query: one user's notes, pinned first, then newest.
+-- Partial because notes are a small slice of the posts table.
+create index posts_author_notes_created_idx
+  on public.posts (author_id, pinned_at desc nulls last, created_at desc)
+  where post_type = 'note';
 
 -- Ordered media attached to a post — both photos and videos. The table
 -- name is historical (it began as image-only); `kind` distinguishes the
@@ -554,6 +567,30 @@ create table public.post_friend_groups (
   constraint post_friend_groups_unique unique (post_id, friend_group_id)
 );
 create index post_friend_groups_fg_idx on public.post_friend_groups (friend_group_id);
+
+-- Playbook entries (post_type = 'note') can never be cross-posted to a
+-- group or friend_group: a private journal entry on a team page would be
+-- incoherent. Enforced at the targeting tables with a single shared
+-- guard.
+create or replace function public.guard_no_target_for_notes()
+returns trigger
+language plpgsql
+as $$
+begin
+  if (select post_type from public.posts where id = new.post_id) = 'note' then
+    raise exception 'Playbook entries (post_type = ''note'') cannot target groups or friend_groups';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger post_groups_no_notes_insert
+  before insert on public.post_groups
+  for each row execute function public.guard_no_target_for_notes();
+
+create trigger post_friend_groups_no_notes_insert
+  before insert on public.post_friend_groups
+  for each row execute function public.guard_no_target_for_notes();
 
 create table public.likes (
   id         uuid primary key default gen_random_uuid(),
@@ -1296,6 +1333,13 @@ begin
 
   if p.author_id = viewer then
     return true;
+  end if;
+
+  -- Playbook entries (post_type = 'note') default to private. Author
+  -- returned true above; for everyone else, private means hidden with no
+  -- fall-through to friend / target / broadcast / event visibility.
+  if p.visibility = 'private' then
+    return false;
   end if;
 
   -- Block check: bidirectional.

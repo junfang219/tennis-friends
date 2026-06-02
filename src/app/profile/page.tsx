@@ -10,9 +10,10 @@ import {
   deleteHighlight,
   listHighlights,
   listPostsByAuthor,
+  listPlaybookEntries,
   countUserFriends,
 } from "@/lib/supabase/queries";
-import { toPostCamel, type PostMediaCamel } from "@/lib/supabase/adapters";
+import { toPostCamel, type PostMediaCamel, type PostCamel } from "@/lib/supabase/adapters";
 import { categorizePosts } from "@/lib/postCategorize";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { useRouter } from "next/navigation";
@@ -22,6 +23,8 @@ import Avatar from "@/components/Avatar";
 import CoverEditMenu from "@/components/CoverEditMenu";
 import PostCard from "@/components/PostCard";
 import PostComposer from "@/components/PostComposer";
+import PlaybookComposer from "@/components/PlaybookComposer";
+import PlaybookEntryCard from "@/components/PlaybookEntryCard";
 import { AGE_LABELS, GENDER_LABELS, formatRating } from "@/lib/profileLabels";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 import { getCached } from "@/lib/queryCache";
@@ -88,6 +91,7 @@ type Profile = {
   highlights: Highlight[];
   friendCount: number;
   posts: Post[];
+  playbookEntries: PostCamel[];
 };
 
 export default function ProfilePage() {
@@ -99,7 +103,9 @@ export default function ProfilePage() {
     () => getCached<Profile>(PROFILE_CACHE_KEY) ?? null,
   );
   const [editing, setEditing] = useState(false);
-  const [tab, setTab] = useState<"find_players" | "posts">("find_players");
+  const [tab, setTab] = useState<"find_players" | "posts" | "playbook">("find_players");
+  const [playbookOpen, setPlaybookOpen] = useState(false);
+  const [editingEntry, setEditingEntry] = useState<PostCamel | null>(null);
   const [form, setForm] = useState(() => {
     const cached = getCached<Profile>(PROFILE_CACHE_KEY);
     const raw = (cached as unknown as { __rawProfile?: {
@@ -200,10 +206,11 @@ export default function ProfilePage() {
     if (!p) return null;
     // Hydrate posts/highlights/friend count in parallel; they're additive
     // and the page renders fine without any of them.
-    const [postsRes, highlightsRes, friendCountRes] = await Promise.allSettled([
+    const [postsRes, highlightsRes, friendCountRes, playbookRes] = await Promise.allSettled([
       listPostsByAuthor(supabase, p.id),
       listHighlights(supabase, p.id),
       countUserFriends(supabase, p.id),
+      listPlaybookEntries(supabase, p.id),
     ]);
     const assembled: Profile = {
       id: p.id,
@@ -242,6 +249,10 @@ export default function ProfilePage() {
       posts:
         postsRes.status === "fulfilled"
           ? postsRes.value.map((r) => toPostCamel(r) as unknown as Post)
+          : [],
+      playbookEntries:
+        playbookRes.status === "fulfilled"
+          ? playbookRes.value.map((r) => toPostCamel(r))
           : [],
     };
     // Stash form-only fields the local `form` state needs (venmo, paypal,
@@ -1176,9 +1187,10 @@ export default function ProfilePage() {
         )}
 
         {/* Posts section with tabs */}
-        {!editing && profile.posts && (() => {
+        {!editing && (() => {
           const { findPlayers: findPlayersPosts, media: mediaPosts } =
-            categorizePosts(profile.posts);
+            categorizePosts(profile.posts ?? []);
+          const playbookEntries = profile.playbookEntries ?? [];
 
           const filtered = tab === "find_players" ? findPlayersPosts : mediaPosts;
 
@@ -1211,10 +1223,83 @@ export default function ProfilePage() {
                     <polyline points="21,15 16,10 5,21" />
                   </svg>
                 </button>
+                <button
+                  onClick={() => setTab("playbook")}
+                  title="Playbook"
+                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl transition-all ${
+                    tab === "playbook" ? "bg-court-green text-white shadow-md" : "text-gray-400 hover:text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={tab === "playbook" ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v18H6.5A2.5 2.5 0 0 0 4 22.5V4.5z" />
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                  </svg>
+                </button>
               </div>
 
-              {/* Filtered posts */}
-              {filtered.length === 0 ? (
+              {tab === "playbook" ? (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => {
+                      setEditingEntry(null);
+                      setPlaybookOpen(true);
+                    }}
+                    className="w-full px-4 py-3 rounded-2xl border-2 border-dashed border-court-green-pale/60 text-court-green-soft hover:bg-court-green-pale/10 hover:border-court-green-pale text-sm font-medium flex items-center justify-center gap-2 transition-colors"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                    New entry
+                  </button>
+                  {playbookEntries.length === 0 ? (
+                    <div className="text-center py-10 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
+                      <div className="w-12 h-12 bg-ball-yellow/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="text-court-green-soft" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v18H6.5A2.5 2.5 0 0 0 4 22.5V4.5z" />
+                          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                        </svg>
+                      </div>
+                      <p className="text-gray-500 text-sm px-6">
+                        Your Playbook is empty. Capture serve cues, match notes, or reminders to yourself.
+                      </p>
+                    </div>
+                  ) : (
+                    playbookEntries.map((e) => (
+                      <PlaybookEntryCard
+                        key={e.id}
+                        entry={e}
+                        isOwner
+                        onEdit={(entry) => {
+                          setEditingEntry(entry);
+                          setPlaybookOpen(true);
+                        }}
+                        onChanged={(updated) =>
+                          setProfile((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  playbookEntries: (prev.playbookEntries ?? []).map((x) =>
+                                    x.id === updated.id ? updated : x,
+                                  ),
+                                }
+                              : prev,
+                          )
+                        }
+                        onDeleted={(id) =>
+                          setProfile((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  playbookEntries: (prev.playbookEntries ?? []).filter((x) => x.id !== id),
+                                }
+                              : prev,
+                          )
+                        }
+                      />
+                    ))
+                  )}
+                </div>
+              ) : filtered.length === 0 ? (
                 <div className="text-center py-12 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
                   <div className="w-12 h-12 bg-ball-yellow/20 rounded-full flex items-center justify-center mx-auto mb-3">
                     {tab === "find_players" && (
@@ -1308,6 +1393,26 @@ export default function ProfilePage() {
         })()}
 
       </div>
+
+      <PlaybookComposer
+        isOpen={playbookOpen}
+        entry={editingEntry}
+        onClose={() => {
+          setPlaybookOpen(false);
+          setEditingEntry(null);
+        }}
+        onSaved={(saved) => {
+          setProfile((prev) => {
+            if (!prev) return prev;
+            const existing = prev.playbookEntries ?? [];
+            const idx = existing.findIndex((x) => x.id === saved.id);
+            const next = idx >= 0
+              ? existing.map((x) => (x.id === saved.id ? saved : x))
+              : [saved, ...existing];
+            return { ...prev, playbookEntries: next };
+          });
+        }}
+      />
     </div>
   );
 }

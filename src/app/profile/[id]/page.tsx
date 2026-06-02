@@ -10,14 +10,16 @@ import {
   getProfile,
   getFriendshipWith,
   listPostsByAuthor,
+  listPlaybookEntries,
   listHighlights,
   countUserFriends,
 } from "@/lib/supabase/queries";
-import { toPostCamel, type PostMediaCamel } from "@/lib/supabase/adapters";
+import { toPostCamel, type PostMediaCamel, type PostCamel } from "@/lib/supabase/adapters";
 import { categorizePosts } from "@/lib/postCategorize";
 import Avatar from "@/components/Avatar";
 import FriendRequestButton from "@/components/FriendRequestButton";
 import PostCard from "@/components/PostCard";
+import PlaybookEntryCard from "@/components/PlaybookEntryCard";
 import { AGE_LABELS, GENDER_LABELS, formatRating } from "@/lib/profileLabels";
 
 type Highlight = {
@@ -79,6 +81,7 @@ type UserProfile = {
   isPrivate?: boolean;
   highlights: Highlight[];
   posts: UserPost[];
+  playbookEntries: PostCamel[];
 };
 
 export default function UserProfilePage() {
@@ -86,7 +89,7 @@ export default function UserProfilePage() {
   const { data: session } = useSession();
   const router = useRouter();
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [tab, setTab] = useState<"find_players" | "posts">("posts");
+  const [tab, setTab] = useState<"find_players" | "posts" | "playbook">("posts");
   const [viewingHighlightIdx, setViewingHighlightIdx] = useState<number | null>(null);
 
   useEffect(() => {
@@ -127,6 +130,7 @@ export default function UserProfilePage() {
         handle: p.handle,
         highlights: [],
         posts: [],
+        playbookEntries: [],
         friendCount: 0,
         friendshipId: friendship.friendshipId,
         friendshipStatus: friendship.friendshipStatus,
@@ -138,10 +142,11 @@ export default function UserProfilePage() {
       // and their accepted-friend count. Run all three in parallel and
       // merge whichever succeed so a single failure doesn't blank the
       // others.
-      const [postsRes, highlightsRes, friendCountRes] = await Promise.allSettled([
+      const [postsRes, highlightsRes, friendCountRes, playbookRes] = await Promise.allSettled([
         listPostsByAuthor(supabase, p.id),
         listHighlights(supabase, p.id),
         countUserFriends(supabase, p.id),
+        listPlaybookEntries(supabase, p.id),
       ]);
       setUser((prev) => {
         if (!prev) return prev;
@@ -190,6 +195,9 @@ export default function UserProfilePage() {
         }
         if (friendCountRes.status === "fulfilled") {
           next.friendCount = friendCountRes.value;
+        }
+        if (playbookRes.status === "fulfilled") {
+          next.playbookEntries = playbookRes.value.map((r) => toPostCamel(r));
         }
         return next;
       });
@@ -335,6 +343,7 @@ export default function UserProfilePage() {
         {(() => {
           const { findPlayers: findPlayersPosts, media: mediaPosts } =
             categorizePosts(user.posts);
+          const playbookEntries = user.playbookEntries ?? [];
           const filtered = tab === "find_players" ? findPlayersPosts : mediaPosts;
 
           const renderPostCard = (post: UserPost) => (
@@ -382,10 +391,48 @@ export default function UserProfilePage() {
                     <polyline points="21,15 16,10 5,21" />
                   </svg>
                 </button>
+                <button
+                  onClick={() => setTab("playbook")}
+                  title="Playbook"
+                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl transition-all ${
+                    tab === "playbook" ? "bg-court-green text-white shadow-md" : "text-gray-400 hover:text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={tab === "playbook" ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v18H6.5A2.5 2.5 0 0 0 4 22.5V4.5z" />
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                  </svg>
+                </button>
               </div>
 
               {/* Tab content */}
-              {filtered.length === 0 ? (
+              {tab === "playbook" ? (
+                playbookEntries.length === 0 ? (
+                  <div className="text-center py-10 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
+                    <div className="w-12 h-12 bg-ball-yellow/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="text-court-green-soft" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v18H6.5A2.5 2.5 0 0 0 4 22.5V4.5z" />
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                      </svg>
+                    </div>
+                    <p className="text-gray-500 text-sm">
+                      {user.name} hasn&rsquo;t shared any Playbook entries yet.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {playbookEntries.map((e) => (
+                      <PlaybookEntryCard
+                        key={e.id}
+                        entry={e}
+                        isOwner={false}
+                        onChanged={() => {}}
+                        onDeleted={() => {}}
+                      />
+                    ))}
+                  </div>
+                )
+              ) : filtered.length === 0 ? (
                 user.isPrivate && user.friendshipStatus !== "ACCEPTED" ? (
                   <div className="text-center py-12 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
                     <div className="w-12 h-12 bg-ball-yellow/20 rounded-full flex items-center justify-center mx-auto mb-3">
