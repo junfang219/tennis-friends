@@ -20,6 +20,7 @@ const config: Config = {
         "ball-yellow": {
           DEFAULT: "#C9E265",
           glow: "#D4ED6B",
+          pale: "#EEF5D3",
         },
         clay: {
           DEFAULT: "#C17A56",

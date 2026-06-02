@@ -612,7 +612,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
             button: "text-court-green hover:bg-court-green/10",
           },
           player: {
-            container: "bg-ball-yellow/60 ring-ball-yellow",
+            container: "bg-ball-yellow-pale ring-ball-yellow",
             icon: "bg-ball-yellow",
             title: "text-court-green",
             subtitle: "text-court-green",
