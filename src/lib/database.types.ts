@@ -1895,23 +1895,32 @@ export type Database = {
       photos: {
         Row: {
           created_at: string
+          duration_ms: number | null
           id: string
+          kind: string
           order: number
           post_id: string
+          thumbnail_url: string
           url: string
         }
         Insert: {
           created_at?: string
+          duration_ms?: number | null
           id?: string
+          kind?: string
           order?: number
           post_id: string
+          thumbnail_url?: string
           url: string
         }
         Update: {
           created_at?: string
+          duration_ms?: number | null
           id?: string
+          kind?: string
           order?: number
           post_id?: string
+          thumbnail_url?: string
           url?: string
         }
         Relationships: [
@@ -2153,8 +2162,6 @@ export type Database = {
           is_broadcast: boolean
           is_complete: boolean
           manual_players: string
-          media_type: string
-          media_url: string
           pinned_at: string | null
           play_date: string
           play_duration: number
@@ -2185,8 +2192,6 @@ export type Database = {
           is_broadcast?: boolean
           is_complete?: boolean
           manual_players?: string
-          media_type?: string
-          media_url?: string
           pinned_at?: string | null
           play_date?: string
           play_duration?: number
@@ -2217,8 +2222,6 @@ export type Database = {
           is_broadcast?: boolean
           is_complete?: boolean
           manual_players?: string
-          media_type?: string
-          media_url?: string
           pinned_at?: string | null
           play_date?: string
           play_duration?: number
@@ -2724,6 +2727,7 @@ export type Database = {
     }
     Functions: {
       accept_group_invite: { Args: { p_token: string }; Returns: Json }
+      active_season_id: { Args: { g: string }; Returns: string }
       advance_event_match_to_next_round: {
         Args: { p_match_id: string }
         Returns: undefined

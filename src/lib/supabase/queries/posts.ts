@@ -3,14 +3,33 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Inserts } from "../types";
 
+// One row of post media — image or video. The table is still called
+// `photos` for historical reasons (it began as image-only); `kind` is
+// the discriminator. `order` drives the carousel sequence; `thumbnail_url`
+// is empty for images and optional for videos.
+export interface PostMediaRow {
+  id: string;
+  url: string;
+  order: number;
+  kind: "image" | "video";
+  thumbnail_url: string;
+  duration_ms: number | null;
+}
+
+// Input shape for createPost — no id, no order (assigned by index).
+export interface PostMediaInput {
+  url: string;
+  kind: "image" | "video";
+  thumbnailUrl?: string;
+  durationMs?: number | null;
+}
+
 // Lean shape matching POST_COLUMNS. Excludes generated columns like
 // broadcast_location that we never read on the client.
 export interface PostRow {
   id: string;
   author_id: string;
   content: string;
-  media_url: string;
-  media_type: string;
   post_type: "regular" | "find_players" | "propose_team" | "event";
   play_date: string;
   play_time: string;
@@ -35,7 +54,7 @@ export interface PostRow {
   pinned_at: string | null;
   created_at: string;
   author: { id: string; name: string; profile_image_url: string };
-  photos: { id: string; url: string; order: number }[];
+  photos: PostMediaRow[];
   // Reverse-FK from chats.post_id. Populated when the auto-create-chat
   // trigger has fired (find_players post flipped to is_complete = true).
   // Embedded as an array because PostgREST doesn't know the chats.post_id
@@ -98,14 +117,14 @@ export interface Comment {
 }
 
 const POST_COLUMNS = `
-  id, author_id, content, media_url, media_type, post_type,
+  id, author_id, content, post_type,
   play_date, play_time, play_duration, court_location, court_facility_id, game_type,
   players_needed, players_confirmed, skill_min, skill_max, court_booked,
   is_complete, comments_disabled, manual_players, team_group_id,
   is_broadcast, broadcast_radius_mi, broadcast_lat, broadcast_lng,
   event_id, pinned_at, created_at,
   author:profiles!posts_author_id_fkey ( id, name, profile_image_url ),
-  photos ( id, url, "order" ),
+  photos ( id, url, "order", kind, thumbnail_url, duration_ms ),
   session_chat:chats!chats_post_id_fkey ( id )
 `;
 
@@ -377,12 +396,12 @@ type TargetRow = {
 
 export async function createPost(
   supabase: SupabaseClient<Database>,
-  input: Omit<PostInsert, "author_id"> & { photoUrls?: string[] }
+  input: Omit<PostInsert, "author_id"> & { media?: PostMediaInput[] }
 ): Promise<Post> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("Not signed in");
 
-  const { photoUrls = [], ...postInput } = input;
+  const { media = [], ...postInput } = input;
   const { data: row, error } = await supabase
     .from("posts")
     .insert({ ...postInput, author_id: auth.user.id })
@@ -390,14 +409,17 @@ export async function createPost(
     .single();
   if (error) throw error;
 
-  if (photoUrls.length > 0) {
-    const photoRows = photoUrls.map((url, i) => ({
+  if (media.length > 0) {
+    const mediaRows = media.map((m, i) => ({
       post_id: row.id,
-      url,
+      url: m.url,
       order: i,
+      kind: m.kind,
+      thumbnail_url: m.thumbnailUrl ?? "",
+      duration_ms: m.durationMs ?? null,
     }));
-    const { error: photoErr } = await supabase.from("photos").insert(photoRows);
-    if (photoErr) throw photoErr;
+    const { error: mediaErr } = await supabase.from("photos").insert(mediaRows);
+    if (mediaErr) throw mediaErr;
   }
 
   const fetched = await getPost(supabase, row.id);

@@ -1,5 +1,6 @@
 import { pgToIso } from "@/lib/pgDate";
 import type { Post as FeedPost } from "@/lib/supabase/queries";
+import type { PostMediaCamel } from "@/lib/supabase/adapters";
 
 // The legacy camelCase Post shape that PostCard (and the pages that feed it)
 // expect. Both the home feed and the group/team feed adapt their snake_case
@@ -8,8 +9,6 @@ import type { Post as FeedPost } from "@/lib/supabase/queries";
 export type FeedPostView = {
   id: string;
   content: string;
-  mediaUrl?: string;
-  mediaType?: string;
   postType?: string;
   playDate?: string;
   playTime?: string;
@@ -20,7 +19,7 @@ export type FeedPostView = {
   playersConfirmed?: number;
   courtBooked?: boolean;
   isComplete?: boolean;
-  photoUrls?: string[];
+  media?: PostMediaCamel[];
   isBroadcast?: boolean;
   broadcastRadiusMi?: number;
   distanceMiles?: number | null;
@@ -61,12 +60,19 @@ export function adaptFeedPost(p: FeedPost): FeedPostView {
   return {
     id: p.id,
     content: p.content,
-    mediaUrl: p.media_url,
-    mediaType: p.media_type,
-    // Flatten the joined photos rows into PostCard's photoUrls list.
-    // Sorted by the explicit display order so the multi-photo viewer
-    // stays consistent with how PostComposer inserted them.
-    photoUrls: [...p.photos].sort((a, b) => a.order - b.order).map((ph) => ph.url),
+    // Ordered post media (images + videos). Sorted by the explicit display
+    // order so the carousel stays consistent with how PostComposer inserted
+    // them.
+    media: [...p.photos]
+      .sort((a, b) => a.order - b.order)
+      .map((m) => ({
+        id: m.id,
+        url: m.url,
+        order: m.order,
+        kind: m.kind,
+        thumbnailUrl: m.thumbnail_url,
+        durationMs: m.duration_ms,
+      })),
     postType: p.post_type,
     playDate: p.play_date,
     playTime: p.play_time,

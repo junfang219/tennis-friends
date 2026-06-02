@@ -102,12 +102,22 @@ export function toProfileCamel(p: Profile): ProfileCamel {
 // Posts
 // ---------------------------------------------------------------------
 
+// Camel-cased post media item — what PostCard and SharedPostCard render
+// out of the unified ordered list. Mirrors PostMediaRow with thumbnailUrl
+// / durationMs.
+export interface PostMediaCamel {
+  id: string;
+  url: string;
+  order: number;
+  kind: "image" | "video";
+  thumbnailUrl: string;
+  durationMs: number | null;
+}
+
 export interface PostCamel {
   id: string;
   authorId: string;
   content: string;
-  mediaUrl: string;
-  mediaType: string;
   postType: "regular" | "find_players" | "propose_team" | "event";
   playDate: string;
   playTime: string;
@@ -134,10 +144,9 @@ export interface PostCamel {
   pinnedAt: string | null;
   createdAt: string;
   author: { id: string; name: string; profileImageUrl: string };
-  photos: { id: string; url: string; order: number }[];
-  // Flat URL list — what PostCard consumes for its photo grid. Kept
-  // alongside the typed `photos` array so consumers can pick either shape.
-  photoUrls: string[];
+  // Ordered post media (images + videos interleaved). PostCard renders
+  // <img> or <video> per item based on kind. Empty for text-only posts.
+  media: PostMediaCamel[];
   likeCount: number;
   commentCount: number;
   isLiked: boolean;
@@ -169,8 +178,6 @@ export function toPostCamel(p: Post): PostCamel {
     id: p.id,
     authorId: p.author_id,
     content: p.content,
-    mediaUrl: p.media_url,
-    mediaType: p.media_type,
     postType: p.post_type,
     playDate: p.play_date,
     playTime: p.play_time,
@@ -197,8 +204,16 @@ export function toPostCamel(p: Post): PostCamel {
       name: p.author.name,
       profileImageUrl: p.author.profile_image_url,
     },
-    photos: p.photos,
-    photoUrls: [...p.photos].sort((a, b) => a.order - b.order).map((ph) => ph.url),
+    media: [...p.photos]
+      .sort((a, b) => a.order - b.order)
+      .map((m) => ({
+        id: m.id,
+        url: m.url,
+        order: m.order,
+        kind: m.kind,
+        thumbnailUrl: m.thumbnail_url,
+        durationMs: m.duration_ms,
+      })),
     likeCount: p.like_count,
     commentCount: p.comment_count,
     isLiked: p.is_liked,

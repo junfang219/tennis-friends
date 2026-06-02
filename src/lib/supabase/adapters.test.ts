@@ -71,13 +71,11 @@ describe("snake_case → camelCase adapters", () => {
     expect(result.email).toBe("");
   });
 
-  it("toPostCamel flattens author + photos", () => {
+  it("toPostCamel flattens author + media", () => {
     const result = toPostCamel({
       id: "post1",
       author_id: "a1",
       content: "rally",
-      media_url: "",
-      media_type: "",
       post_type: "regular",
       play_date: "",
       play_time: "",
@@ -101,7 +99,9 @@ describe("snake_case → camelCase adapters", () => {
       pinned_at: null,
       created_at: "t",
       author: { id: "a1", name: "Alice", profile_image_url: "x.png" },
-      photos: [{ id: "ph1", url: "u.jpg", order: 0 }],
+      photos: [
+        { id: "ph1", url: "u.jpg", order: 0, kind: "image", thumbnail_url: "", duration_ms: null },
+      ],
       session_chat: [],
       like_count: 3,
       comment_count: 1,
@@ -114,8 +114,62 @@ describe("snake_case → camelCase adapters", () => {
     expect(result.author.profileImageUrl).toBe("x.png");
     expect(result.likeCount).toBe(3);
     expect(result.isLiked).toBe(true);
-    expect(result.photos.length).toBe(1);
+    expect(result.media.length).toBe(1);
+    expect(result.media[0].kind).toBe("image");
     expect(result.sessionChatId).toBeNull();
+  });
+
+  // Mixed-media regression: a single post can now carry both images and
+  // videos in a unified ordered list. toPostCamel must sort by `order`,
+  // preserve each item's `kind`, and snake→camel the thumbnail / duration
+  // fields so PostCard renders the right element per slide.
+  it("toPostCamel preserves kind on mixed image+video posts (sorted by order)", () => {
+    const result = toPostCamel({
+      id: "post-mixed",
+      author_id: "a1",
+      content: "match highlights",
+      post_type: "regular",
+      play_date: "",
+      play_time: "",
+      play_duration: 0,
+      court_location: "",
+      court_facility_id: null,
+      game_type: "",
+      players_needed: 0,
+      players_confirmed: 0,
+      skill_min: null,
+      skill_max: null,
+      court_booked: false,
+      is_complete: false,
+      comments_disabled: false,
+      manual_players: "",
+      team_group_id: "",
+      is_broadcast: false,
+      broadcast_radius_mi: 0,
+      broadcast_lat: null,
+      broadcast_lng: null,
+      event_id: null,
+      pinned_at: null,
+      created_at: "t",
+      author: { id: "a1", name: "Alice", profile_image_url: "" },
+      // Out-of-order on purpose — adapter must sort by `order`.
+      photos: [
+        { id: "v1", url: "clip.mp4", order: 1, kind: "video", thumbnail_url: "poster.jpg", duration_ms: 12500 },
+        { id: "p1", url: "shot.jpg", order: 0, kind: "image", thumbnail_url: "", duration_ms: null },
+      ],
+      session_chat: [],
+      like_count: 0,
+      comment_count: 0,
+      is_liked: false,
+      my_play_request: null,
+      groups: [],
+      friend_groups: [],
+      event: null,
+    });
+    expect(result.media).toEqual([
+      { id: "p1", url: "shot.jpg", order: 0, kind: "image", thumbnailUrl: "", durationMs: null },
+      { id: "v1", url: "clip.mp4", order: 1, kind: "video", thumbnailUrl: "poster.jpg", durationMs: 12500 },
+    ]);
   });
 
   it("toPostCamel surfaces session_chat[0].id as sessionChatId", () => {
@@ -123,8 +177,6 @@ describe("snake_case → camelCase adapters", () => {
       id: "post-complete",
       author_id: "a1",
       content: "",
-      media_url: "",
-      media_type: "",
       post_type: "find_players",
       play_date: "2026-05-23",
       play_time: "09:20",
@@ -172,8 +224,6 @@ describe("snake_case → camelCase adapters", () => {
       id: "post-fp",
       author_id: "a1",
       content: "Looking for 1 player for singles…",
-      media_url: "",
-      media_type: "",
       post_type: "find_players",
       play_date: "2026-05-23",
       play_time: "09:20",
@@ -232,8 +282,6 @@ describe("snake_case → camelCase adapters", () => {
       id: "p-team",
       author_id: "a1",
       content: "",
-      media_url: "",
-      media_type: "",
       post_type: "propose_team",
       play_date: "",
       play_time: "",
@@ -277,7 +325,7 @@ describe("snake_case → camelCase adapters", () => {
 
   it("toPostCamel passes null my_play_request through unchanged", () => {
     const base = {
-      id: "p", author_id: "a1", content: "", media_url: "", media_type: "",
+      id: "p", author_id: "a1", content: "",
       post_type: "regular" as const, play_date: "", play_time: "",
       play_duration: 0, court_location: "", court_facility_id: null, game_type: "",
       players_needed: 0, players_confirmed: 0, skill_min: null, skill_max: null,
@@ -296,7 +344,7 @@ describe("snake_case → camelCase adapters", () => {
 
   it("toPostCamel maps audience targets (snake -> camel)", () => {
     const base = {
-      id: "p", author_id: "a1", content: "", media_url: "", media_type: "",
+      id: "p", author_id: "a1", content: "",
       post_type: "regular" as const, play_date: "", play_time: "",
       play_duration: 0, court_location: "", court_facility_id: null, game_type: "",
       players_needed: 0, players_confirmed: 0, skill_min: null, skill_max: null,

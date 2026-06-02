@@ -41,12 +41,14 @@ type CommentData = {
   author: { id: string; name: string; profileImageUrl: string };
 };
 
+import type { PostMediaCamel } from "@/lib/supabase/adapters";
+
 type Post = {
   id: string;
   content: string;
-  mediaUrl?: string;
-  mediaType?: string;
-  photoUrls?: string[];
+  // Ordered post media — images + videos interleaved in carousel order.
+  // Empty for text-only posts.
+  media?: PostMediaCamel[];
   postType?: string;
   playDate?: string;
   playTime?: string;
@@ -146,16 +148,14 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
   const [liked, setLiked] = useState(post.isLiked);
   const [likeCount, setLikeCount] = useState(post.likeCount);
   const [animating, setAnimating] = useState(false);
-  // Index of the photo currently in view (carousel + lightbox).
+  // Index of the media item currently in view in the carousel.
   const [photoIndex, setPhotoIndex] = useState(0);
   const photoStripRef = useRef<HTMLDivElement>(null);
   const [deleted, setDeleted] = useState(false);
 
-  // Unified photo list — prefer photoUrls (multi support); fall back to legacy
-  // single mediaUrl when the API or older client hasn't migrated yet.
-  const photos: string[] = (post.photoUrls && post.photoUrls.length > 0)
-    ? post.photoUrls
-    : (post.mediaType === "image" && post.mediaUrl ? [post.mediaUrl] : []);
+  // Ordered post media (images + videos). Empty for text-only posts. The
+  // composer guarantees ordering and kind; PostCard just branches per item.
+  const mediaItems: PostMediaCamel[] = post.media ?? [];
 
   // Play request state
   const [myRequest, setMyRequest] = useState<PlayRequestInfo>(post.myPlayRequest || null);
@@ -1093,12 +1093,31 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
           )}
         </div>
 
-        {/* Media — photos display only, no tap-to-expand. Multi-photo
-            posts still swipe horizontally via the snap carousel. */}
-        {photos.length === 1 && (
-          <img src={photos[0]} alt="Post image" className="w-full max-h-[500px] object-cover" />
+        {/* Media — interleaved images and videos in carousel order. Videos
+            don't autoplay (controls + playsInline + the user scrolling
+            into this slide is when they decide to tap play). Single-item
+            posts skip the strip entirely. */}
+        {mediaItems.length === 1 && (
+          mediaItems[0].kind === "image" ? (
+            <img
+              src={mediaItems[0].url}
+              alt="Post image"
+              className="w-full max-h-[500px] object-cover"
+            />
+          ) : (
+            <div className="bg-black">
+              <video
+                src={`${mediaItems[0].url}#t=0.1`}
+                poster={mediaItems[0].thumbnailUrl || undefined}
+                className="w-full max-h-[500px] object-contain"
+                controls
+                preload="metadata"
+                playsInline
+              />
+            </div>
+          )
         )}
-        {photos.length > 1 && (
+        {mediaItems.length > 1 && (
           <div className="relative">
             <div
               ref={photoStripRef}
@@ -1110,17 +1129,30 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
               className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide"
               style={{ scrollbarWidth: "none" }}
             >
-              {photos.map((url, i) => (
-                <img
-                  key={i}
-                  src={url}
-                  alt={`Photo ${i + 1}`}
-                  className="snap-center min-w-full max-h-[500px] object-cover"
-                />
+              {mediaItems.map((item, i) => (
+                item.kind === "image" ? (
+                  <img
+                    key={i}
+                    src={item.url}
+                    alt={`Item ${i + 1}`}
+                    className="snap-center min-w-full max-h-[500px] object-cover"
+                  />
+                ) : (
+                  <div key={i} className="snap-center min-w-full bg-black">
+                    <video
+                      src={`${item.url}#t=0.1`}
+                      poster={item.thumbnailUrl || undefined}
+                      className="w-full max-h-[500px] object-contain"
+                      controls
+                      preload="metadata"
+                      playsInline
+                    />
+                  </div>
+                )
               ))}
             </div>
             <div className="absolute top-3 right-3 bg-black/60 text-white text-[11px] font-semibold px-2 py-1 rounded-full pointer-events-none">
-              {photoIndex + 1} / {photos.length}
+              {photoIndex + 1} / {mediaItems.length}
             </div>
             {/* Prev / next chevrons. Desktop has no swipe gesture so the
                 arrows are the only way to advance the carousel; on
@@ -1133,21 +1165,21 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                   if (el) el.scrollTo({ left: (photoIndex - 1) * el.clientWidth, behavior: "smooth" });
                 }}
                 className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/90 hover:bg-white shadow-md text-gray-900 flex items-center justify-center transition-colors"
-                aria-label="Previous photo"
+                aria-label="Previous item"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="15 18 9 12 15 6" />
                 </svg>
               </button>
             )}
-            {photoIndex < photos.length - 1 && (
+            {photoIndex < mediaItems.length - 1 && (
               <button
                 onClick={() => {
                   const el = photoStripRef.current;
                   if (el) el.scrollTo({ left: (photoIndex + 1) * el.clientWidth, behavior: "smooth" });
                 }}
                 className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/90 hover:bg-white shadow-md text-gray-900 flex items-center justify-center transition-colors"
-                aria-label="Next photo"
+                aria-label="Next item"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="9 6 15 12 9 18" />
@@ -1155,7 +1187,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
               </button>
             )}
             <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 pointer-events-none">
-              {photos.map((_, i) => (
+              {mediaItems.map((_, i) => (
                 <span
                   key={i}
                   className={`w-1.5 h-1.5 rounded-full transition-colors ${
@@ -1164,17 +1196,6 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                 />
               ))}
             </div>
-          </div>
-        )}
-        {post.mediaUrl && post.mediaType === "video" && (
-          <div className="bg-black">
-            <video
-              src={`${post.mediaUrl}#t=0.1`}
-              className="w-full max-h-[500px] object-contain"
-              controls
-              preload="metadata"
-              playsInline
-            />
           </div>
         )}
 

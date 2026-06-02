@@ -1208,10 +1208,16 @@ function GroupComposerModal({
 
     try {
       const supabase = createSupabaseBrowserClient();
+      // This inline group composer supports a single attachment (one image
+      // OR one video); the main PostComposer is the place for mixed media.
+      // Either way the wire shape is the unified media[] list.
+      const attachUrl = typeof body.mediaUrl === "string" ? body.mediaUrl : "";
+      const attachKind: "image" | "video" =
+        typeof body.mediaType === "string" && body.mediaType === "video"
+          ? "video"
+          : "image";
       const newPost = await createPost(supabase, {
         content: typeof body.content === "string" ? body.content : "",
-        media_url: typeof body.mediaUrl === "string" ? body.mediaUrl : "",
-        media_type: typeof body.mediaType === "string" ? body.mediaType : "",
         post_type: (body.postType as "regular" | "find_players") || "regular",
         play_date: typeof body.playDate === "string" ? body.playDate : "",
         play_time: typeof body.playTime === "string" ? body.playTime : "",
@@ -1220,6 +1226,7 @@ function GroupComposerModal({
         game_type: typeof body.gameType === "string" ? body.gameType : "",
         players_needed: typeof body.playersNeeded === "number" ? body.playersNeeded : 0,
         court_booked: !!body.courtBooked,
+        media: attachUrl ? [{ url: attachUrl, kind: attachKind }] : [],
       });
       // Cross-post to this group via the join table.
       await supabase

@@ -172,16 +172,18 @@ function ComposerModal({
   const [content, setContent] = useState("");
   const [posting, setPosting] = useState(false);
   const [postError, setPostError] = useState("");
-  // Up to 9 photos per post (images only). Videos are single-attachment and
-  // tracked via mediaUrl + mediaType — image and video are mutually exclusive.
-  const [photoUrls, setPhotoUrls] = useState<string[]>([]);
-  const [mediaUrl, setMediaUrl] = useState("");
-  const [mediaType, setMediaType] = useState("");
+  // Ordered post media — images and videos interleaved. Up to MAX_MEDIA
+  // total items, with a softer MAX_VIDEOS cap to keep iOS WKWebView memory
+  // reasonable for a post that's just been scrolled into the feed.
+  type MediaItem = { url: string; kind: "image" | "video" };
+  const [media, setMedia] = useState<MediaItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
-  const MAX_PHOTOS = 9;
+  const MAX_MEDIA = 9;
+  const MAX_VIDEOS = 2;
   const MAX_PHOTO_BYTES = 10 * 1024 * 1024; // 10 MB — matches /api/storage/sign-upload
   const MAX_VIDEO_BYTES = 100 * 1024 * 1024; // 100 MB — matches /api/storage/sign-upload
+  const videoCount = media.filter((m) => m.kind === "video").length;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const teamPurposeRef = useRef<HTMLTextAreaElement>(null);
@@ -342,7 +344,7 @@ function ComposerModal({
   // Upload a single file directly to Supabase Storage via a signed upload URL.
   // The /api/storage/sign-upload route validates ownership + size + mime, mints
   // a one-shot URL, and returns the eventual publicUrl.
-  const uploadOne = async (file: File): Promise<{ url: string; mediaType: string } | null> => {
+  const uploadOne = async (file: File): Promise<MediaItem | null> => {
     try {
       // Pick bucket based on the file's broad type. Posts get the larger
       // 100MB ceiling; profile/cover live in avatars (handled elsewhere).
@@ -379,27 +381,23 @@ function ComposerModal({
       }
       // Reference: buildObjectKey is the same naming used by the route.
       void buildObjectKey;
-      return { url: publicUrl, mediaType: isVideo ? "video" : "image" };
+      return { url: publicUrl, kind: isVideo ? "video" : "image" };
     } catch {
       setUploadError("Upload failed. Please try again.");
       return null;
     }
   };
 
-  // Photo button: multi-file. Uploads in parallel, appends image URLs to
-  // photoUrls (capped at MAX_PHOTOS). Rejects if a video is mixed in or any
-  // file exceeds MAX_PHOTO_BYTES (skipped with a count).
+  // Photo button: multi-file. Uploads in parallel, appends to the unified
+  // media list (capped at MAX_MEDIA total). Skips files that exceed
+  // MAX_PHOTO_BYTES and surfaces a count. Videos picked here are rejected
+  // (use the video button so its caps apply).
   const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
-    if (mediaUrl && mediaType === "video") {
-      setUploadError("Remove the video before adding photos.");
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      return;
-    }
-    const remaining = MAX_PHOTOS - photoUrls.length;
+    const remaining = MAX_MEDIA - media.length;
     if (remaining <= 0) {
-      setUploadError(`Up to ${MAX_PHOTOS} photos per post.`);
+      setUploadError(`Up to ${MAX_MEDIA} items per post.`);
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
@@ -416,32 +414,39 @@ function ComposerModal({
     }
     setUploading(true);
     const results = await Promise.all(toUpload.map((f) => uploadOne(f)));
-    const newImageUrls = results
-      .filter((r): r is { url: string; mediaType: string } => !!r && r.mediaType === "image")
-      .map((r) => r.url);
-    if (newImageUrls.length > 0) {
-      setPhotoUrls((prev) => [...prev, ...newImageUrls]);
+    const newImages = results.filter(
+      (r): r is MediaItem => !!r && r.kind === "image"
+    );
+    if (newImages.length > 0) {
+      setMedia((prev) => [...prev, ...newImages]);
     }
-    if (results.some((r) => r && r.mediaType !== "image")) {
+    if (results.some((r) => r && r.kind !== "image")) {
       setUploadError("Use the video button for videos.");
     } else if (oversized > 0) {
       setUploadError(
         `Skipped ${oversized} photo${oversized === 1 ? "" : "s"} over 10 MB.`
       );
     } else if (ok.length > toUpload.length) {
-      setUploadError(`Only the first ${toUpload.length} photo(s) added (max ${MAX_PHOTOS}).`);
+      setUploadError(
+        `Only the first ${toUpload.length} photo(s) added (max ${MAX_MEDIA} items).`
+      );
     }
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  // Video button: single-file. Replaces any existing video; rejects if photos
-  // are already attached or the file exceeds MAX_VIDEO_BYTES.
+  // Video button: single-file. Appends to the unified media list. Caps:
+  // MAX_VIDEOS per post (memory) and MAX_MEDIA total (UX).
   const handleVideoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (photoUrls.length > 0) {
-      setUploadError("Remove photos before adding a video.");
+    if (media.length >= MAX_MEDIA) {
+      setUploadError(`Up to ${MAX_MEDIA} items per post.`);
+      e.target.value = "";
+      return;
+    }
+    if (videoCount >= MAX_VIDEOS) {
+      setUploadError(`Up to ${MAX_VIDEOS} videos per post.`);
       e.target.value = "";
       return;
     }
@@ -453,22 +458,15 @@ function ComposerModal({
     setUploadError("");
     setUploading(true);
     const result = await uploadOne(file);
-    if (result) {
-      setMediaUrl(result.url);
-      setMediaType(result.mediaType);
+    if (result && result.kind === "video") {
+      setMedia((prev) => [...prev, result]);
     }
     setUploading(false);
     e.target.value = "";
   };
 
-  const removePhotoAt = (idx: number) => {
-    setPhotoUrls((prev) => prev.filter((_, i) => i !== idx));
-    setUploadError("");
-  };
-
-  const removeVideo = () => {
-    setMediaUrl("");
-    setMediaType("");
+  const removeMediaAt = (idx: number) => {
+    setMedia((prev) => prev.filter((_, i) => i !== idx));
     setUploadError("");
   };
 
@@ -476,7 +474,7 @@ function ComposerModal({
     ? (playDate && playTime && courtLocation)
     : proposeTeam
     ? (teamName.trim() && teamPurpose.trim())
-    : (content.trim() || photoUrls.length > 0 || mediaUrl);
+    : (content.trim() || media.length > 0);
 
   const handleSubmit = async () => {
     if (!canSubmit || posting || uploading) return;
@@ -485,12 +483,10 @@ function ComposerModal({
 
     const body: Record<string, unknown> = {
       content,
-      // For photo posts, send the array; the API maps photoUrls[0] into
-      // mediaUrl + mediaType="image" for backwards compat. For videos,
-      // continue sending mediaUrl + mediaType.
-      photoUrls: photoUrls.length > 0 ? photoUrls : undefined,
-      mediaUrl: photoUrls.length > 0 ? "" : mediaUrl,
-      mediaType: photoUrls.length > 0 ? "" : mediaType,
+      // Unified ordered media — createPost inserts the rows into public.photos
+      // with kind set per item, so images and videos interleave in carousel
+      // order.
+      media: media.length > 0 ? media : undefined,
       groupIds: selectedGroupIds.size > 0 ? Array.from(selectedGroupIds) : undefined,
       friendGroupIds: selectedFriendGroupIds.size > 0 ? Array.from(selectedFriendGroupIds) : undefined,
     };
@@ -544,13 +540,11 @@ function ComposerModal({
       // Translate the page's camelCase body into snake_case columns the
       // posts table expects. Group / friend-group targeting goes via the
       // post_targets join table (with target_kind = 'group' | 'friend_group').
-      const photoUrls = (body.photoUrls as string[] | undefined) ?? [];
+      const mediaItems = (body.media as MediaItem[] | undefined) ?? [];
       const groupIds = (body.groupIds as string[] | undefined) ?? [];
       const friendGroupIds = (body.friendGroupIds as string[] | undefined) ?? [];
       const newPost = await createPost(supabase, {
         content: typeof body.content === "string" ? body.content : "",
-        media_url: typeof body.mediaUrl === "string" ? body.mediaUrl : "",
-        media_type: typeof body.mediaType === "string" ? body.mediaType : "",
         post_type:
           (body.postType as "regular" | "find_players" | "propose_team" | "event") ||
           "regular",
@@ -582,7 +576,7 @@ function ComposerModal({
         is_broadcast: !!body.isBroadcast,
         broadcast_radius_mi:
           typeof body.broadcastRadiusMi === "number" ? body.broadcastRadiusMi : 0,
-        photoUrls,
+        media: mediaItems,
       });
       // Target groups / friend groups.
       if (groupIds.length > 0) {
@@ -730,22 +724,45 @@ function ComposerModal({
             </div>
           )}
 
-          {/* Photo grid preview (multi) */}
-          {photoUrls.length > 0 && (
+          {/* Unified media preview — images + videos interleaved in carousel
+              order. Videos render with preload="metadata" (first frame as
+              poster) and a play-icon overlay; no autoplay in the composer. */}
+          {media.length > 0 && (
             <div className="mb-3">
               <div className={`grid gap-1 ${
-                photoUrls.length === 1 ? "grid-cols-1" :
-                photoUrls.length === 2 ? "grid-cols-2" :
-                photoUrls.length <= 4 ? "grid-cols-2" :
+                media.length === 1 ? "grid-cols-1" :
+                media.length === 2 ? "grid-cols-2" :
+                media.length <= 4 ? "grid-cols-2" :
                 "grid-cols-3"
               }`}>
-                {photoUrls.map((url, i) => (
+                {media.map((item, i) => (
                   <div key={i} className="relative aspect-square rounded-xl overflow-hidden border border-gray-200 bg-gray-50">
-                    <img src={url} alt={`Photo ${i + 1}`} className="w-full h-full object-cover" />
+                    {item.kind === "image" ? (
+                      <img src={item.url} alt={`Item ${i + 1}`} className="w-full h-full object-cover" />
+                    ) : (
+                      <>
+                        <video
+                          src={`${item.url}#t=0.1`}
+                          className="w-full h-full object-cover"
+                          preload="metadata"
+                          muted
+                          playsInline
+                        />
+                        {/* Play badge — pointer-events-none so the remove
+                            button on top stays clickable. */}
+                        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                          <div className="w-10 h-10 rounded-full bg-black/55 flex items-center justify-center">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
+                              <polygon points="8,5 19,12 8,19" />
+                            </svg>
+                          </div>
+                        </div>
+                      </>
+                    )}
                     <button
-                      onClick={() => removePhotoAt(i)}
+                      onClick={() => removeMediaAt(i)}
                       className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center transition-colors"
-                      aria-label={`Remove photo ${i + 1}`}
+                      aria-label={`Remove item ${i + 1}`}
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                         <line x1="18" y1="6" x2="6" y2="18" />
@@ -756,25 +773,9 @@ function ComposerModal({
                 ))}
               </div>
               <p className="text-[11px] text-gray-400 mt-1.5">
-                {photoUrls.length} of {MAX_PHOTOS} photos
+                {media.length} of {MAX_MEDIA} items
+                {videoCount > 0 && ` · ${videoCount}/${MAX_VIDEOS} videos`}
               </p>
-            </div>
-          )}
-
-          {/* Video preview (single) */}
-          {mediaUrl && mediaType === "video" && (
-            <div className="relative rounded-xl overflow-hidden border border-gray-200 bg-gray-50 mb-3">
-              <video src={`${mediaUrl}#t=0.1`} className="max-h-72 w-full object-cover" controls preload="metadata" playsInline />
-              <button
-                onClick={removeVideo}
-                className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center transition-colors"
-                aria-label="Remove video"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
             </div>
           )}
 
@@ -1139,7 +1140,7 @@ function ComposerModal({
                 accept="image/jpeg,image/png,image/gif,image/webp"
                 multiple
                 onChange={handlePhotoSelect}
-                disabled={uploading || photoUrls.length >= MAX_PHOTOS}
+                disabled={uploading || media.length >= MAX_MEDIA}
                 className="hidden"
               />
             </label>
@@ -1152,7 +1153,7 @@ function ComposerModal({
                 type="file"
                 accept="video/mp4,video/webm,video/quicktime,video/mov"
                 onChange={handleVideoSelect}
-                disabled={uploading || photoUrls.length > 0}
+                disabled={uploading || media.length >= MAX_MEDIA || videoCount >= MAX_VIDEOS}
                 className="hidden"
               />
             </label>

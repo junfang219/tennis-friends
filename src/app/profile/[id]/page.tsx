@@ -13,7 +13,7 @@ import {
   listHighlights,
   countUserFriends,
 } from "@/lib/supabase/queries";
-import { toPostCamel } from "@/lib/supabase/adapters";
+import { toPostCamel, type PostMediaCamel } from "@/lib/supabase/adapters";
 import { categorizePosts } from "@/lib/postCategorize";
 import Avatar from "@/components/Avatar";
 import FriendRequestButton from "@/components/FriendRequestButton";
@@ -32,9 +32,7 @@ type Highlight = {
 type UserPost = {
   id: string;
   content: string;
-  mediaUrl: string;
-  mediaType: string;
-  photoUrls?: string[];
+  media: PostMediaCamel[];
   postType: string;
   playDate: string;
   playTime: string;
@@ -154,9 +152,7 @@ export default function UserProfilePage() {
             return {
               id: c.id,
               content: c.content,
-              mediaUrl: c.mediaUrl,
-              mediaType: c.mediaType,
-              photoUrls: c.photoUrls,
+              media: c.media,
               postType: c.postType,
               playDate: c.playDate,
               playTime: c.playTime,
@@ -449,17 +445,19 @@ export default function UserProfilePage() {
               ) : tab === "posts" ? (
                 <div className="grid grid-cols-3 gap-1">
                   {photoPosts.map((post) => {
-                    const urls = (post.photoUrls && post.photoUrls.length > 0)
-                      ? post.photoUrls
-                      : (post.mediaUrl ? [post.mediaUrl] : []);
-                    const cover = urls[0];
+                    // Cover the photos tile with the first image in the
+                    // post (mixed posts still appear here when they have
+                    // at least one image). The count badge shows how many
+                    // images total in the post.
+                    const images = post.media.filter((m) => m.kind === "image");
+                    const cover = images[0]?.url;
                     if (!cover) return null;
                     return (
                       <button
                         key={post.id}
                         onClick={() => router.push(`/profile/${user.id}/posts?focus=${post.id}`)}
                         className="relative aspect-square overflow-hidden bg-gray-100 group"
-                        aria-label={urls.length > 1 ? `Open photo set (${urls.length})` : "Open photo"}
+                        aria-label={images.length > 1 ? `Open photo set (${images.length})` : "Open photo"}
                       >
                         <img
                           src={cover}
@@ -467,13 +465,13 @@ export default function UserProfilePage() {
                           loading="lazy"
                           className="w-full h-full object-cover group-hover:opacity-90 transition-opacity"
                         />
-                        {urls.length > 1 && (
+                        {images.length > 1 && (
                           <span className="absolute top-1.5 right-1.5 bg-black/60 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full pointer-events-none flex items-center gap-1">
                             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                               <rect x="3" y="3" width="14" height="14" rx="2" />
                               <path d="M7 7h14v14" />
                             </svg>
-                            {urls.length}
+                            {images.length}
                           </span>
                         )}
                       </button>
@@ -483,7 +481,8 @@ export default function UserProfilePage() {
               ) : tab === "videos" ? (
                 <div className="grid grid-cols-3 gap-1">
                   {videoPosts.map((post) => {
-                    if (!post.mediaUrl) return null;
+                    const firstVideo = post.media.find((m) => m.kind === "video");
+                    if (!firstVideo) return null;
                     return (
                       <button
                         key={post.id}
@@ -491,13 +490,22 @@ export default function UserProfilePage() {
                         className="relative aspect-square overflow-hidden bg-black group"
                         aria-label="Open video"
                       >
-                        <video
-                          src={`${post.mediaUrl}#t=0.1`}
-                          preload="metadata"
-                          playsInline
-                          muted
-                          className="w-full h-full object-cover group-hover:opacity-90 transition-opacity pointer-events-none"
-                        />
+                        {firstVideo.thumbnailUrl ? (
+                          <img
+                            src={firstVideo.thumbnailUrl}
+                            alt=""
+                            loading="lazy"
+                            className="w-full h-full object-cover group-hover:opacity-90 transition-opacity"
+                          />
+                        ) : (
+                          <video
+                            src={`${firstVideo.url}#t=0.1`}
+                            preload="metadata"
+                            playsInline
+                            muted
+                            className="w-full h-full object-cover group-hover:opacity-90 transition-opacity pointer-events-none"
+                          />
+                        )}
                         <span className="absolute top-1.5 right-1.5 bg-black/60 text-white px-1 py-0.5 rounded-full pointer-events-none">
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                             <polygon points="6 4 20 12 6 20" />

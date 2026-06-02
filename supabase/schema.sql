@@ -474,9 +474,6 @@ create table public.posts (
   id                  uuid primary key default gen_random_uuid(),
   author_id           uuid not null references public.profiles (id) on delete cascade,
   content             text not null default '',
-  -- Legacy single-media fields (kept until clients migrate to photos[])
-  media_url           text not null default '',
-  media_type          text not null default '',
   post_type           post_type not null default 'regular',
   play_date           text not null default '',
   play_time           text not null default '',
@@ -525,12 +522,20 @@ create index posts_event_idx              on public.posts (event_id) where event
 create index posts_broadcast_created_idx  on public.posts (created_at desc) where is_broadcast = true;
 create index posts_broadcast_location_idx on public.posts using gist (broadcast_location) where is_broadcast = true and broadcast_location is not null;
 
+-- Ordered media attached to a post — both photos and videos. The table
+-- name is historical (it began as image-only); `kind` distinguishes the
+-- two. `order` drives the carousel sequence. `thumbnail_url` is empty
+-- for images and optional for videos (clients can render the first frame
+-- via <video preload="metadata"> when absent).
 create table public.photos (
-  id          uuid primary key default gen_random_uuid(),
-  post_id     uuid not null references public.posts (id) on delete cascade,
-  url         text not null,
-  "order"     integer not null default 0,
-  created_at  timestamptz not null default now()
+  id            uuid primary key default gen_random_uuid(),
+  post_id       uuid not null references public.posts (id) on delete cascade,
+  url           text not null,
+  "order"       integer not null default 0,
+  kind          text not null default 'image' check (kind in ('image', 'video')),
+  thumbnail_url text not null default '',
+  duration_ms   integer,
+  created_at    timestamptz not null default now()
 );
 create index photos_post_order_idx on public.photos (post_id, "order");
 

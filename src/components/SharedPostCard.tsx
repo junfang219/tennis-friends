@@ -8,11 +8,18 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getPost } from "@/lib/supabase/queries";
 import { toPostCamel } from "@/lib/supabase/adapters";
 
+export type SharedPostMediaItem = {
+  url: string;
+  kind: "image" | "video";
+  thumbnailUrl?: string;
+};
+
 export type SharedPost = {
   id: string;
   content: string;
-  mediaUrl: string;
-  mediaType: string;
+  // First media item is used as the preview thumbnail. Carried as a list
+  // so the full-post modal renders the same media as PostCard.
+  media: SharedPostMediaItem[];
   postType: string;
   playDate: string;
   playTime: string;
@@ -65,9 +72,35 @@ export default function SharedPostCard({ post }: { post: SharedPost }) {
           <p className="px-3 pb-2 text-xs text-gray-700 line-clamp-3">{post.content}</p>
         )}
 
-        {post.mediaUrl && post.mediaType === "image" && (
-          <img src={post.mediaUrl} alt="Post" className="w-full max-h-40 object-cover" />
-        )}
+        {post.media.length > 0 && (() => {
+          const first = post.media[0];
+          // Image: thumbnail. Video: poster (or first-frame via #t=0.1) with a
+          // play badge so the preview clearly signals "tap to open and play".
+          return first.kind === "image" ? (
+            <img src={first.url} alt="Post" className="w-full max-h-40 object-cover" />
+          ) : (
+            <div className="relative bg-black">
+              {first.thumbnailUrl ? (
+                <img src={first.thumbnailUrl} alt="Post video" className="w-full max-h-40 object-cover" />
+              ) : (
+                <video
+                  src={`${first.url}#t=0.1`}
+                  className="w-full max-h-40 object-cover"
+                  preload="metadata"
+                  muted
+                  playsInline
+                />
+              )}
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-full bg-black/55 flex items-center justify-center">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
+                    <polygon points="8,5 19,12 8,19" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {isFindPlayers && (
           <div className="px-3 py-2 bg-court-green/5 border-t border-gray-100">
