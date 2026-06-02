@@ -99,7 +99,7 @@ export default function ProfilePage() {
     () => getCached<Profile>(PROFILE_CACHE_KEY) ?? null,
   );
   const [editing, setEditing] = useState(false);
-  const [tab, setTab] = useState<"find_players" | "posts" | "videos">("find_players");
+  const [tab, setTab] = useState<"find_players" | "posts">("find_players");
   const [form, setForm] = useState(() => {
     const cached = getCached<Profile>(PROFILE_CACHE_KEY);
     const raw = (cached as unknown as { __rawProfile?: {
@@ -1177,13 +1177,10 @@ export default function ProfilePage() {
 
         {/* Posts section with tabs */}
         {!editing && profile.posts && (() => {
-          const { findPlayers: findPlayersPosts, photos: photoPosts, videos: videoPosts } =
+          const { findPlayers: findPlayersPosts, media: mediaPosts } =
             categorizePosts(profile.posts);
 
-          const filtered =
-            tab === "find_players" ? findPlayersPosts :
-            tab === "posts" ? photoPosts :
-            videoPosts;
+          const filtered = tab === "find_players" ? findPlayersPosts : mediaPosts;
 
           return (
             <div className="mt-6">
@@ -1214,18 +1211,6 @@ export default function ProfilePage() {
                     <polyline points="21,15 16,10 5,21" />
                   </svg>
                 </button>
-                <button
-                  onClick={() => setTab("videos")}
-                  title="Videos"
-                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl transition-all ${
-                    tab === "videos" ? "bg-court-green text-white shadow-md" : "text-gray-400 hover:text-gray-600 hover:bg-gray-50"
-                  }`}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={tab === "videos" ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round">
-                    <polygon points="23,7 16,12 23,17" />
-                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-                  </svg>
-                </button>
               </div>
 
               {/* Filtered posts */}
@@ -1245,84 +1230,70 @@ export default function ProfilePage() {
                         <polyline points="21,15 16,10 5,21" />
                       </svg>
                     )}
-                    {tab === "videos" && (
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-court-green-soft" strokeLinecap="round" strokeLinejoin="round">
-                        <polygon points="23,7 16,12 23,17" />
-                        <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-                      </svg>
-                    )}
                   </div>
                   <p className="text-gray-500 text-sm">
                     {tab === "find_players" && "No text posts yet"}
-                    {tab === "posts" && "No photos yet. Share your first tennis moment!"}
-                    {tab === "videos" && "No videos yet"}
+                    {tab === "posts" && "No photos or videos yet. Share your first tennis moment!"}
                   </p>
                 </div>
               ) : tab === "posts" ? (
                 <div className="grid grid-cols-3 gap-1">
-                  {photoPosts.map((post) => {
-                    const images = (post.media ?? []).filter((m) => m.kind === "image");
-                    const cover = images[0]?.url;
-                    if (!cover) return null;
+                  {mediaPosts.map((post) => {
+                    // Each tile = one post. Show the first media item — image
+                    // tile for image, poster (or first frame) tile for video.
+                    // Multi-item posts (e.g. 4 photos, or 1 photo + 1 video)
+                    // get the stack badge; videos always get the play overlay
+                    // so the cell type is unambiguous at a glance.
+                    const items = post.media ?? [];
+                    const first = items[0];
+                    if (!first) return null;
+                    const total = items.length;
                     return (
                       <button
                         key={post.id}
                         onClick={() => router.push(`/profile/${profile.id}/posts?focus=${post.id}`)}
-                        className="relative aspect-square overflow-hidden bg-gray-100 group"
-                        aria-label={images.length > 1 ? `Open photo set (${images.length})` : "Open photo"}
+                        className={`relative aspect-square overflow-hidden group ${first.kind === "video" ? "bg-black" : "bg-gray-100"}`}
+                        aria-label={first.kind === "video" ? "Open video post" : total > 1 ? `Open post (${total} items)` : "Open photo"}
                       >
-                        <img
-                          src={cover}
-                          alt=""
-                          loading="lazy"
-                          className="w-full h-full object-cover group-hover:opacity-90 transition-opacity"
-                        />
-                        {images.length > 1 && (
-                          <span className="absolute top-1.5 right-1.5 bg-black/60 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full pointer-events-none flex items-center gap-1">
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                              <rect x="3" y="3" width="14" height="14" rx="2" />
-                              <path d="M7 7h14v14" />
-                            </svg>
-                            {images.length}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : tab === "videos" ? (
-                <div className="grid grid-cols-3 gap-1">
-                  {videoPosts.map((post) => {
-                    const firstVideo = (post.media ?? []).find((m) => m.kind === "video");
-                    if (!firstVideo) return null;
-                    return (
-                      <button
-                        key={post.id}
-                        onClick={() => router.push(`/profile/${profile.id}/posts?focus=${post.id}`)}
-                        className="relative aspect-square overflow-hidden bg-black group"
-                        aria-label="Open video"
-                      >
-                        {firstVideo.thumbnailUrl ? (
+                        {first.kind === "image" ? (
                           <img
-                            src={firstVideo.thumbnailUrl}
+                            src={first.url}
+                            alt=""
+                            loading="lazy"
+                            className="w-full h-full object-cover group-hover:opacity-90 transition-opacity"
+                          />
+                        ) : first.thumbnailUrl ? (
+                          <img
+                            src={first.thumbnailUrl}
                             alt=""
                             loading="lazy"
                             className="w-full h-full object-cover group-hover:opacity-90 transition-opacity"
                           />
                         ) : (
                           <video
-                            src={`${firstVideo.url}#t=0.1`}
+                            src={`${first.url}#t=0.1`}
                             preload="metadata"
                             playsInline
                             muted
                             className="w-full h-full object-cover group-hover:opacity-90 transition-opacity pointer-events-none"
                           />
                         )}
-                        <span className="absolute top-1.5 right-1.5 bg-black/60 text-white px-1 py-0.5 rounded-full pointer-events-none">
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                            <polygon points="6 4 20 12 6 20" />
-                          </svg>
-                        </span>
+                        {first.kind === "video" && (
+                          <span className="absolute top-1.5 left-1.5 bg-black/60 text-white px-1 py-0.5 rounded-full pointer-events-none">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                              <polygon points="6 4 20 12 6 20" />
+                            </svg>
+                          </span>
+                        )}
+                        {total > 1 && (
+                          <span className="absolute top-1.5 right-1.5 bg-black/60 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full pointer-events-none flex items-center gap-1">
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="3" y="3" width="14" height="14" rx="2" />
+                              <path d="M7 7h14v14" />
+                            </svg>
+                            {total}
+                          </span>
+                        )}
                       </button>
                     );
                   })}

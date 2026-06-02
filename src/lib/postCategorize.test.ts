@@ -9,36 +9,16 @@ describe("categorizePosts", () => {
       { id: "c", postType: "propose_team", media: [] },
     ]);
     expect(result.findPlayers.map((p) => p.id).sort()).toEqual(["a", "b", "c"]);
-    expect(result.photos).toEqual([]);
-    expect(result.videos).toEqual([]);
+    expect(result.media).toEqual([]);
   });
 
-  it("routes regular photo posts to photos, not findPlayers", () => {
+  it("routes regular posts with any media into the media bucket", () => {
     const result = categorizePosts([
       { id: "a", postType: "regular", media: [{ kind: "image" }] },
-      { id: "b", postType: "regular", media: [{ kind: "image" }, { kind: "image" }] },
+      { id: "b", postType: "regular", media: [{ kind: "video" }] },
+      { id: "c", postType: "regular", media: [{ kind: "image" }, { kind: "video" }] },
     ]);
-    expect(result.photos.map((p) => p.id).sort()).toEqual(["a", "b"]);
-    expect(result.findPlayers).toEqual([]);
-  });
-
-  it("routes regular video posts to videos", () => {
-    const result = categorizePosts([
-      { id: "a", postType: "regular", media: [{ kind: "video" }] },
-    ]);
-    expect(result.videos.map((p) => p.id)).toEqual(["a"]);
-    expect(result.findPlayers).toEqual([]);
-    expect(result.photos).toEqual([]);
-  });
-
-  // A post with both an image and a video shows up in BOTH the Photos
-  // and Videos tabs — each tab answers "does this post have X?".
-  it("mixed photo+video posts appear in both photos and videos buckets", () => {
-    const result = categorizePosts([
-      { id: "a", postType: "regular", media: [{ kind: "image" }, { kind: "video" }] },
-    ]);
-    expect(result.photos.map((p) => p.id)).toEqual(["a"]);
-    expect(result.videos.map((p) => p.id)).toEqual(["a"]);
+    expect(result.media.map((p) => p.id).sort()).toEqual(["a", "b", "c"]);
     expect(result.findPlayers).toEqual([]);
   });
 
@@ -47,5 +27,6 @@ describe("categorizePosts", () => {
       { id: "a", postType: "regular", media: [] },
     ]);
     expect(result.findPlayers.map((p) => p.id)).toEqual(["a"]);
+    expect(result.media).toEqual([]);
   });
 });
