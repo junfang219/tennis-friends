@@ -1102,7 +1102,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
             <img
               src={mediaItems[0].url}
               alt="Post image"
-              className="w-full max-h-[500px] object-cover"
+              className="w-full max-h-[500px] object-contain"
             />
           ) : (
             <div className="bg-black">
@@ -1126,7 +1126,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                 const idx = Math.round(el.scrollLeft / el.clientWidth);
                 if (idx !== photoIndex) setPhotoIndex(idx);
               }}
-              className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide"
+              className="flex items-center overflow-x-auto snap-x snap-mandatory scrollbar-hide"
               style={{ scrollbarWidth: "none" }}
             >
               {mediaItems.map((item, i) => (
@@ -1135,7 +1135,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                     key={i}
                     src={item.url}
                     alt={`Item ${i + 1}`}
-                    className="snap-center min-w-full max-h-[500px] object-cover"
+                    className="snap-center min-w-full max-h-[500px] object-contain"
                   />
                 ) : (
                   <div key={i} className="snap-center min-w-full bg-black">
