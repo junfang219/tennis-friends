@@ -7185,3 +7185,81 @@ DROP TRIGGER IF EXISTS events_set_season ON public.events;
 CREATE TRIGGER events_set_season
   BEFORE INSERT ON public.events
   FOR EACH ROW EXECUTE FUNCTION public.set_active_season_from_host_group();
+
+-- =====================================================================
+-- Migration: group invites can target a phone number instead of an email.
+-- Exactly one of (email, phone) is set per row. The email-dispatch
+-- trigger is gated so phone invites don't try to email an empty address.
+-- accept_group_invite matches caller's auth.users.phone for phone invites
+-- (stripping the leading '+' since auth.users.phone is stored without it).
+-- =====================================================================
+
+ALTER TABLE public.group_invites
+  ALTER COLUMN email DROP NOT NULL,
+  ADD COLUMN IF NOT EXISTS phone text;
+
+ALTER TABLE public.group_invites
+  DROP CONSTRAINT IF EXISTS group_invites_email_xor_phone;
+ALTER TABLE public.group_invites
+  ADD CONSTRAINT group_invites_email_xor_phone
+  CHECK ((email IS NOT NULL)::int + (phone IS NOT NULL)::int = 1);
+
+CREATE INDEX IF NOT EXISTS group_invites_phone_status_idx
+  ON public.group_invites (phone, status)
+  WHERE phone IS NOT NULL;
+
+DROP TRIGGER IF EXISTS group_invites_send_email ON public.group_invites;
+CREATE TRIGGER group_invites_send_email
+  AFTER INSERT ON public.group_invites
+  FOR EACH ROW
+  WHEN (NEW.email IS NOT NULL)
+  EXECUTE FUNCTION public.dispatch_group_invite_email();
+
+-- Two invite paths: email-bound (recipient-matched, email dispatch via
+-- group-invite-email edge function) OR bearer link (null email — anyone
+-- signed in with the token can accept, delivered via the inviter's own
+-- share sheet to Messages / WhatsApp / etc.). The phone column was
+-- removed: collecting a phone number to attach to a bearer link added
+-- no value beyond labeling.
+ALTER TABLE public.group_invites
+  DROP CONSTRAINT IF EXISTS group_invites_email_xor_phone;
+DROP INDEX IF EXISTS public.group_invites_phone_status_idx;
+ALTER TABLE public.group_invites DROP COLUMN IF EXISTS phone;
+DROP FUNCTION IF EXISTS public.dispatch_group_invite_sms();
+
+CREATE OR REPLACE FUNCTION public.accept_group_invite(p_token text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_caller       uuid := auth.uid();
+  v_caller_email text;
+  v_inv          group_invites%ROWTYPE;
+BEGIN
+  IF v_caller IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+  IF p_token IS NULL OR length(trim(p_token)) = 0 THEN RAISE EXCEPTION 'Missing token' USING ERRCODE = 'invalid_parameter_value'; END IF;
+  SELECT email INTO v_caller_email FROM auth.users WHERE id = v_caller;
+  SELECT * INTO v_inv FROM group_invites WHERE token = p_token;
+  IF v_inv.id IS NULL THEN RAISE EXCEPTION 'Invite not found' USING ERRCODE = 'no_data_found'; END IF;
+  IF v_inv.status = 'accepted' THEN RETURN jsonb_build_object('ok', true, 'already_accepted', true); END IF;
+  IF v_inv.status = 'cancelled' THEN RAISE EXCEPTION 'This invite was cancelled' USING ERRCODE = 'invalid_parameter_value'; END IF;
+  IF v_inv.expires_at IS NOT NULL AND v_inv.expires_at < now() THEN RAISE EXCEPTION 'This invite has expired' USING ERRCODE = 'invalid_parameter_value'; END IF;
+
+  -- Email-bound invites require a match. Bearer (email IS NULL) invites
+  -- accept any signed-in user — the token is the credential.
+  IF v_inv.email IS NOT NULL THEN
+    IF v_caller_email IS NULL OR lower(v_caller_email) <> lower(v_inv.email::text) THEN
+      RAISE EXCEPTION 'This invite is for a different email address' USING ERRCODE = 'insufficient_privilege';
+    END IF;
+  END IF;
+
+  INSERT INTO group_members (group_id, user_id, roles, member_type)
+  VALUES (v_inv.group_id, v_caller, v_inv.roles, COALESCE(v_inv.member_type, ''))
+  ON CONFLICT (group_id, user_id) DO NOTHING;
+
+  UPDATE group_invites SET status = 'accepted', accepted_by_id = v_caller, accepted_at = now() WHERE id = v_inv.id;
+  INSERT INTO notifications (user_id, actor_id, type)
+  VALUES (v_inv.invited_by_id, v_caller, 'group_invite_accepted'::notification_type);
+  RETURN jsonb_build_object('ok', true, 'group_id', v_inv.group_id);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.accept_group_invite(text) FROM public;
+GRANT EXECUTE ON FUNCTION public.accept_group_invite(text) TO authenticated;

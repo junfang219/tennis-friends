@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
@@ -66,7 +66,7 @@ export default function InviteAcceptPage() {
     void loadInvite();
   }, [loadInvite]);
 
-  const accept = async () => {
+  const accept = useCallback(async () => {
     setAccepting(true);
     setAcceptError("");
     try {
@@ -79,7 +79,23 @@ export default function InviteAcceptPage() {
       setAcceptError(errorMessage(err, "Couldn't accept the invite."));
       setAccepting(false);
     }
-  };
+  }, [router, token]);
+
+  // Auto-accept once the invitee is signed in. Clicking the invite link is
+  // explicit consent; no reason to make them tap "Join" again after login.
+  // The ref guards against re-fires from useEffect deps (acceptError clearing,
+  // session update) — we attempt exactly once per page load.
+  const autoAttempted = useRef(false);
+  useEffect(() => {
+    if (
+      !autoAttempted.current &&
+      info?.status === "PENDING" &&
+      sessionStatus === "authenticated"
+    ) {
+      autoAttempted.current = true;
+      void accept();
+    }
+  }, [info, sessionStatus, accept]);
 
   if (loadError) {
     return (
@@ -154,14 +170,22 @@ export default function InviteAcceptPage() {
       <p className="text-sm text-gray-500 mt-3">
         Signed in as <span className="font-medium text-gray-800">{session?.user?.email || session?.user?.name}</span>.
       </p>
-      {acceptError && (
-        <p className="mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
-          {acceptError}
-        </p>
+      {acceptError ? (
+        <>
+          <p className="mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+            {acceptError}
+          </p>
+          <button
+            onClick={() => void accept()}
+            disabled={accepting}
+            className="btn-primary mt-4 w-full"
+          >
+            {accepting ? "Joining..." : "Try again"}
+          </button>
+        </>
+      ) : (
+        <p className="mt-4 text-sm text-gray-500">Joining {info.team.name}…</p>
       )}
-      <button onClick={accept} disabled={accepting} className="btn-primary mt-4 w-full">
-        {accepting ? "Joining..." : `Join ${info.team.name}`}
-      </button>
     </InviteShell>
   );
 }

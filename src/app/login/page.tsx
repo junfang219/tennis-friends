@@ -34,7 +34,9 @@ export default function SupabaseLoginPage() {
   // and show a banner pointing the user to Safari or email signup.
   const embeddedBrowser = useIsEmbeddedBrowser();
   const showGoogle = (!isNative || googleNativeConfigured) && !embeddedBrowser;
-  const redirectTo = search.get("redirectTo") ?? "/";
+  // Some callers use `?next=...` (e.g. /invite/[token], /register), others
+  // use `?redirectTo=...`. Accept either so neither flow drops the return URL.
+  const redirectTo = search.get("redirectTo") ?? search.get("next") ?? "/";
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -192,7 +194,10 @@ export default function SupabaseLoginPage() {
         <Link href="/auth/reset" className="text-green-700 hover:underline">
           Forgot password?
         </Link>
-        <Link href="/register" className="text-green-700 hover:underline">
+        <Link
+          href={redirectTo === "/" ? "/register" : `/register?next=${encodeURIComponent(redirectTo)}`}
+          className="text-green-700 hover:underline"
+        >
           Create account
         </Link>
       </div>

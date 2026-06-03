@@ -346,7 +346,10 @@ export default function SupabaseRegisterPage() {
 
       <p className="mt-6 text-sm text-gray-600">
         Already have an account?{" "}
-        <Link href="/login" className="text-green-700 hover:underline">
+        <Link
+          href={nextPath === "/onboarding" ? "/login" : `/login?next=${encodeURIComponent(nextPath)}`}
+          className="text-green-700 hover:underline"
+        >
           Log in
         </Link>
       </p>

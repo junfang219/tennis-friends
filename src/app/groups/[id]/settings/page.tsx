@@ -196,6 +196,7 @@ export default function GroupSettingsPage() {
               group={group}
               canManage={canManage}
               currentUserId={session?.user?.id || ""}
+              currentUserName={session?.user?.name || ""}
               onSaved={loadGroup}
             />
           )}
@@ -383,7 +384,8 @@ function TeamTab({
 
 type Invite = {
   id: string;
-  email: string;
+  email: string | null;
+  token: string;
   roles: TeamRole[];
   memberType: string;
   status: string;
@@ -401,11 +403,13 @@ function RosterTab({
   group,
   canManage,
   currentUserId,
+  currentUserName,
   onSaved,
 }: {
   group: Group;
   canManage: boolean;
   currentUserId: string;
+  currentUserName: string;
   onSaved: () => void;
 }) {
   const types = parseMemberTypes(group.memberTypes);
@@ -415,6 +419,7 @@ function RosterTab({
 
   // Invites — fetched once and refreshed after send/cancel.
   const [invites, setInvites] = useState<Invite[]>([]);
+  const [inviteChannel, setInviteChannel] = useState<"email" | "phone">("email");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRoles, setInviteRoles] = useState<TeamRole[]>([]);
   const [inviteType, setInviteType] = useState("");
@@ -427,23 +432,37 @@ function RosterTab({
     const { data } = await supabase
       .from("group_invites")
       .select(
-        "id, email, roles, member_type, status, expires_at, accepted_by_id, accepted_at, created_at, invited_by_id, token"
+        `id, email, token, roles, member_type, status, created_at, invited_by_id,
+         invitedBy:profiles!group_invites_invited_by_id_fkey ( id, name )`
       )
       .eq("group_id", group.id)
+      .eq("status", "pending")
       .order("created_at", { ascending: false });
+    type Row = {
+      id: string;
+      email: string | null;
+      token: string;
+      roles: TeamRole[];
+      member_type: string;
+      status: string;
+      created_at: string;
+      invited_by_id: string;
+      invitedBy: { id: string; name: string } | { id: string; name: string }[] | null;
+    };
     setInvites(
-      (data ?? []).map((i) => ({
-        id: i.id,
-        email: i.email,
-        roles: i.roles,
-        memberType: i.member_type,
-        status: i.status,
-        expiresAt: i.expires_at,
-        acceptedById: i.accepted_by_id,
-        acceptedAt: i.accepted_at,
-        createdAt: i.created_at,
-        token: i.token,
-      })) as unknown as typeof invites
+      ((data ?? []) as unknown as Row[]).map((i) => {
+        const inviter = Array.isArray(i.invitedBy) ? i.invitedBy[0] : i.invitedBy;
+        return {
+          id: i.id,
+          email: i.email,
+          token: i.token,
+          roles: i.roles,
+          memberType: i.member_type,
+          status: i.status,
+          createdAt: i.created_at,
+          invitedBy: inviter ?? { id: i.invited_by_id, name: "Unknown" },
+        };
+      })
     );
   }, [group.id]);
 
@@ -453,10 +472,19 @@ function RosterTab({
   }, [loadInvites]);
 
   const sendInvite = async () => {
-    if (!inviteEmail.trim()) return;
-    setSending(true);
     setInviteErr("");
     setInviteMsg("");
+
+    // Email tab requires an address. Phone tab is no-input — it generates
+    // a bearer link (null email) and opens the share sheet.
+    let emailToInsert: string | null = null;
+    if (inviteChannel === "email") {
+      const trimmed = inviteEmail.trim();
+      if (!trimmed) return;
+      emailToInsert = trimmed;
+    }
+
+    setSending(true);
     try {
       const supabase = createSupabaseBrowserClient();
       const { data: auth } = await supabase.auth.getUser();
@@ -467,7 +495,7 @@ function RosterTab({
         .join("");
       const { error: insErr } = await supabase.from("group_invites").insert({
         group_id: group.id,
-        email: inviteEmail.trim(),
+        email: emailToInsert,
         roles: inviteRoles,
         member_type: inviteType,
         token,
@@ -476,11 +504,18 @@ function RosterTab({
         expires_at: new Date(Date.now() + 30 * 86400_000).toISOString(),
       });
       if (insErr) throw insErr;
-      setInviteMsg(`Invite saved for ${inviteEmail.trim()}. Email dispatch is owned by an Edge Function — needs reinstatement before launch.`);
+      if (emailToInsert) {
+        setInviteMsg(`Invite sent to ${emailToInsert}.`);
+        void loadInvites();
+      } else {
+        // Bearer link — push it through the share sheet so the inviter
+        // can send the link + pre-filled message via Messages / etc.
+        await loadInvites();
+        await shareInviteLink(token);
+      }
       setInviteEmail("");
       setInviteType("");
       setInviteRoles([]);
-      void loadInvites();
     } catch (err) {
       setInviteErr(errorMessage(err, "Failed to send invite."));
     }
@@ -499,6 +534,36 @@ function RosterTab({
       void loadInvites();
     } catch (err) {
       setInviteErr(errorMessage(err, "Failed to cancel invite."));
+    }
+  };
+
+  const shareInviteLink = async (token: string) => {
+    setInviteErr("");
+    setInviteMsg("");
+    const link = `${window.location.origin}/invite/${token}`;
+    const inviter = currentUserName || "A teammate";
+    const message = `${inviter} invited you to join ${group.name} on TennisFriend.`;
+    // Prefer the native share sheet (Messages, WhatsApp, Mail…).
+    // On HTTPS prod this works; if it's missing or denied, fall back to clipboard.
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      try {
+        await navigator.share({
+          title: `Join ${group.name} on TennisFriend`,
+          text: message,
+          url: link,
+        });
+        return;
+      } catch {
+        // User cancelled or share unavailable; fall through to clipboard.
+      }
+    }
+    try {
+      // Clipboard payload mirrors what the share sheet would send so the
+      // inviter can paste the full message + link, not a bare URL.
+      await navigator.clipboard.writeText(`${message}\n${link}`);
+      setInviteMsg("Invite copied. Open Messages and paste to send.");
+    } catch {
+      setInviteErr("Couldn't copy automatically — long-press the link to copy.");
     }
   };
 
@@ -655,49 +720,100 @@ function RosterTab({
             Pending invites
           </h3>
           <div className="space-y-2">
-            {invites.map((inv) => (
-              <div
-                key={inv.id}
-                className="flex items-center gap-3 px-3 py-2 rounded-xl border border-gray-100 bg-amber-50/40"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-600 shrink-0">
-                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                  <polyline points="22,6 12,13 2,6" />
-                </svg>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-800 truncate">{inv.email}</p>
-                  <p className="text-[11px] text-gray-500">
-                    Invited by {inv.invitedBy.name} · {rolesLabel(inv.roles)}{inv.memberType ? ` · ${inv.memberType}` : ""}
-                  </p>
+            {invites.map((inv) => {
+              const isLink = !inv.email;
+              return (
+                <div
+                  key={inv.id}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-xl border ${
+                    isLink
+                      ? "border-court-green-pale/40 bg-court-green-pale/10"
+                      : "border-gray-100 bg-amber-50/40"
+                  }`}
+                >
+                  {isLink ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-court-green shrink-0">
+                      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-600 shrink-0">
+                      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                      <polyline points="22,6 12,13 2,6" />
+                    </svg>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800 truncate">
+                      {isLink ? "Invite link" : inv.email}
+                    </p>
+                    <p className="text-[11px] text-gray-500">
+                      {isLink ? "Anyone with the link" : "Email queued"} · {inv.invitedBy.name} · {rolesLabel(inv.roles)}{inv.memberType ? ` · ${inv.memberType}` : ""}
+                    </p>
+                  </div>
+                  {isLink && canManage && (
+                    <button
+                      onClick={() => shareInviteLink(inv.token)}
+                      className="text-xs font-semibold text-court-green hover:underline"
+                    >
+                      Share
+                    </button>
+                  )}
+                  {canManage && (
+                    <button
+                      onClick={() => cancelInvite(inv.id)}
+                      className="text-xs font-semibold text-red-500 hover:text-red-600"
+                    >
+                      Cancel
+                    </button>
+                  )}
                 </div>
-                {canManage && (
-                  <button
-                    onClick={() => cancelInvite(inv.id)}
-                    className="text-xs font-semibold text-red-500 hover:text-red-600"
-                  >
-                    Cancel
-                  </button>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* ── Invite by email ── */}
+      {/* ── Invite by email or phone ── */}
       {canManage && (
         <div className="mt-6">
           <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
-            Invite by email
+            Invite someone
           </h3>
           <div className="p-3 rounded-xl border border-gray-200 bg-gray-50 space-y-2">
-            <input
-              type="email"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="name@example.com"
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-court-green"
-            />
+            <div className="grid grid-cols-2 gap-1 p-0.5 bg-white rounded-lg border border-gray-200">
+              {(["email", "phone"] as const).map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => {
+                    setInviteChannel(c);
+                    setInviteMsg("");
+                    setInviteErr("");
+                  }}
+                  aria-pressed={inviteChannel === c}
+                  className={`text-xs font-semibold py-1.5 rounded-md transition-colors ${
+                    inviteChannel === c
+                      ? "bg-court-green text-white"
+                      : "text-gray-500 hover:text-gray-800"
+                  }`}
+                >
+                  {c === "email" ? "Email" : "Phone"}
+                </button>
+              ))}
+            </div>
+            {inviteChannel === "email" ? (
+              <input
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="name@example.com"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-court-green"
+              />
+            ) : (
+              <p className="text-[11px] text-gray-500 leading-snug px-1">
+                Tap Send to generate a link. We&apos;ll open your share sheet so you can text it with a pre-filled message.
+              </p>
+            )}
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                 Roles
@@ -743,10 +859,17 @@ function RosterTab({
             </select>
             <button
               onClick={sendInvite}
-              disabled={sending || !inviteEmail.trim()}
+              disabled={
+                sending ||
+                (inviteChannel === "email" && !inviteEmail.trim())
+              }
               className="btn-primary w-full"
             >
-              {sending ? "Sending..." : "Send invite"}
+              {sending
+                ? "Sending..."
+                : inviteChannel === "email"
+                ? "Send invite"
+                : "Generate & share link"}
             </button>
             {inviteMsg && <p className="text-xs text-court-green">{inviteMsg}</p>}
             {inviteErr && <p className="text-xs text-red-600">{inviteErr}</p>}
