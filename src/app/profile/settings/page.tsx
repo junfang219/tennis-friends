@@ -333,59 +333,68 @@ export default function SettingsPage() {
             aria-hidden="true"
           />
           <div className="relative w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl p-5 mx-0 sm:mx-4">
-            <h3 id="delete-account-title" className="text-lg font-semibold text-gray-900">
-              Delete account?
-            </h3>
-            <p className="mt-2 text-sm text-gray-600">
-              This will permanently remove everything tied to your account:
-            </p>
-            <ul className="mt-2 text-sm text-gray-600 list-disc pl-5 space-y-0.5">
-              <li>Your profile, avatar, and bio</li>
-              <li>Posts, comments, likes, and photos/videos you uploaded</li>
-              <li>Direct messages and group chats you created</li>
-              <li>RSVPs, events you own, polls, and bookings</li>
-              <li>Teams you own (other members will lose access)</li>
-              <li>Friendships and push notifications</li>
-            </ul>
-            <p className="mt-3 text-sm font-semibold text-red-600">
-              This cannot be undone.
-            </p>
-            <label className="block mt-4 text-xs text-gray-600">
-              Type <span className="font-mono font-semibold">DELETE</span> to confirm
-            </label>
-            <input
-              type="text"
-              autoFocus
-              autoComplete="off"
-              autoCapitalize="characters"
-              spellCheck={false}
-              value={deleteConfirmInput}
-              onChange={(e) => setDeleteConfirmInput(e.target.value)}
-              disabled={deleting}
-              className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:bg-gray-50"
-            />
-            {deleteError && (
-              <p className="mt-2 text-xs text-red-600">{deleteError}</p>
+            {deleting ? (
+              <div className="flex items-center justify-center gap-3 py-8 text-sm font-semibold text-gray-700">
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-4 w-4 rounded-full border-2 border-gray-300 border-t-red-600 animate-spin"
+                />
+                Deleting…
+              </div>
+            ) : (
+              <>
+                <h3 id="delete-account-title" className="text-lg font-semibold text-gray-900">
+                  Delete account?
+                </h3>
+                <p className="mt-2 text-sm text-gray-600">
+                  This will permanently remove everything tied to your account:
+                </p>
+                <ul className="mt-2 text-sm text-gray-600 list-disc pl-5 space-y-0.5">
+                  <li>Your profile, avatar, and bio</li>
+                  <li>Posts, comments, likes, and photos/videos you uploaded</li>
+                  <li>Direct messages and group chats you created</li>
+                  <li>RSVPs, events you own, polls, and bookings</li>
+                  <li>Teams you own (other members will lose access)</li>
+                  <li>Friendships and push notifications</li>
+                </ul>
+                <p className="mt-3 text-sm font-semibold text-red-600">
+                  This cannot be undone.
+                </p>
+                <label className="block mt-4 text-xs text-gray-600">
+                  Type <span className="font-mono font-semibold">DELETE</span> to confirm
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  value={deleteConfirmInput}
+                  onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                />
+                {deleteError && (
+                  <p className="mt-2 text-xs text-red-600">{deleteError}</p>
+                )}
+                <div className="mt-4 flex gap-2 justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteModal(false)}
+                    className="btn-secondary btn-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={deleteAccount}
+                    disabled={deleteConfirmInput !== "DELETE"}
+                    className="btn-danger btn-sm disabled:opacity-50"
+                  >
+                    Delete account permanently
+                  </button>
+                </div>
+              </>
             )}
-            <div className="mt-4 flex gap-2 justify-end">
-              {!deleting && (
-                <button
-                  type="button"
-                  onClick={() => setShowDeleteModal(false)}
-                  className="btn-secondary btn-sm"
-                >
-                  Cancel
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={deleteAccount}
-                disabled={deleting || deleteConfirmInput !== "DELETE"}
-                className="btn-danger btn-sm disabled:opacity-50"
-              >
-                {deleting ? "Deleting…" : "Delete account permanently"}
-              </button>
-            </div>
           </div>
         </div>
       )}
