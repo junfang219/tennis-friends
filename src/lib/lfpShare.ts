@@ -16,7 +16,11 @@ export type LfpSharePost = {
   authorName?: string;
 };
 
-export type LfpSharePayload = { title: string; text: string; url: string };
+export type SharePayload = { title: string; text: string; url: string };
+// Back-compat alias for callers built against the LFP-specific name. The
+// payload shape is identical — title / text / url is the same triple the Web
+// Share API and Capacitor Share both accept.
+export type LfpSharePayload = SharePayload;
 
 function formatPlayDate(playDate: string): string {
   // Anchor to noon to dodge the UTC-midnight day-shift on negative offsets.
@@ -111,12 +115,13 @@ function errMsg(err: unknown): string {
   }
 }
 
-export async function shareLfp(payload: LfpSharePayload): Promise<ShareResult> {
-  // Native Capacitor first. Required on iOS because the dev server (and any
-  // non-HTTPS context) blocks navigator.share / navigator.clipboard — those
-  // are both secure-context-only Web APIs. The Capacitor Share plugin goes
-  // through the native bridge and has no such restriction, so it works in
-  // both dev (mDNS over HTTP) and prod (HTTPS) identically.
+// Generic share routine: Capacitor native first (works on iOS dev server),
+// then Web Share API, then clipboard fallback. Used by every share call site
+// in the app — pass a logTag for legible console traces when a target fails.
+export async function nativeShare(
+  payload: SharePayload,
+  logTag = "share",
+): Promise<ShareResult> {
   let lastError: string | undefined;
   try {
     const core = await import("@capacitor/core");
@@ -126,62 +131,73 @@ export async function shareLfp(payload: LfpSharePayload): Promise<ShareResult> {
       // installing @capacitor/share, or Xcode didn't refresh the workspace.
       if (!core.Capacitor.isPluginAvailable("Share")) {
         const msg = "Share plugin not registered. Run `npx cap sync ios` and rebuild.";
-        console.error("[lfpShare]", msg);
+        console.error(`[${logTag}]`, msg);
         return { outcome: "failed", error: msg };
       }
       try {
         const { Share } = await import("@capacitor/share");
-        await Share.share({
-          title: payload.title,
-          text: payload.text,
-          url: payload.url,
-        });
+        // Only include fields with non-empty values. iOS UIActivityViewController
+        // turns an empty-string `url: ""` into a URL activity item anyway, which
+        // makes Messages render a link card and drop the text body. Omitting the
+        // field entirely is what forces Messages to send plain text.
+        const opts: { title?: string; text?: string; url?: string } = {};
+        if (payload.title) opts.title = payload.title;
+        if (payload.text) opts.text = payload.text;
+        if (payload.url) opts.url = payload.url;
+        await Share.share(opts);
         return { outcome: "shared" };
       } catch (err) {
-        // iOS rejects with "Share canceled" when the user dismisses the
-        // sheet; treat that as a quiet cancel, not a failure.
         const msg = errMsg(err);
-        console.error("[lfpShare] Share.share threw:", msg, err);
+        console.error(`[${logTag}] Share.share threw:`, msg, err);
         if (/cancel/i.test(msg)) return { outcome: "cancelled" };
         lastError = msg;
-        // Any other native error falls through to the web paths so we still
-        // have a chance to surface something useful — but if those also fail,
-        // we report this native error since it's the most actionable.
+        // Fall through to the web paths.
       }
     }
   } catch (err) {
-    console.error("[lfpShare] @capacitor/core import failed:", errMsg(err));
+    console.error(`[${logTag}] @capacitor/core import failed:`, errMsg(err));
   }
 
   if (canNativeShare()) {
     try {
-      await navigator.share({
-        title: payload.title,
-        text: payload.text,
-        url: payload.url,
-      });
+      // Same omit-when-empty discipline as the native path above — some browsers
+      // (Safari) render text+url as a link preview when both are present.
+      const opts: ShareData = {};
+      if (payload.title) opts.title = payload.title;
+      if (payload.text) opts.text = payload.text;
+      if (payload.url) opts.url = payload.url;
+      await navigator.share(opts);
       return { outcome: "shared" };
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
         return { outcome: "cancelled" };
       }
       const msg = errMsg(err);
-      console.error("[lfpShare] navigator.share threw:", msg, err);
+      console.error(`[${logTag}] navigator.share threw:`, msg, err);
       lastError = lastError ?? msg;
-      // Fall through to clipboard if the platform rejected the payload.
     }
   }
 
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
     try {
-      await navigator.clipboard.writeText(`${payload.text}\n${payload.url}`);
+      const clipText = payload.url ? `${payload.text}\n${payload.url}` : payload.text;
+      await navigator.clipboard.writeText(clipText);
       return { outcome: "copied" };
     } catch (err) {
       const msg = errMsg(err);
-      console.error("[lfpShare] clipboard.writeText threw:", msg, err);
+      console.error(`[${logTag}] clipboard.writeText threw:`, msg, err);
       lastError = lastError ?? msg;
     }
   }
 
   return { outcome: "failed", error: lastError };
+}
+
+export async function shareLfp(payload: LfpSharePayload): Promise<ShareResult> {
+  // Native Capacitor first. Required on iOS because the dev server (and any
+  // non-HTTPS context) blocks navigator.share / navigator.clipboard — those
+  // are both secure-context-only Web APIs. The Capacitor Share plugin goes
+  // through the native bridge and has no such restriction, so it works in
+  // both dev (mDNS over HTTP) and prod (HTTPS) identically.
+  return nativeShare(payload, "lfpShare");
 }

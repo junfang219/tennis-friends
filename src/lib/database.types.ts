@@ -117,6 +117,121 @@ export type Database = {
           },
         ]
       }
+      availability_poll_responses: {
+        Row: {
+          blocks: Json
+          created_at: string
+          id: string
+          note: string
+          poll_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          blocks?: Json
+          created_at?: string
+          id?: string
+          note?: string
+          poll_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          blocks?: Json
+          created_at?: string
+          id?: string
+          note?: string
+          poll_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "availability_poll_responses_poll_id_fkey"
+            columns: ["poll_id"]
+            isOneToOne: false
+            referencedRelation: "availability_polls"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "availability_poll_responses_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      availability_polls: {
+        Row: {
+          candidate_dates: string[]
+          closed_at: string | null
+          created_at: string
+          created_by_id: string
+          group_id: string
+          id: string
+          min_block_minutes: number
+          min_players: number
+          resulting_match_id: string | null
+          status: string
+          timezone: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          candidate_dates: string[]
+          closed_at?: string | null
+          created_at?: string
+          created_by_id: string
+          group_id: string
+          id?: string
+          min_block_minutes?: number
+          min_players?: number
+          resulting_match_id?: string | null
+          status?: string
+          timezone?: string
+          title?: string
+          updated_at?: string
+        }
+        Update: {
+          candidate_dates?: string[]
+          closed_at?: string | null
+          created_at?: string
+          created_by_id?: string
+          group_id?: string
+          id?: string
+          min_block_minutes?: number
+          min_players?: number
+          resulting_match_id?: string | null
+          status?: string
+          timezone?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "availability_polls_created_by_id_fkey"
+            columns: ["created_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "availability_polls_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "availability_polls_resulting_match_id_fkey"
+            columns: ["resulting_match_id"]
+            isOneToOne: false
+            referencedRelation: "team_matches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       availabilities: {
         Row: {
           created_at: string
@@ -1807,6 +1922,7 @@ export type Database = {
           id: string
           match_id: string | null
           message_id: string | null
+          poll_id: string | null
           post_id: string | null
           read: boolean
           type: Database["public"]["Enums"]["notification_type"]
@@ -1821,6 +1937,7 @@ export type Database = {
           id?: string
           match_id?: string | null
           message_id?: string | null
+          poll_id?: string | null
           post_id?: string | null
           read?: boolean
           type: Database["public"]["Enums"]["notification_type"]
@@ -1835,6 +1952,7 @@ export type Database = {
           id?: string
           match_id?: string | null
           message_id?: string | null
+          poll_id?: string | null
           post_id?: string | null
           read?: boolean
           type?: Database["public"]["Enums"]["notification_type"]
@@ -2844,6 +2962,7 @@ export type Database = {
         | "event_ladder_challenge"
         | "event_challenge_accepted"
         | "event_challenge_declined"
+        | "availability_poll"
       play_request_status:
         | "pending"
         | "approved"
@@ -3020,6 +3139,7 @@ export const Constants = {
         "event_ladder_challenge",
         "event_challenge_accepted",
         "event_challenge_declined",
+        "availability_poll",
       ],
       play_request_status: [
         "pending",

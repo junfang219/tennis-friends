@@ -13,6 +13,8 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage } from "@/lib/supabase/queries";
 import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { errorMessage } from "@/lib/errorMessage";
+import { AvailabilityTabs } from "@/components/availability/AvailabilityTabs";
+import { closePoll } from "@/lib/supabase/queries/availabilityPolls";
 
 type Member = {
   id: string;
@@ -93,6 +95,14 @@ export default function AvailabilityPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const focusMatchId = searchParams.get("focus");
+  // Poll → match handoff: when the captain converts a winning poll window
+  // into a real match, the poll page navigates here with these query params.
+  // We open the Add Match form prefilled, then on successful insert close
+  // the source poll and replace the URL so a refresh doesn't re-trigger.
+  const prefillDate = searchParams.get("prefillDate");
+  const prefillTime = searchParams.get("prefillTime");
+  const fromPollIdParam = searchParams.get("fromPollId");
+  const fromPollIdRef = useRef<string | null>(fromPollIdParam);
   const { data: session } = useSession();
   const groupId = params.id as string;
   const myId = session?.user?.id || "";
@@ -242,6 +252,21 @@ export default function AvailabilityPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId]);
 
+  // Seed the Add Match form from a poll → match handoff (?prefillDate=&prefillTime=).
+  // Runs once on mount; clears the params from the URL so a refresh won't re-open the form.
+  useEffect(() => {
+    if (prefillDate || prefillTime) {
+      setShowAdd(true);
+      if (prefillDate) setMatchDate(prefillDate);
+      if (prefillTime) setMatchTime(prefillTime);
+      const next = new URLSearchParams();
+      if (focusMatchId) next.set("focus", focusMatchId);
+      const qs = next.toString();
+      router.replace(`/groups/${groupId}/availability${qs ? `?${qs}` : ""}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Scroll to and highlight the focused match column when navigated from elsewhere (e.g. calendar)
   useEffect(() => {
     if (!focusMatchId || loading || matches.length === 0) return;
@@ -287,6 +312,14 @@ export default function AvailabilityPage() {
         availabilities: [],
       } as unknown as Match;
       setMatches((prev) => [...prev, newMatch].sort((a, b) => (a.matchDate + a.matchTime).localeCompare(b.matchDate + b.matchTime)));
+      // Close the source poll and link it to this new match. RLS already
+      // limits captains-only UPDATE so we don't need to gate this on isCaptain.
+      if (fromPollIdRef.current) {
+        try {
+          await closePoll(supabase, { pollId: fromPollIdRef.current, resultingMatchId: data.id });
+        } catch { /* non-fatal */ }
+        fromPollIdRef.current = null;
+      }
       setShowAdd(false);
       setMatchDate("");
       setMatchTime("");
@@ -497,6 +530,8 @@ export default function AvailabilityPage() {
           </button>
         )}
       </div>
+
+      <AvailabilityTabs groupId={groupId} active="matches" />
 
       {/* Add match form */}
       {showAdd && isCaptain && (

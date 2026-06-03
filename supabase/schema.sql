@@ -102,7 +102,8 @@ create type public.notification_type         as enum (
   'event_match_disputed',
   'event_ladder_challenge',
   'event_challenge_accepted',
-  'event_challenge_declined'
+  'event_challenge_declined',
+  'availability_poll'
 );
 
 -- =========================================================================
@@ -795,6 +796,11 @@ create table public.notifications (
   message_id  uuid references public.messages (id) on delete cascade,
   event_id    uuid references public.events (id) on delete cascade,
   match_id    uuid references public.event_matches (id) on delete cascade,
+  -- Set by the availability_poll notification flow; references the poll
+  -- the recipient should deep-link into. NULL for non-poll notifications.
+  -- Forward-referenced: availability_polls is created later in this schema,
+  -- so the FK is wired via ALTER TABLE in section 0018.
+  poll_id     uuid,
   emoji       text not null default '',
   read        boolean not null default false,
   created_at  timestamptz not null default now()
@@ -7305,3 +7311,119 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.accept_group_invite(text) FROM public;
 GRANT EXECUTE ON FUNCTION public.accept_group_invite(text) TO authenticated;
+
+-- =====================================================================
+-- 0018_availability_polls
+--
+-- "Availability-first" complement to the captain-posts-match flow.
+-- The captain opens a poll on a chosen set of dates (e.g. specific
+-- weekends), and each member submits one or more free-form blocks
+-- (start, end) per date (length >= min_block_minutes, default 2h).
+-- The poll page computes a ranked list of overlap windows; converting
+-- a winning slot uses the existing Add Match form (prefilled date+time)
+-- so team_matches stays the single source of truth.
+-- =====================================================================
+
+CREATE TABLE public.availability_polls (
+  id                  uuid primary key default gen_random_uuid(),
+  group_id            uuid not null references public.groups (id) on delete cascade,
+  created_by_id       uuid not null references public.profiles (id) on delete restrict,
+  title               text not null default '',
+  candidate_dates     date[] not null,
+  min_players         integer not null default 4 check (min_players >= 1),
+  min_block_minutes   integer not null default 120 check (min_block_minutes >= 30),
+  timezone            text not null default 'America/Los_Angeles',
+  status              text not null default 'open' check (status in ('open','closed')),
+  closed_at           timestamptz,
+  resulting_match_id  uuid references public.team_matches (id) on delete set null,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now(),
+  CHECK (array_length(candidate_dates, 1) between 1 and 60)
+);
+CREATE INDEX availability_polls_group_status_idx
+  ON public.availability_polls (group_id, status);
+
+CREATE TRIGGER availability_polls_updated_at
+  BEFORE UPDATE ON public.availability_polls
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+CREATE TABLE public.availability_poll_responses (
+  id          uuid primary key default gen_random_uuid(),
+  poll_id     uuid not null references public.availability_polls (id) on delete cascade,
+  user_id     uuid not null references public.profiles (id) on delete cascade,
+  -- jsonb array: [{ "date":"YYYY-MM-DD", "start":"HH:MM", "end":"HH:MM" }, ...]
+  -- A single row per (poll, member); replacing the array is a plain upsert.
+  blocks      jsonb not null default '[]'::jsonb
+              CHECK (jsonb_typeof(blocks) = 'array'),
+  note        text not null default '',
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  UNIQUE (poll_id, user_id)
+);
+CREATE INDEX availability_poll_responses_poll_idx
+  ON public.availability_poll_responses (poll_id);
+CREATE INDEX availability_poll_responses_user_idx
+  ON public.availability_poll_responses (user_id);
+
+CREATE TRIGGER availability_poll_responses_updated_at
+  BEFORE UPDATE ON public.availability_poll_responses
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- Wire the forward-referenced FK from notifications.poll_id (declared in
+-- the notifications block above) to the now-created polls table.
+ALTER TABLE public.notifications
+  ADD CONSTRAINT notifications_poll_id_fkey
+  FOREIGN KEY (poll_id) REFERENCES public.availability_polls (id) ON DELETE CASCADE;
+
+-- RLS: mirrors team_matches (members read; captains write).
+ALTER TABLE public.availability_polls ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY availability_polls_select_member ON public.availability_polls
+  FOR SELECT TO authenticated USING (public.is_group_member(group_id));
+
+CREATE POLICY availability_polls_insert_captain ON public.availability_polls
+  FOR INSERT TO authenticated
+  WITH CHECK (public.can_run_group(group_id) AND created_by_id = (SELECT auth.uid()));
+
+CREATE POLICY availability_polls_update_captain ON public.availability_polls
+  FOR UPDATE TO authenticated
+  USING (public.can_run_group(group_id))
+  WITH CHECK (public.can_run_group(group_id));
+
+CREATE POLICY availability_polls_delete_captain ON public.availability_polls
+  FOR DELETE TO authenticated
+  USING (public.can_run_group(group_id));
+
+ALTER TABLE public.availability_poll_responses ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY poll_responses_select_member ON public.availability_poll_responses
+  FOR SELECT TO authenticated USING (
+    EXISTS (
+      SELECT 1 FROM public.availability_polls p
+      WHERE p.id = poll_id AND public.is_group_member(p.group_id)
+    )
+  );
+
+CREATE POLICY poll_responses_insert_self ON public.availability_poll_responses
+  FOR INSERT TO authenticated WITH CHECK (
+    user_id = (SELECT auth.uid())
+    AND EXISTS (
+      SELECT 1 FROM public.availability_polls p
+      WHERE p.id = poll_id
+        AND public.is_group_member(p.group_id)
+        AND p.status = 'open'
+    )
+  );
+
+CREATE POLICY poll_responses_update_self ON public.availability_poll_responses
+  FOR UPDATE TO authenticated
+  USING (user_id = (SELECT auth.uid()))
+  WITH CHECK (user_id = (SELECT auth.uid()));
+
+CREATE POLICY poll_responses_delete_self ON public.availability_poll_responses
+  FOR DELETE TO authenticated
+  USING (user_id = (SELECT auth.uid()));
+
+-- Realtime so the captain's ranked-window view live-updates as members submit.
+ALTER PUBLICATION supabase_realtime ADD TABLE public.availability_polls;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.availability_poll_responses;
