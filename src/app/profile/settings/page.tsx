@@ -31,6 +31,30 @@ export default function SettingsPage() {
   const [locationSaving, setLocationSaving] = useState(false);
   const [locationError, setLocationError] = useState("");
   const [confirmingTurnOff, setConfirmingTurnOff] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  const deleteAccount = async () => {
+    setDeleteError("");
+    setDeleting(true);
+    try {
+      const res = await fetch("/api/account/delete", { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: "" }));
+        setDeleteError(body.error || "Could not delete account. Try again.");
+        setDeleting(false);
+        return;
+      }
+      // Don't reset `deleting` — keep the button disabled while signOut
+      // tears the page down so the user can't double-submit.
+      await signOut({ callbackUrl: "/login?deleted=1" });
+    } catch {
+      setDeleteError("Network error. Try again.");
+      setDeleting(false);
+    }
+  };
 
   // Bounce unauthenticated visitors to login (mirrors the profile page).
   useEffect(() => {
@@ -270,6 +294,100 @@ export default function SettingsPage() {
           {signingOut ? "Signing out…" : "Sign out"}
         </button>
       </section>
+
+      {/* Danger zone */}
+      <section className="bg-white rounded-2xl shadow-sm border border-red-200 overflow-hidden mt-4">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-red-600 px-4 pt-4 pb-2">
+          Danger zone
+        </h2>
+        <div className="px-4 pb-4">
+          <p className="text-xs text-gray-500 mb-3">
+            Permanently delete your account and everything tied to it. This cannot be undone.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setDeleteConfirmInput("");
+              setDeleteError("");
+              setShowDeleteModal(true);
+            }}
+            className="btn-danger btn-sm"
+          >
+            Delete account
+          </button>
+        </div>
+      </section>
+
+      {showDeleteModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-account-title"
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+        >
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => {
+              if (!deleting) setShowDeleteModal(false);
+            }}
+            aria-hidden="true"
+          />
+          <div className="relative w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl p-5 mx-0 sm:mx-4">
+            <h3 id="delete-account-title" className="text-lg font-semibold text-gray-900">
+              Delete account?
+            </h3>
+            <p className="mt-2 text-sm text-gray-600">
+              This will permanently remove everything tied to your account:
+            </p>
+            <ul className="mt-2 text-sm text-gray-600 list-disc pl-5 space-y-0.5">
+              <li>Your profile, avatar, and bio</li>
+              <li>Posts, comments, likes, and photos/videos you uploaded</li>
+              <li>Direct messages and group chats you created</li>
+              <li>RSVPs, events you own, polls, and bookings</li>
+              <li>Teams you own (other members will lose access)</li>
+              <li>Friendships and push notifications</li>
+            </ul>
+            <p className="mt-3 text-sm font-semibold text-red-600">
+              This cannot be undone.
+            </p>
+            <label className="block mt-4 text-xs text-gray-600">
+              Type <span className="font-mono font-semibold">DELETE</span> to confirm
+            </label>
+            <input
+              type="text"
+              autoFocus
+              autoComplete="off"
+              autoCapitalize="characters"
+              spellCheck={false}
+              value={deleteConfirmInput}
+              onChange={(e) => setDeleteConfirmInput(e.target.value)}
+              disabled={deleting}
+              className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:bg-gray-50"
+            />
+            {deleteError && (
+              <p className="mt-2 text-xs text-red-600">{deleteError}</p>
+            )}
+            <div className="mt-4 flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                disabled={deleting}
+                className="btn-secondary btn-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={deleteAccount}
+                disabled={deleting || deleteConfirmInput !== "DELETE"}
+                className="btn-danger btn-sm disabled:opacity-50"
+              >
+                {deleting ? "Deleting…" : "Delete account permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

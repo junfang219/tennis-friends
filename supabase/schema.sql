@@ -4159,20 +4159,18 @@ CREATE INDEX IF NOT EXISTS team_listings_created_by_id_idx ON team_listings (cre
 -- Hard guard: refuses to run against any user whose email isn't on the
 -- @tennisfriend.test domain, so misuse can't wipe real accounts.
 
-CREATE OR REPLACE FUNCTION public.cleanup_user_for_test(uid uuid)
+-- Internal helper: hard-delete every RESTRICT-blocking row owned by `uid`
+-- across the schema, so a subsequent auth.users delete can cascade through
+-- profiles without tripping a foreign key. Shared by both
+-- cleanup_user_for_test (test teardown) and delete_my_account (user-driven
+-- account deletion from Settings) so the two stay in lockstep.
+CREATE OR REPLACE FUNCTION public._delete_user_owned_rows(uid uuid)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM auth.users
-    WHERE id = uid AND email LIKE '%@tennisfriend.test'
-  ) THEN
-    RAISE EXCEPTION 'cleanup_user_for_test refuses non-test user %', uid;
-  END IF;
-
   DELETE FROM public.album_items WHERE added_by_id = uid;
   DELETE FROM public.albums WHERE created_by_id = uid;
   DELETE FROM public.booking_players
@@ -4203,8 +4201,52 @@ BEGIN
 END;
 $$;
 
+REVOKE ALL ON FUNCTION public._delete_user_owned_rows(uuid) FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.cleanup_user_for_test(uid uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM auth.users
+    WHERE id = uid AND email LIKE '%@tennisfriend.test'
+  ) THEN
+    RAISE EXCEPTION 'cleanup_user_for_test refuses non-test user %', uid;
+  END IF;
+
+  PERFORM public._delete_user_owned_rows(uid);
+END;
+$$;
+
 GRANT EXECUTE ON FUNCTION public.cleanup_user_for_test(uuid) TO service_role;
 REVOKE EXECUTE ON FUNCTION public.cleanup_user_for_test(uuid) FROM PUBLIC, anon, authenticated;
+
+-- User-driven account self-deletion. Called by /api/account/delete after the
+-- user double-confirms in Settings → Danger zone. Operates only on the
+-- caller's own rows (auth.uid()); the API route follows up with storage
+-- cleanup + auth.admin.deleteUser to remove the profile + auth record.
+CREATE OR REPLACE FUNCTION public.delete_my_account()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  uid uuid := auth.uid();
+BEGIN
+  IF uid IS NULL THEN
+    RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  PERFORM public._delete_user_owned_rows(uid);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.delete_my_account() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.delete_my_account() TO authenticated;
 
 -- ============================================================
 -- FRIEND-REQUEST NOTIFICATION

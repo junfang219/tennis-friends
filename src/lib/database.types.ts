@@ -2747,6 +2747,7 @@ export type Database = {
       }
       cleanup_user_for_test: { Args: { uid: string }; Returns: undefined }
       count_user_friends: { Args: { user_id: string }; Returns: number }
+      delete_my_account: { Args: Record<string, never>; Returns: undefined }
       email_exists: { Args: { p_email: string }; Returns: boolean }
       generate_round_robin_schedule: {
         Args: { p_event_id: string; p_schedule: Json }

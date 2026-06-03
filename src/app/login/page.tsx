@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { AppleIcon, GoogleIcon } from "@/app/components/ui/icons";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { authErrorMessage } from "@/lib/supabase/authError";
 import { useIsNative } from "@/hooks/useIsNative";
@@ -42,6 +42,20 @@ export default function SupabaseLoginPage() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // `?deleted=1` is set by the post-delete redirect in Settings → Danger zone.
+  // Seed the banner from the URL on first render, then strip the param so a
+  // page refresh doesn't keep showing it.
+  const [showDeletedBanner, setShowDeletedBanner] = useState(
+    () => search.get("deleted") === "1"
+  );
+  useEffect(() => {
+    if (search.get("deleted") === "1") {
+      const next = new URLSearchParams(search.toString());
+      next.delete("deleted");
+      const qs = next.toString();
+      router.replace(qs ? `/login?${qs}` : "/login");
+    }
+  }, [search, router]);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -110,6 +124,23 @@ export default function SupabaseLoginPage() {
   return (
     <main className="mx-auto max-w-md p-6 pt-16">
       <h1 className="text-2xl font-semibold text-gray-900 mb-6">Log in</h1>
+
+      {showDeletedBanner && (
+        <div
+          role="status"
+          className="mb-4 flex items-start gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800"
+        >
+          <span className="flex-1">Your account has been deleted.</span>
+          <button
+            type="button"
+            onClick={() => setShowDeletedBanner(false)}
+            aria-label="Dismiss"
+            className="text-green-700 hover:text-green-900"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {embeddedBrowser && <EmbeddedBrowserNotice appName={embeddedBrowser.app} />}
 
