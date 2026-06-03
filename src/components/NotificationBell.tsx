@@ -66,6 +66,7 @@ function notificationText(n: { type: string; emoji?: string }) {
     case "event_match_disputed": return "disputed your reported score";
     case "event_challenge_accepted": return "accepted your ladder challenge";
     case "event_challenge_declined": return "declined your ladder challenge";
+    case "group_invite_accepted": return "accepted your team invitation";
     default: return "interacted with your post";
   }
 }
