@@ -368,14 +368,15 @@ export default function SettingsPage() {
               <p className="mt-2 text-xs text-red-600">{deleteError}</p>
             )}
             <div className="mt-4 flex gap-2 justify-end">
-              <button
-                type="button"
-                onClick={() => setShowDeleteModal(false)}
-                disabled={deleting}
-                className="btn-secondary btn-sm"
-              >
-                Cancel
-              </button>
+              {!deleting && (
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteModal(false)}
+                  className="btn-secondary btn-sm"
+                >
+                  Cancel
+                </button>
+              )}
               <button
                 type="button"
                 onClick={deleteAccount}
