@@ -20,6 +20,16 @@ function formatDateLong(date: string): string {
   });
 }
 
+function formatTimeLocale(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return hhmm;
+  // Match the device-locale format the native time input uses so the
+  // captain's ranked windows read the same as the inputs above.
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
 function formatDuration(minutes: number): string {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
@@ -58,7 +68,7 @@ export function RankedWindowList({
             >
               <div className="flex flex-col">
                 <div className="font-semibold text-gray-900">
-                  {formatDateLong(w.date)} · {w.start}–{w.end}
+                  {formatDateLong(w.date)} · {formatTimeLocale(w.start)}–{formatTimeLocale(w.end)}
                 </div>
                 <div className="text-xs text-gray-500">
                   {formatDuration(w.durationMinutes)} ·{" "}

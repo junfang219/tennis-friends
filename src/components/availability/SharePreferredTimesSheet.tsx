@@ -20,6 +20,17 @@ function windowKey(w: RankedWindow): string {
   return `${w.date}|${w.start}`;
 }
 
+function formatTimeLocale(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return hhmm;
+  // Match the input widget's locale rendering so the picker reads the same
+  // as the time inputs above. The shared text body (buildPollShare) still
+  // uses 24h since that travels outside the app.
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
 function formatDateLong(date: string): string {
   const d = new Date(`${date}T12:00:00`);
   if (Number.isNaN(d.getTime())) return date;
@@ -147,7 +158,7 @@ export function SharePreferredTimesSheet({
                           className="w-4 h-4 accent-court-green"
                         />
                         <span className="text-sm text-gray-900">
-                          {formatDateLong(w.date)} · {w.start}–{w.end}
+                          {formatDateLong(w.date)} · {formatTimeLocale(w.start)}–{formatTimeLocale(w.end)}
                         </span>
                       </label>
                     </li>
@@ -175,7 +186,7 @@ export function SharePreferredTimesSheet({
                             className="w-4 h-4 accent-court-green"
                           />
                           <span className="text-sm text-gray-500">
-                            {formatDateLong(w.date)} · {w.start}–{w.end}
+                            {formatDateLong(w.date)} · {formatTimeLocale(w.start)}–{formatTimeLocale(w.end)}
                           </span>
                         </label>
                       </li>

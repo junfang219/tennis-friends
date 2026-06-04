@@ -34,8 +34,19 @@ function formatDateLong(date: string): string {
   });
 }
 
+function formatTimeLocale(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return hhmm;
+  // toLocaleTimeString respects the device locale, so the read-only display
+  // matches whatever format the native <input type="time"> widget uses for
+  // this user (US → "9:00 AM", UK → "09:00").
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
 function formatBlock(b: Block): string {
-  return `${b.start}–${b.end}`;
+  return `${formatTimeLocale(b.start)}–${formatTimeLocale(b.end)}`;
 }
 
 // Unified per-date table. The "You" row sits first in every date, with
