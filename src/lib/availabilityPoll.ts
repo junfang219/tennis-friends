@@ -111,14 +111,16 @@ export function rankWindows(
 }
 
 // Walk a single day's presence array. For each tick s with non-empty presence,
-// extend e forward maintaining the running intersection of presence sets; the
-// longest non-empty [s, e) is the maximal window where the same set of members
-// can all attend. That intersection is the window's member list — guarantees
-// every listed member is free for the entire window.
+// extend e forward maintaining the running intersection of presence sets.
+// Every time the intersection would SHRINK at tick e (a member drops), emit
+// the just-closed [s, e) sub-window with the pre-shrink member set, then
+// continue extending with the smaller set. The trailing segment is emitted
+// after the loop. This surfaces nested overlaps like "A 9-21, B 9-12" as both
+// {A,B} 9-12 and {A} 9-21 instead of swallowing the {A,B} sub-window.
 //
 // After enumeration, collapse windows that share the same member-set, keeping
-// the longest. This eliminates shifted-by-one-tick duplicates that share both
-// the trailing end tick and the member set.
+// the longest. This eliminates shifted-by-one-tick duplicates emitted at
+// different start ticks.
 function pushDayWindows(
   date: string,
   presence: Set<string>[],
@@ -133,21 +135,27 @@ function pushDayWindows(
     if (presence[s].size === 0) continue;
     const intersection = new Set(presence[s]);
     let e = s + 1;
-    // Build the window [s, e) by appending one tick at a time; stop when the
-    // next tick would empty the intersection (don't include that tick).
     while (e < TICKS_PER_DAY && presence[e].size > 0) {
-      let stillIntersects = false;
+      let dropper = false;
       for (const id of intersection) {
-        if (presence[e].has(id)) { stillIntersects = true; break; }
+        if (!presence[e].has(id)) { dropper = true; break; }
       }
-      if (!stillIntersects) break;
-      for (const id of [...intersection]) {
-        if (!presence[e].has(id)) intersection.delete(id);
+      if (dropper) {
+        if (e - s >= minTicks) {
+          candidates.push({ start: s, end: e, members: [...intersection].sort() });
+        }
+        for (const id of [...intersection]) {
+          if (!presence[e].has(id)) intersection.delete(id);
+        }
+        if (intersection.size === 0) break;
       }
       e++;
     }
-    if (e - s < minTicks) continue;
-    candidates.push({ start: s, end: e, members: [...intersection].sort() });
+    // Trailing segment: intersection still non-empty when we ran out of
+    // presence (end-of-day or hit a zero tick).
+    if (intersection.size > 0 && e - s >= minTicks) {
+      candidates.push({ start: s, end: e, members: [...intersection].sort() });
+    }
   }
 
   // Collapse same-member-set windows: keep the longest (then earliest start).
@@ -163,19 +171,77 @@ function pushDayWindows(
     }
   }
 
-  for (const c of bestByKey.values()) {
-    const memberNames = c.members
-      .map((id) => responses.find((r) => r.userId === id)?.userName ?? id)
-      .sort((a, b) => a.localeCompare(b));
-    out.push({
-      date,
-      start: fromTick(c.start),
-      end: fromTick(c.end),
-      durationMinutes: (c.end - c.start) * TICK_MINUTES,
-      memberIds: c.members,
-      memberNames,
-    });
+  // Subtract higher-population coverage: each candidate's range is reduced
+  // by the union of every other candidate whose member set is a STRICT
+  // superset (more members AND all of ours). The remaining pieces are the
+  // time uniquely covered by THIS subset of members — so a 1-player
+  // near-miss row never visually overlaps the captain's chosen 2-player
+  // top row. Subtraction uses the OTHER candidate's original range, not
+  // its post-processed pieces, so the result reflects ground-truth presence.
+  const deduped = [...bestByKey.values()];
+  for (const c of deduped) {
+    const supersetRanges: Array<[number, number]> = [];
+    for (const other of deduped) {
+      if (other === c) continue;
+      if (other.members.length <= c.members.length) continue;
+      const isSuperset = c.members.every((m) => other.members.includes(m));
+      if (!isSuperset) continue;
+      const lo = Math.max(c.start, other.start);
+      const hi = Math.min(c.end, other.end);
+      if (lo < hi) supersetRanges.push([lo, hi]);
+    }
+    const remaining = subtractRanges(c.start, c.end, supersetRanges);
+    for (const [s, e] of remaining) {
+      if (e - s < minTicks) continue;
+      const memberNames = c.members
+        .map((id) => responses.find((r) => r.userId === id)?.userName ?? id)
+        .sort((a, b) => a.localeCompare(b));
+      out.push({
+        date,
+        start: fromTick(s),
+        end: fromTick(e),
+        durationMinutes: (e - s) * TICK_MINUTES,
+        memberIds: c.members,
+        memberNames,
+      });
+    }
   }
+}
+
+// Return the contiguous pieces of [start, end) not covered by any of the
+// input ranges. Ranges are inclusive-start, exclusive-end (matching tick
+// semantics elsewhere in this file). Pure math helper — used by the
+// pushDayWindows subtraction pass to carve a candidate's range around
+// higher-population overlap.
+function subtractRanges(
+  start: number,
+  end: number,
+  ranges: Array<[number, number]>,
+): Array<[number, number]> {
+  if (ranges.length === 0) return [[start, end]];
+  // Sort and merge overlapping/adjacent input ranges.
+  const sorted = ranges
+    .map((r) => [r[0], r[1]] as [number, number])
+    .sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const [s, e] of sorted) {
+    if (merged.length > 0 && s <= merged[merged.length - 1][1]) {
+      merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], e);
+    } else {
+      merged.push([s, e]);
+    }
+  }
+  const result: Array<[number, number]> = [];
+  let cursor = start;
+  for (const [s, e] of merged) {
+    if (e <= cursor) continue;
+    if (s >= end) break;
+    if (s > cursor) result.push([cursor, Math.min(s, end)]);
+    cursor = Math.max(cursor, e);
+    if (cursor >= end) break;
+  }
+  if (cursor < end) result.push([cursor, end]);
+  return result;
 }
 
 // Validate a single block on the client before saving — returns null if OK,

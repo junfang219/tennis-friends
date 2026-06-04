@@ -173,6 +173,80 @@ describe("rankWindows", () => {
     expect(result.top).toHaveLength(1);
     expect(result.top[0]).toMatchObject({ start: "09:30", end: "11:30", durationMinutes: 120 });
   });
+
+  it("surfaces the nested {A,B} 9-12 overlap when A is 9-21 and B is 9-12", () => {
+    // The 2-player overlap surfaces as the top window. The 1-player near-miss
+    // is the COMPLEMENT — only the 12-21 stretch where A is alone — never the
+    // 9-12 portion that overlaps with the top.
+    const result = rankWindows(
+      { candidateDates: [DATE], minBlockMinutes: 120, minPlayers: 2 },
+      [
+        member("a", "Alice", [{ start: "09:00", end: "21:00" }]),
+        member("b", "Bob",   [{ start: "09:00", end: "12:00" }]),
+      ],
+    );
+    expect(result.top).toHaveLength(1);
+    expect(result.top[0]).toMatchObject({
+      date: DATE,
+      start: "09:00",
+      end: "12:00",
+      durationMinutes: 180,
+    });
+    expect(result.top[0].memberNames).toEqual(["Alice", "Bob"]);
+    expect(result.nearMiss).toHaveLength(1);
+    expect(result.nearMiss[0]).toMatchObject({
+      date: DATE,
+      start: "12:00",
+      end: "21:00",
+      durationMinutes: 540,
+    });
+    expect(result.nearMiss[0].memberNames).toEqual(["Alice"]);
+  });
+
+  it("subtracts higher-population coverage from cascading nested members", () => {
+    // A 9-21, B 10-20, C 11-15.
+    // - {A,B,C} 11-15 stays (no strict superset).
+    // - {A,B} 10-20 minus {A,B,C} 11-15 → [10,11) + [15,20). [10,11) is 1h
+    //   (below 2h floor, drops); [15,20) is 5h (kept).
+    // - {A} 9-21 minus {A,B,C} 11-15 ∪ {A,B} 10-20 = 9-21 minus [10,20) →
+    //   [9,10) + [20,21). Both 1h, both drop.
+    const result = rankWindows(
+      { candidateDates: [DATE], minBlockMinutes: 120, minPlayers: 1 },
+      [
+        member("a", "Alice",   [{ start: "09:00", end: "21:00" }]),
+        member("b", "Bob",     [{ start: "10:00", end: "20:00" }]),
+        member("c", "Carol",   [{ start: "11:00", end: "15:00" }]),
+      ],
+    );
+    expect(result.top).toHaveLength(2);
+    expect(result.top[0]).toMatchObject({
+      start: "11:00", end: "15:00", durationMinutes: 240,
+    });
+    expect(result.top[0].memberNames).toEqual(["Alice", "Bob", "Carol"]);
+    expect(result.top[1]).toMatchObject({
+      start: "15:00", end: "20:00", durationMinutes: 300,
+    });
+    expect(result.top[1].memberNames).toEqual(["Alice", "Bob"]);
+  });
+
+  it("near-miss never overlaps the top window time-wise", () => {
+    // Pins the semantic invariant: any near-miss window's time range must lie
+    // entirely outside every top window on the same date (no redundancy).
+    const result = rankWindows(
+      { candidateDates: [DATE], minBlockMinutes: 120, minPlayers: 2 },
+      [
+        member("a", "Alice", [{ start: "09:00", end: "21:00" }]),
+        member("b", "Bob",   [{ start: "09:00", end: "12:00" }]),
+      ],
+    );
+    for (const top of result.top) {
+      for (const nm of result.nearMiss) {
+        if (top.date !== nm.date) continue;
+        const overlap = !(nm.end <= top.start || nm.start >= top.end);
+        expect(overlap).toBe(false);
+      }
+    }
+  });
 });
 
 describe("validateBlock", () => {
