@@ -19,7 +19,7 @@ import {
   type PollResponse,
 } from "@/lib/supabase/queries/availabilityPolls";
 import { rankWindows, validateBlock, type Block, type MemberResponse, type RankedWindow } from "@/lib/availabilityPoll";
-import { BlockEditor } from "@/components/availability/BlockEditor";
+import { AvailabilityTable } from "@/components/availability/AvailabilityTable";
 import { RankedWindowList } from "@/components/availability/RankedWindowList";
 import { SharePreferredTimesSheet } from "@/components/availability/SharePreferredTimesSheet";
 
@@ -349,28 +349,30 @@ export default function PollDetailPage() {
         </span>
       </div>
 
-      {/* Member response form */}
+      {/* Unified per-date table: You row (editable) + other members (read-only) */}
       <section className="mb-8">
         <h2 className="font-display text-lg font-bold text-gray-900 mb-3">
-          Your availability
+          Availability
         </h2>
         {!isOpen && (
           <p className="text-sm text-gray-500 mb-3">This poll is closed.</p>
         )}
-        <div className="space-y-3">
-          {poll.candidate_dates.map((date) => (
-            <BlockEditor
-              key={date}
-              date={date}
-              blocks={myBlocks.get(date) ?? []}
-              minBlockMinutes={poll.min_block_minutes}
-              onAdd={() => addBlockAt(date)}
-              onChange={(idx, patch) => setBlockAt(date, idx, patch)}
-              onRemove={(idx) => removeBlockAt(date, idx)}
-              disabled={!isOpen}
-            />
-          ))}
-        </div>
+        <AvailabilityTable
+          candidateDates={poll.candidate_dates}
+          responses={responses}
+          members={team.members.map((m) => ({
+            id: m.user.id,
+            name: m.user.name,
+            profileImageUrl: m.user.profileImageUrl,
+          }))}
+          myUserId={myId}
+          myBlocks={myBlocks}
+          minBlockMinutes={poll.min_block_minutes}
+          disabled={!isOpen}
+          onAdd={addBlockAt}
+          onChange={setBlockAt}
+          onRemove={removeBlockAt}
+        />
         {error && isOpen && <p className="text-sm text-red-500 mt-3">{error}</p>}
         {isOpen && (
           <button
