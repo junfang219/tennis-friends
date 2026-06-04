@@ -674,6 +674,11 @@ export default function GroupChatPage() {
                     {msg.sharedPost && (
                       <SharedPostCard post={msg.sharedPost} />
                     )}
+                    {msg.sharedPostId && !msg.sharedPost && (
+                      <div className={`bg-white rounded-xl border border-gray-200 shadow-sm px-3 py-2.5 max-w-full ${isMe ? "ml-auto" : ""}`}>
+                        <p className="text-[11px] font-medium text-gray-400">Shared post</p>
+                      </div>
+                    )}
                     {msg.mediaUrl && (
                       <div className={`rounded-2xl overflow-hidden shadow-sm ${msg.sharedPost ? "mt-1" : ""} ${isMe ? "ml-auto" : ""}`}>
                         {msg.mediaType === "video" ? (
@@ -685,7 +690,7 @@ export default function GroupChatPage() {
                         )}
                       </div>
                     )}
-                    {(msg.content || (!msg.sharedPost && !msg.mediaUrl)) && (
+                    {(msg.content || (!msg.sharedPostId && !msg.mediaUrl)) && (
                       <div
                         className={`px-4 py-2.5 text-sm leading-relaxed ${msg.sharedPost || msg.mediaUrl ? "mt-1 " : ""}${
                           isMe

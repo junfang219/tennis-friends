@@ -604,34 +604,44 @@ export function ComposerModal({
       // originating chat and drop a shared-post card into that chat. This
       // replaces the group/friend-group audience inserts below.
       if (chatTarget) {
-        if (chatTarget.kind === "dm") {
-          await supabase.from("post_targets").insert({
-            post_id: newPost.id,
-            target_kind: "user" as const,
-            target_user_id: chatTarget.userId,
-          });
-          await sendDirectMessage(supabase, chatTarget.userId, "", { sharedPostId: newPost.id });
-        } else if (chatTarget.kind === "session") {
-          await supabase.from("post_targets").insert({
-            post_id: newPost.id,
-            target_kind: "chat" as const,
-            chat_id: chatTarget.chatId,
-          });
-          await sendChatMessage(supabase, chatTarget.chatId, "", { sharedPostId: newPost.id });
-        } else if (chatTarget.kind === "club") {
-          await supabase.from("post_targets").insert({
-            post_id: newPost.id,
-            target_kind: "friend_group" as const,
-            friend_group_id: chatTarget.friendGroupId,
-          });
-          await sendChatMessage(supabase, chatTarget.chatId, "", { sharedPostId: newPost.id });
-        } else {
-          await supabase.from("post_targets").insert({
-            post_id: newPost.id,
-            target_kind: "group" as const,
-            group_id: chatTarget.groupId,
-          });
-          await sendGroupMessage(supabase, chatTarget.groupId, "", { sharedPostId: newPost.id });
+        // Audience-target + card-send must both land, or the post is deleted.
+        // An untargeted post falls through can_see_post() to friends-of-author
+        // visibility, so a half-written chat request would leak to all friends
+        // instead of "Only visible to {name}". Delete-on-failure keeps the
+        // create atomic-enough without an RPC.
+        try {
+          if (chatTarget.kind === "dm") {
+            await supabase.from("post_targets").insert({
+              post_id: newPost.id,
+              target_kind: "user" as const,
+              target_user_id: chatTarget.userId,
+            });
+            await sendDirectMessage(supabase, chatTarget.userId, "", { sharedPostId: newPost.id });
+          } else if (chatTarget.kind === "session") {
+            await supabase.from("post_targets").insert({
+              post_id: newPost.id,
+              target_kind: "chat" as const,
+              chat_id: chatTarget.chatId,
+            });
+            await sendChatMessage(supabase, chatTarget.chatId, "", { sharedPostId: newPost.id });
+          } else if (chatTarget.kind === "club") {
+            await supabase.from("post_targets").insert({
+              post_id: newPost.id,
+              target_kind: "friend_group" as const,
+              friend_group_id: chatTarget.friendGroupId,
+            });
+            await sendChatMessage(supabase, chatTarget.chatId, "", { sharedPostId: newPost.id });
+          } else {
+            await supabase.from("post_targets").insert({
+              post_id: newPost.id,
+              target_kind: "group" as const,
+              group_id: chatTarget.groupId,
+            });
+            await sendGroupMessage(supabase, chatTarget.groupId, "", { sharedPostId: newPost.id });
+          }
+        } catch (e) {
+          await supabase.from("posts").delete().eq("id", newPost.id).then(undefined, () => {});
+          throw e;
         }
         onPost(toPostCamel(newPost) as unknown as Record<string, unknown>);
         return;

@@ -1985,8 +1985,16 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                     .update(updates)
                     .eq("id", post.id);
                   if (!upErr) {
-                    // Refresh post_targets: nuke + reinsert.
-                    await supabase.from("post_targets").delete().eq("post_id", post.id);
+                    // Refresh post_targets: nuke + reinsert — but ONLY the
+                    // group / friend_group rows the editor manages. A
+                    // chat-scoped request (target_kind 'user'/'chat') has no UI
+                    // here; deleting those rows would strip its audience and
+                    // leak it to all friends, so leave them untouched.
+                    await supabase
+                      .from("post_targets")
+                      .delete()
+                      .eq("post_id", post.id)
+                      .in("target_kind", ["group", "friend_group"]);
                     const targetRows: { post_id: string; target_kind: "group" | "friend_group"; group_id?: string; friend_group_id?: string }[] = [];
                     for (const gid of editSelectedTeamIds) {
                       targetRows.push({ post_id: post.id, target_kind: "group", group_id: gid });

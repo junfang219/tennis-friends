@@ -104,6 +104,7 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
   describe("posts: visibility branches", () => {
     let friendPostId: string;
     let groupPostId: string;
+    let privatePostId: string;
     let groupId: string;
 
     beforeAll(async () => {
@@ -114,6 +115,14 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
         .select("id")
         .single();
       friendPostId = fp!.id;
+
+      // Private Playbook-style entry: author-only regardless of friendship.
+      const { data: pp } = await alice.client
+        .from("posts")
+        .insert({ author_id: alice.id, content: "private-note", post_type: "note", visibility: "private" })
+        .select("id")
+        .single();
+      privatePostId = pp!.id;
 
       // Group-targeted post: alice creates a group, adds carol, targets the post.
       const { data: g } = await alice.client
@@ -162,6 +171,21 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
         .select("id")
         .eq("id", friendPostId);
       expect(data?.length).toBe(0);
+    });
+
+    it("private post is author-only — hidden even from a friend", async () => {
+      // Bob is alice's accepted friend; private must still hard-stop him.
+      const friendView = await bob.client
+        .from("posts")
+        .select("id")
+        .eq("id", privatePostId);
+      expect(friendView.data?.length).toBe(0);
+
+      const selfView = await alice.client
+        .from("posts")
+        .select("id")
+        .eq("id", privatePostId);
+      expect(selfView.data?.length).toBe(1);
     });
 
     it("targeted-group post is visible to members of that group", async () => {

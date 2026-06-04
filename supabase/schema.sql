@@ -8077,3 +8077,124 @@ $$;
 DROP TRIGGER IF EXISTS message_reactions_notify ON public.message_reactions;
 CREATE TRIGGER message_reactions_notify AFTER INSERT ON public.message_reactions
   FOR EACH ROW EXECUTE FUNCTION public.notify_on_message_reaction();
+
+-- =====================================================================
+-- 0015_can_see_post_private_guard
+-- =====================================================================
+-- Restore the `visibility = 'private'` short-circuit that the posts.visibility
+-- column comment promises and that the original can_see_post() carried. It was
+-- dropped during the post_targets consolidation (migration 0007) and stayed
+-- missing through the 0013 rewrite, leaving private Playbook entries
+-- (post_type='note', visibility='private', no targets) readable by the author's
+-- friends via the untargeted friends-of-author fallthrough. Author still sees
+-- their own post (returns above); everyone else is hard-stopped for private.
+
+CREATE OR REPLACE FUNCTION public.can_see_post(p posts)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+declare
+  viewer uuid := auth.uid();
+  viewer_loc geography;
+  has_targets boolean;
+  viewer_in_target boolean;
+begin
+  if viewer is null then
+    return false;
+  end if;
+
+  if p.author_id = viewer then
+    return true;
+  end if;
+
+  -- Private posts (Playbook notes) are author-only: hard stop for everyone
+  -- else, no fall-through to friend / target / broadcast / event visibility.
+  if p.visibility = 'private' then
+    return false;
+  end if;
+
+  if public.is_blocked(viewer, p.author_id) then
+    return false;
+  end if;
+
+  has_targets := exists(select 1 from public.post_targets where post_id = p.id);
+
+  if has_targets then
+    viewer_in_target := exists(
+      select 1 from public.post_targets pt
+      join public.group_members gm on gm.group_id = pt.group_id
+      where pt.post_id = p.id
+        and pt.target_kind = 'group'
+        and gm.user_id = viewer
+    );
+    if viewer_in_target then
+      return true;
+    end if;
+
+    viewer_in_target := exists(
+      select 1 from public.post_targets pt
+      join public.friend_group_members fgm on fgm.friend_group_id = pt.friend_group_id
+      where pt.post_id = p.id
+        and pt.target_kind = 'friend_group'
+        and fgm.user_id = viewer
+    );
+    if viewer_in_target then
+      return true;
+    end if;
+
+    viewer_in_target := exists(
+      select 1 from public.post_targets pt
+      where pt.post_id = p.id
+        and pt.target_kind = 'user'
+        and pt.target_user_id = viewer
+    );
+    if viewer_in_target then
+      return true;
+    end if;
+
+    viewer_in_target := exists(
+      select 1 from public.post_targets pt
+      where pt.post_id = p.id
+        and pt.target_kind = 'chat'
+        and public.is_chat_participant(pt.chat_id)
+    );
+    if viewer_in_target then
+      return true;
+    end if;
+
+    return false;
+  end if;
+
+  if exists(
+    select 1 from public.friendships
+    where status = 'accepted'
+      and ((requester_id = viewer and addressee_id = p.author_id)
+        or (requester_id = p.author_id and addressee_id = viewer))
+  ) then
+    return true;
+  end if;
+
+  if p.is_broadcast and p.broadcast_location is not null and p.broadcast_radius_mi > 0 then
+    select location into viewer_loc from public.profiles where id = viewer;
+    if viewer_loc is not null then
+      if st_dwithin(viewer_loc, p.broadcast_location, p.broadcast_radius_mi * 1609.34) then
+        return true;
+      end if;
+    end if;
+  end if;
+
+  if p.event_id is not null then
+    return exists(
+      select 1 from public.events e
+      where e.id = p.event_id and public.can_see_event(e)
+    );
+  end if;
+
+  return false;
+end;
+$function$;
+
+revoke execute on function public.can_see_post(public.posts) from anon, public;
+grant  execute on function public.can_see_post(public.posts) to authenticated;

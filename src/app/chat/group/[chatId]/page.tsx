@@ -811,6 +811,11 @@ export default function GroupChatThreadPage() {
                         <SharedPostCard post={msg.sharedPost} />
                       </div>
                     )}
+                    {msg.sharedPostId && !msg.sharedPost && (
+                      <div className={`bg-white rounded-xl border border-gray-200 shadow-sm px-3 py-2.5 max-w-full ${isMe ? "ml-auto" : ""}`}>
+                        <p className="text-[11px] font-medium text-gray-400">Shared post</p>
+                      </div>
+                    )}
                     {msg.mediaUrl && (
                       <div className={`rounded-2xl overflow-hidden shadow-sm ${isMe ? "ml-auto" : ""}`}>
                         {msg.mediaType === "video" ? (

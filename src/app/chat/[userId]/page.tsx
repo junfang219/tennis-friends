@@ -621,6 +621,14 @@ export default function ChatPage() {
                     {msg.sharedPost && (
                       <SharedPostCard post={msg.sharedPost} />
                     )}
+                    {/* FK set but body not resolved yet (in-flight) or not
+                        visible to us (RLS). Placeholder avoids a blank/
+                        timestamp-only bubble. */}
+                    {msg.sharedPostId && !msg.sharedPost && (
+                      <div className={`bg-white rounded-xl border border-gray-200 shadow-sm px-3 py-2.5 max-w-full ${isMe ? "ml-auto" : ""}`}>
+                        <p className="text-[11px] font-medium text-gray-400">Shared post</p>
+                      </div>
+                    )}
 
                     {/* Media attachment */}
                     {msg.mediaUrl && (
@@ -636,7 +644,7 @@ export default function ChatPage() {
                     )}
 
                     {/* Text message bubble */}
-                    {(msg.content || (!msg.sharedPost && !msg.mediaUrl)) && (
+                    {(msg.content || (!msg.sharedPostId && !msg.mediaUrl)) && (
                       <div
                         className={`px-4 py-2.5 text-sm leading-relaxed ${msg.sharedPost || msg.mediaUrl ? "mt-1 " : ""}${
                           isMe
