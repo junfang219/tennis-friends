@@ -44,6 +44,7 @@ type Match = {
   matchDate: string;
   matchTime: string;
   location: string;
+  opponent: string;
   notes: string;
   availabilities: Availability[];
 };
@@ -116,13 +117,16 @@ export default function AvailabilityPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Add-match form
+  // Add/edit-match form — editingMatchId null = creating, set = editing that match
   const [showAdd, setShowAdd] = useState(false);
+  const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
   const [matchDate, setMatchDate] = useState("");
   const [matchTime, setMatchTime] = useState("");
   const [location, setLocation] = useState("");
+  const [opponent, setOpponent] = useState("");
   const [notes, setNotes] = useState("");
   const [adding, setAdding] = useState(false);
+  const matchFormRef = useRef<HTMLDivElement | null>(null);
 
   // Inline editor for self-availability — portal-anchored to avoid clipping by overflow-x table
   const [statusPopover, setStatusPopover] = useState<{
@@ -189,7 +193,7 @@ export default function AvailabilityPage() {
         supabase
           .from("team_matches")
           .select(
-            `id, match_date, match_time, location, notes,
+            `id, match_date, match_time, location, opponent, notes,
              availabilities ( id, user_id, status, match_types, lineup_slot,
                user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url ) )`
           )
@@ -217,6 +221,7 @@ export default function AvailabilityPage() {
         match_date: string;
         match_time: string;
         location: string;
+        opponent: string;
         notes: string;
         availabilities: RawAvail[];
       };
@@ -226,6 +231,7 @@ export default function AvailabilityPage() {
           matchDate: m.match_date,
           matchTime: m.match_time,
           location: m.location,
+          opponent: m.opponent,
           notes: m.notes,
           availabilities: m.availabilities.map((a) => ({
             id: a.id,
@@ -280,27 +286,84 @@ export default function AvailabilityPage() {
     });
   }, [focusMatchId, loading, matches.length]);
 
-  const addMatch = async () => {
+  const resetMatchForm = () => {
+    setShowAdd(false);
+    setEditingMatchId(null);
+    setMatchDate("");
+    setMatchTime("");
+    setLocation("");
+    setOpponent("");
+    setNotes("");
+  };
+
+  // Open the form prefilled with an existing match (captain only).
+  // Location and time often change after posting, so matches stay editable.
+  const startEditMatch = (match: Match) => {
+    setEditingMatchId(match.id);
+    setMatchDate(match.matchDate);
+    setMatchTime(match.matchTime);
+    setLocation(match.location);
+    setOpponent(match.opponent);
+    setNotes(match.notes);
+    setShowAdd(true);
+    // The form renders above the table; bring it into view since the
+    // edited column may be scrolled far right/down.
+    requestAnimationFrame(() => {
+      matchFormRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  };
+
+  const saveMatch = async () => {
     if (!matchDate || !location.trim() || adding) return;
     setAdding(true);
     const supabase = createSupabaseBrowserClient();
+    const fields = {
+      match_date: matchDate,
+      match_time: matchTime,
+      location: location.trim(),
+      opponent: opponent.trim(),
+      notes: notes.trim(),
+      // Tag the row with the user's local IANA zone so the
+      // event-reminders cron can compute the reminder window in
+      // their local time instead of Vercel-UTC.
+      timezone:
+        (typeof Intl !== "undefined" &&
+          Intl.DateTimeFormat().resolvedOptions().timeZone) ||
+        "America/Los_Angeles",
+    };
+    if (editingMatchId) {
+      const { data, error: updErr } = await supabase
+        .from("team_matches")
+        .update(fields)
+        .eq("id", editingMatchId)
+        .select("id, match_date, match_time, location, opponent, notes")
+        .single();
+      if (!updErr && data) {
+        setMatches((prev) =>
+          prev
+            .map((m) =>
+              m.id === data.id
+                ? {
+                    ...m,
+                    matchDate: data.match_date,
+                    matchTime: data.match_time,
+                    location: data.location,
+                    opponent: data.opponent,
+                    notes: data.notes,
+                  }
+                : m
+            )
+            .sort((a, b) => (a.matchDate + a.matchTime).localeCompare(b.matchDate + b.matchTime))
+        );
+        resetMatchForm();
+      }
+      setAdding(false);
+      return;
+    }
     const { data, error: insErr } = await supabase
       .from("team_matches")
-      .insert({
-        group_id: groupId,
-        match_date: matchDate,
-        match_time: matchTime,
-        location: location.trim(),
-        notes: notes.trim(),
-        // Tag the row with the user's local IANA zone so the
-        // event-reminders cron can compute the reminder window in
-        // their local time instead of Vercel-UTC.
-        timezone:
-          (typeof Intl !== "undefined" &&
-            Intl.DateTimeFormat().resolvedOptions().timeZone) ||
-          "America/Los_Angeles",
-      })
-      .select("id, match_date, match_time, location, notes")
+      .insert({ group_id: groupId, ...fields })
+      .select("id, match_date, match_time, location, opponent, notes")
       .single();
     if (!insErr && data) {
       const newMatch: Match = {
@@ -308,6 +371,7 @@ export default function AvailabilityPage() {
         matchDate: data.match_date,
         matchTime: data.match_time,
         location: data.location,
+        opponent: data.opponent,
         notes: data.notes,
         availabilities: [],
       } as unknown as Match;
@@ -320,11 +384,7 @@ export default function AvailabilityPage() {
         } catch { /* non-fatal */ }
         fromPollIdRef.current = null;
       }
-      setShowAdd(false);
-      setMatchDate("");
-      setMatchTime("");
-      setLocation("");
-      setNotes("");
+      resetMatchForm();
     }
     setAdding(false);
   };
@@ -463,7 +523,7 @@ export default function AvailabilityPage() {
     const sortedSlots = Array.from(bySlot.keys()).sort(compareSlots);
     const lineupLines = sortedSlots.map((slot) => `${slot}: ${bySlot.get(slot)!.join(" & ")}`);
 
-    const header = `🎾 Lineup for ${formatDateHeader(match.matchDate)}${match.matchTime ? ` at ${match.matchTime}` : ""}\n📍 ${match.location}\n\n`;
+    const header = `🎾 Lineup for ${formatDateHeader(match.matchDate)}${match.matchTime ? ` at ${match.matchTime}` : ""}\n📍 ${match.location}${match.opponent ? `\n🆚 ${match.opponent}` : ""}\n\n`;
     const content = header + lineupLines.join("\n");
 
     setSendingLineupId(match.id);
@@ -519,7 +579,20 @@ export default function AvailabilityPage() {
         </div>
         {isCaptain && (
           <button
-            onClick={() => setShowAdd(!showAdd)}
+            onClick={() => {
+              if (showAdd) {
+                resetMatchForm();
+              } else {
+                // A previous edit may have left prefilled values behind.
+                setEditingMatchId(null);
+                setMatchDate("");
+                setMatchTime("");
+                setLocation("");
+                setOpponent("");
+                setNotes("");
+                setShowAdd(true);
+              }
+            }}
             className="btn-primary btn-sm inline-flex"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -535,8 +608,8 @@ export default function AvailabilityPage() {
 
       {/* Add match form */}
       {showAdd && isCaptain && (
-        <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 mb-5 animate-fade-in-up">
-          <h3 className="font-display text-base font-bold text-gray-800 mb-4">New Match</h3>
+        <div ref={matchFormRef} className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 mb-5 animate-fade-in-up">
+          <h3 className="font-display text-base font-bold text-gray-800 mb-4">{editingMatchId ? "Edit Match" : "New Match"}</h3>
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
@@ -568,6 +641,16 @@ export default function AvailabilityPage() {
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
             />
           </div>
+          <div className="mb-3">
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Opponent Team (optional)</label>
+            <input
+              type="text"
+              value={opponent}
+              onChange={(e) => setOpponent(e.target.value)}
+              placeholder="e.g. Greenlake Smashers"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+            />
+          </div>
           <div className="mb-4">
             <label className="block text-xs font-semibold text-gray-600 mb-1">Notes (optional)</label>
             <input
@@ -580,13 +663,13 @@ export default function AvailabilityPage() {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={addMatch}
+              onClick={saveMatch}
               disabled={!matchDate || !location.trim() || adding}
               className="btn-primary flex-1"
             >
-              {adding ? "Adding..." : "Add Match"}
+              {editingMatchId ? (adding ? "Saving..." : "Save") : adding ? "Adding..." : "Add Match"}
             </button>
-            <button onClick={() => setShowAdd(false)} className="btn-secondary flex-1">Cancel</button>
+            <button onClick={resetMatchForm} className="btn-secondary flex-1">Cancel</button>
           </div>
         </div>
       )}
@@ -643,6 +726,11 @@ export default function AvailabilityPage() {
                             <p className="text-[11px] text-gray-700 font-medium truncate" title={match.location}>
                               📍 {match.location}
                             </p>
+                            {match.opponent && (
+                              <p className="text-[11px] text-gray-700 font-medium truncate" title={match.opponent}>
+                                🆚 {match.opponent}
+                              </p>
+                            )}
                             {match.notes && (
                               <p className="text-[10px] text-gray-400 truncate" title={match.notes}>{match.notes}</p>
                             )}
@@ -680,6 +768,18 @@ export default function AvailabilityPage() {
                                     Send
                                   </>
                                 )}
+                              </button>
+                            )}
+                            {isCaptain && (
+                              <button
+                                onClick={() => startEditMatch(match)}
+                                className="text-gray-300 hover:text-court-green"
+                                title="Edit match"
+                                aria-label="Edit match"
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                                </svg>
                               </button>
                             )}
                             {isCaptain && (

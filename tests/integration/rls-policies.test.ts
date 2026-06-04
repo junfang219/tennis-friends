@@ -554,4 +554,68 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
       expect(ps.data?.season_id).toBe(season!.id);
     });
   });
+
+  // Match details (location/time) often change after posting, so the
+  // availability page lets captains edit a match in place. Verify the
+  // team_matches_update_captain policy: captain can edit, member cannot.
+  describe("team match editing", () => {
+    let groupId: string;
+    let matchId: string;
+
+    beforeAll(async () => {
+      const admin = adminClient();
+      const { data: g } = await admin
+        .from("groups")
+        .insert({ name: "Match Edit Test", owner_id: alice.id })
+        .select("id")
+        .single();
+      groupId = g!.id;
+      // owner row auto-added by the trigger; bob is a plain member.
+      await admin.from("group_members").insert({ group_id: groupId, user_id: bob.id, roles: [] });
+
+      const { data: m } = await alice.client
+        .from("team_matches")
+        .insert({ group_id: groupId, match_date: "2026-07-10", match_time: "18:00", location: "Magnuson" })
+        .select("id")
+        .single();
+      matchId = m!.id;
+    }, 60_000);
+
+    afterAll(async () => {
+      if (groupId) await adminClient().from("groups").delete().eq("id", groupId);
+    });
+
+    it("the captain can edit a match's date/time/location after posting", async () => {
+      const { data, error } = await alice.client
+        .from("team_matches")
+        .update({ match_date: "2026-07-11", match_time: "19:30", location: "Lower Woodland", opponent: "Greenlake Smashers", notes: "Court moved" })
+        .eq("id", matchId)
+        .select("match_date, match_time, location, opponent, notes")
+        .single();
+      expect(error).toBeNull();
+      expect(data).toMatchObject({
+        match_date: "2026-07-11",
+        match_time: "19:30",
+        location: "Lower Woodland",
+        opponent: "Greenlake Smashers",
+        notes: "Court moved",
+      });
+    });
+
+    it("a non-captain member cannot edit the match", async () => {
+      // RLS update with no matching row returns success with 0 rows updated
+      // (not an error). Verify by re-reading.
+      const { error } = await bob.client
+        .from("team_matches")
+        .update({ location: "PWNED" })
+        .eq("id", matchId);
+      expect(error).toBeNull();
+      const { data } = await adminClient()
+        .from("team_matches")
+        .select("location")
+        .eq("id", matchId)
+        .single();
+      expect(data?.location).toBe("Lower Woodland");
+    });
+  });
 });
