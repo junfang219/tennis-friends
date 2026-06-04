@@ -68,6 +68,8 @@ function notificationText(n: { type: string; emoji?: string }) {
     case "event_challenge_accepted": return "accepted your ladder challenge";
     case "event_challenge_declined": return "declined your ladder challenge";
     case "group_invite_accepted": return "accepted your team invitation";
+    case "club_invite": return "invited you to join a club";
+    case "club_invite_accepted": return "accepted your club invitation";
     case "availability_poll": return "started an availability poll — mark your free times";
     default: return "interacted with your post";
   }
@@ -183,6 +185,26 @@ function notificationIcon(type: string) {
           <span className="text-xs">🎾</span>
         </div>
       );
+    case "club_invite":
+      return (
+        <div className="w-6 h-6 rounded-full bg-court-green flex items-center justify-center">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-ball-yellow">
+            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
+          </svg>
+        </div>
+      );
+    case "club_invite_accepted":
+      return (
+        <div className="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-green-600">
+            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <polyline points="17 11 19 13 23 9" />
+          </svg>
+        </div>
+      );
     case "availability_poll":
       return (
         <div className="w-6 h-6 rounded-full bg-court-green-pale/30 flex items-center justify-center">
@@ -256,6 +278,17 @@ export default function NotificationBell() {
     if (n.type === "friend_request" || n.type === "friend_accepted") {
       setOpen(false);
       router.push(`/profile/${n.actor.id}`);
+      return;
+    }
+    if (n.type === "club_invite") {
+      // Accept/Decline lives on the requests page (same as friend requests).
+      setOpen(false);
+      router.push("/friends/requests");
+      return;
+    }
+    if (n.type === "club_invite_accepted") {
+      setOpen(false);
+      router.push("/friends");
       return;
     }
     if (n.type === "message_reaction") {

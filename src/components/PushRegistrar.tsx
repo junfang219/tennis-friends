@@ -86,6 +86,9 @@ export default function PushRegistrar() {
             router.push(`/chat/group/${data.chatId}`);
           } else if (kind === "availability_poll" && data.groupId && data.pollId) {
             router.push(`/groups/${data.groupId}/availability/polls/${data.pollId}`);
+          } else if (kind === "club_invite") {
+            // Accept/Decline lives on the requests page.
+            router.push("/friends/requests");
           }
         });
 

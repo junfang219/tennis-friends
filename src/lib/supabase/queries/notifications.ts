@@ -17,13 +17,16 @@ export interface Notification {
     | "event_invite"
     | "friend_request"
     | "group_invite_accepted"
-    | "availability_poll";
+    | "availability_poll"
+    | "club_invite"
+    | "club_invite_accepted";
   post_id: string | null;
   comment_id: string | null;
   message_id: string | null;
   event_id: string | null;
   match_id: string | null;
   poll_id: string | null;
+  friend_group_id: string | null;
   emoji: string;
   read: boolean;
   created_at: string;
@@ -36,7 +39,7 @@ export interface Notification {
 
 const NOTIF_COLUMNS = `
   id, user_id, actor_id, type, post_id, comment_id, message_id, event_id,
-  match_id, poll_id, emoji, read, created_at,
+  match_id, poll_id, friend_group_id, emoji, read, created_at,
   actor:profiles!notifications_actor_id_fkey ( id, name, profile_image_url )
 `;
 

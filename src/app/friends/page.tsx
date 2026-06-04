@@ -20,6 +20,13 @@ import {
   listFriendGroupMembers,
   createFriendGroup as sbCreateFriendGroup,
   deleteFriendGroup as sbDeleteFriendGroup,
+  listMyClubs,
+  listPendingClubInvitees,
+  createClub as sbCreateClub,
+  inviteToClub as sbInviteToClub,
+  leaveClub as sbLeaveClub,
+  deleteClub as sbDeleteClub,
+  getClubChatId,
   getChat,
   listChatParticipants,
   markDmRead,
@@ -29,6 +36,7 @@ import {
 import { useCachedQuery } from "@/lib/useCachedQuery";
 import { loadInbox } from "@/lib/inboxLoader";
 import { errorMessage } from "@/lib/errorMessage";
+import { filterInvitableFriends } from "@/lib/clubInvitePicker";
 
 type FriendUser = {
   id: string;
@@ -57,6 +65,17 @@ type FriendGroup = {
   id: string;
   name: string;
   members: { user: { id: string; name: string; profileImageUrl: string } }[];
+  _count: { members: number };
+};
+
+// Club = invite-grown friend group (kind='club'): any member can invite
+// their own friends; invitees join via the requests page.
+type ClubView = {
+  id: string;
+  name: string;
+  ownerId: string;
+  members: { user: { id: string; name: string; profileImageUrl: string } }[];
+  pendingInvitees: { inviteId: string; user: { id: string; name: string; profileImageUrl: string } }[];
   _count: { members: number };
 };
 
@@ -103,6 +122,15 @@ export default function FriendsPage() {
   const [editGroupName, setEditGroupName] = useState("");
   const [editGroupMembers, setEditGroupMembers] = useState<string[]>([]);
   const [groupSaving, setGroupSaving] = useState(false);
+
+  // Clubs
+  const [showCreateClubForm, setShowCreateClubForm] = useState(false);
+  const [newClubName, setNewClubName] = useState("");
+  const [newClubInvites, setNewClubInvites] = useState<string[]>([]);
+  const [clubSaving, setClubSaving] = useState(false);
+  const [invitingClubId, setInvitingClubId] = useState<string | null>(null);
+  const [clubInviteSelection, setClubInviteSelection] = useState<string[]>([]);
+  const [clubError, setClubError] = useState<{ id: string; message: string } | null>(null);
 
   // Chats (combined inbox: 1:1 + group). Shares the "chat:inbox" cache key
   // with src/app/chat/page.tsx so navigating between Friends → Chat → Friends
@@ -227,6 +255,45 @@ export default function FriendsPage() {
   );
   const friendGroups = friendGroupsQuery.data ?? [];
   const loadFriendGroups = friendGroupsQuery.refetch;
+
+  // Clubs I'm a member of (not just owner — clubs grow by member invites).
+  const clubsQuery = useCachedQuery<ClubView[]>("friends:clubs", async () => {
+    const supabase = createSupabaseBrowserClient();
+    const clubs = await listMyClubs(supabase);
+    return Promise.all(
+      clubs.map(async (c) => {
+        const [members, pending] = await Promise.all([
+          listFriendGroupMembers(supabase, c.id),
+          listPendingClubInvitees(supabase, c.id),
+        ]);
+        return {
+          id: c.id,
+          name: c.name,
+          ownerId: c.owner_id,
+          members: members.map((m) => ({
+            user: {
+              id: m.user.id,
+              name: m.user.name,
+              profileImageUrl: m.user.profile_image_url,
+            },
+          })),
+          pendingInvitees: pending
+            .filter((p) => p.invitee)
+            .map((p) => ({
+              inviteId: p.id,
+              user: {
+                id: p.invitee!.id,
+                name: p.invitee!.name,
+                profileImageUrl: p.invitee!.profile_image_url,
+              },
+            })),
+          _count: { members: members.length },
+        };
+      })
+    );
+  });
+  const clubs = clubsQuery.data ?? [];
+  const loadClubs = clubsQuery.refetch;
 
   // Reuses the "chat:inbox" cache populated by src/app/chat/page.tsx, so
   // bouncing between Friends and Chat doesn't refetch the same data.
@@ -467,6 +534,97 @@ export default function FriendsPage() {
     setGroupSaving(false);
   };
 
+  const createClub = async () => {
+    if (!newClubName.trim() || clubSaving) return;
+    setClubSaving(true);
+    setClubError(null);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await sbCreateClub(supabase, newClubName.trim(), newClubInvites);
+      setNewClubName("");
+      setNewClubInvites([]);
+      setShowCreateClubForm(false);
+      loadClubs();
+      loadChats(); // club chat is created with the club
+    } catch (err) {
+      setClubError({ id: "create", message: errorMessage(err, "Couldn't create the club.") });
+    }
+    setClubSaving(false);
+  };
+
+  const toggleNewClubInvite = (id: string) => {
+    setNewClubInvites((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const toggleClubInviteSelection = (id: string) => {
+    setClubInviteSelection((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const sendClubInvites = async (clubId: string) => {
+    if (clubInviteSelection.length === 0 || clubSaving) return;
+    setClubSaving(true);
+    setClubError(null);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      for (const uid of clubInviteSelection) {
+        await sbInviteToClub(supabase, clubId, uid);
+      }
+      setInvitingClubId(null);
+      setClubInviteSelection([]);
+      loadClubs();
+    } catch (err) {
+      setClubError({ id: clubId, message: errorMessage(err, "Couldn't send invites.") });
+    }
+    setClubSaving(false);
+  };
+
+  const openClubChat = async (club: ClubView) => {
+    if (openingChatId) return;
+    setClubError(null);
+    setOpeningChatId(club.id);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const chatId = await getClubChatId(supabase, club.id);
+      if (!chatId) {
+        setClubError({ id: club.id, message: "This club has no chat yet." });
+        return;
+      }
+      router.push(`/chat/group/${chatId}`);
+    } catch (err) {
+      setClubError({ id: club.id, message: errorMessage(err, "Could not open chat.") });
+    } finally {
+      setOpeningChatId(null);
+    }
+  };
+
+  const handleLeaveClub = async (club: ClubView) => {
+    if (!confirm(`Leave ${club.name}? You'll also leave its group chat.`)) return;
+    setClubError(null);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await sbLeaveClub(supabase, club.id);
+      loadClubs();
+      loadChats();
+    } catch (err) {
+      setClubError({ id: club.id, message: errorMessage(err, "Couldn't leave the club.") });
+    }
+  };
+
+  const handleDeleteClub = async (club: ClubView) => {
+    if (!confirm(`Delete ${club.name}? This removes the club and its chat for all members.`)) return;
+    setClubError(null);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await sbDeleteClub(supabase, club.id);
+      loadClubs();
+      loadChats();
+    } catch (err) {
+      setClubError({ id: club.id, message: errorMessage(err, "Couldn't delete the club.") });
+    }
+  };
+
   const startEditGroup = (g: FriendGroup) => {
     setEditingGroupId(g.id);
     setEditGroupName(g.name);
@@ -504,7 +662,7 @@ export default function FriendsPage() {
   };
 
   const deleteFriendGroup = async (friendGroupId: string) => {
-    if (!confirm("Delete this group?")) return;
+    if (!confirm("Delete this circle?")) return;
     const supabase = createSupabaseBrowserClient();
     await sbDeleteFriendGroup(supabase, friendGroupId);
     loadFriendGroups();
@@ -562,7 +720,7 @@ export default function FriendsPage() {
 
   const tabs = [
     { key: "friends" as const, label: "Friends", count: data.friends.length },
-    { key: "groups" as const, label: "Groups", count: friendGroups.length },
+    { key: "groups" as const, label: "Groups", count: friendGroups.length + clubs.length },
     { key: "chats" as const, label: "Chats", count: chats.length },
   ];
 
@@ -622,9 +780,15 @@ export default function FriendsPage() {
         ))}
       </div>
 
-      {/* Groups tab */}
+      {/* Groups tab: Circles (private lists) + Clubs (invite-grown) */}
       {tab === "groups" && (
         <div className="space-y-3">
+          <div className="px-1">
+            <h2 className="font-display text-lg font-bold text-gray-800">Circles</h2>
+            <p className="text-xs text-gray-500">
+              Private friend lists you manage — for sharing posts and starting chats.
+            </p>
+          </div>
           <button
             onClick={() => {
               setShowCreateForm(!showCreateForm);
@@ -637,14 +801,14 @@ export default function FriendsPage() {
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
-            {showCreateForm ? "Cancel" : "Create New Group"}
+            {showCreateForm ? "Cancel" : "New Circle"}
           </button>
 
           {showCreateForm && (
             <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
-                  Group Name
+                  Circle Name
                 </label>
                 <input
                   type="text"
@@ -716,7 +880,7 @@ export default function FriendsPage() {
                 disabled={groupSaving || !newGroupName.trim()}
                 className="btn-primary w-full"
               >
-                {groupSaving ? "Creating..." : "Create Group"}
+                {groupSaving ? "Creating..." : "Create Circle"}
               </button>
             </div>
           )}
@@ -730,7 +894,7 @@ export default function FriendsPage() {
                   <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" strokeLinecap="round" />
                 </svg>
               </div>
-              <h3 className="font-display text-lg font-bold text-gray-800 mb-2">No groups yet</h3>
+              <h3 className="font-display text-lg font-bold text-gray-800 mb-2">No circles yet</h3>
               <p className="text-gray-500 text-sm max-w-xs mx-auto">
                 Create friend lists like &quot;Close Friends&quot; or &quot;Coworkers&quot; to share posts with specific people.
               </p>
@@ -854,7 +1018,7 @@ export default function FriendsPage() {
                         <button
                           onClick={() => startEditGroup(g)}
                           className="p-2 rounded-lg hover:bg-gray-100 text-gray-500"
-                          title="Edit group"
+                          title="Edit circle"
                         >
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
@@ -864,7 +1028,7 @@ export default function FriendsPage() {
                         <button
                           onClick={() => deleteFriendGroup(g.id)}
                           className="p-2 rounded-lg hover:bg-red-50 text-red-500"
-                          title="Delete group"
+                          title="Delete circle"
                         >
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <polyline points="3 6 5 6 21 6" />
@@ -900,6 +1064,260 @@ export default function FriendsPage() {
                 )}
               </div>
             ))
+          )}
+
+          {/* Clubs section */}
+          <div className="px-1 pt-4">
+            <h2 className="font-display text-lg font-bold text-gray-800">Clubs</h2>
+            <p className="text-xs text-gray-500">
+              Communities that grow by invitation — every member can invite their own friends.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setShowCreateClubForm(!showCreateClubForm);
+              setInvitingClubId(null);
+              setClubError(null);
+            }}
+            className="btn-primary w-full flex items-center justify-center gap-2"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            {showCreateClubForm ? "Cancel" : "New Club"}
+          </button>
+
+          {showCreateClubForm && (
+            <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
+                  Club Name
+                </label>
+                <input
+                  type="text"
+                  value={newClubName}
+                  onChange={(e) => setNewClubName(e.target.value)}
+                  placeholder="e.g. Greenlake Weekend Hitters"
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:border-court-green text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
+                  Invite Friends ({newClubInvites.length} selected)
+                </label>
+                <p className="text-xs text-gray-400 mb-2">
+                  They&apos;ll get an invitation to accept — and can invite their own friends once they join.
+                </p>
+                <div className="max-h-60 overflow-y-auto space-y-1.5 border border-gray-100 rounded-xl p-2">
+                  {data.friends.length === 0 ? (
+                    <p className="text-sm text-gray-400 text-center py-4">No friends to invite yet</p>
+                  ) : (
+                    data.friends.map((f) => (
+                      <label
+                        key={f.user.id}
+                        className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={newClubInvites.includes(f.user.id)}
+                          onChange={() => toggleNewClubInvite(f.user.id)}
+                          className="w-4 h-4 accent-court-green"
+                        />
+                        <Avatar name={f.user.name} image={f.user.profileImageUrl} size="sm" />
+                        <span className="text-sm font-medium text-gray-800">{f.user.name}</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+              {clubError?.id === "create" && (
+                <p className="text-xs text-red-600">{clubError.message}</p>
+              )}
+              <button
+                onClick={createClub}
+                disabled={clubSaving || !newClubName.trim()}
+                className="btn-primary w-full"
+              >
+                {clubSaving ? "Creating..." : "Create Club"}
+              </button>
+            </div>
+          )}
+
+          {clubs.length === 0 && !showCreateClubForm ? (
+            <div className="text-center py-10 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
+              <h3 className="font-display text-lg font-bold text-gray-800 mb-2">No clubs yet</h3>
+              <p className="text-gray-500 text-sm max-w-xs mx-auto">
+                Start a club and invite friends — they can bring their own friends, and everyone can post and look for players together.
+              </p>
+            </div>
+          ) : (
+            clubs.map((club) => {
+              const isOwner = club.ownerId === myId;
+              const invitableFriends = filterInvitableFriends(
+                data.friends,
+                club.members.map((m) => m.user.id),
+                club.pendingInvitees.map((p) => p.user.id)
+              );
+              return (
+                <div
+                  key={club.id}
+                  className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-display text-lg font-bold text-gray-900 truncate">
+                        {club.name}
+                      </h3>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {club._count.members} {club._count.members === 1 ? "member" : "members"}
+                        {club.pendingInvitees.length > 0 && ` · ${club.pendingInvitees.length} invited`}
+                        {isOwner && " · You created this club"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => openClubChat(club)}
+                        disabled={openingChatId === club.id}
+                        className="p-2 rounded-lg hover:bg-court-green-pale/30 text-court-green disabled:opacity-60"
+                        title="Open club chat"
+                      >
+                        {openingChatId === club.id ? (
+                          <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
+                            <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                          </svg>
+                        ) : (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+                          </svg>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setInvitingClubId(invitingClubId === club.id ? null : club.id);
+                          setClubInviteSelection([]);
+                          setClubError(null);
+                        }}
+                        className="p-2 rounded-lg hover:bg-court-green-pale/30 text-court-green"
+                        title="Invite friends"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+                          <circle cx="8.5" cy="7" r="4" />
+                          <line x1="20" y1="8" x2="20" y2="14" />
+                          <line x1="23" y1="11" x2="17" y2="11" />
+                        </svg>
+                      </button>
+                      {isOwner ? (
+                        <button
+                          onClick={() => handleDeleteClub(club)}
+                          className="p-2 rounded-lg hover:bg-red-50 text-red-500"
+                          title="Delete club"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                          </svg>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleLeaveClub(club)}
+                          className="p-2 rounded-lg hover:bg-red-50 text-red-500"
+                          title="Leave club"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
+                            <polyline points="16 17 21 12 16 7" />
+                            <line x1="21" y1="12" x2="9" y2="12" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {clubError?.id === club.id && (
+                    <p className="text-xs text-red-600 mb-2">{clubError.message}</p>
+                  )}
+                  {club.members.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {club.members.slice(0, 8).map((m) => (
+                        <div
+                          key={m.user.id}
+                          className="flex items-center gap-1.5 bg-court-green-pale/20 rounded-full pl-1 pr-2.5 py-1"
+                        >
+                          <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
+                          <span className="text-xs font-medium text-gray-700">
+                            {m.user.name.split(" ")[0]}
+                          </span>
+                        </div>
+                      ))}
+                      {club.members.length > 8 && (
+                        <span className="text-xs text-gray-500 self-center">
+                          +{club.members.length - 8} more
+                        </span>
+                      )}
+                      {club.pendingInvitees.map((p) => (
+                        <div
+                          key={p.user.id}
+                          className="flex items-center gap-1.5 bg-gray-100 rounded-full pl-1 pr-2.5 py-1 opacity-70"
+                          title="Invitation pending"
+                        >
+                          <Avatar name={p.user.name} image={p.user.profileImageUrl} size="sm" />
+                          <span className="text-xs font-medium text-gray-500">
+                            {p.user.name.split(" ")[0]} · invited
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {invitingClubId === club.id && (
+                    <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
+                      <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                        Invite Your Friends ({clubInviteSelection.length} selected)
+                      </label>
+                      <div className="max-h-48 overflow-y-auto space-y-1.5 border border-gray-100 rounded-xl p-2">
+                        {invitableFriends.length === 0 ? (
+                          <p className="text-sm text-gray-400 text-center py-4">
+                            All your friends are already in this club or invited.
+                          </p>
+                        ) : (
+                          invitableFriends.map((f) => (
+                            <label
+                              key={f.user.id}
+                              className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={clubInviteSelection.includes(f.user.id)}
+                                onChange={() => toggleClubInviteSelection(f.user.id)}
+                                className="w-4 h-4 accent-court-green"
+                              />
+                              <Avatar name={f.user.name} image={f.user.profileImageUrl} size="sm" />
+                              <span className="text-sm font-medium text-gray-800">{f.user.name}</span>
+                            </label>
+                          ))
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => sendClubInvites(club.id)}
+                          disabled={clubSaving || clubInviteSelection.length === 0}
+                          className="btn-primary flex-1"
+                        >
+                          {clubSaving ? "Sending..." : "Send Invites"}
+                        </button>
+                        <button
+                          onClick={() => setInvitingClubId(null)}
+                          className="btn-secondary flex-1"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
       )}

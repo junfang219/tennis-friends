@@ -10,7 +10,7 @@ import {
   getMyProfile,
   updateMyProfile,
   listMyGroups,
-  listMyFriendGroups,
+  listAudienceFriendGroups,
   getGroupMemberCounts,
   getFriendGroupMemberCounts,
   createPost,
@@ -294,11 +294,13 @@ function ComposerModal({
       })));
     })();
     (async () => {
-      const rows = await listMyFriendGroups(supabase);
+      // Circles I own + clubs I'm a member of — both are friend_groups
+      // rows, so post targeting (post_targets.friend_group_id) is uniform.
+      const rows = await listAudienceFriendGroups(supabase);
       const counts = await getFriendGroupMemberCounts(supabase, rows.map((g) => g.id));
       setFriendGroups(rows.map((g) => ({
         id: g.id,
-        name: g.name,
+        name: g.kind === "club" ? `${g.name} (club)` : g.name,
         _count: { members: counts.get(g.id) ?? 0 },
       })));
     })();

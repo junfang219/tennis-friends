@@ -140,6 +140,9 @@ export interface FriendGroup {
   id: string;
   name: string;
   owner_id: string;
+  // circle = private owner-curated list; club = invite-grown community
+  // (see queries/clubs.ts).
+  kind: "circle" | "club";
   created_at: string;
   updated_at: string;
 }
@@ -152,6 +155,8 @@ export interface FriendGroupMember {
   user: { id: string; name: string; profile_image_url: string };
 }
 
+/** Circles I own. Clubs are listed separately (member-based) via
+ *  listMyClubs in queries/clubs.ts. */
 export async function listMyFriendGroups(
   supabase: SupabaseClient<Database>
 ): Promise<FriendGroup[]> {
@@ -159,11 +164,47 @@ export async function listMyFriendGroups(
   if (!auth.user) return [];
   const { data, error } = await supabase
     .from("friend_groups")
-    .select("id, name, owner_id, created_at, updated_at")
+    .select("id, name, owner_id, kind, created_at, updated_at")
     .eq("owner_id", auth.user.id)
+    .eq("kind", "circle")
     .order("created_at", { ascending: false });
   if (error) throw error;
   return (data ?? []) as FriendGroup[];
+}
+
+/**
+ * Post-audience candidates: circles I own + clubs I'm a member of.
+ * One query — membership rows already cover both (circle owners aren't
+ * members, so the owner side is a separate filter).
+ */
+export async function listAudienceFriendGroups(
+  supabase: SupabaseClient<Database>
+): Promise<FriendGroup[]> {
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return [];
+  const me = auth.user.id;
+  const [circlesRes, clubsRes] = await Promise.all([
+    supabase
+      .from("friend_groups")
+      .select("id, name, owner_id, kind, created_at, updated_at")
+      .eq("owner_id", me)
+      .eq("kind", "circle"),
+    supabase
+      .from("friend_groups")
+      .select("id, name, owner_id, kind, created_at, updated_at, friend_group_members!inner(user_id)")
+      .eq("kind", "club")
+      .eq("friend_group_members.user_id", me),
+  ]);
+  if (circlesRes.error) throw circlesRes.error;
+  if (clubsRes.error) throw clubsRes.error;
+  const clubs = (clubsRes.data ?? []).map((row) => {
+    const { friend_group_members, ...g } = row;
+    void friend_group_members; // inner-join filter only; not part of the result
+    return g;
+  });
+  return [...(circlesRes.data ?? []), ...clubs].sort((a, b) =>
+    a.created_at < b.created_at ? 1 : -1
+  ) as FriendGroup[];
 }
 
 /**
@@ -212,8 +253,8 @@ export async function createFriendGroup(
   if (!auth.user) throw new Error("Not signed in");
   const { data, error } = await supabase
     .from("friend_groups")
-    .insert({ name, owner_id: auth.user.id })
-    .select("id, name, owner_id, created_at, updated_at")
+    .insert({ name, owner_id: auth.user.id }) // kind defaults to 'circle'
+    .select("id, name, owner_id, kind, created_at, updated_at")
     .single();
   if (error) throw error;
   if (memberIds.length > 0) {

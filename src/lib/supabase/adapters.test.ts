@@ -446,7 +446,8 @@ describe("snake_case → camelCase adapters", () => {
     const n = toNotificationCamel({
       id: "n", user_id: "u", actor_id: "a", type: "like",
       post_id: null, comment_id: null, message_id: null,
-      event_id: null, match_id: null, poll_id: null, emoji: "", read: false,
+      event_id: null, match_id: null, poll_id: null, friend_group_id: null,
+      emoji: "", read: false,
       created_at: "t",
       actor: { id: "a", name: "Actor", profile_image_url: "x.png" },
     });

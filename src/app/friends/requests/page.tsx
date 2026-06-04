@@ -8,6 +8,8 @@ import {
   listPendingRequests,
   acceptFriendRequest,
   rejectFriendRequest,
+  listIncomingClubInvites,
+  respondToClubInvite,
 } from "@/lib/supabase/queries";
 import { errorMessage } from "@/lib/errorMessage";
 
@@ -20,6 +22,13 @@ type FriendRequest = {
     skillLevel: string;
   };
   createdAt: string;
+};
+
+type ClubInviteRow = {
+  inviteId: string;
+  clubName: string;
+  createdAt: string;
+  inviter: { id: string; name: string; profileImageUrl: string };
 };
 
 const SKILL_LABELS: Record<string, string> = {
@@ -43,6 +52,7 @@ function timeAgo(date: string) {
 
 export default function FriendRequestsPage() {
   const [requests, setRequests] = useState<FriendRequest[]>([]);
+  const [clubInvites, setClubInvites] = useState<ClubInviteRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string>("");
   const [actionError, setActionError] = useState("");
@@ -51,7 +61,10 @@ export default function FriendRequestsPage() {
   const fetchRequests = useCallback(async () => {
     try {
       const supabase = createSupabaseBrowserClient();
-      const rows = await listPendingRequests(supabase);
+      const [rows, invites] = await Promise.all([
+        listPendingRequests(supabase),
+        listIncomingClubInvites(supabase),
+      ]);
       setRequests(
         rows
           .filter((r) => r.direction === "incoming")
@@ -65,6 +78,18 @@ export default function FriendRequestsPage() {
               skillLevel: r.other.skill_level,
             },
           }))
+      );
+      setClubInvites(
+        invites.map((i) => ({
+          inviteId: i.id,
+          clubName: i.club?.name ?? "a club",
+          createdAt: i.created_at,
+          inviter: {
+            id: i.inviter?.id ?? "",
+            name: i.inviter?.name ?? "Someone",
+            profileImageUrl: i.inviter?.profile_image_url ?? "",
+          },
+        }))
       );
     } catch (err) {
       setLoadError(errorMessage(err, "Couldn't load requests."));
@@ -109,6 +134,22 @@ export default function FriendRequestsPage() {
     }
   };
 
+  const respondToInvite = async (inviteId: string, action: "accept" | "decline") => {
+    setActionLoading(inviteId);
+    setActionError("");
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await respondToClubInvite(supabase, inviteId, action);
+      setClubInvites((prev) => prev.filter((i) => i.inviteId !== inviteId));
+    } catch (err) {
+      setActionError(
+        errorMessage(err, action === "accept" ? "Couldn't accept the invitation." : "Couldn't decline the invitation.")
+      );
+    } finally {
+      setActionLoading("");
+    }
+  };
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
       {/* Header */}
@@ -131,12 +172,11 @@ export default function FriendRequestsPage() {
         </Link>
         <div>
           <h1 className="font-display text-xl font-bold text-gray-900">
-            Friend Requests
+            Requests &amp; Invitations
           </h1>
           {!loading && (
             <p className="text-sm text-gray-500">
-              {requests.length} pending request
-              {requests.length !== 1 ? "s" : ""}
+              {requests.length + clubInvites.length} pending
             </p>
           )}
         </div>
@@ -175,7 +215,7 @@ export default function FriendRequestsPage() {
       )}
 
       {/* Empty state */}
-      {!loading && requests.length === 0 && (
+      {!loading && requests.length === 0 && clubInvites.length === 0 && (
         <div className="text-center py-16">
           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg
@@ -196,14 +236,72 @@ export default function FriendRequestsPage() {
           </div>
           <h3 className="font-semibold text-gray-700 mb-1">All caught up!</h3>
           <p className="text-sm text-gray-500">
-            No pending friend requests right now.
+            No pending friend requests or club invitations right now.
           </p>
+        </div>
+      )}
+
+      {/* Club invitations */}
+      {!loading && clubInvites.length > 0 && (
+        <div className="space-y-3 mb-6">
+          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-1">
+            Club Invitations
+          </h2>
+          {clubInvites.map((i) => (
+            <div
+              key={i.inviteId}
+              className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-4 flex items-center gap-4"
+            >
+              <Link href={`/profile/${i.inviter.id}`}>
+                <Avatar
+                  name={i.inviter.name}
+                  image={i.inviter.profileImageUrl}
+                  size="lg"
+                />
+              </Link>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-gray-900">
+                  <Link
+                    href={`/profile/${i.inviter.id}`}
+                    className="font-semibold hover:text-court-green transition-colors"
+                  >
+                    {i.inviter.name}
+                  </Link>{" "}
+                  invited you to join <span className="font-semibold">{i.clubName}</span>
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {i.createdAt && timeAgo(i.createdAt)}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => respondToInvite(i.inviteId, "accept")}
+                  disabled={actionLoading === i.inviteId}
+                  className="px-4 py-2 bg-court-green text-white text-xs font-semibold rounded-lg hover:bg-court-green-light disabled:opacity-50 transition-colors"
+                >
+                  Accept
+                </button>
+                <button
+                  onClick={() => respondToInvite(i.inviteId, "decline")}
+                  disabled={actionLoading === i.inviteId}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-200 disabled:opacity-50 transition-colors"
+                >
+                  Decline
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
       {/* Request list */}
       {!loading && requests.length > 0 && (
         <div className="space-y-3">
+          {clubInvites.length > 0 && (
+            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-1">
+              Friend Requests
+            </h2>
+          )}
           {requests.map((r) => (
             <div
               key={r.friendshipId}

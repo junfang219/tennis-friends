@@ -7427,3 +7427,440 @@ CREATE POLICY poll_responses_delete_self ON public.availability_poll_responses
 -- Realtime so the captain's ranked-window view live-updates as members submit.
 ALTER PUBLICATION supabase_realtime ADD TABLE public.availability_polls;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.availability_poll_responses;
+
+-- =====================================================================
+-- Circles & Clubs (migrations clubs_a / clubs_b / clubs_c)
+-- =====================================================================
+--
+-- Two friend-group kinds:
+--   circle — legacy private, owner-curated list of the owner's friends.
+--   club   — invite-grown community: ANY member can invite their OWN
+--            accepted friends (who need not know the owner). Invitees get
+--            a bell notification + push, accept via accept_club_invite()
+--            (membership + auto-join of the club chat) or decline via a
+--            plain status UPDATE. Clubs reuse the existing friend_group
+--            plumbing: post_targets / can_see_post() visibility and
+--            chats.friend_group_id chat backing work unchanged.
+
+CREATE TYPE public.friend_group_kind AS ENUM ('circle', 'club');
+
+ALTER TABLE public.friend_groups
+  ADD COLUMN kind public.friend_group_kind NOT NULL DEFAULT 'circle';
+
+CREATE TYPE public.friend_group_invite_status AS ENUM ('pending', 'accepted', 'declined');
+
+ALTER TYPE public.notification_type ADD VALUE IF NOT EXISTS 'club_invite';
+ALTER TYPE public.notification_type ADD VALUE IF NOT EXISTS 'club_invite_accepted';
+
+-- is_friend_group_member: SECURITY DEFINER so friend_groups /
+-- friend_group_members policies can reference membership without the
+-- mutual-policy recursion that bit groups/group_members (see
+-- 0006_helpers_security_definer). Safe: checks auth.uid() only.
+CREATE OR REPLACE FUNCTION public.is_friend_group_member(fg uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS(
+    SELECT 1 FROM public.friend_group_members
+    WHERE friend_group_id = fg AND user_id = auth.uid()
+  );
+$$;
+REVOKE EXECUTE ON FUNCTION public.is_friend_group_member(uuid) FROM anon, public;
+GRANT  EXECUTE ON FUNCTION public.is_friend_group_member(uuid) TO authenticated;
+
+-- Club invitations. One live row per (club, invitee); a declined row is
+-- flipped back to 'pending' on re-invite rather than re-inserted.
+CREATE TABLE public.friend_group_invites (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  friend_group_id uuid NOT NULL REFERENCES public.friend_groups(id) ON DELETE CASCADE,
+  inviter_id      uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  invitee_id      uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  status          public.friend_group_invite_status NOT NULL DEFAULT 'pending',
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT friend_group_invites_distinct CHECK (inviter_id <> invitee_id),
+  CONSTRAINT friend_group_invites_unique UNIQUE (friend_group_id, invitee_id)
+);
+CREATE INDEX friend_group_invites_invitee_idx ON public.friend_group_invites (invitee_id, status);
+CREATE INDEX friend_group_invites_inviter_idx ON public.friend_group_invites (inviter_id);
+
+CREATE TRIGGER friend_group_invites_updated_at
+  BEFORE UPDATE ON public.friend_group_invites
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+COMMENT ON TABLE public.friend_group_invites IS
+  'Club (friend_groups.kind=club) invitations. Any member may invite their own accepted friends; the invitee accepts via accept_club_invite() or declines via a status UPDATE.';
+
+-- Deep-link FK so club_invite notifications can route to the club.
+-- Follows the nullable poll_id precedent.
+ALTER TABLE public.notifications
+  ADD COLUMN friend_group_id uuid REFERENCES public.friend_groups(id) ON DELETE CASCADE;
+
+-- friend_groups: members (clubs grow beyond the owner's friends) can now
+-- read the row; writes stay owner-only. Also fixes circle members not being
+-- able to resolve the group name on posts targeted at the circle.
+DROP POLICY friend_groups_select_owner ON public.friend_groups;
+CREATE POLICY friend_groups_select_member ON public.friend_groups
+  FOR SELECT TO authenticated
+  USING (owner_id = (SELECT auth.uid()) OR public.is_friend_group_member(id));
+
+-- friend_group_members: members can see the full roster (needed for club
+-- cards + invite-picker exclusion). Uses the DEFINER helper, not an inline
+-- self-referencing EXISTS, to avoid policy recursion.
+DROP POLICY friend_group_members_select ON public.friend_group_members;
+CREATE POLICY friend_group_members_select ON public.friend_group_members
+  FOR SELECT TO authenticated
+  USING (
+    user_id = (SELECT auth.uid())
+    OR public.is_friend_group_member(friend_group_id)
+    OR EXISTS(
+      SELECT 1 FROM public.friend_groups fg
+      WHERE fg.id = friend_group_id AND fg.owner_id = (SELECT auth.uid())
+    )
+  );
+-- (friend_group_members_write_by_owner and friend_group_members_leave_self
+-- remain as-is; club member inserts go through the accept_club_invite RPC.)
+
+ALTER TABLE public.friend_group_invites ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY friend_group_invites_select ON public.friend_group_invites
+  FOR SELECT TO authenticated
+  USING (
+    inviter_id = (SELECT auth.uid())
+    OR invitee_id = (SELECT auth.uid())
+    OR public.is_friend_group_member(friend_group_id)
+  );
+
+-- Any club member may invite, but only their own accepted friends, and
+-- only into clubs (never circles).
+CREATE POLICY friend_group_invites_insert_member ON public.friend_group_invites
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    inviter_id = (SELECT auth.uid())
+    AND status = 'pending'
+    AND public.is_friend_group_member(friend_group_id)
+    AND public.is_friend(invitee_id)
+    AND EXISTS(
+      SELECT 1 FROM public.friend_groups fg
+      WHERE fg.id = friend_group_id AND fg.kind = 'club'
+    )
+  );
+
+-- Invitee declines via UPDATE (accept goes through the RPC). Inviter may
+-- re-send a declined invite (flip back to pending).
+CREATE POLICY friend_group_invites_update_invitee ON public.friend_group_invites
+  FOR UPDATE TO authenticated
+  USING (invitee_id = (SELECT auth.uid()))
+  WITH CHECK (invitee_id = (SELECT auth.uid()));
+
+CREATE POLICY friend_group_invites_update_inviter ON public.friend_group_invites
+  FOR UPDATE TO authenticated
+  USING (inviter_id = (SELECT auth.uid()))
+  WITH CHECK (inviter_id = (SELECT auth.uid()) AND status = 'pending');
+
+CREATE POLICY friend_group_invites_delete_inviter ON public.friend_group_invites
+  FOR DELETE TO authenticated
+  USING (inviter_id = (SELECT auth.uid()));
+
+-- Bell notification + push banner when an invite lands (insert, or a
+-- declined row re-sent back to pending).
+CREATE OR REPLACE FUNCTION public.notify_club_invite()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_inviter_name text;
+  v_club_name    text;
+BEGIN
+  IF TG_OP = 'UPDATE' AND NOT (OLD.status = 'declined' AND NEW.status = 'pending') THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.status <> 'pending' THEN
+    RETURN NEW;
+  END IF;
+
+  INSERT INTO public.notifications (user_id, actor_id, type, friend_group_id)
+  VALUES (NEW.invitee_id, NEW.inviter_id, 'club_invite', NEW.friend_group_id);
+
+  SELECT name INTO v_inviter_name FROM public.profiles WHERE id = NEW.inviter_id;
+  SELECT name INTO v_club_name FROM public.friend_groups WHERE id = NEW.friend_group_id;
+
+  PERFORM public.invoke_edge_function(
+    'push-fanout',
+    jsonb_build_object(
+      'user_ids',  jsonb_build_array(NEW.invitee_id),
+      'title',     COALESCE(v_inviter_name, 'A player'),
+      'body',      'invited you to join ' || COALESCE(v_club_name, 'a club'),
+      'thread_id', 'club_invite:' || NEW.friend_group_id::text,
+      'data',      jsonb_build_object(
+                     'kind',            'club_invite',
+                     'friend_group_id', NEW.friend_group_id::text,
+                     'invite_id',       NEW.id::text
+                   )
+    )
+  );
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS friend_group_invites_notify_insert ON public.friend_group_invites;
+CREATE TRIGGER friend_group_invites_notify_insert
+  AFTER INSERT ON public.friend_group_invites
+  FOR EACH ROW EXECUTE FUNCTION public.notify_club_invite();
+
+DROP TRIGGER IF EXISTS friend_group_invites_notify_resend ON public.friend_group_invites;
+CREATE TRIGGER friend_group_invites_notify_resend
+  AFTER UPDATE OF status ON public.friend_group_invites
+  FOR EACH ROW EXECUTE FUNCTION public.notify_club_invite();
+
+-- Remove the stale bell row once the invite is no longer pending
+-- (accepted, declined, or cancelled/deleted).
+CREATE OR REPLACE FUNCTION public.cleanup_club_invite_notification()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_invitee uuid;
+  v_inviter uuid;
+  v_club    uuid;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    v_invitee := OLD.invitee_id; v_inviter := OLD.inviter_id; v_club := OLD.friend_group_id;
+  ELSIF OLD.status = 'pending' AND NEW.status <> 'pending' THEN
+    v_invitee := NEW.invitee_id; v_inviter := NEW.inviter_id; v_club := NEW.friend_group_id;
+  ELSE
+    RETURN NULL;
+  END IF;
+
+  DELETE FROM public.notifications
+  WHERE user_id = v_invitee
+    AND actor_id = v_inviter
+    AND type = 'club_invite'
+    AND friend_group_id = v_club;
+
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS friend_group_invites_cleanup_delete ON public.friend_group_invites;
+CREATE TRIGGER friend_group_invites_cleanup_delete
+  AFTER DELETE ON public.friend_group_invites
+  FOR EACH ROW EXECUTE FUNCTION public.cleanup_club_invite_notification();
+
+DROP TRIGGER IF EXISTS friend_group_invites_cleanup_update ON public.friend_group_invites;
+CREATE TRIGGER friend_group_invites_cleanup_update
+  AFTER UPDATE OF status ON public.friend_group_invites
+  FOR EACH ROW EXECUTE FUNCTION public.cleanup_club_invite_notification();
+
+-- Accept = three privileged writes (membership, chat join, inviter
+-- notification) that plain client RLS can't do atomically — so an RPC,
+-- modeled on accept_group_invite.
+CREATE OR REPLACE FUNCTION public.accept_club_invite(p_invite_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller uuid := auth.uid();
+  v_inv    friend_group_invites%ROWTYPE;
+  v_chat   uuid;
+BEGIN
+  IF v_caller IS NULL THEN
+    RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  SELECT * INTO v_inv FROM friend_group_invites WHERE id = p_invite_id FOR UPDATE;
+  IF v_inv.id IS NULL OR v_inv.invitee_id <> v_caller THEN
+    RAISE EXCEPTION 'Invite not found' USING ERRCODE = 'no_data_found';
+  END IF;
+  IF v_inv.status = 'accepted' THEN
+    RETURN jsonb_build_object('ok', true, 'already_accepted', true,
+                              'friend_group_id', v_inv.friend_group_id);
+  END IF;
+
+  INSERT INTO friend_group_members (friend_group_id, user_id)
+  VALUES (v_inv.friend_group_id, v_caller)
+  ON CONFLICT (friend_group_id, user_id) DO NOTHING;
+
+  -- Club chats are created in create_club, but be defensive.
+  SELECT id INTO v_chat FROM chats WHERE friend_group_id = v_inv.friend_group_id;
+  IF v_chat IS NULL THEN
+    INSERT INTO chats (name, creator_id, friend_group_id)
+    SELECT fg.name, fg.owner_id, fg.id FROM friend_groups fg
+    WHERE fg.id = v_inv.friend_group_id
+    RETURNING id INTO v_chat;
+    INSERT INTO chat_participants (chat_id, user_id)
+    SELECT v_chat, fgm.user_id FROM friend_group_members fgm
+    WHERE fgm.friend_group_id = v_inv.friend_group_id
+    ON CONFLICT DO NOTHING;
+  ELSE
+    INSERT INTO chat_participants (chat_id, user_id)
+    VALUES (v_chat, v_caller)
+    ON CONFLICT DO NOTHING;
+  END IF;
+
+  UPDATE friend_group_invites SET status = 'accepted' WHERE id = v_inv.id;
+
+  INSERT INTO notifications (user_id, actor_id, type, friend_group_id)
+  VALUES (v_inv.inviter_id, v_caller, 'club_invite_accepted', v_inv.friend_group_id);
+
+  RETURN jsonb_build_object('ok', true,
+                            'friend_group_id', v_inv.friend_group_id,
+                            'chat_id', v_chat);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.accept_club_invite(uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.accept_club_invite(uuid) TO authenticated;
+
+-- create_club: club row + creator membership + chat + creator participant
+-- in one transaction, then the initial invites (each re-validated against
+-- the caller's accepted friendships — the RPC is DEFINER so RLS WITH CHECK
+-- doesn't run here).
+CREATE OR REPLACE FUNCTION public.create_club(p_name text, p_invitee_ids uuid[] DEFAULT '{}')
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller uuid := auth.uid();
+  v_club   uuid;
+  v_chat   uuid;
+  v_id     uuid;
+BEGIN
+  IF v_caller IS NULL THEN
+    RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF p_name IS NULL OR length(trim(p_name)) = 0 THEN
+    RAISE EXCEPTION 'Club name is required';
+  END IF;
+
+  INSERT INTO friend_groups (name, owner_id, kind)
+  VALUES (trim(p_name), v_caller, 'club')
+  RETURNING id INTO v_club;
+
+  INSERT INTO friend_group_members (friend_group_id, user_id)
+  VALUES (v_club, v_caller);
+
+  INSERT INTO chats (name, creator_id, friend_group_id)
+  VALUES (trim(p_name), v_caller, v_club)
+  RETURNING id INTO v_chat;
+
+  INSERT INTO chat_participants (chat_id, user_id)
+  VALUES (v_chat, v_caller);
+
+  FOREACH v_id IN ARRAY COALESCE(p_invitee_ids, '{}') LOOP
+    IF v_id <> v_caller AND EXISTS(
+      SELECT 1 FROM friendships
+      WHERE status = 'accepted'
+        AND ((requester_id = v_caller AND addressee_id = v_id)
+          OR (requester_id = v_id AND addressee_id = v_caller))
+    ) THEN
+      INSERT INTO friend_group_invites (friend_group_id, inviter_id, invitee_id)
+      VALUES (v_club, v_caller, v_id)
+      ON CONFLICT (friend_group_id, invitee_id) DO NOTHING;
+    END IF;
+  END LOOP;
+
+  RETURN jsonb_build_object('club_id', v_club, 'chat_id', v_chat);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.create_club(text, uuid[]) FROM public;
+GRANT EXECUTE ON FUNCTION public.create_club(text, uuid[]) TO authenticated;
+
+-- Default privileges grant EXECUTE to anon; strip it from the new club
+-- functions (matches the 0006 revoke-from-anon pattern).
+REVOKE EXECUTE ON FUNCTION public.accept_club_invite(uuid) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.create_club(text, uuid[]) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.notify_club_invite() FROM anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.cleanup_club_invite_notification() FROM anon, authenticated;
+
+-- Invitees need the club row (name) to render "X invited you to join {club}"
+-- on the requests page. No recursion: friend_group_invites' SELECT policy
+-- only references auth.uid() and the DEFINER membership helper.
+DROP POLICY friend_groups_select_member ON public.friend_groups;
+CREATE POLICY friend_groups_select_member ON public.friend_groups
+  FOR SELECT TO authenticated
+  USING (
+    owner_id = (SELECT auth.uid())
+    OR public.is_friend_group_member(id)
+    OR EXISTS(
+      SELECT 1 FROM public.friend_group_invites i
+      WHERE i.friend_group_id = id
+        AND i.invitee_id = (SELECT auth.uid())
+        AND i.status = 'pending'
+    )
+  );
+
+-- Two fixes to the clubs RLS:
+--
+-- 1. friend_groups_select_member's invite clause wrote `i.friend_group_id
+--    = id`, which Postgres resolved to i.id (the invites table's own
+--    column) — invitees could never read the club name.
+-- 2. friend_group_invites_insert_member queried friend_groups while
+--    friend_groups' SELECT policy queried friend_group_invites back —
+--    relation-level policy cycle → "infinite recursion detected" (42P17)
+--    on every member-driven invite INSERT.
+--
+-- Both are fixed the way 0006 fixed groups/group_members: tiny SECURITY
+-- DEFINER helpers so policies never cross-reference each other's tables.
+
+CREATE OR REPLACE FUNCTION public.is_club(fg uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS(
+    SELECT 1 FROM public.friend_groups
+    WHERE id = fg AND kind = 'club'
+  );
+$$;
+REVOKE EXECUTE ON FUNCTION public.is_club(uuid) FROM anon, public;
+GRANT  EXECUTE ON FUNCTION public.is_club(uuid) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.has_pending_club_invite(fg uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS(
+    SELECT 1 FROM public.friend_group_invites
+    WHERE friend_group_id = fg
+      AND invitee_id = auth.uid()
+      AND status = 'pending'
+  );
+$$;
+REVOKE EXECUTE ON FUNCTION public.has_pending_club_invite(uuid) FROM anon, public;
+GRANT  EXECUTE ON FUNCTION public.has_pending_club_invite(uuid) TO authenticated;
+
+DROP POLICY friend_groups_select_member ON public.friend_groups;
+CREATE POLICY friend_groups_select_member ON public.friend_groups
+  FOR SELECT TO authenticated
+  USING (
+    owner_id = (SELECT auth.uid())
+    OR public.is_friend_group_member(id)
+    OR public.has_pending_club_invite(id)
+  );
+
+DROP POLICY friend_group_invites_insert_member ON public.friend_group_invites;
+CREATE POLICY friend_group_invites_insert_member ON public.friend_group_invites
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    inviter_id = (SELECT auth.uid())
+    AND status = 'pending'
+    AND public.is_friend_group_member(friend_group_id)
+    AND public.is_friend(invitee_id)
+    AND public.is_club(friend_group_id)
+  );
