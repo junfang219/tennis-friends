@@ -7,6 +7,8 @@ import { useSession } from "@/lib/supabase/nextauth-compat";
 import Avatar from "@/components/Avatar";
 import EmojiPicker from "@/components/EmojiPicker";
 import SplitCostSheet from "@/components/SplitCostSheet";
+import SharedPostCard, { type SharedPost } from "@/components/SharedPostCard";
+import ChatFindPlayerButton from "@/components/chat/ChatFindPlayerButton";
 import MessageReactionBar from "@/components/MessageReactionBar";
 import MessageReactions, { type MessageReaction as MsgReaction } from "@/components/MessageReactions";
 import { useLongPress } from "@/hooks/useLongPress";
@@ -21,6 +23,9 @@ import {
   markChatRead,
   sendChatMessage,
   addReaction,
+  removeReaction,
+  listReactionsForMessages,
+  loadSharedPosts,
 } from "@/lib/supabase/queries";
 import { toChatMessageCamel } from "@/lib/supabase/adapters";
 import { errorMessage } from "@/lib/errorMessage";
@@ -34,12 +39,14 @@ import { GameCourtPrompt } from "@/components/courts/GameCourtPrompt";
 // the chat UI maintains in component state.
 type Message = ReturnType<typeof toChatMessageCamel> & {
   reactions?: MsgReaction[];
+  sharedPost?: SharedPost | null;
 };
 
 type ChatInfo = {
   id: string;
   name: string;
   creatorId: string;
+  friendGroupId: string | null;
   participants: { id: string; name: string; profileImageUrl: string }[];
   guestNames: string[];
 };
@@ -240,7 +247,7 @@ export default function GroupChatThreadPage() {
     // will re-mark) and we don't want to block the initial paint on it.
     void markChatRead(supabase, chatId).catch(() => {});
     getChatBundle(supabase, chatId)
-      .then((bundle) => {
+      .then(async (bundle) => {
         if (!bundle) {
           setError("Chat not found.");
           return;
@@ -250,6 +257,7 @@ export default function GroupChatThreadPage() {
           id: c.id,
           name: c.name,
           creatorId: c.creator_id,
+          friendGroupId: c.friend_group_id,
           participants: participants.map((p) => ({
             id: p.user.id,
             name: p.user.name,
@@ -260,8 +268,36 @@ export default function GroupChatThreadPage() {
             .map((s) => s.trim())
             .filter(Boolean),
         });
+        // Resolve any embedded Looking-for-Player cards in one batch.
+        const sharedIds = msgs
+          .map((m) => m.shared_post_id)
+          .filter((id): id is string => !!id);
+        const sharedMap = sharedIds.length
+          ? await loadSharedPosts(supabase, sharedIds).catch(
+              () => new Map<string, SharedPost>()
+            )
+          : new Map<string, SharedPost>();
+        // Fetch reactions so they survive a reopen/reload — they live in a
+        // sibling table (message_reactions), not on the chat_messages row.
+        const reactionRows = msgs.length
+          ? await listReactionsForMessages(
+              supabase,
+              "chat",
+              msgs.map((m) => m.id)
+            ).catch(() => [])
+          : [];
+        const reactionsByMsg = new Map<string, MsgReaction[]>();
+        for (const r of reactionRows) {
+          const arr = reactionsByMsg.get(r.target_id) ?? [];
+          arr.push({ emoji: r.emoji, userId: r.user_id, userName: r.user.name });
+          reactionsByMsg.set(r.target_id, arr);
+        }
         setMessages(
-          msgs.map((m) => ({ ...toChatMessageCamel(m), reactions: [] }))
+          msgs.map((m) => ({
+            ...toChatMessageCamel(m),
+            reactions: reactionsByMsg.get(m.id) ?? [],
+            sharedPost: m.shared_post_id ? sharedMap.get(m.shared_post_id) ?? null : null,
+          }))
         );
 
         // Confirmed-game chats carry a post_id. If the game is at a
@@ -325,6 +361,7 @@ export default function GroupChatThreadPage() {
             content: string | null;
             media_url: string | null;
             media_type: string | null;
+            shared_post_id: string | null;
             created_at: string;
           };
           // If a message arrives from someone else while the thread is open,
@@ -357,6 +394,7 @@ export default function GroupChatThreadPage() {
               content: row.content || "",
               mediaUrl: row.media_url || "",
               mediaType: row.media_type || "",
+              sharedPostId: row.shared_post_id ?? null,
               createdAt: new Date(row.created_at).toISOString(),
               sender: sender
                 ? {
@@ -366,9 +404,25 @@ export default function GroupChatThreadPage() {
                   }
                 : { id: row.sender_id, name: "…", profileImageUrl: "" },
               reactions: [],
+              sharedPost: null,
             };
             return [...prev, msg];
           });
+          // A Looking-for-Player card arrives over realtime as a message with
+          // shared_post_id but no resolved body — fetch it and patch the bubble.
+          if (payload.eventType === "INSERT" && row.shared_post_id) {
+            const sharedId = row.shared_post_id;
+            const supabase = createSupabaseBrowserClient();
+            loadSharedPosts(supabase, [sharedId])
+              .then((map) => {
+                const sp = map.get(sharedId);
+                if (!sp) return;
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === row.id ? { ...m, sharedPost: sp } : m))
+                );
+              })
+              .catch(() => {});
+          }
         } else if (payload.eventType === "DELETE") {
           // DELETE payload only carries the primary key by default
           // (REPLICA IDENTITY DEFAULT). Removing by id is sufficient.
@@ -499,6 +553,14 @@ export default function GroupChatThreadPage() {
 
   const applyReaction = async (msgId: string, key: ReactionKey | null) => {
     if (!myId) return;
+    // Snapshot the user's existing reaction so a swap/toggle-off deletes the
+    // stale row — otherwise the (target,user,emoji)-unique table keeps the old
+    // emoji and the next reaction fetch shows two reactions. Mirrors the DM
+    // handler in chat/[userId]/page.tsx.
+    const prevEmoji = messages
+      .find((m) => m.id === msgId)
+      ?.reactions?.find((r) => r.userId === myId)?.emoji as ReactionKey | undefined;
+
     setMessages((prev) =>
       prev.map((m) => {
         if (m.id !== msgId) return m;
@@ -509,9 +571,14 @@ export default function GroupChatThreadPage() {
     );
     try {
       const supabase = createSupabaseBrowserClient();
-      if (key !== null) await addReaction(supabase, "chat", msgId, key);
+      if (prevEmoji && prevEmoji !== key) {
+        await removeReaction(supabase, "chat", msgId, prevEmoji);
+      }
+      if (key !== null && prevEmoji !== key) {
+        await addReaction(supabase, "chat", msgId, key);
+      }
     } catch {
-      // Polling will reconcile.
+      // Next reaction fetch will reconcile.
     }
   };
 
@@ -739,6 +806,11 @@ export default function GroupChatThreadPage() {
                         {msg.sender.name}
                       </p>
                     )}
+                    {msg.sharedPost && (
+                      <div className={isMe ? "ml-auto" : ""}>
+                        <SharedPostCard post={msg.sharedPost} />
+                      </div>
+                    )}
                     {msg.mediaUrl && (
                       <div className={`rounded-2xl overflow-hidden shadow-sm ${isMe ? "ml-auto" : ""}`}>
                         {msg.mediaType === "video" ? (
@@ -860,6 +932,20 @@ export default function GroupChatThreadPage() {
           </p>
         )}
         <div className="flex items-center gap-2">
+          {chatInfo && (
+            <ChatFindPlayerButton
+              chatTarget={
+                chatInfo.friendGroupId
+                  ? {
+                      kind: "club",
+                      chatId,
+                      friendGroupId: chatInfo.friendGroupId,
+                      name: chatInfo.name || "this club",
+                    }
+                  : { kind: "session", chatId, name: chatInfo.name || "this chat" }
+              }
+            />
+          )}
           <input
             ref={fileInputRef}
             type="file"

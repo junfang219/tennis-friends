@@ -20,6 +20,8 @@ type Notification = {
   postId: string;
   commentId: string;
   messageId: string;
+  chatId: string;
+  groupId: string;
   eventId: string;
   matchId: string;
   pollId: string;
@@ -207,6 +209,8 @@ export default function NotificationsPage() {
         postId: n.post_id ?? "",
         commentId: n.comment_id ?? "",
         messageId: n.message_id ?? "",
+        chatId: n.chat_message?.chat_id ?? "",
+        groupId: n.group_message?.group_id ?? "",
         eventId: n.event_id ?? "",
         matchId: n.match_id ?? "",
         pollId: n.poll_id ?? "",
@@ -295,7 +299,15 @@ export default function NotificationsPage() {
       return;
     }
     if (n.type === "message_reaction") {
-      const target = n.messageId ? `/chat/${n.actor.id}?msg=${n.messageId}` : `/chat/${n.actor.id}`;
+      // Route to the thread the reaction happened in: session/team chats by
+      // their thread id, DM by the actor (with the reacted message anchored).
+      const target = n.chatId
+        ? `/chat/group/${n.chatId}`
+        : n.groupId
+        ? `/groups/${n.groupId}/chat`
+        : n.messageId
+        ? `/chat/${n.actor.id}?msg=${n.messageId}`
+        : `/chat/${n.actor.id}`;
       router.push(target);
       return;
     }

@@ -3037,7 +3037,7 @@ CREATE OR REPLACE FUNCTION public.can_see_post(p posts)
 RETURNS boolean
 LANGUAGE plpgsql
 STABLE SECURITY DEFINER
-SET search_path TO 'public'
+SET search_path TO 'public', 'extensions'
 AS $function$
 declare
   viewer uuid := auth.uid();
@@ -7864,3 +7864,216 @@ CREATE POLICY friend_group_invites_insert_member ON public.friend_group_invites
     AND public.is_friend(invitee_id)
     AND public.is_club(friend_group_id)
   );
+
+-- =====================================================================
+-- 0013_chat_looking_for_player
+-- =====================================================================
+-- Looking-for-Player requests fired off from inside a chat. The feed post
+-- (post_type = 'find_players') is audience-scoped to exactly the chat it was
+-- created from, and a card (shared_post_id) is dropped into that chat.
+--
+-- Two new post_targets kinds extend the existing group / friend_group model:
+--   'user' → a single person (1-on-1 DM)
+--   'chat' → an ad-hoc session/game chat's participant set
+-- (team chats reuse 'group'; club chats reuse 'friend_group'.)
+--
+-- NOTE: the ALTER TYPE ... ADD VALUE statements must commit before the new
+-- literals are referenced (in the CHECK / can_see_post below). When applying
+-- to a live DB via Supabase MCP, run this enum block as its OWN migration,
+-- then the remainder as a second migration. In a fresh schema.sql replay
+-- (psql autocommit) the sequential order below is sufficient.
+
+ALTER TYPE post_target_kind ADD VALUE IF NOT EXISTS 'user';
+ALTER TYPE post_target_kind ADD VALUE IF NOT EXISTS 'chat';
+
+-- post_targets: two new nullable FK columns for the new kinds.
+ALTER TABLE public.post_targets
+  ADD COLUMN IF NOT EXISTS target_user_id uuid REFERENCES public.profiles (id) ON DELETE CASCADE,
+  ADD COLUMN IF NOT EXISTS chat_id        uuid REFERENCES public.chats (id)    ON DELETE CASCADE;
+
+-- Replace the original (unnamed) CHECK that only allowed group / friend_group.
+DO $$
+DECLARE c text;
+BEGIN
+  SELECT conname INTO c
+    FROM pg_constraint
+   WHERE conrelid = 'public.post_targets'::regclass
+     AND contype  = 'c';
+  IF c IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE public.post_targets DROP CONSTRAINT %I', c);
+  END IF;
+END $$;
+
+ALTER TABLE public.post_targets
+  ADD CONSTRAINT post_targets_kind_col_ck CHECK (
+    (target_kind = 'group'        AND group_id        IS NOT NULL AND friend_group_id IS NULL AND target_user_id IS NULL AND chat_id IS NULL)
+    OR (target_kind = 'friend_group' AND friend_group_id IS NOT NULL AND group_id IS NULL AND target_user_id IS NULL AND chat_id IS NULL)
+    OR (target_kind = 'user'      AND target_user_id  IS NOT NULL AND group_id IS NULL AND friend_group_id IS NULL AND chat_id IS NULL)
+    OR (target_kind = 'chat'      AND chat_id         IS NOT NULL AND group_id IS NULL AND friend_group_id IS NULL AND target_user_id IS NULL)
+  );
+
+-- One target row per (post, audience). Partial so the group/friend_group
+-- uniqueness already declared on the table is unaffected.
+CREATE UNIQUE INDEX IF NOT EXISTS post_targets_post_user_uq ON public.post_targets (post_id, target_user_id) WHERE target_user_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS post_targets_post_chat_uq ON public.post_targets (post_id, chat_id)        WHERE chat_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS post_targets_user_idx ON public.post_targets (target_user_id) WHERE target_user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS post_targets_chat_idx ON public.post_targets (chat_id)        WHERE chat_id IS NOT NULL;
+
+-- can_see_post: add the 'user' and 'chat' branches inside the targeted block.
+CREATE OR REPLACE FUNCTION public.can_see_post(p posts)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+declare
+  viewer uuid := auth.uid();
+  viewer_loc geography;
+  has_targets boolean;
+  viewer_in_target boolean;
+begin
+  if viewer is null then
+    return false;
+  end if;
+
+  if p.author_id = viewer then
+    return true;
+  end if;
+
+  if public.is_blocked(viewer, p.author_id) then
+    return false;
+  end if;
+
+  has_targets := exists(select 1 from public.post_targets where post_id = p.id);
+
+  if has_targets then
+    -- Either targeted at a group the viewer's a member of...
+    viewer_in_target := exists(
+      select 1 from public.post_targets pt
+      join public.group_members gm on gm.group_id = pt.group_id
+      where pt.post_id = p.id
+        and pt.target_kind = 'group'
+        and gm.user_id = viewer
+    );
+    if viewer_in_target then
+      return true;
+    end if;
+
+    -- ...or targeted at a friend group the viewer belongs to...
+    viewer_in_target := exists(
+      select 1 from public.post_targets pt
+      join public.friend_group_members fgm on fgm.friend_group_id = pt.friend_group_id
+      where pt.post_id = p.id
+        and pt.target_kind = 'friend_group'
+        and fgm.user_id = viewer
+    );
+    if viewer_in_target then
+      return true;
+    end if;
+
+    -- ...or targeted directly at the viewer (1-on-1 chat request)...
+    viewer_in_target := exists(
+      select 1 from public.post_targets pt
+      where pt.post_id = p.id
+        and pt.target_kind = 'user'
+        and pt.target_user_id = viewer
+    );
+    if viewer_in_target then
+      return true;
+    end if;
+
+    -- ...or targeted at a session chat the viewer participates in.
+    viewer_in_target := exists(
+      select 1 from public.post_targets pt
+      where pt.post_id = p.id
+        and pt.target_kind = 'chat'
+        and public.is_chat_participant(pt.chat_id)
+    );
+    if viewer_in_target then
+      return true;
+    end if;
+
+    -- Targeted posts that don't match: no fallthrough.
+    return false;
+  end if;
+
+  -- Untargeted: friends-of-author can see it.
+  if exists(
+    select 1 from public.friendships
+    where status = 'accepted'
+      and ((requester_id = viewer and addressee_id = p.author_id)
+        or (requester_id = p.author_id and addressee_id = viewer))
+  ) then
+    return true;
+  end if;
+
+  -- Untargeted broadcast: location-gated.
+  if p.is_broadcast and p.broadcast_location is not null and p.broadcast_radius_mi > 0 then
+    select location into viewer_loc from public.profiles where id = viewer;
+    if viewer_loc is not null then
+      if st_dwithin(viewer_loc, p.broadcast_location, p.broadcast_radius_mi * 1609.34) then
+        return true;
+      end if;
+    end if;
+  end if;
+
+  -- Posts cross-posted from an event the viewer can see.
+  if p.event_id is not null then
+    return exists(
+      select 1 from public.events e
+      where e.id = p.event_id and public.can_see_event(e)
+    );
+  end if;
+
+  return false;
+end;
+$function$;
+
+revoke execute on function public.can_see_post(public.posts) from anon, public;
+grant  execute on function public.can_see_post(public.posts) to authenticated;
+
+-- Session-chat messages can now embed a shared post card (DMs and group
+-- messages already carry this column).
+ALTER TABLE public.chat_messages
+  ADD COLUMN IF NOT EXISTS shared_post_id uuid REFERENCES public.posts (id) ON DELETE SET NULL;
+
+-- =====================================================================
+-- 0014_react_notify_all_chats
+-- =====================================================================
+-- Reacting to a message now notifies the message's sender in ALL chat
+-- surfaces, not just DMs. The notify trigger previously early-returned for
+-- target_type <> 'dm'. Session/team reactions reference chat_messages /
+-- group_messages, which the notifications table couldn't point at — so add
+-- two nullable FK columns alongside the existing message_id (DM).
+
+ALTER TABLE public.notifications
+  ADD COLUMN IF NOT EXISTS chat_message_id  uuid REFERENCES public.chat_messages (id)  ON DELETE CASCADE,
+  ADD COLUMN IF NOT EXISTS group_message_id uuid REFERENCES public.group_messages (id) ON DELETE CASCADE;
+
+CREATE OR REPLACE FUNCTION public.notify_on_message_reaction()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE v_sender_id uuid;
+BEGIN
+  IF NEW.target_type = 'dm' THEN
+    SELECT sender_id INTO v_sender_id FROM messages WHERE id = NEW.target_id;
+    IF v_sender_id IS NULL OR v_sender_id = NEW.user_id THEN RETURN NEW; END IF;
+    INSERT INTO notifications (user_id, actor_id, type, message_id, emoji)
+    VALUES (v_sender_id, NEW.user_id, 'message_reaction', NEW.target_id, NEW.emoji);
+  ELSIF NEW.target_type = 'chat' THEN
+    SELECT sender_id INTO v_sender_id FROM chat_messages WHERE id = NEW.target_id;
+    IF v_sender_id IS NULL OR v_sender_id = NEW.user_id THEN RETURN NEW; END IF;
+    INSERT INTO notifications (user_id, actor_id, type, chat_message_id, emoji)
+    VALUES (v_sender_id, NEW.user_id, 'message_reaction', NEW.target_id, NEW.emoji);
+  ELSIF NEW.target_type = 'group' THEN
+    SELECT sender_id INTO v_sender_id FROM group_messages WHERE id = NEW.target_id;
+    IF v_sender_id IS NULL OR v_sender_id = NEW.user_id THEN RETURN NEW; END IF;
+    INSERT INTO notifications (user_id, actor_id, type, group_message_id, emoji)
+    VALUES (v_sender_id, NEW.user_id, 'message_reaction', NEW.target_id, NEW.emoji);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS message_reactions_notify ON public.message_reactions;
+CREATE TRIGGER message_reactions_notify AFTER INSERT ON public.message_reactions
+  FOR EACH ROW EXECUTE FUNCTION public.notify_on_message_reaction();

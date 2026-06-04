@@ -14,6 +14,9 @@ import {
   getGroupMemberCounts,
   getFriendGroupMemberCounts,
   createPost,
+  sendDirectMessage,
+  sendChatMessage,
+  sendGroupMessage,
 } from "@/lib/supabase/queries";
 import { buildObjectKey, type StorageBucket } from "@/lib/supabase/storage";
 import { toPostCamel } from "@/lib/supabase/adapters";
@@ -35,6 +38,18 @@ type GroupOption = {
   name: string;
   _count: { members: number };
 };
+
+/**
+ * Describes the chat a Looking-for-Player request is being fired off from.
+ * Drives both the feed post's audience (post_targets) and which chat the
+ * shared-post card is dropped into. `name` is shown in the "Only visible to X"
+ * chip. See ChatFindPlayerButton + ComposerModal's chatTarget branch.
+ */
+export type ChatTarget =
+  | { kind: "dm"; userId: string; name: string }
+  | { kind: "session"; chatId: string; name: string }
+  | { kind: "club"; chatId: string; friendGroupId: string; name: string }
+  | { kind: "team"; groupId: string; name: string };
 
 export default function PostComposer({
   onPost,
@@ -154,11 +169,12 @@ export default function PostComposer({
 
 /* ────── Modal Composer ────── */
 
-function ComposerModal({
+export function ComposerModal({
   session,
   placeholder,
   initialFindPlayers,
   initialProposeTeam,
+  chatTarget,
   onPost,
   onClose,
 }: {
@@ -166,6 +182,10 @@ function ComposerModal({
   placeholder: string;
   initialFindPlayers?: boolean;
   initialProposeTeam?: boolean;
+  // When set, the composer is locked to a Looking-for-Player request scoped to
+  // this chat: the feed post is audience-targeted to the chat, and a shared-post
+  // card is sent into it. Audience picker, broadcast, and mode toggles are hidden.
+  chatTarget?: ChatTarget;
   onPost: (post: Record<string, unknown>) => void;
   onClose: () => void;
 }) {
@@ -217,7 +237,7 @@ function ComposerModal({
   };
 
   // Find Players
-  const [findPlayers, setFindPlayers] = useState(initialFindPlayers || false);
+  const [findPlayers, setFindPlayers] = useState(initialFindPlayers || !!chatTarget);
   const [playDate, setPlayDate] = useState("");
   const [playTime, setPlayTime] = useState("");
   const [courtLocation, setCourtLocation] = useState("");
@@ -580,6 +600,43 @@ function ComposerModal({
           typeof body.broadcastRadiusMi === "number" ? body.broadcastRadiusMi : 0,
         media: mediaItems,
       });
+      // Chat-scoped Looking-for-Player request: audience-target the post to the
+      // originating chat and drop a shared-post card into that chat. This
+      // replaces the group/friend-group audience inserts below.
+      if (chatTarget) {
+        if (chatTarget.kind === "dm") {
+          await supabase.from("post_targets").insert({
+            post_id: newPost.id,
+            target_kind: "user" as const,
+            target_user_id: chatTarget.userId,
+          });
+          await sendDirectMessage(supabase, chatTarget.userId, "", { sharedPostId: newPost.id });
+        } else if (chatTarget.kind === "session") {
+          await supabase.from("post_targets").insert({
+            post_id: newPost.id,
+            target_kind: "chat" as const,
+            chat_id: chatTarget.chatId,
+          });
+          await sendChatMessage(supabase, chatTarget.chatId, "", { sharedPostId: newPost.id });
+        } else if (chatTarget.kind === "club") {
+          await supabase.from("post_targets").insert({
+            post_id: newPost.id,
+            target_kind: "friend_group" as const,
+            friend_group_id: chatTarget.friendGroupId,
+          });
+          await sendChatMessage(supabase, chatTarget.chatId, "", { sharedPostId: newPost.id });
+        } else {
+          await supabase.from("post_targets").insert({
+            post_id: newPost.id,
+            target_kind: "group" as const,
+            group_id: chatTarget.groupId,
+          });
+          await sendGroupMessage(supabase, chatTarget.groupId, "", { sharedPostId: newPost.id });
+        }
+        onPost(toPostCamel(newPost) as unknown as Record<string, unknown>);
+        return;
+      }
+
       // Target groups / friend groups.
       if (groupIds.length > 0) {
         await supabase.from("post_targets").insert(
@@ -636,7 +693,7 @@ function ComposerModal({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <h2 className="font-display text-xl font-bold text-gray-900">
-            Create Post
+            {chatTarget ? "Looking for a player" : "Create Post"}
           </h2>
           <button
             onClick={onClose}
@@ -658,29 +715,39 @@ function ComposerModal({
           />
           <div>
             <p className="text-sm font-semibold text-gray-900">{session?.user?.name}</p>
-            <button
-              onClick={() => setShowAudiencePicker(true)}
-              className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-court-green transition-colors mt-0.5 bg-gray-100 hover:bg-gray-200 px-2 py-0.5 rounded-md"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                {selectedGroupIds.size === 0 ? (
-                  <>
-                    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-                    <circle cx="9" cy="7" r="4" />
-                    <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
-                  </>
-                ) : (
-                  <>
-                    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-                    <circle cx="9" cy="7" r="4" />
-                  </>
-                )}
-              </svg>
-              {audienceLabel}
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-                <polyline points="6,9 12,15 18,9" />
-              </svg>
-            </button>
+            {chatTarget ? (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-court-green mt-0.5 bg-court-green-soft/10 px-2 py-0.5 rounded-md">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0110 0v4" />
+                </svg>
+                Only visible to {chatTarget.name}
+              </span>
+            ) : (
+              <button
+                onClick={() => setShowAudiencePicker(true)}
+                className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-court-green transition-colors mt-0.5 bg-gray-100 hover:bg-gray-200 px-2 py-0.5 rounded-md"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  {selectedGroupIds.size === 0 ? (
+                    <>
+                      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+                      <circle cx="9" cy="7" r="4" />
+                      <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
+                    </>
+                  ) : (
+                    <>
+                      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+                      <circle cx="9" cy="7" r="4" />
+                    </>
+                  )}
+                </svg>
+                {audienceLabel}
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+                  <polyline points="6,9 12,15 18,9" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
 
@@ -804,12 +871,14 @@ function ComposerModal({
                   </svg>
                   Find Players
                 </h4>
-                <button
-                  onClick={() => setFindPlayers(false)}
-                  className="text-xs text-gray-400 hover:text-red-500 transition-colors"
-                >
-                  Remove
-                </button>
+                {!chatTarget && (
+                  <button
+                    onClick={() => setFindPlayers(false)}
+                    className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+                  >
+                    Remove
+                  </button>
+                )}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-full">
                 <div className="min-w-0">
@@ -919,7 +988,10 @@ function ComposerModal({
                 <span className="text-sm font-medium text-gray-700">Court booked</span>
               </label>
 
-              {/* Broadcast section — reach players beyond friends list */}
+              {/* Broadcast section — reach players beyond friends list.
+                  Hidden for chat requests, which are intentionally scoped to
+                  the chat audience rather than broadcast by distance. */}
+              {!chatTarget && (
               <div className="mt-3 pt-3 border-t border-court-green-pale/20">
                 <label className="flex items-start gap-3 cursor-pointer">
                   <div className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all ${
@@ -999,6 +1071,7 @@ function ComposerModal({
                   </div>
                 )}
               </div>
+              )}
             </div>
           )}
 
@@ -1160,7 +1233,7 @@ function ComposerModal({
               />
             </label>
             <EmojiPicker open={emojiOpen} onOpenChange={setEmojiOpen} onSelect={insertEmoji} />
-            {!proposeTeam && (
+            {!proposeTeam && !chatTarget && (
               <button
                 onClick={() => setFindPlayers(!findPlayers)}
                 className={`p-2 rounded-lg transition-colors ${
@@ -1176,7 +1249,7 @@ function ComposerModal({
                 </svg>
               </button>
             )}
-            {groups.length > 0 && (
+            {!chatTarget && groups.length > 0 && (
               <button
                 onClick={() => setShowAudiencePicker(true)}
                 className={`p-2 rounded-lg transition-colors ${
@@ -1214,7 +1287,7 @@ function ComposerModal({
                 <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
               </svg>
             ) : (
-              "Post"
+              chatTarget ? "Send request" : "Post"
             )}
           </button>
         </div>

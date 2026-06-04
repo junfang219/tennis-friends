@@ -27,6 +27,8 @@ type Notification = {
   postId: string;
   commentId: string;
   messageId: string;
+  chatId: string;
+  groupId: string;
   eventId: string;
   matchId: string;
   pollId: string;
@@ -293,7 +295,14 @@ export default function NotificationBell() {
     }
     if (n.type === "message_reaction") {
       setOpen(false);
-      const target = n.messageId ? `/chat/${n.actor.id}?msg=${n.messageId}` : `/chat/${n.actor.id}`;
+      // Session/team reactions deep-link to their thread; DM by the actor.
+      const target = n.chatId
+        ? `/chat/group/${n.chatId}`
+        : n.groupId
+        ? `/groups/${n.groupId}/chat`
+        : n.messageId
+        ? `/chat/${n.actor.id}?msg=${n.messageId}`
+        : `/chat/${n.actor.id}`;
       router.push(target);
       return;
     }

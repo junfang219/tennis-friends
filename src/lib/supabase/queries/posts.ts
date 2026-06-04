@@ -2,6 +2,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Inserts } from "../types";
+import type { SharedPost } from "@/components/SharedPostCard";
 
 // One row of post media — image or video. The table is still called
 // `photos` for historical reasons (it began as image-only); `kind` is
@@ -198,6 +199,58 @@ export async function getPost(
   if (!data) return null;
   const [enriched] = await enrichPosts(supabase, [data as unknown as PostRow]);
   return enriched;
+}
+
+/**
+ * Batch-resolve a set of post ids into the lean `SharedPost` shape that
+ * `SharedPostCard` renders. Used by the chat pages to fill `msg.sharedPost`
+ * from each message's `shared_post_id` FK in a single round-trip (mirrors the
+ * getPollsByIds batch pattern). RLS (`can_see_post`) still applies — posts the
+ * viewer can't see simply don't come back and stay absent from the map.
+ */
+export async function loadSharedPosts(
+  supabase: SupabaseClient<Database>,
+  ids: string[]
+): Promise<Map<string, SharedPost>> {
+  const out = new Map<string, SharedPost>();
+  const unique = Array.from(new Set(ids.filter(Boolean)));
+  if (unique.length === 0) return out;
+
+  const { data, error } = await supabase
+    .from("posts")
+    .select(POST_COLUMNS)
+    .in("id", unique);
+  if (error) throw error;
+
+  for (const row of (data ?? []) as unknown as PostRow[]) {
+    out.set(row.id, {
+      id: row.id,
+      content: row.content,
+      media: (row.photos ?? [])
+        .slice()
+        .sort((a, b) => a.order - b.order)
+        .map((p) => ({
+          url: p.url,
+          kind: p.kind,
+          thumbnailUrl: p.thumbnail_url || undefined,
+        })),
+      postType: row.post_type,
+      playDate: row.play_date,
+      playTime: row.play_time,
+      courtLocation: row.court_location,
+      gameType: row.game_type,
+      playersNeeded: row.players_needed,
+      playersConfirmed: row.players_confirmed,
+      courtBooked: row.court_booked,
+      isComplete: row.is_complete,
+      author: {
+        id: row.author.id,
+        name: row.author.name,
+        profileImageUrl: row.author.profile_image_url,
+      },
+    });
+  }
+  return out;
 }
 
 export async function listPostsByAuthor(

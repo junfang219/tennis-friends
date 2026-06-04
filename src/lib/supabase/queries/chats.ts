@@ -23,6 +23,7 @@ export interface ChatMessage {
   content: string;
   media_url: string;
   media_type: string;
+  shared_post_id: string | null;
   created_at: string;
   sender: { id: string; name: string; profile_image_url: string };
 }
@@ -264,7 +265,7 @@ export async function getChatBundle(
          user:profiles!chat_participants_user_id_fkey ( id, name, profile_image_url )
        ),
        messages:chat_messages!chat_messages_chat_id_fkey (
-         id, chat_id, sender_id, content, media_url, media_type, created_at,
+         id, chat_id, sender_id, content, media_url, media_type, shared_post_id, created_at,
          sender:profiles!chat_messages_sender_id_fkey ( id, name, profile_image_url )
        )`
     )
@@ -313,7 +314,7 @@ export async function listChatMessages(
   let query = supabase
     .from("chat_messages")
     .select(
-      `id, chat_id, sender_id, content, media_url, media_type, created_at,
+      `id, chat_id, sender_id, content, media_url, media_type, shared_post_id, created_at,
        sender:profiles!chat_messages_sender_id_fkey ( id, name, profile_image_url )`
     )
     .eq("chat_id", chatId)
@@ -345,7 +346,7 @@ export async function sendChatMessage(
   supabase: SupabaseClient<Database>,
   chatId: string,
   content: string,
-  opts: { mediaUrl?: string; mediaType?: string; expenseId?: string } = {}
+  opts: { mediaUrl?: string; mediaType?: string; expenseId?: string; sharedPostId?: string } = {}
 ): Promise<ChatMessage> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("Not signed in");
@@ -358,9 +359,10 @@ export async function sendChatMessage(
       media_url: opts.mediaUrl ?? "",
       media_type: opts.mediaType ?? "",
       expense_id: opts.expenseId ?? null,
+      shared_post_id: opts.sharedPostId ?? null,
     })
     .select(
-      `id, chat_id, sender_id, content, media_url, media_type, created_at,
+      `id, chat_id, sender_id, content, media_url, media_type, shared_post_id, created_at,
        sender:profiles!chat_messages_sender_id_fkey ( id, name, profile_image_url )`
     )
     .single();

@@ -25,7 +25,9 @@ import {
   addReaction,
   removeReaction,
   listReactionsForMessages,
+  loadSharedPosts,
 } from "@/lib/supabase/queries";
+import ChatFindPlayerButton from "@/components/chat/ChatFindPlayerButton";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { toDirectMessageCamel } from "@/lib/supabase/adapters";
 import { errorMessage } from "@/lib/errorMessage";
@@ -217,11 +219,22 @@ export default function ChatPage() {
       arr.push({ emoji: r.emoji, userId: r.user_id, userName: r.user.name });
       byMessage.set(r.target_id, arr);
     }
-    const fresh: Message[] = rows.map((m) => ({
-      ...toDirectMessageCamel(m),
-      sharedPost: null,
-      reactions: byMessage.get(m.id) ?? [],
-    }));
+    // Resolve any embedded Looking-for-Player cards (shared_post_id) in one
+    // batch so each card renders via SharedPostCard.
+    const sharedIds = rows
+      .map((m) => toDirectMessageCamel(m).sharedPostId)
+      .filter((id): id is string => !!id);
+    const sharedMap = sharedIds.length
+      ? await loadSharedPosts(supabase, sharedIds).catch(() => new Map<string, SharedPost>())
+      : new Map<string, SharedPost>();
+    const fresh: Message[] = rows.map((m) => {
+      const camel = toDirectMessageCamel(m);
+      return {
+        ...camel,
+        sharedPost: camel.sharedPostId ? sharedMap.get(camel.sharedPostId) ?? null : null,
+        reactions: byMessage.get(m.id) ?? [],
+      };
+    });
     // Preserve optimistic bubbles whose await sendDirectMessage hasn't
     // resolved yet — without this the poll briefly flickers the just-sent
     // message off-screen between the optimistic insert and the swap-in.
@@ -724,6 +737,12 @@ export default function ChatPage() {
           </p>
         )}
         <div className="flex items-center gap-2">
+          {chatUser && (
+            <ChatFindPlayerButton
+              chatTarget={{ kind: "dm", userId, name: chatUser.name }}
+              onPosted={loadMessages}
+            />
+          )}
           <input
             ref={fileInputRef}
             type="file"
