@@ -84,6 +84,8 @@ export default function PushRegistrar() {
             router.push(`/groups/${data.groupId}/chat`);
           } else if (kind === "chat" && data.chatId) {
             router.push(`/chat/group/${data.chatId}`);
+          } else if (kind === "availability_poll" && data.groupId && data.pollId) {
+            router.push(`/groups/${data.groupId}/availability/polls/${data.pollId}`);
           }
         });
 
