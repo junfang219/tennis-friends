@@ -215,6 +215,81 @@ export async function deleteClub(
   if (error) throw error;
 }
 
+/**
+ * Fetch-or-create the club's stable, reusable QR invite link. Any member can
+ * call this (the SECURITY DEFINER RPC gates on club membership), and it's
+ * idempotent — repeat calls return the same token, so the QR is stable. The
+ * token feeds /club-invite/<token>, which a non-user can scan to sign up and
+ * land in the club chat.
+ */
+export async function getOrCreateClubInviteLink(
+  supabase: SupabaseClient<Database>,
+  clubId: string
+): Promise<{ token: string; clubName: string; friendGroupId: string; isOwner: boolean }> {
+  const { data, error } = await supabase.rpc("get_or_create_club_invite_link", {
+    p_friend_group_id: clubId,
+  });
+  if (error) throw new Error(error.message);
+  const result = data as {
+    token?: string;
+    club_name?: string;
+    friend_group_id?: string;
+    is_owner?: boolean;
+  } | null;
+  if (!result?.token) throw new Error("Couldn't create the invite link.");
+  return {
+    token: result.token,
+    clubName: result.club_name ?? "",
+    friendGroupId: result.friend_group_id ?? clubId,
+    isOwner: !!result.is_owner,
+  };
+}
+
+/** Owner-only. Reset the club's QR link to a fresh token, immediately
+ *  invalidating the old QR everywhere. Returns the new token. */
+export async function rotateClubInviteLink(
+  supabase: SupabaseClient<Database>,
+  clubId: string
+): Promise<{ token: string }> {
+  const { data, error } = await supabase.rpc("rotate_club_invite_link", {
+    p_friend_group_id: clubId,
+  });
+  if (error) throw new Error(error.message);
+  const result = data as { token?: string } | null;
+  if (!result?.token) throw new Error("Couldn't reset the invite link.");
+  return { token: result.token };
+}
+
+/** Public preview of a club invite link (club + inviter name) for the
+ *  /club-invite landing page — callable before the visitor signs in. */
+export async function getClubInviteLink(
+  supabase: SupabaseClient<Database>,
+  token: string
+): Promise<{ friendGroupId: string; clubName: string; inviterName: string } | null> {
+  const { data, error } = await supabase.rpc("get_club_invite_link", { p_token: token });
+  if (error) throw new Error(error.message);
+  const result = data as { friend_group_id?: string; club_name?: string; inviter_name?: string } | null;
+  if (!result?.friend_group_id) return null;
+  return {
+    friendGroupId: result.friend_group_id,
+    clubName: result.club_name ?? "",
+    inviterName: result.inviter_name ?? "",
+  };
+}
+
+/** Redeem a club invite link for the signed-in user: join the club + its chat.
+ *  Reusable — not consumed. Returns the chat id to deep-link into. */
+export async function acceptClubInviteLink(
+  supabase: SupabaseClient<Database>,
+  token: string
+): Promise<{ friendGroupId: string; chatId: string | null }> {
+  const { data, error } = await supabase.rpc("accept_club_invite_link", { p_token: token });
+  if (error) throw new Error(error.message);
+  const result = data as { ok: boolean; friend_group_id: string; chat_id?: string } | null;
+  if (!result?.ok) throw new Error("Couldn't accept the invite.");
+  return { friendGroupId: result.friend_group_id, chatId: result.chat_id ?? null };
+}
+
 /** The club's backing chat id (created with the club in create_club). */
 export async function getClubChatId(
   supabase: SupabaseClient<Database>,

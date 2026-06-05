@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
+import { ClubQRModal } from "@/components/clubs/ClubQRModal";
 import { formatRating } from "@/lib/profileLabels";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
@@ -113,6 +114,8 @@ export default function FriendsPage() {
   const router = useRouter();
   const { data: session } = useSession();
   const myId = session?.user?.id || "";
+  const myName = session?.user?.name || "";
+  const [qrClub, setQrClub] = useState<ClubView | null>(null);
   const [tab, setTab] = useState<"friends" | "groups" | "chats">("friends");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -1209,6 +1212,22 @@ export default function FriendsPage() {
                           <line x1="23" y1="11" x2="17" y2="11" />
                         </svg>
                       </button>
+                      <button
+                        onClick={() => setQrClub(club)}
+                        className="p-2 rounded-lg hover:bg-court-green-pale/30 text-court-green"
+                        title="Invite by QR code"
+                      >
+                        {/* qr-code */}
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="3" y="3" width="7" height="7" rx="1" />
+                          <rect x="14" y="3" width="7" height="7" rx="1" />
+                          <rect x="3" y="14" width="7" height="7" rx="1" />
+                          <line x1="14" y1="14" x2="14" y2="17" />
+                          <line x1="17" y1="14" x2="21" y2="14" />
+                          <line x1="21" y1="17" x2="21" y2="21" />
+                          <line x1="14" y1="21" x2="17" y2="21" />
+                        </svg>
+                      </button>
                       {isOwner ? (
                         <button
                           onClick={() => handleDeleteClub(club)}
@@ -1642,6 +1661,16 @@ export default function FriendsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Club QR invite modal */}
+      {qrClub && (
+        <ClubQRModal
+          clubId={qrClub.id}
+          clubName={qrClub.name}
+          inviterName={myName}
+          onClose={() => setQrClub(null)}
+        />
       )}
 
       {/* Edit Chat Members modal */}

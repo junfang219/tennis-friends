@@ -1365,6 +1365,45 @@ export type Database = {
           },
         ]
       }
+      friend_group_invite_links: {
+        Row: {
+          created_at: string
+          created_by_id: string
+          friend_group_id: string
+          id: string
+          token: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_id: string
+          friend_group_id: string
+          id?: string
+          token: string
+        }
+        Update: {
+          created_at?: string
+          created_by_id?: string
+          friend_group_id?: string
+          id?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "friend_group_invite_links_friend_group_id_fkey"
+            columns: ["friend_group_id"]
+            isOneToOne: true
+            referencedRelation: "friend_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "friend_group_invite_links_created_by_id_fkey"
+            columns: ["created_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       friend_group_members: {
         Row: {
           created_at: string
@@ -2999,7 +3038,11 @@ export type Database = {
         Args: { p_event_id: string; p_schedule: Json }
         Returns: Json
       }
+      get_club_invite_link: { Args: { p_token: string }; Returns: Json }
       get_invite_by_token: { Args: { p_token: string }; Returns: Json }
+      get_or_create_club_invite_link: { Args: { p_friend_group_id: string }; Returns: Json }
+      rotate_club_invite_link: { Args: { p_friend_group_id: string }; Returns: Json }
+      accept_club_invite_link: { Args: { p_token: string }; Returns: Json }
       invite_to_event: {
         Args: { p_event_id: string; p_user_ids: string[] }
         Returns: Json

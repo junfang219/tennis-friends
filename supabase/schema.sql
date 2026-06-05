@@ -8320,3 +8320,173 @@ $$;
 DROP TRIGGER IF EXISTS message_reactions_unnotify ON public.message_reactions;
 CREATE TRIGGER message_reactions_unnotify AFTER DELETE ON public.message_reactions
   FOR EACH ROW EXECUTE FUNCTION public.unnotify_on_message_reaction_delete();
+
+-- =====================================================================
+-- 0023_club_qr_invite_link
+--
+-- Reusable QR invite for a CLUB (friend_groups kind='club'). Clubs only
+-- supported friend-to-friend invites (friend_group_invites.invitee_id FK to
+-- profiles), so there was no way to bring in a NON-user. This adds a stable
+-- per-club bearer link: any member surfaces a QR that encodes
+-- /club-invite/<token>; the recipient registers (web-first) and lands in the
+-- club chat (/chat/group/<chatId>). One link per club (the QR is stable); the
+-- token is the credential, so it is NOT consumed on use — many people join
+-- from the same code.
+-- =====================================================================
+
+CREATE TABLE public.friend_group_invite_links (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  friend_group_id uuid NOT NULL REFERENCES public.friend_groups(id) ON DELETE CASCADE,
+  token           text NOT NULL UNIQUE,
+  created_by_id   uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT friend_group_invite_links_one_per_group UNIQUE (friend_group_id)
+);
+
+ALTER TABLE public.friend_group_invite_links ENABLE ROW LEVEL SECURITY;
+-- Members may read their club's link to render/re-share the QR. All writes go
+-- through the DEFINER RPCs below (no INSERT/UPDATE/DELETE policy = denied).
+CREATE POLICY friend_group_invite_links_select_member ON public.friend_group_invite_links
+  FOR SELECT TO authenticated
+  USING (public.is_friend_group_member(friend_group_id));
+
+-- Fetch-or-create the club's stable QR link. Any member; idempotent.
+CREATE OR REPLACE FUNCTION public.get_or_create_club_invite_link(p_friend_group_id uuid)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_caller uuid := auth.uid();
+  v_token  text;
+  v_name   text;
+  v_owner  uuid;
+BEGIN
+  IF v_caller IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+  IF NOT public.is_friend_group_member(p_friend_group_id) THEN
+    RAISE EXCEPTION 'Only a club member can create an invite' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  SELECT name, owner_id INTO v_name, v_owner FROM friend_groups WHERE id = p_friend_group_id AND kind = 'club';
+  IF v_name IS NULL THEN RAISE EXCEPTION 'Club not found' USING ERRCODE = 'no_data_found'; END IF;
+
+  SELECT token INTO v_token FROM friend_group_invite_links WHERE friend_group_id = p_friend_group_id;
+  IF v_token IS NULL THEN
+    -- gen_random_uuid (not pgcrypto's gen_random_bytes, which isn't on the
+    -- public search_path under Supabase). Two uuids = 256 bits of entropy.
+    INSERT INTO friend_group_invite_links (friend_group_id, token, created_by_id)
+    VALUES (
+      p_friend_group_id,
+      replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''),
+      v_caller
+    )
+    ON CONFLICT (friend_group_id) DO UPDATE SET friend_group_id = excluded.friend_group_id
+    RETURNING token INTO v_token;
+  END IF;
+
+  -- is_owner drives the owner-only "Reset link" action in the UI.
+  RETURN jsonb_build_object(
+    'token', v_token, 'club_name', v_name,
+    'friend_group_id', p_friend_group_id, 'is_owner', v_owner = v_caller
+  );
+END;
+$$;
+REVOKE ALL ON FUNCTION public.get_or_create_club_invite_link(uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.get_or_create_club_invite_link(uuid) TO authenticated;
+
+-- Reset/rotate the club's QR link (owner-only). Minting a new token instantly
+-- invalidates the old QR for everyone, so this is gated on ownership, not mere
+-- membership — the escape hatch for a leaked/over-shared code.
+CREATE OR REPLACE FUNCTION public.rotate_club_invite_link(p_friend_group_id uuid)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_caller uuid := auth.uid();
+  v_owner  uuid;
+  v_name   text;
+  v_token  text := replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '');
+BEGIN
+  IF v_caller IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+  SELECT owner_id, name INTO v_owner, v_name FROM friend_groups WHERE id = p_friend_group_id AND kind = 'club';
+  IF v_owner IS NULL THEN RAISE EXCEPTION 'Club not found' USING ERRCODE = 'no_data_found'; END IF;
+  IF v_owner <> v_caller THEN
+    RAISE EXCEPTION 'Only the club owner can reset the invite link' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  INSERT INTO friend_group_invite_links (friend_group_id, token, created_by_id)
+  VALUES (p_friend_group_id, v_token, v_caller)
+  ON CONFLICT (friend_group_id)
+    DO UPDATE SET token = excluded.token, created_by_id = excluded.created_by_id, created_at = now()
+  RETURNING token INTO v_token;
+
+  RETURN jsonb_build_object('token', v_token, 'club_name', v_name, 'friend_group_id', p_friend_group_id, 'is_owner', true);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.rotate_club_invite_link(uuid) FROM public;
+REVOKE EXECUTE ON FUNCTION public.rotate_club_invite_link(uuid) FROM anon;
+GRANT EXECUTE ON FUNCTION public.rotate_club_invite_link(uuid) TO authenticated;
+
+-- Public preview of a link (club name + inviter) for the /club-invite landing
+-- page, including the not-yet-signed-in case (granted to anon).
+CREATE OR REPLACE FUNCTION public.get_club_invite_link(p_token text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_link    friend_group_invite_links%ROWTYPE;
+  v_name    text;
+  v_inviter text;
+BEGIN
+  IF p_token IS NULL OR length(trim(p_token)) = 0 THEN RETURN NULL; END IF;
+  SELECT * INTO v_link FROM friend_group_invite_links WHERE token = p_token;
+  IF v_link.id IS NULL THEN RETURN NULL; END IF;
+  SELECT name INTO v_name FROM friend_groups WHERE id = v_link.friend_group_id;
+  SELECT name INTO v_inviter FROM profiles WHERE id = v_link.created_by_id;
+  RETURN jsonb_build_object(
+    'friend_group_id', v_link.friend_group_id,
+    'club_name', COALESCE(v_name, ''),
+    'inviter_name', COALESCE(v_inviter, '')
+  );
+END;
+$$;
+REVOKE ALL ON FUNCTION public.get_club_invite_link(text) FROM public;
+GRANT EXECUTE ON FUNCTION public.get_club_invite_link(text) TO anon, authenticated;
+
+-- Redeem a club link: join the club + its chat. Not consumed (reusable). The
+-- link creator is notified only when a genuinely new member joins.
+CREATE OR REPLACE FUNCTION public.accept_club_invite_link(p_token text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_caller uuid := auth.uid();
+  v_link   friend_group_invite_links%ROWTYPE;
+  v_chat   uuid;
+  v_added  integer;
+BEGIN
+  IF v_caller IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+  IF p_token IS NULL OR length(trim(p_token)) = 0 THEN RAISE EXCEPTION 'Missing token' USING ERRCODE = 'invalid_parameter_value'; END IF;
+  SELECT * INTO v_link FROM friend_group_invite_links WHERE token = p_token;
+  IF v_link.id IS NULL THEN RAISE EXCEPTION 'Invite not found' USING ERRCODE = 'no_data_found'; END IF;
+
+  INSERT INTO friend_group_members (friend_group_id, user_id)
+  VALUES (v_link.friend_group_id, v_caller)
+  ON CONFLICT (friend_group_id, user_id) DO NOTHING;
+  GET DIAGNOSTICS v_added = ROW_COUNT;
+
+  -- Club chats are created in create_club, but be defensive (mirror accept_club_invite).
+  SELECT id INTO v_chat FROM chats WHERE friend_group_id = v_link.friend_group_id;
+  IF v_chat IS NULL THEN
+    INSERT INTO chats (name, creator_id, friend_group_id)
+    SELECT fg.name, fg.owner_id, fg.id FROM friend_groups fg WHERE fg.id = v_link.friend_group_id
+    RETURNING id INTO v_chat;
+    INSERT INTO chat_participants (chat_id, user_id)
+    SELECT v_chat, fgm.user_id FROM friend_group_members fgm WHERE fgm.friend_group_id = v_link.friend_group_id
+    ON CONFLICT DO NOTHING;
+  ELSE
+    INSERT INTO chat_participants (chat_id, user_id)
+    VALUES (v_chat, v_caller) ON CONFLICT DO NOTHING;
+  END IF;
+
+  IF v_added > 0 THEN
+    INSERT INTO notifications (user_id, actor_id, type, friend_group_id)
+    VALUES (v_link.created_by_id, v_caller, 'club_invite_accepted', v_link.friend_group_id);
+  END IF;
+
+  RETURN jsonb_build_object('ok', true, 'friend_group_id', v_link.friend_group_id, 'chat_id', v_chat);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.accept_club_invite_link(text) FROM public;
+REVOKE EXECUTE ON FUNCTION public.accept_club_invite_link(text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.accept_club_invite_link(text) TO authenticated;

@@ -14,8 +14,9 @@ import { NextResponse } from "next/server";
 //  - Content-Type `application/json` (NOT `application/pkcs7-mime` since iOS 9).
 //  - The `appIDs` entry must be `<TEAM_ID>.<BUNDLE_ID>`.
 //
-// Only `/p/*` is claimed — every other path stays in the browser, which keeps
-// pages like /login, /onboarding, /chat reachable from email links etc.
+// Only `/p/*` and `/club-invite/*` are claimed — every other path stays in
+// the browser, which keeps pages like /login, /onboarding, /chat reachable
+// from email links etc.
 const AASA = {
   applinks: {
     details: [
@@ -25,6 +26,10 @@ const AASA = {
           {
             "/": "/p/*",
             comment: "Public LFP post preview — open in app when installed",
+          },
+          {
+            "/": "/club-invite/*",
+            comment: "Club QR invite — open in app when installed so a member who scans lands in the club chat",
           },
         ],
       },

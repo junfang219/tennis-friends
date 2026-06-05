@@ -9,6 +9,7 @@ import EmojiPicker from "@/components/EmojiPicker";
 import SplitCostSheet from "@/components/SplitCostSheet";
 import SharedPostCard, { type SharedPost } from "@/components/SharedPostCard";
 import ChatFindPlayerButton from "@/components/chat/ChatFindPlayerButton";
+import { ClubQRModal } from "@/components/clubs/ClubQRModal";
 import MessageReactionBar from "@/components/MessageReactionBar";
 import MessageReactions, { type MessageReaction as MsgReaction } from "@/components/MessageReactions";
 import { useLongPress } from "@/hooks/useLongPress";
@@ -92,6 +93,7 @@ export default function GroupChatThreadPage() {
   const [showMembers, setShowMembers] = useState(false);
   const [showSplit, setShowSplit] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [showQr, setShowQr] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<{ url: string; type: string } | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -727,6 +729,26 @@ export default function GroupChatThreadPage() {
                 </button>
               )}
             </div>
+            {/* Club chats: surface the reusable QR invite so any member can
+                bring a non-user straight into this chat. */}
+            {!showRename && chatInfo.friendGroupId && (
+              <button
+                onClick={() => setShowQr(true)}
+                className="p-1.5 rounded-lg hover:bg-court-green-pale/30 transition-colors text-court-green shrink-0"
+                title="Invite by QR code"
+                aria-label="Invite by QR code"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="7" height="7" rx="1" />
+                  <rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" />
+                  <line x1="14" y1="14" x2="14" y2="17" />
+                  <line x1="17" y1="14" x2="21" y2="14" />
+                  <line x1="21" y1="17" x2="21" y2="21" />
+                  <line x1="14" y1="21" x2="17" y2="21" />
+                </svg>
+              </button>
+            )}
             {/* Overflow menu hides while the rename input is up so the
                 input + Save/Cancel don't collide with it. */}
             {!showRename && (
@@ -751,6 +773,15 @@ export default function GroupChatThreadPage() {
           </div>
         )}
       </div>
+
+      {showQr && chatInfo?.friendGroupId && (
+        <ClubQRModal
+          clubId={chatInfo.friendGroupId}
+          clubName={chatInfo.name || title}
+          inviterName={session?.user?.name ?? ""}
+          onClose={() => setShowQr(false)}
+        />
+      )}
 
       {/*
         Messages — the only scrolling region. min-h-0 lets flex shrink

@@ -3,11 +3,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { publicSiteUrl } from "@/lib/siteUrl";
 
-// Public OG / canonical URL base. Falls back to localhost in dev so previews
-// during local testing don't claim a prod URL.
-const SITE_URL =
-  process.env.NEXT_PUBLIC_SITE_URL ?? "https://mytennisfriends.com";
+// Public OG / canonical URL base.
+const SITE_URL = publicSiteUrl();
 
 type Params = { id: string };
 
