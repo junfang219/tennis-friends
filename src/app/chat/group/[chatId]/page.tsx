@@ -841,7 +841,7 @@ export default function GroupChatThreadPage() {
                         </p>
                       </div>
                     )}
-                    {msg.mediaUrl && !msg.content && (
+                    {(msg.mediaUrl || msg.sharedPostId) && !msg.content && (
                       <p className={`text-[10px] mt-1 ${isMe ? "text-right" : ""} text-gray-400`}>
                         {formatTime(msg.createdAt)}
                       </p>

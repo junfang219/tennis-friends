@@ -8198,3 +8198,125 @@ $function$;
 
 revoke execute on function public.can_see_post(public.posts) from anon, public;
 grant  execute on function public.can_see_post(public.posts) to authenticated;
+
+-- =====================================================================
+-- 0016_chat_lfp_audience_lifecycle_and_reaction_notif_cleanup
+-- =====================================================================
+
+-- (a) A chat-scoped Looking-for-Player post's whole audience is one
+-- post_targets row (target_kind 'user' or 'chat'). The FK uses ON DELETE
+-- CASCADE, so if the targeted user deletes their account (or the session chat
+-- is purged) that row vanishes and the post -- still visibility='friends' --
+-- would fall through can_see_post() to the author's friends. Delete the
+-- dependent post BEFORE the cascade fires. Only posts whose SOLE audience is
+-- the departing user/chat are removed.
+CREATE OR REPLACE FUNCTION public.delete_orphaned_chat_scoped_posts()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF TG_TABLE_NAME = 'profiles' THEN
+    DELETE FROM public.posts p
+    WHERE EXISTS (
+      SELECT 1 FROM public.post_targets pt
+      WHERE pt.post_id = p.id AND pt.target_kind = 'user' AND pt.target_user_id = OLD.id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM public.post_targets pt2
+      WHERE pt2.post_id = p.id
+        AND NOT (pt2.target_kind = 'user' AND pt2.target_user_id = OLD.id)
+    );
+  ELSIF TG_TABLE_NAME = 'chats' THEN
+    DELETE FROM public.posts p
+    WHERE EXISTS (
+      SELECT 1 FROM public.post_targets pt
+      WHERE pt.post_id = p.id AND pt.target_kind = 'chat' AND pt.chat_id = OLD.id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM public.post_targets pt2
+      WHERE pt2.post_id = p.id
+        AND NOT (pt2.target_kind = 'chat' AND pt2.chat_id = OLD.id)
+    );
+  END IF;
+  RETURN OLD;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS profiles_delete_orphaned_chat_posts ON public.profiles;
+CREATE TRIGGER profiles_delete_orphaned_chat_posts BEFORE DELETE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION public.delete_orphaned_chat_scoped_posts();
+
+DROP TRIGGER IF EXISTS chats_delete_orphaned_chat_posts ON public.chats;
+CREATE TRIGGER chats_delete_orphaned_chat_posts BEFORE DELETE ON public.chats
+  FOR EACH ROW EXECUTE FUNCTION public.delete_orphaned_chat_scoped_posts();
+
+-- (b) Reaction notifications are keyed to the message, not the reaction row, so
+-- a swap (remove a reaction then add another) or a toggle-off left stale
+-- notifications behind. Keep exactly one message_reaction notification per
+-- (recipient, actor, message): AFTER INSERT clears any prior one before
+-- inserting; a new AFTER DELETE path clears it on toggle-off.
+CREATE OR REPLACE FUNCTION public.notify_on_message_reaction()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE v_sender_id uuid;
+BEGIN
+  IF NEW.target_type = 'dm' THEN
+    SELECT sender_id INTO v_sender_id FROM messages WHERE id = NEW.target_id;
+    IF v_sender_id IS NULL OR v_sender_id = NEW.user_id THEN RETURN NEW; END IF;
+    DELETE FROM notifications
+      WHERE type = 'message_reaction' AND user_id = v_sender_id
+        AND actor_id = NEW.user_id AND message_id = NEW.target_id;
+    INSERT INTO notifications (user_id, actor_id, type, message_id, emoji)
+    VALUES (v_sender_id, NEW.user_id, 'message_reaction', NEW.target_id, NEW.emoji);
+  ELSIF NEW.target_type = 'chat' THEN
+    SELECT sender_id INTO v_sender_id FROM chat_messages WHERE id = NEW.target_id;
+    IF v_sender_id IS NULL OR v_sender_id = NEW.user_id THEN RETURN NEW; END IF;
+    DELETE FROM notifications
+      WHERE type = 'message_reaction' AND user_id = v_sender_id
+        AND actor_id = NEW.user_id AND chat_message_id = NEW.target_id;
+    INSERT INTO notifications (user_id, actor_id, type, chat_message_id, emoji)
+    VALUES (v_sender_id, NEW.user_id, 'message_reaction', NEW.target_id, NEW.emoji);
+  ELSIF NEW.target_type = 'group' THEN
+    SELECT sender_id INTO v_sender_id FROM group_messages WHERE id = NEW.target_id;
+    IF v_sender_id IS NULL OR v_sender_id = NEW.user_id THEN RETURN NEW; END IF;
+    DELETE FROM notifications
+      WHERE type = 'message_reaction' AND user_id = v_sender_id
+        AND actor_id = NEW.user_id AND group_message_id = NEW.target_id;
+    INSERT INTO notifications (user_id, actor_id, type, group_message_id, emoji)
+    VALUES (v_sender_id, NEW.user_id, 'message_reaction', NEW.target_id, NEW.emoji);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS message_reactions_notify ON public.message_reactions;
+CREATE TRIGGER message_reactions_notify AFTER INSERT ON public.message_reactions
+  FOR EACH ROW EXECUTE FUNCTION public.notify_on_message_reaction();
+
+CREATE OR REPLACE FUNCTION public.unnotify_on_message_reaction_delete()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE v_sender_id uuid;
+BEGIN
+  IF OLD.target_type = 'dm' THEN
+    SELECT sender_id INTO v_sender_id FROM messages WHERE id = OLD.target_id;
+    IF v_sender_id IS NULL THEN RETURN OLD; END IF;
+    DELETE FROM notifications
+      WHERE type = 'message_reaction' AND user_id = v_sender_id
+        AND actor_id = OLD.user_id AND message_id = OLD.target_id;
+  ELSIF OLD.target_type = 'chat' THEN
+    SELECT sender_id INTO v_sender_id FROM chat_messages WHERE id = OLD.target_id;
+    IF v_sender_id IS NULL THEN RETURN OLD; END IF;
+    DELETE FROM notifications
+      WHERE type = 'message_reaction' AND user_id = v_sender_id
+        AND actor_id = OLD.user_id AND chat_message_id = OLD.target_id;
+  ELSIF OLD.target_type = 'group' THEN
+    SELECT sender_id INTO v_sender_id FROM group_messages WHERE id = OLD.target_id;
+    IF v_sender_id IS NULL THEN RETURN OLD; END IF;
+    DELETE FROM notifications
+      WHERE type = 'message_reaction' AND user_id = v_sender_id
+        AND actor_id = OLD.user_id AND group_message_id = OLD.target_id;
+  END IF;
+  RETURN OLD;
+END;
+$$;
+DROP TRIGGER IF EXISTS message_reactions_unnotify ON public.message_reactions;
+CREATE TRIGGER message_reactions_unnotify AFTER DELETE ON public.message_reactions
+  FOR EACH ROW EXECUTE FUNCTION public.unnotify_on_message_reaction_delete();

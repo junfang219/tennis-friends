@@ -109,6 +109,7 @@ describe("snake_case → camelCase adapters", () => {
       my_play_request: null,
       groups: [],
       friend_groups: [],
+      audience_label: "",
       event: null,
     });
     expect(result.author.profileImageUrl).toBe("x.png");
@@ -164,6 +165,7 @@ describe("snake_case → camelCase adapters", () => {
       my_play_request: null,
       groups: [],
       friend_groups: [],
+      audience_label: "",
       event: null,
     });
     expect(result.media).toEqual([
@@ -208,6 +210,7 @@ describe("snake_case → camelCase adapters", () => {
       my_play_request: null,
       groups: [],
       friend_groups: [],
+      audience_label: "",
       event: null,
     });
     expect(result.sessionChatId).toBe("chat-123");
@@ -255,6 +258,7 @@ describe("snake_case → camelCase adapters", () => {
       my_play_request: null,
       groups: [],
       friend_groups: [],
+      audience_label: "",
       event: null,
     });
     expect(result.postType).toBe("find_players");
@@ -313,6 +317,7 @@ describe("snake_case → camelCase adapters", () => {
       my_play_request: { id: "req-1", status: "approved", note: "" },
       groups: [],
       friend_groups: [],
+      audience_label: "",
       event: null,
     });
     expect(result.myPlayRequest).toEqual({
@@ -337,7 +342,7 @@ describe("snake_case → camelCase adapters", () => {
       photos: [], session_chat: [],
       like_count: 0, comment_count: 0, is_liked: false,
       my_play_request: null,
-      groups: [], friend_groups: [], event: null,
+      groups: [], friend_groups: [], audience_label: "", event: null,
     };
     expect(toPostCamel(base).myPlayRequest).toBeNull();
   });
@@ -358,6 +363,7 @@ describe("snake_case → camelCase adapters", () => {
       my_play_request: null,
       groups: [{ id: "g1", name: "Wolves" }],
       friend_groups: [{ id: "fg1", name: "Inner Circle" }],
+      audience_label: "",
       event: null,
     };
     const result = toPostCamel(base);

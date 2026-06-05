@@ -331,10 +331,13 @@ export function ComposerModal({
     setTimeout(() => textareaRef.current?.focus(), 100);
   }, []);
 
-  // Lock body scroll
+  // Lock body scroll. Snapshot the prior value rather than hard-resetting to
+  // "" — when this modal is opened from inside a chat (which already locks the
+  // body), restoring "" on close would unlock the chat surface underneath.
   useEffect(() => {
+    const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = ""; };
+    return () => { document.body.style.overflow = prev; };
   }, []);
 
   const toggleGroup = (id: string) => {
@@ -598,17 +601,21 @@ export function ComposerModal({
         is_broadcast: !!body.isBroadcast,
         broadcast_radius_mi:
           typeof body.broadcastRadiusMi === "number" ? body.broadcastRadiusMi : 0,
+        // Chat-scoped requests are born private (author-only) so there is no
+        // window where the post exists untargeted and friend-visible. They're
+        // flipped to 'friends' below only AFTER the audience target row lands.
+        visibility: chatTarget ? ("private" as const) : ("friends" as const),
         media: mediaItems,
       });
       // Chat-scoped Looking-for-Player request: audience-target the post to the
       // originating chat and drop a shared-post card into that chat. This
       // replaces the group/friend-group audience inserts below.
       if (chatTarget) {
-        // Audience-target + card-send must both land, or the post is deleted.
-        // An untargeted post falls through can_see_post() to friends-of-author
-        // visibility, so a half-written chat request would leak to all friends
-        // instead of "Only visible to {name}". Delete-on-failure keeps the
-        // create atomic-enough without an RPC.
+        // The post is currently private. Sequence so it's never observably
+        // untargeted-and-visible: (1) write the audience target row, (2) flip
+        // to 'friends' — now scoped to that target only, (3) drop the chat card.
+        // On any failure the post is deleted; until step 2 it stays private, so
+        // even a failed rollback can't leak it to friends.
         try {
           if (chatTarget.kind === "dm") {
             await supabase.from("post_targets").insert({
@@ -616,28 +623,40 @@ export function ComposerModal({
               target_kind: "user" as const,
               target_user_id: chatTarget.userId,
             });
-            await sendDirectMessage(supabase, chatTarget.userId, "", { sharedPostId: newPost.id });
           } else if (chatTarget.kind === "session") {
             await supabase.from("post_targets").insert({
               post_id: newPost.id,
               target_kind: "chat" as const,
               chat_id: chatTarget.chatId,
             });
-            await sendChatMessage(supabase, chatTarget.chatId, "", { sharedPostId: newPost.id });
           } else if (chatTarget.kind === "club") {
             await supabase.from("post_targets").insert({
               post_id: newPost.id,
               target_kind: "friend_group" as const,
               friend_group_id: chatTarget.friendGroupId,
             });
-            await sendChatMessage(supabase, chatTarget.chatId, "", { sharedPostId: newPost.id });
           } else {
             await supabase.from("post_targets").insert({
               post_id: newPost.id,
               target_kind: "group" as const,
               group_id: chatTarget.groupId,
             });
+          }
+
+          const { error: visErr } = await supabase
+            .from("posts")
+            .update({ visibility: "friends" })
+            .eq("id", newPost.id);
+          if (visErr) throw visErr;
+          newPost.visibility = "friends";
+
+          if (chatTarget.kind === "dm") {
+            await sendDirectMessage(supabase, chatTarget.userId, "", { sharedPostId: newPost.id });
+          } else if (chatTarget.kind === "team") {
             await sendGroupMessage(supabase, chatTarget.groupId, "", { sharedPostId: newPost.id });
+          } else {
+            // session or club — both carry chatId
+            await sendChatMessage(supabase, chatTarget.chatId, "", { sharedPostId: newPost.id });
           }
         } catch (e) {
           await supabase.from("posts").delete().eq("id", newPost.id).then(undefined, () => {});

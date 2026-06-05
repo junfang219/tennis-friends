@@ -84,6 +84,10 @@ export type Post = PostRow & {
   // an empty list here would make an edit silently wipe the targets.
   groups: { id: string; name: string }[];
   friend_groups: { id: string; name: string }[];
+  // Single resolved label for chat-scoped requests (target_kind 'user'/'chat'),
+  // e.g. "Only visible to Bob". Empty for group/circle/default posts, which use
+  // the groups / friend_groups arrays above instead.
+  audience_label: string;
   // Populated for cross-posts created when a new event is published
   // (post_type='event', event_id set). PostCard renders an EventChip
   // from this so the card shows date / venue / type / signups at a glance.
@@ -352,7 +356,7 @@ async function enrichPosts(
       supabase
         .from("post_targets")
         .select(
-          "post_id, target_kind, group_id, friend_group_id, groups ( id, name ), friend_groups ( id, name )"
+          "post_id, target_kind, group_id, friend_group_id, target_user_id, chat_id, groups ( id, name ), friend_groups ( id, name ), profiles ( id, name ), chats ( id, name )"
         )
         .in("post_id", ids),
       eventIds.length > 0
@@ -420,6 +424,10 @@ async function enrichPosts(
 
   const groupsByPost = new Map<string, { id: string; name: string }[]>();
   const friendGroupsByPost = new Map<string, { id: string; name: string }[]>();
+  // Chat-scoped requests (target_kind 'user'/'chat') have no group/circle UI;
+  // surface a single human label so PostCard can render the same
+  // "Only visible to {name}" affordance the composer showed.
+  const audienceLabelByPost = new Map<string, string>();
   for (const row of (targetsRes.data ?? []) as TargetRow[]) {
     if (row.target_kind === "group" && row.group_id) {
       const arr = groupsByPost.get(row.post_id) ?? [];
@@ -429,6 +437,11 @@ async function enrichPosts(
       const arr = friendGroupsByPost.get(row.post_id) ?? [];
       arr.push({ id: row.friend_group_id, name: row.friend_groups?.name ?? "" });
       friendGroupsByPost.set(row.post_id, arr);
+    } else if (row.target_kind === "user" && row.target_user_id) {
+      audienceLabelByPost.set(row.post_id, `Only visible to ${row.profiles?.name || "one person"}`);
+    } else if (row.target_kind === "chat" && row.chat_id) {
+      const cn = row.chats?.name?.trim();
+      audienceLabelByPost.set(row.post_id, cn ? `Only visible to ${cn}` : "Only visible to this chat");
     }
   }
 
@@ -463,6 +476,7 @@ async function enrichPosts(
     my_play_request: myRequestByPost.get(p.id) ?? null,
     groups: groupsByPost.get(p.id) ?? [],
     friend_groups: friendGroupsByPost.get(p.id) ?? [],
+    audience_label: audienceLabelByPost.get(p.id) ?? "",
     event: p.event_id ? eventById.get(p.event_id) ?? null : null,
   }));
 }
@@ -472,11 +486,15 @@ async function enrichPosts(
 // so we narrow them here for the enrichPosts mapping.
 type TargetRow = {
   post_id: string;
-  target_kind: "group" | "friend_group";
+  target_kind: "group" | "friend_group" | "user" | "chat";
   group_id: string | null;
   friend_group_id: string | null;
+  target_user_id: string | null;
+  chat_id: string | null;
   groups: { id: string; name: string } | null;
   friend_groups: { id: string; name: string } | null;
+  profiles: { id: string; name: string } | null;
+  chats: { id: string; name: string } | null;
 };
 
 export async function createPost(

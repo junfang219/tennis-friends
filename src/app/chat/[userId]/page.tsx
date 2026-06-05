@@ -660,7 +660,7 @@ export default function ChatPage() {
                       </div>
                     )}
                     {/* Timestamp under media-only messages */}
-                    {msg.mediaUrl && !msg.content && !msg.sharedPost && (
+                    {(msg.mediaUrl || msg.sharedPostId) && !msg.content && (
                       <p className={`text-[10px] mt-1 ${isMe ? "text-right text-gray-400" : "text-gray-400"}`}>
                         {formatTime(msg.createdAt)}
                       </p>

@@ -175,6 +175,9 @@ export interface PostCamel {
   // pre-select groups when editing.
   groups: { id: string; name: string }[];
   friendGroups: { id: string; name: string }[];
+  // Resolved label for chat-scoped requests ("Only visible to {name}"); empty
+  // for group/circle/default posts.
+  audienceLabel: string;
 }
 
 export function toPostCamel(p: Post): PostCamel {
@@ -233,6 +236,7 @@ export function toPostCamel(p: Post): PostCamel {
       : null,
     groups: p.groups,
     friendGroups: p.friend_groups,
+    audienceLabel: p.audience_label,
   };
 }
 
