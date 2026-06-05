@@ -22,6 +22,8 @@ type Notification = {
   messageId: string;
   chatId: string;
   groupId: string;
+  chatMessageId: string;
+  groupMessageId: string;
   eventId: string;
   matchId: string;
   pollId: string;
@@ -211,6 +213,8 @@ export default function NotificationsPage() {
         messageId: n.message_id ?? "",
         chatId: n.chat_message?.chat_id ?? "",
         groupId: n.group_message?.group_id ?? "",
+        chatMessageId: n.chat_message_id ?? "",
+        groupMessageId: n.group_message_id ?? "",
         eventId: n.event_id ?? "",
         matchId: n.match_id ?? "",
         pollId: n.poll_id ?? "",
@@ -302,9 +306,9 @@ export default function NotificationsPage() {
       // Route to the thread the reaction happened in: session/team chats by
       // their thread id, DM by the actor (with the reacted message anchored).
       const target = n.chatId
-        ? `/chat/group/${n.chatId}`
+        ? `/chat/group/${n.chatId}${n.chatMessageId ? `?msg=${n.chatMessageId}` : ""}`
         : n.groupId
-        ? `/groups/${n.groupId}/chat`
+        ? `/groups/${n.groupId}/chat${n.groupMessageId ? `?msg=${n.groupMessageId}` : ""}`
         : n.messageId
         ? `/chat/${n.actor.id}?msg=${n.messageId}`
         : `/chat/${n.actor.id}`;

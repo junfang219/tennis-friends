@@ -29,6 +29,8 @@ type Notification = {
   messageId: string;
   chatId: string;
   groupId: string;
+  chatMessageId: string;
+  groupMessageId: string;
   eventId: string;
   matchId: string;
   pollId: string;
@@ -295,11 +297,12 @@ export default function NotificationBell() {
     }
     if (n.type === "message_reaction") {
       setOpen(false);
-      // Session/team reactions deep-link to their thread; DM by the actor.
+      // Session/team reactions deep-link to their thread, anchored on the
+      // reacted message; DM by the actor.
       const target = n.chatId
-        ? `/chat/group/${n.chatId}`
+        ? `/chat/group/${n.chatId}${n.chatMessageId ? `?msg=${n.chatMessageId}` : ""}`
         : n.groupId
-        ? `/groups/${n.groupId}/chat`
+        ? `/groups/${n.groupId}/chat${n.groupMessageId ? `?msg=${n.groupMessageId}` : ""}`
         : n.messageId
         ? `/chat/${n.actor.id}?msg=${n.messageId}`
         : `/chat/${n.actor.id}`;

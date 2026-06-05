@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Avatar from "@/components/Avatar";
 import EmojiPicker from "@/components/EmojiPicker";
@@ -100,6 +100,11 @@ export default function GroupChatThreadPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
+  // Deep-link target from a tapped reaction notification (/chat/group/<id>?msg=…),
+  // snapshotted once so re-renders don't keep re-firing the focus effect.
+  const searchParams = useSearchParams();
+  const focusTargetRef = useRef<string | null>(searchParams.get("msg"));
+  const focusHandledRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -454,11 +459,14 @@ export default function GroupChatThreadPage() {
   // inputBarHeight) but ONLY while still anchored. useLayoutEffect runs
   // after React commits the new DOM but before paint, so scrollHeight already
   // reflects the new content — no rAF dance, no clobbering.
-  const stickToBottomRef = useRef(true);
+  // Start anchored to the bottom UNLESS a ?msg= deep-link is active — then the
+  // deep-link effect below scrolls to that bubble instead.
+  const stickToBottomRef = useRef(!focusTargetRef.current);
 
-  // Re-anchor on chat switch so a fresh thread always opens at the bottom.
+  // Re-anchor on chat switch so a fresh thread always opens at the bottom
+  // (but never override a pending deep-link).
   useEffect(() => {
-    stickToBottomRef.current = true;
+    stickToBottomRef.current = !focusTargetRef.current;
   }, [chatId]);
 
   const handleMessagesScroll = useCallback(() => {
@@ -469,11 +477,30 @@ export default function GroupChatThreadPage() {
   }, []);
 
   useLayoutEffect(() => {
+    if (focusTargetRef.current && !focusHandledRef.current) return;
     if (!stickToBottomRef.current) return;
     const el = messagesScrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [messages.length, keyboardHeight, inputBarHeight, chatId]);
+
+  // Deep-link: scroll to and briefly highlight the reacted message (?msg=…).
+  useEffect(() => {
+    const targetId = focusTargetRef.current;
+    if (!targetId || focusHandledRef.current) return;
+    if (!messages.some((m) => m.id === targetId)) return;
+    const raf = requestAnimationFrame(() => {
+      const el = document.getElementById(`msg-${targetId}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("ring-4", "ring-amber-300", "ring-offset-2", "ring-offset-transparent", "rounded-2xl");
+      setTimeout(() => {
+        el.classList.remove("ring-4", "ring-amber-300", "ring-offset-2", "ring-offset-transparent", "rounded-2xl");
+      }, 1800);
+      focusHandledRef.current = true;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [messages]);
 
   const handleSend = async () => {
     if ((!input.trim() && !pendingMedia) || sending || uploading) return;
@@ -795,6 +822,7 @@ export default function GroupChatThreadPage() {
                   )}
 
                   <div
+                    id={`msg-${msg.id}`}
                     className="max-w-[75%] select-none"
                     data-msg-id={msg.id}
                     data-long-press-root

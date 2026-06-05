@@ -495,6 +495,8 @@ export interface NotificationCamel {
   messageId: string;
   chatId: string;
   groupId: string;
+  chatMessageId: string;
+  groupMessageId: string;
   eventId: string;
   matchId: string;
   pollId: string;
@@ -514,9 +516,12 @@ export function toNotificationCamel(n: Notification): NotificationCamel {
     postId: n.post_id ?? "",
     commentId: n.comment_id ?? "",
     messageId: n.message_id ?? "",
-    // Thread ids for routing a session/team reaction notification.
+    // Thread ids (for routing) + the reacted message ids (for the ?msg= anchor)
+    // of a session/team reaction notification.
     chatId: n.chat_message?.chat_id ?? "",
     groupId: n.group_message?.group_id ?? "",
+    chatMessageId: n.chat_message_id ?? "",
+    groupMessageId: n.group_message_id ?? "",
     eventId: n.event_id ?? "",
     matchId: n.match_id ?? "",
     pollId: n.poll_id ?? "",
