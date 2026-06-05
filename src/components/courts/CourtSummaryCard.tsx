@@ -26,6 +26,11 @@ type Props = {
   category?: string;
   /** Direct booking URL when the venue is reservable online. */
   bookingUrl?: string | null;
+  /** When the venue books per-court (multiple `bookingLinks` on the detail
+   *  page) there is no single working booking URL, so the card's "Book"
+   *  button routes to the detail page instead of an external link. Takes
+   *  precedence over `bookingUrl`. */
+  bookingViaDetails?: boolean;
   /** Short first-sentence preview from `description`. */
   descriptionPreview?: string | null;
   /** "temporarily_closed" → red status chip. */
@@ -77,6 +82,7 @@ export function CourtSummaryCard({
   summary,
   category,
   bookingUrl,
+  bookingViaDetails,
   descriptionPreview,
   status,
   editable,
@@ -250,7 +256,7 @@ export function CourtSummaryCard({
             {/* Action row */}
             <div
               className={`mt-4 grid gap-2 ${
-                bookingUrl ? "grid-cols-3" : "grid-cols-2"
+                bookingViaDetails || bookingUrl ? "grid-cols-3" : "grid-cols-2"
               }`}
             >
               <DirectionsButton
@@ -267,13 +273,14 @@ export function CourtSummaryCard({
                 </svg>
                 Directions
               </DirectionsButton>
-              {bookingUrl && (
-                <a
-                  href={bookingUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+              {/* Per-court venues (e.g. Aubrey Davis Park) have no single
+                  booking URL — route "Book" to the detail page, where each
+                  court's PerfectMind link is listed. */}
+              {bookingViaDetails ? (
+                <Link
+                  href={detailHref}
                   className="flex items-center justify-center gap-1 px-2 py-2 rounded-lg bg-ball-yellow/30 hover:bg-ball-yellow/50 text-xs sm:text-sm font-semibold text-amber-800"
-                  aria-label="Book this court"
+                  aria-label="Book this court — opens the details page to pick a court"
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                     <rect x="3" y="4" width="18" height="18" rx="2" />
@@ -282,7 +289,28 @@ export function CourtSummaryCard({
                     <line x1="3" y1="10" x2="21" y2="10" />
                   </svg>
                   Book
-                </a>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                </Link>
+              ) : (
+                bookingUrl && (
+                  <a
+                    href={bookingUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-1 px-2 py-2 rounded-lg bg-ball-yellow/30 hover:bg-ball-yellow/50 text-xs sm:text-sm font-semibold text-amber-800"
+                    aria-label="Book this court"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <rect x="3" y="4" width="18" height="18" rx="2" />
+                      <line x1="16" y1="2" x2="16" y2="6" />
+                      <line x1="8" y1="2" x2="8" y2="6" />
+                      <line x1="3" y1="10" x2="21" y2="10" />
+                    </svg>
+                    Book
+                  </a>
+                )
               )}
               <Link
                 href={detailHref}

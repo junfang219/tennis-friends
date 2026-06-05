@@ -37,6 +37,9 @@ type CourtData = {
   /** Facility-only fields (undefined for curated/OSM markers). */
   bucket?: ManagedByBucket;
   bookingUrl?: string | null;
+  /** True when the venue books per-court — the card's "Book" button routes
+   *  to the detail page instead of a single external URL. */
+  bookingViaDetails?: boolean;
   category?: string;
   status?: "active" | "temporarily_closed";
   descriptionPreview?: string | null;
@@ -117,6 +120,7 @@ type CourtSearchResult = {
   category: string;
   bookable: boolean;
   bookingUrl: string | null;
+  bookingViaDetails: boolean;
   courts: number | null;
   descriptionPreview: string | null;
 };
@@ -359,6 +363,7 @@ export default function CourtsPage() {
           source: "facility" as const,
           bucket,
           bookingUrl: f.bookingUrl,
+          bookingViaDetails: (f.bookingLinks?.length ?? 0) > 0,
           category: f.category ?? undefined,
         };
       });
@@ -440,6 +445,7 @@ export default function CourtsPage() {
           category: f.category,
           bookable: f.bookable,
           bookingUrl: f.bookingUrl,
+          bookingViaDetails: (f.bookingLinks?.length ?? 0) > 0,
           courts: f.courtCount,
           descriptionPreview: descriptionPreview(f.description),
         }));
@@ -552,6 +558,7 @@ export default function CourtsPage() {
       source: "facility",
       bucket: c.bucket,
       bookingUrl: c.bookingUrl,
+      bookingViaDetails: c.bookingViaDetails,
       category: c.category,
       descriptionPreview: c.descriptionPreview,
     });
@@ -710,6 +717,7 @@ export default function CourtsPage() {
           source: "facility",
           bucket,
           bookingUrl: f.bookingUrl,
+          bookingViaDetails: (f.bookingLinks?.length ?? 0) > 0,
           category: f.category ?? undefined,
           status: undefined,
           descriptionPreview: null,
@@ -1330,6 +1338,7 @@ export default function CourtsPage() {
               summary={summaries[selectedCourt.id] ?? null}
               category={selectedCourt.category}
               bookingUrl={selectedCourt.bookingUrl ?? null}
+              bookingViaDetails={selectedCourt.bookingViaDetails ?? false}
               descriptionPreview={selectedCourt.descriptionPreview ?? null}
               status={selectedCourt.status}
               editable={IS_DEV && selectedCourt.source === "facility"}
