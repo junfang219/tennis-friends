@@ -432,6 +432,7 @@ export type Database = {
           media_type: string
           media_url: string
           sender_id: string
+          shared_post_id: string | null
         }
         Insert: {
           chat_id: string
@@ -442,6 +443,7 @@ export type Database = {
           media_type?: string
           media_url?: string
           sender_id: string
+          shared_post_id?: string | null
         }
         Update: {
           chat_id?: string
@@ -452,6 +454,7 @@ export type Database = {
           media_type?: string
           media_url?: string
           sender_id?: string
+          shared_post_id?: string | null
         }
         Relationships: [
           {
@@ -459,6 +462,13 @@ export type Database = {
             columns: ["chat_id"]
             isOneToOne: false
             referencedRelation: "chats"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_shared_post_id_fkey"
+            columns: ["shared_post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
             referencedColumns: ["id"]
           },
           {
@@ -1970,11 +1980,13 @@ export type Database = {
       notifications: {
         Row: {
           actor_id: string
+          chat_message_id: string | null
           comment_id: string | null
           created_at: string
           emoji: string
           event_id: string | null
           friend_group_id: string | null
+          group_message_id: string | null
           id: string
           match_id: string | null
           message_id: string | null
@@ -1986,11 +1998,13 @@ export type Database = {
         }
         Insert: {
           actor_id: string
+          chat_message_id?: string | null
           comment_id?: string | null
           created_at?: string
           emoji?: string
           event_id?: string | null
           friend_group_id?: string | null
+          group_message_id?: string | null
           id?: string
           match_id?: string | null
           message_id?: string | null
@@ -2002,11 +2016,13 @@ export type Database = {
         }
         Update: {
           actor_id?: string
+          chat_message_id?: string | null
           comment_id?: string | null
           created_at?: string
           emoji?: string
           event_id?: string | null
           friend_group_id?: string | null
+          group_message_id?: string | null
           id?: string
           match_id?: string | null
           message_id?: string | null
@@ -2022,6 +2038,20 @@ export type Database = {
             columns: ["actor_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_chat_message_id_fkey"
+            columns: ["chat_message_id"]
+            isOneToOne: false
+            referencedRelation: "chat_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_group_message_id_fkey"
+            columns: ["group_message_id"]
+            isOneToOne: false
+            referencedRelation: "group_messages"
             referencedColumns: ["id"]
           },
           {
@@ -2286,30 +2316,43 @@ export type Database = {
       }
       post_targets: {
         Row: {
+          chat_id: string | null
           created_at: string
           friend_group_id: string | null
           group_id: string | null
           id: string
           post_id: string
           target_kind: Database["public"]["Enums"]["post_target_kind"]
+          target_user_id: string | null
         }
         Insert: {
+          chat_id?: string | null
           created_at?: string
           friend_group_id?: string | null
           group_id?: string | null
           id?: string
           post_id: string
           target_kind: Database["public"]["Enums"]["post_target_kind"]
+          target_user_id?: string | null
         }
         Update: {
+          chat_id?: string | null
           created_at?: string
           friend_group_id?: string | null
           group_id?: string | null
           id?: string
           post_id?: string
           target_kind?: Database["public"]["Enums"]["post_target_kind"]
+          target_user_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "post_targets_chat_id_fkey"
+            columns: ["chat_id"]
+            isOneToOne: false
+            referencedRelation: "chats"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "post_targets_friend_group_id_fkey"
             columns: ["friend_group_id"]
@@ -2322,6 +2365,13 @@ export type Database = {
             columns: ["group_id"]
             isOneToOne: false
             referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_targets_target_user_id_fkey"
+            columns: ["target_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
           {
@@ -3052,7 +3102,7 @@ export type Database = {
         | "rejected"
         | "withdrawn"
         | "removed"
-      post_target_kind: "group" | "friend_group"
+      post_target_kind: "group" | "friend_group" | "user" | "chat"
       post_type: "regular" | "find_players" | "propose_team" | "event" | "note"
       reaction_target: "dm" | "group" | "chat"
       team_listing_format: "singles" | "doubles" | "mixed_doubles" | "any"
@@ -3235,7 +3285,7 @@ export const Constants = {
         "withdrawn",
         "removed",
       ],
-      post_target_kind: ["group", "friend_group"],
+      post_target_kind: ["group", "friend_group", "user", "chat"],
       post_type: ["regular", "find_players", "propose_team", "event", "note"],
       reaction_target: ["dm", "group", "chat"],
       team_listing_format: ["singles", "doubles", "mixed_doubles", "any"],

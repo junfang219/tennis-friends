@@ -21,11 +21,15 @@ import {
   sendGroupMessage,
   markTeamRead,
   addReaction,
+  removeReaction,
+  listReactionsForMessages,
   createPollInGroup,
   votePoll,
   setPollClosed,
   getPollsByIds,
+  loadSharedPosts,
 } from "@/lib/supabase/queries";
+import ChatFindPlayerButton from "@/components/chat/ChatFindPlayerButton";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { toGroupMessageCamel } from "@/lib/supabase/adapters";
 import { errorMessage } from "@/lib/errorMessage";
@@ -227,11 +231,32 @@ export default function GroupChatPage() {
         const pollMap = pollIds.length > 0
           ? await getPollsByIds(supabase, pollIds)
           : new Map();
+        // Resolve embedded Looking-for-Player cards (shared_post_id) the same
+        // way — the chat row only carries the FK, not the post body.
+        const sharedIds = Array.from(
+          new Set(rows.map((m) => m.shared_post_id).filter((id): id is string => !!id))
+        );
+        const sharedMap = sharedIds.length > 0
+          ? await loadSharedPosts(supabase, sharedIds).catch(() => new Map<string, SharedPost>())
+          : new Map<string, SharedPost>();
+        // Fetch reactions every poll — they live in message_reactions, not on
+        // the group_messages row. Without this the 3s poll rebuilds with no
+        // reactions and any just-added emoji vanishes.
+        const reactionRows = rows.length
+          ? await listReactionsForMessages(supabase, "group", rows.map((m) => m.id)).catch(() => [])
+          : [];
+        const reactionsByMsg = new Map<string, MsgReaction[]>();
+        for (const r of reactionRows) {
+          const arr = reactionsByMsg.get(r.target_id) ?? [];
+          arr.push({ emoji: r.emoji, userId: r.user_id, userName: r.user.name });
+          reactionsByMsg.set(r.target_id, arr);
+        }
         setMessages(
           rows.map((m) => ({
             ...toGroupMessageCamel(m),
-            reactions: [],
+            reactions: reactionsByMsg.get(m.id) ?? [],
             poll: m.poll_id ? pollMap.get(m.poll_id) ?? null : null,
+            sharedPost: m.shared_post_id ? sharedMap.get(m.shared_post_id) ?? null : null,
           }))
         );
       })
@@ -392,6 +417,13 @@ export default function GroupChatPage() {
 
   const applyReaction = async (msgId: string, key: ReactionKey | null) => {
     if (!myId) return;
+    // Snapshot the existing reaction so a swap/toggle-off deletes the stale
+    // row — without this the unique (target,user,emoji) table keeps the old
+    // emoji and the next poll shows two reactions. Mirrors the DM handler.
+    const prevEmoji = messages
+      .find((m) => m.id === msgId)
+      ?.reactions?.find((r) => r.userId === myId)?.emoji as ReactionKey | undefined;
+
     setMessages((prev) =>
       prev.map((m) => {
         if (m.id !== msgId) return m;
@@ -402,9 +434,14 @@ export default function GroupChatPage() {
     );
     try {
       const supabase = createSupabaseBrowserClient();
-      if (key !== null) await addReaction(supabase, "group", msgId, key);
+      if (prevEmoji && prevEmoji !== key) {
+        await removeReaction(supabase, "group", msgId, prevEmoji);
+      }
+      if (key !== null && prevEmoji !== key) {
+        await addReaction(supabase, "group", msgId, key);
+      }
     } catch {
-      // Polling will reconcile.
+      // The 3s poll will reconcile.
     }
   };
 
@@ -637,6 +674,11 @@ export default function GroupChatPage() {
                     {msg.sharedPost && (
                       <SharedPostCard post={msg.sharedPost} />
                     )}
+                    {msg.sharedPostId && !msg.sharedPost && (
+                      <div className={`bg-white rounded-xl border border-gray-200 shadow-sm px-3 py-2.5 max-w-full ${isMe ? "ml-auto" : ""}`}>
+                        <p className="text-[11px] font-medium text-gray-400">Shared post</p>
+                      </div>
+                    )}
                     {msg.mediaUrl && (
                       <div className={`rounded-2xl overflow-hidden shadow-sm ${msg.sharedPost ? "mt-1" : ""} ${isMe ? "ml-auto" : ""}`}>
                         {msg.mediaType === "video" ? (
@@ -648,7 +690,7 @@ export default function GroupChatPage() {
                         )}
                       </div>
                     )}
-                    {(msg.content || (!msg.sharedPost && !msg.mediaUrl)) && (
+                    {(msg.content || (!msg.sharedPostId && !msg.mediaUrl)) && (
                       <div
                         className={`px-4 py-2.5 text-sm leading-relaxed ${msg.sharedPost || msg.mediaUrl ? "mt-1 " : ""}${
                           isMe
@@ -663,7 +705,7 @@ export default function GroupChatPage() {
                         </p>
                       </div>
                     )}
-                    {msg.mediaUrl && !msg.content && !msg.sharedPost && (
+                    {(msg.mediaUrl || msg.sharedPostId) && !msg.content && (
                       <p className={`text-[10px] mt-1 ${isMe ? "text-right" : ""} text-gray-400`}>
                         {formatTime(msg.createdAt)}
                       </p>
@@ -847,6 +889,12 @@ export default function GroupChatPage() {
         )}
         {uploadError && <p className="text-xs text-red-500 mb-2">{uploadError}</p>}
         <div className="flex items-center gap-2">
+          {groupInfo && (
+            <ChatFindPlayerButton
+              chatTarget={{ kind: "team", groupId, name: groupInfo.name }}
+              onPosted={loadMessages}
+            />
+          )}
           <input
             ref={fileInputRef}
             type="file"

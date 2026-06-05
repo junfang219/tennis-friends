@@ -23,6 +23,11 @@ export interface Notification {
   post_id: string | null;
   comment_id: string | null;
   message_id: string | null;
+  // Session-chat / team-chat message a reaction targeted. Used to deep-link a
+  // message_reaction notification into the right thread (chat_message → chat,
+  // group_message → group). message_id stays for DM reactions.
+  chat_message_id: string | null;
+  group_message_id: string | null;
   event_id: string | null;
   match_id: string | null;
   poll_id: string | null;
@@ -35,12 +40,18 @@ export interface Notification {
     name: string;
     profile_image_url: string;
   };
+  // Thread ids resolved via the FK joins above, for routing.
+  chat_message: { chat_id: string } | null;
+  group_message: { group_id: string } | null;
 }
 
 const NOTIF_COLUMNS = `
-  id, user_id, actor_id, type, post_id, comment_id, message_id, event_id,
+  id, user_id, actor_id, type, post_id, comment_id, message_id,
+  chat_message_id, group_message_id, event_id,
   match_id, poll_id, friend_group_id, emoji, read, created_at,
-  actor:profiles!notifications_actor_id_fkey ( id, name, profile_image_url )
+  actor:profiles!notifications_actor_id_fkey ( id, name, profile_image_url ),
+  chat_message:chat_messages!notifications_chat_message_id_fkey ( chat_id ),
+  group_message:group_messages!notifications_group_message_id_fkey ( group_id )
 `;
 
 export async function listNotifications(

@@ -104,6 +104,7 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
   describe("posts: visibility branches", () => {
     let friendPostId: string;
     let groupPostId: string;
+    let privatePostId: string;
     let groupId: string;
 
     beforeAll(async () => {
@@ -114,6 +115,14 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
         .select("id")
         .single();
       friendPostId = fp!.id;
+
+      // Private Playbook-style entry: author-only regardless of friendship.
+      const { data: pp } = await alice.client
+        .from("posts")
+        .insert({ author_id: alice.id, content: "private-note", post_type: "note", visibility: "private" })
+        .select("id")
+        .single();
+      privatePostId = pp!.id;
 
       // Group-targeted post: alice creates a group, adds carol, targets the post.
       const { data: g } = await alice.client
@@ -164,6 +173,21 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
       expect(data?.length).toBe(0);
     });
 
+    it("private post is author-only — hidden even from a friend", async () => {
+      // Bob is alice's accepted friend; private must still hard-stop him.
+      const friendView = await bob.client
+        .from("posts")
+        .select("id")
+        .eq("id", privatePostId);
+      expect(friendView.data?.length).toBe(0);
+
+      const selfView = await alice.client
+        .from("posts")
+        .select("id")
+        .eq("id", privatePostId);
+      expect(selfView.data?.length).toBe(1);
+    });
+
     it("targeted-group post is visible to members of that group", async () => {
       const { data } = await carol.client
         .from("posts")
@@ -198,6 +222,80 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
         .select("user_id")
         .eq("group_id", groupId);
       expect(bobView.data?.length).toBe(0);
+    });
+  });
+
+  // Looking-for-Player requests fired off from inside a chat scope the feed
+  // post to exactly that chat's audience via two post_targets kinds:
+  //   'user' → a single recipient (a 1-on-1 DM request)
+  //   'chat' → the participants of a session chat
+  describe("posts: chat-scoped visibility (user/chat targets)", () => {
+    let userPostId: string;
+    let chatPostId: string;
+    let chatId: string;
+
+    beforeAll(async () => {
+      // user-targeted post: alice targets carol directly (not a friend of
+      // alice's via the group; bob is alice's friend but NOT the target).
+      const { data: up } = await alice.client
+        .from("posts")
+        .insert({ author_id: alice.id, content: "dm-targeted-post" })
+        .select("id")
+        .single();
+      userPostId = up!.id;
+      await alice.client
+        .from("post_targets")
+        .insert({ post_id: userPostId, target_kind: "user", target_user_id: carol.id });
+
+      // chat-targeted post: a session chat with alice + carol as participants.
+      const admin = adminClient();
+      const { data: c } = await admin
+        .from("chats")
+        .insert({ name: "test-session-chat", creator_id: alice.id })
+        .select("id")
+        .single();
+      chatId = c!.id;
+      await admin.from("chat_participants").insert([
+        { chat_id: chatId, user_id: alice.id },
+        { chat_id: chatId, user_id: carol.id },
+      ]);
+
+      const { data: cp } = await alice.client
+        .from("posts")
+        .insert({ author_id: alice.id, content: "chat-targeted-post" })
+        .select("id")
+        .single();
+      chatPostId = cp!.id;
+      await alice.client
+        .from("post_targets")
+        .insert({ post_id: chatPostId, target_kind: "chat", chat_id: chatId });
+    });
+
+    it("user-targeted post is visible to the targeted recipient", async () => {
+      const { data } = await carol.client.from("posts").select("id").eq("id", userPostId);
+      expect(data?.length).toBe(1);
+    });
+
+    it("user-targeted post is visible to the author", async () => {
+      const { data } = await alice.client.from("posts").select("id").eq("id", userPostId);
+      expect(data?.length).toBe(1);
+    });
+
+    it("user-targeted post is NOT visible to a non-target (even a friend)", async () => {
+      // Bob is alice's friend but is not the targeted user.
+      const { data } = await bob.client.from("posts").select("id").eq("id", userPostId);
+      expect(data?.length).toBe(0);
+    });
+
+    it("chat-targeted post is visible to a chat participant", async () => {
+      const { data } = await carol.client.from("posts").select("id").eq("id", chatPostId);
+      expect(data?.length).toBe(1);
+    });
+
+    it("chat-targeted post is NOT visible to a non-participant (even a friend)", async () => {
+      // Bob is alice's friend but not a participant of the targeted chat.
+      const { data } = await bob.client.from("posts").select("id").eq("id", chatPostId);
+      expect(data?.length).toBe(0);
     });
   });
 

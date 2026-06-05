@@ -35,6 +35,7 @@ export type FeedPostView = {
   isLiked: boolean;
   groups?: { id: string; name: string }[];
   friendGroups?: { id: string; name: string }[];
+  audienceLabel?: string;
   // Populated for posts cross-posted from a new event (post_type='event'
   // with event_id set). PostCard's EventChip uses this so the card
   // renders date / venue / type / signups without a follow-up fetch.
@@ -121,6 +122,7 @@ export function adaptFeedPost(p: FeedPost): FeedPostView {
     // the edit modal pre-selects the actual groups instead of wiping them.
     groups: p.groups,
     friendGroups: p.friend_groups,
+    audienceLabel: p.audience_label,
     event: p.event
       ? {
           id: p.event.id,

@@ -109,6 +109,7 @@ describe("snake_case → camelCase adapters", () => {
       my_play_request: null,
       groups: [],
       friend_groups: [],
+      audience_label: "",
       event: null,
     });
     expect(result.author.profileImageUrl).toBe("x.png");
@@ -164,6 +165,7 @@ describe("snake_case → camelCase adapters", () => {
       my_play_request: null,
       groups: [],
       friend_groups: [],
+      audience_label: "",
       event: null,
     });
     expect(result.media).toEqual([
@@ -208,6 +210,7 @@ describe("snake_case → camelCase adapters", () => {
       my_play_request: null,
       groups: [],
       friend_groups: [],
+      audience_label: "",
       event: null,
     });
     expect(result.sessionChatId).toBe("chat-123");
@@ -255,6 +258,7 @@ describe("snake_case → camelCase adapters", () => {
       my_play_request: null,
       groups: [],
       friend_groups: [],
+      audience_label: "",
       event: null,
     });
     expect(result.postType).toBe("find_players");
@@ -313,6 +317,7 @@ describe("snake_case → camelCase adapters", () => {
       my_play_request: { id: "req-1", status: "approved", note: "" },
       groups: [],
       friend_groups: [],
+      audience_label: "",
       event: null,
     });
     expect(result.myPlayRequest).toEqual({
@@ -337,7 +342,7 @@ describe("snake_case → camelCase adapters", () => {
       photos: [], session_chat: [],
       like_count: 0, comment_count: 0, is_liked: false,
       my_play_request: null,
-      groups: [], friend_groups: [], event: null,
+      groups: [], friend_groups: [], audience_label: "", event: null,
     };
     expect(toPostCamel(base).myPlayRequest).toBeNull();
   });
@@ -358,6 +363,7 @@ describe("snake_case → camelCase adapters", () => {
       my_play_request: null,
       groups: [{ id: "g1", name: "Wolves" }],
       friend_groups: [{ id: "fg1", name: "Inner Circle" }],
+      audience_label: "",
       event: null,
     };
     const result = toPostCamel(base);
@@ -446,13 +452,29 @@ describe("snake_case → camelCase adapters", () => {
     const n = toNotificationCamel({
       id: "n", user_id: "u", actor_id: "a", type: "like",
       post_id: null, comment_id: null, message_id: null,
+      chat_message_id: null, group_message_id: null,
       event_id: null, match_id: null, poll_id: null, friend_group_id: null,
       emoji: "", read: false,
       created_at: "t",
       actor: { id: "a", name: "Actor", profile_image_url: "x.png" },
+      chat_message: null, group_message: null,
     });
     expect(n.postId).toBe("");
     expect(n.actor.profileImageUrl).toBe("x.png");
+
+    // message_reaction in a session chat resolves the thread id for routing.
+    const nChat = toNotificationCamel({
+      id: "n2", user_id: "u", actor_id: "a", type: "message_reaction",
+      post_id: null, comment_id: null, message_id: null,
+      chat_message_id: "cm1", group_message_id: null,
+      event_id: null, match_id: null, poll_id: null, friend_group_id: null,
+      emoji: "love", read: false,
+      created_at: "t",
+      actor: { id: "a", name: "Actor", profile_image_url: "x.png" },
+      chat_message: { chat_id: "chat-9" }, group_message: null,
+    });
+    expect(nChat.chatId).toBe("chat-9");
+    expect(nChat.groupId).toBe("");
 
     const dm = toDirectMessageCamel({
       id: "dm", sender_id: "s", receiver_id: "r", content: "hi",
@@ -462,10 +484,11 @@ describe("snake_case → camelCase adapters", () => {
 
     const cm = toChatMessageCamel({
       id: "cm", chat_id: "c", sender_id: "s", content: "hey",
-      media_url: "", media_type: "", created_at: "t",
+      media_url: "", media_type: "", shared_post_id: "p1", created_at: "t",
       sender: { id: "s", name: "Sender", profile_image_url: "x.png" },
     });
     expect(cm.chatId).toBe("c");
+    expect(cm.sharedPostId).toBe("p1");
     expect(cm.sender.profileImageUrl).toBe("x.png");
   });
 
@@ -498,7 +521,7 @@ describe("snake_case → camelCase adapters", () => {
 
     const cm = toChatMessageCamel({
       id: "cm", chat_id: "c", sender_id: "s", content: "hey",
-      media_url: "", media_type: "", created_at: pgStamp,
+      media_url: "", media_type: "", shared_post_id: null, created_at: pgStamp,
       sender: { id: "s", name: "Sender", profile_image_url: "" },
     });
     expect(cm.createdAt).toBe(expected);

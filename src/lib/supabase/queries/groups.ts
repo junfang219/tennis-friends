@@ -356,7 +356,7 @@ export async function sendGroupMessage(
   supabase: SupabaseClient<Database>,
   groupId: string,
   content: string,
-  opts: { mediaUrl?: string; mediaType?: string; kind?: "chat" | "announcement" } = {}
+  opts: { mediaUrl?: string; mediaType?: string; kind?: "chat" | "announcement"; sharedPostId?: string } = {}
 ): Promise<GroupMessage> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("Not signed in");
@@ -369,6 +369,7 @@ export async function sendGroupMessage(
       media_url: opts.mediaUrl ?? "",
       media_type: opts.mediaType ?? "",
       kind: opts.kind ?? "chat",
+      shared_post_id: opts.sharedPostId ?? null,
     })
     .select(GROUP_MESSAGE_COLUMNS)
     .single();

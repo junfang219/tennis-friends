@@ -175,6 +175,9 @@ export interface PostCamel {
   // pre-select groups when editing.
   groups: { id: string; name: string }[];
   friendGroups: { id: string; name: string }[];
+  // Resolved label for chat-scoped requests ("Only visible to {name}"); empty
+  // for group/circle/default posts.
+  audienceLabel: string;
 }
 
 export function toPostCamel(p: Post): PostCamel {
@@ -233,6 +236,7 @@ export function toPostCamel(p: Post): PostCamel {
       : null,
     groups: p.groups,
     friendGroups: p.friend_groups,
+    audienceLabel: p.audience_label,
   };
 }
 
@@ -489,6 +493,8 @@ export interface NotificationCamel {
   postId: string;
   commentId: string;
   messageId: string;
+  chatId: string;
+  groupId: string;
   eventId: string;
   matchId: string;
   pollId: string;
@@ -508,6 +514,9 @@ export function toNotificationCamel(n: Notification): NotificationCamel {
     postId: n.post_id ?? "",
     commentId: n.comment_id ?? "",
     messageId: n.message_id ?? "",
+    // Thread ids for routing a session/team reaction notification.
+    chatId: n.chat_message?.chat_id ?? "",
+    groupId: n.group_message?.group_id ?? "",
     eventId: n.event_id ?? "",
     matchId: n.match_id ?? "",
     pollId: n.poll_id ?? "",
@@ -554,6 +563,7 @@ export interface ChatMessageCamel {
   content: string;
   mediaUrl: string;
   mediaType: string;
+  sharedPostId: string | null;
   createdAt: string;
   sender: { id: string; name: string; profileImageUrl: string };
 }
@@ -566,6 +576,7 @@ export function toChatMessageCamel(m: ChatMessage): ChatMessageCamel {
     content: m.content,
     mediaUrl: m.media_url,
     mediaType: m.media_type,
+    sharedPostId: m.shared_post_id,
     createdAt: pgToIso(m.created_at),
     sender: {
       id: m.sender.id,

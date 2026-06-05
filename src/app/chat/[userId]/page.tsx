@@ -25,7 +25,9 @@ import {
   addReaction,
   removeReaction,
   listReactionsForMessages,
+  loadSharedPosts,
 } from "@/lib/supabase/queries";
+import ChatFindPlayerButton from "@/components/chat/ChatFindPlayerButton";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { toDirectMessageCamel } from "@/lib/supabase/adapters";
 import { errorMessage } from "@/lib/errorMessage";
@@ -217,11 +219,22 @@ export default function ChatPage() {
       arr.push({ emoji: r.emoji, userId: r.user_id, userName: r.user.name });
       byMessage.set(r.target_id, arr);
     }
-    const fresh: Message[] = rows.map((m) => ({
-      ...toDirectMessageCamel(m),
-      sharedPost: null,
-      reactions: byMessage.get(m.id) ?? [],
-    }));
+    // Resolve any embedded Looking-for-Player cards (shared_post_id) in one
+    // batch so each card renders via SharedPostCard.
+    const sharedIds = rows
+      .map((m) => toDirectMessageCamel(m).sharedPostId)
+      .filter((id): id is string => !!id);
+    const sharedMap = sharedIds.length
+      ? await loadSharedPosts(supabase, sharedIds).catch(() => new Map<string, SharedPost>())
+      : new Map<string, SharedPost>();
+    const fresh: Message[] = rows.map((m) => {
+      const camel = toDirectMessageCamel(m);
+      return {
+        ...camel,
+        sharedPost: camel.sharedPostId ? sharedMap.get(camel.sharedPostId) ?? null : null,
+        reactions: byMessage.get(m.id) ?? [],
+      };
+    });
     // Preserve optimistic bubbles whose await sendDirectMessage hasn't
     // resolved yet — without this the poll briefly flickers the just-sent
     // message off-screen between the optimistic insert and the swap-in.
@@ -608,6 +621,14 @@ export default function ChatPage() {
                     {msg.sharedPost && (
                       <SharedPostCard post={msg.sharedPost} />
                     )}
+                    {/* FK set but body not resolved yet (in-flight) or not
+                        visible to us (RLS). Placeholder avoids a blank/
+                        timestamp-only bubble. */}
+                    {msg.sharedPostId && !msg.sharedPost && (
+                      <div className={`bg-white rounded-xl border border-gray-200 shadow-sm px-3 py-2.5 max-w-full ${isMe ? "ml-auto" : ""}`}>
+                        <p className="text-[11px] font-medium text-gray-400">Shared post</p>
+                      </div>
+                    )}
 
                     {/* Media attachment */}
                     {msg.mediaUrl && (
@@ -623,7 +644,7 @@ export default function ChatPage() {
                     )}
 
                     {/* Text message bubble */}
-                    {(msg.content || (!msg.sharedPost && !msg.mediaUrl)) && (
+                    {(msg.content || (!msg.sharedPostId && !msg.mediaUrl)) && (
                       <div
                         className={`px-4 py-2.5 text-sm leading-relaxed ${msg.sharedPost || msg.mediaUrl ? "mt-1 " : ""}${
                           isMe
@@ -639,7 +660,7 @@ export default function ChatPage() {
                       </div>
                     )}
                     {/* Timestamp under media-only messages */}
-                    {msg.mediaUrl && !msg.content && !msg.sharedPost && (
+                    {(msg.mediaUrl || msg.sharedPostId) && !msg.content && (
                       <p className={`text-[10px] mt-1 ${isMe ? "text-right text-gray-400" : "text-gray-400"}`}>
                         {formatTime(msg.createdAt)}
                       </p>
@@ -724,6 +745,12 @@ export default function ChatPage() {
           </p>
         )}
         <div className="flex items-center gap-2">
+          {chatUser && (
+            <ChatFindPlayerButton
+              chatTarget={{ kind: "dm", userId, name: chatUser.name }}
+              onPosted={loadMessages}
+            />
+          )}
           <input
             ref={fileInputRef}
             type="file"

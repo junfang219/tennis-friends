@@ -79,6 +79,7 @@ type Post = {
   isLiked: boolean;
   groups?: { id: string; name: string }[];
   friendGroups?: { id: string; name: string }[];
+  audienceLabel?: string;
   event?: {
     id: string;
     title: string;
@@ -782,6 +783,20 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                     <span className="inline-flex items-center gap-1 text-xs font-medium text-court-green-soft">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /></svg>
                       {liveFriendGroups.map((g) => g.name).join(", ")}
+                    </span>
+                  </>
+                )}
+                {/* Chat-scoped request (DM / session): no group/circle chips,
+                    just the resolved "Only visible to {name}" label. */}
+                {post.audienceLabel && liveGroups.length === 0 && liveFriendGroups.length === 0 && (
+                  <>
+                    <span className="text-xs text-gray-300">·</span>
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-court-green-soft">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                        <path d="M7 11V7a5 5 0 0110 0v4" />
+                      </svg>
+                      {post.audienceLabel}
                     </span>
                   </>
                 )}
@@ -1985,8 +2000,16 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                     .update(updates)
                     .eq("id", post.id);
                   if (!upErr) {
-                    // Refresh post_targets: nuke + reinsert.
-                    await supabase.from("post_targets").delete().eq("post_id", post.id);
+                    // Refresh post_targets: nuke + reinsert — but ONLY the
+                    // group / friend_group rows the editor manages. A
+                    // chat-scoped request (target_kind 'user'/'chat') has no UI
+                    // here; deleting those rows would strip its audience and
+                    // leak it to all friends, so leave them untouched.
+                    await supabase
+                      .from("post_targets")
+                      .delete()
+                      .eq("post_id", post.id)
+                      .in("target_kind", ["group", "friend_group"]);
                     const targetRows: { post_id: string; target_kind: "group" | "friend_group"; group_id?: string; friend_group_id?: string }[] = [];
                     for (const gid of editSelectedTeamIds) {
                       targetRows.push({ post_id: post.id, target_kind: "group", group_id: gid });
