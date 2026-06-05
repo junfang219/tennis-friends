@@ -23,7 +23,7 @@
 
 import type { User } from "@supabase/supabase-js";
 import { createSupabaseBrowserClient } from "./browser";
-import { refreshAuthSnapshot, useAuthSnapshot } from "./auth-store";
+import { markUserInitiatedSignOut, refreshAuthSnapshot, useAuthSnapshot } from "./auth-store";
 import { clearAllCached } from "../queryCache";
 
 interface CompatSession {
@@ -82,6 +82,10 @@ interface SignOutOpts {
 
 export async function signOut(opts: SignOutOpts = {}) {
   const supabase = createSupabaseBrowserClient();
+  // Tag the SIGNED_OUT the line below emits as expected, so the auth-event
+  // diagnostics can tell a real user logout apart from a session that the
+  // refresh/cookie machinery dropped on its own.
+  markUserInitiatedSignOut();
   await supabase.auth.signOut();
   // Wipe the in-memory query cache so a subsequent sign-in (or sign-up from
   // the same browser tab) doesn't inherit the previous user's feed/inbox/

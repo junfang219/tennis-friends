@@ -96,7 +96,7 @@ type Profile = {
 
 export default function ProfilePage() {
   const router = useRouter();
-  const { update: updateSession } = useSession();
+  const { status: authStatus, update: updateSession } = useSession();
   // Lazy-init from the in-memory cache so a tab revisit paints the profile
   // synchronously on the very first render — no skeleton, no flicker.
   const [profile, setProfile] = useState<Profile | null>(
@@ -270,7 +270,14 @@ export default function ProfilePage() {
   useEffect(() => {
     if (cachedProfile.data === undefined) return; // still loading
     if (cachedProfile.data === null) {
-      router.replace("/login");
+      // getMyProfile() returns null both when the user is genuinely signed out
+      // AND when a getUser()/profile read transiently fails (network blip,
+      // momentarily-invalid token on app resume). Only redirect to /login once
+      // the auth layer has *settled* on unauthenticated — otherwise a transient
+      // failure would feel like a spurious logout even though the session
+      // cookie is still intact. While authenticated/loading we leave the page
+      // on its cached/loading state; useCachedQuery's background refresh retries.
+      if (authStatus === "unauthenticated") router.replace("/login");
       return;
     }
     if (editing || saving) return;
@@ -301,7 +308,7 @@ export default function ProfilePage() {
         zelleHandle: raw.zelle_handle ?? "",
       });
     }
-  }, [cachedProfile.data, editing, saving, router]);
+  }, [cachedProfile.data, authStatus, editing, saving, router]);
 
   const handleSave = async () => {
     setSaving(true);

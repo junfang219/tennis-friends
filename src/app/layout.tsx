@@ -6,6 +6,7 @@ import PushRegistrar from "@/components/PushRegistrar";
 import KeyboardInit from "@/components/KeyboardInit";
 import LastActiveHeartbeat from "@/components/LastActiveHeartbeat";
 import AppUrlOpenListener from "@/components/AppUrlOpenListener";
+import AuthRefreshController from "@/components/AuthRefreshController";
 
 // SessionProvider is gone: Supabase's auth state is hydrated per-component
 // via useSupabaseUser / the nextauth-compat shim. Court-availability reports
@@ -41,6 +42,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-surface" suppressHydrationWarning>
         <PushRegistrar />
         <KeyboardInit />
+        <AuthRefreshController />
         <LastActiveHeartbeat />
         <AppUrlOpenListener />
         <Navbar />

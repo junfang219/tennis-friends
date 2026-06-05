@@ -15,7 +15,7 @@
 // stable snapshot.
 
 import { useSyncExternalStore } from "react";
-import type { User } from "@supabase/supabase-js";
+import type { Session, SupabaseClient, User } from "@supabase/supabase-js";
 import { createSupabaseBrowserClient } from "./browser";
 
 type Snapshot = {
@@ -27,6 +27,56 @@ let snapshot: Snapshot = { user: null, loaded: false };
 const listeners = new Set<() => void>();
 let started = false;
 
+// --- Temporary auth-logout diagnostics (see auth_debug_events migration) ---
+// Records every auth state transition to a write-only Postgres table so we can
+// catch *unexpected* SIGNED_OUT events (the "users randomly logged out" bug)
+// with context the 24h GoTrue logs don't retain. Best-effort and removable.
+let detectedPlatform = "unknown";
+let pendingUserInitiatedSignOut = false;
+
+/** Called by our signOut() wrapper so the next SIGNED_OUT is tagged expected. */
+export function markUserInitiatedSignOut(): void {
+  pendingUserInitiatedSignOut = true;
+}
+
+async function detectPlatform(): Promise<void> {
+  try {
+    const core = await import("@capacitor/core");
+    detectedPlatform = core.Capacitor.getPlatform(); // "ios" | "android" | "web"
+  } catch {
+    detectedPlatform = "web";
+  }
+}
+
+function recordAuthEvent(
+  supabase: SupabaseClient,
+  event: string,
+  session: Session | null,
+  priorUserId: string | null
+): void {
+  const userInitiated = event === "SIGNED_OUT" && pendingUserInitiatedSignOut;
+  if (event === "SIGNED_OUT") pendingUserInitiatedSignOut = false;
+  try {
+    void supabase
+      .from("auth_debug_events")
+      .insert({
+        event,
+        prior_user_id: priorUserId,
+        has_session: !!session,
+        user_initiated: userInitiated,
+        platform: detectedPlatform,
+        details: {
+          path: window.location?.pathname ?? null,
+          visibility:
+            typeof document !== "undefined" ? document.visibilityState : null,
+        },
+      })
+      .then(() => {}, () => {}); // swallow — diagnostics must never surface errors
+  } catch {
+    // best-effort
+  }
+}
+
 function setSnapshot(next: Snapshot) {
   snapshot = next;
   for (const fn of listeners) fn();
@@ -35,12 +85,15 @@ function setSnapshot(next: Snapshot) {
 function start() {
   if (started || typeof window === "undefined") return;
   started = true;
+  void detectPlatform();
   const supabase = createSupabaseBrowserClient();
   supabase.auth.getUser().then(({ data }) => {
     setSnapshot({ user: data.user ?? null, loaded: true });
   });
-  supabase.auth.onAuthStateChange((_event, session) => {
+  supabase.auth.onAuthStateChange((event, session) => {
+    const priorUserId = snapshot.user?.id ?? null;
     setSnapshot({ user: session?.user ?? null, loaded: true });
+    recordAuthEvent(supabase, event, session, priorUserId);
   });
 }
 
