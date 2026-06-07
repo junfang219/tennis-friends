@@ -45,6 +45,7 @@ type Match = {
   matchTime: string;
   location: string;
   opponent: string;
+  opponentTeamId: string | null;
   notes: string;
   availabilities: Availability[];
 };
@@ -193,7 +194,7 @@ export default function AvailabilityPage() {
         supabase
           .from("team_matches")
           .select(
-            `id, match_date, match_time, location, opponent, notes,
+            `id, match_date, match_time, location, opponent, opponent_team_id, notes,
              availabilities ( id, user_id, status, match_types, lineup_slot,
                user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url ) )`
           )
@@ -222,6 +223,7 @@ export default function AvailabilityPage() {
         match_time: string;
         location: string;
         opponent: string;
+        opponent_team_id: string | null;
         notes: string;
         availabilities: RawAvail[];
       };
@@ -232,6 +234,7 @@ export default function AvailabilityPage() {
           matchTime: m.match_time,
           location: m.location,
           opponent: m.opponent,
+          opponentTeamId: m.opponent_team_id,
           notes: m.notes,
           availabilities: m.availabilities.map((a) => ({
             id: a.id,
@@ -372,6 +375,7 @@ export default function AvailabilityPage() {
         matchTime: data.match_time,
         location: data.location,
         opponent: data.opponent,
+        opponentTeamId: null,
         notes: data.notes,
         availabilities: [],
       } as unknown as Match;
@@ -730,6 +734,14 @@ export default function AvailabilityPage() {
                               <p className="text-[11px] text-gray-700 font-medium truncate" title={match.opponent}>
                                 🆚 {match.opponent}
                               </p>
+                            )}
+                            {match.opponentTeamId && (
+                              <Link
+                                href={`/groups/${groupId}/scouting`}
+                                className="text-[11px] text-court-green font-medium hover:underline"
+                              >
+                                🔎 Scout opponent
+                              </Link>
                             )}
                             {match.notes && (
                               <p className="text-[10px] text-gray-400 truncate" title={match.notes}>{match.notes}</p>

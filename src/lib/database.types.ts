@@ -2822,6 +2822,126 @@ export type Database = {
           },
         ]
       }
+      opponent_teams: {
+        Row: {
+          created_at: string
+          created_by_id: string | null
+          fetch_error: string
+          fetch_status: string
+          group_id: string
+          id: string
+          last_fetched_at: string | null
+          linked_group_id: string | null
+          name: string
+          source: string
+          source_team_key: string
+          source_url: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_id?: string | null
+          fetch_error?: string
+          fetch_status?: string
+          group_id: string
+          id?: string
+          last_fetched_at?: string | null
+          linked_group_id?: string | null
+          name: string
+          source?: string
+          source_team_key?: string
+          source_url?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by_id?: string | null
+          fetch_error?: string
+          fetch_status?: string
+          group_id?: string
+          id?: string
+          last_fetched_at?: string | null
+          linked_group_id?: string | null
+          name?: string
+          source?: string
+          source_team_key?: string
+          source_url?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opponent_teams_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opponent_teams_linked_group_id_fkey"
+            columns: ["linked_group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opponent_teams_created_by_id_fkey"
+            columns: ["created_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      opponent_players: {
+        Row: {
+          created_at: string
+          dynamic_rating: number | null
+          id: string
+          losses: number
+          name: string
+          ntrp_rating: number | null
+          opponent_team_id: string
+          order: number
+          record_raw: string
+          source_player_url: string
+          wins: number
+        }
+        Insert: {
+          created_at?: string
+          dynamic_rating?: number | null
+          id?: string
+          losses?: number
+          name: string
+          ntrp_rating?: number | null
+          opponent_team_id: string
+          order?: number
+          record_raw?: string
+          source_player_url?: string
+          wins?: number
+        }
+        Update: {
+          created_at?: string
+          dynamic_rating?: number | null
+          id?: string
+          losses?: number
+          name?: string
+          ntrp_rating?: number | null
+          opponent_team_id?: string
+          order?: number
+          record_raw?: string
+          source_player_url?: string
+          wins?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opponent_players_opponent_team_id_fkey"
+            columns: ["opponent_team_id"]
+            isOneToOne: false
+            referencedRelation: "opponent_teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       team_matches: {
         Row: {
           created_at: string
@@ -2833,6 +2953,7 @@ export type Database = {
           match_time: string
           notes: string
           opponent: string
+          opponent_team_id: string | null
           season_id: string | null
           shirt_color: string
           timezone: string
@@ -2847,6 +2968,7 @@ export type Database = {
           match_time?: string
           notes?: string
           opponent?: string
+          opponent_team_id?: string | null
           season_id?: string | null
           shirt_color?: string
           timezone?: string
@@ -2861,6 +2983,7 @@ export type Database = {
           match_time?: string
           notes?: string
           opponent?: string
+          opponent_team_id?: string | null
           season_id?: string | null
           shirt_color?: string
           timezone?: string
@@ -2871,6 +2994,13 @@ export type Database = {
             columns: ["group_id"]
             isOneToOne: false
             referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "team_matches_opponent_team_fk"
+            columns: ["opponent_team_id"]
+            isOneToOne: false
+            referencedRelation: "opponent_teams"
             referencedColumns: ["id"]
           },
           {

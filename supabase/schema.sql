@@ -835,6 +835,11 @@ create table public.team_matches (
   home_away   text not null default '',
   shirt_color text not null default '',
   opponent    text not null default '',
+  -- Optional link to a scouted opponent (opponent_teams). The free-text
+  -- `opponent` above stays as the always-present label; this points at the
+  -- richer scouting record (tennisrecord roster, ratings) when one exists.
+  -- FK is added via ALTER below, after opponent_teams is created.
+  opponent_team_id uuid,
   season_id   uuid references public.seasons (id) on delete set null,
   -- IANA timezone the wall-clock match_date/match_time strings
   -- represent. The event-reminders cron uses this to compute the
@@ -857,6 +862,59 @@ create table public.match_availabilities (
   constraint match_availabilities_unique unique (match_id, user_id)
 );
 create index match_availabilities_user_idx on public.match_availabilities (user_id);
+
+-- =========================================================================
+-- Opponent scouting (tennisrecord)
+--
+-- A captain scouts an opponent team by pasting its tennisrecord team URL
+-- (or team name). The server fetches + parses the public roster and caches
+-- it here so the whole team can see who they're up against and how strong
+-- they are. `opponent_teams` is scoped to the scouting group; the roster
+-- snapshot lives in `opponent_players` and is replaced wholesale on each
+-- refresh. `linked_group_id` optionally ties the opponent to an in-app team
+-- when one exists (groundwork for cross-team scheduling later).
+-- =========================================================================
+
+create table public.opponent_teams (
+  id               uuid primary key default gen_random_uuid(),
+  group_id         uuid not null references public.groups (id) on delete cascade,
+  name             text not null,
+  source           text not null default 'tennisrecord',
+  source_url       text not null default '',
+  source_team_key  text not null default '',
+  linked_group_id  uuid references public.groups (id) on delete set null,
+  last_fetched_at  timestamptz,
+  fetch_status     text not null default '',
+  fetch_error      text not null default '',
+  created_by_id    uuid references public.profiles (id) on delete set null,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now()
+);
+create index opponent_teams_group_idx on public.opponent_teams (group_id);
+-- One scouting row per (group, tennisrecord team) so refresh upserts cleanly.
+create unique index opponent_teams_group_key_unique
+  on public.opponent_teams (group_id, source_team_key)
+  where source_team_key <> '';
+
+create table public.opponent_players (
+  id                uuid primary key default gen_random_uuid(),
+  opponent_team_id  uuid not null references public.opponent_teams (id) on delete cascade,
+  name              text not null,
+  source_player_url text not null default '',
+  ntrp_rating       double precision,
+  dynamic_rating    double precision,
+  wins              integer not null default 0,
+  losses            integer not null default 0,
+  record_raw        text not null default '',
+  "order"           integer not null default 0,
+  created_at        timestamptz not null default now()
+);
+create index opponent_players_team_order_idx on public.opponent_players (opponent_team_id, "order");
+
+-- Now that opponent_teams exists, wire up the deferred FK on team_matches.
+alter table public.team_matches
+  add constraint team_matches_opponent_team_fk
+  foreign key (opponent_team_id) references public.opponent_teams (id) on delete set null;
 
 create table public.practice_series (
   id             uuid primary key default gen_random_uuid(),
@@ -1110,6 +1168,7 @@ create trigger play_requests_updated_at           before update on public.play_r
 create trigger polls_updated_at                   before update on public.polls                   for each row execute function public.set_updated_at();
 create trigger chats_updated_at                   before update on public.chats                   for each row execute function public.set_updated_at();
 create trigger match_availabilities_updated_at    before update on public.match_availabilities    for each row execute function public.set_updated_at();
+create trigger opponent_teams_updated_at          before update on public.opponent_teams          for each row execute function public.set_updated_at();
 create trigger practice_series_updated_at         before update on public.practice_series         for each row execute function public.set_updated_at();
 create trigger team_practices_updated_at          before update on public.team_practices          for each row execute function public.set_updated_at();
 create trigger practice_availabilities_updated_at before update on public.practice_availabilities for each row execute function public.set_updated_at();
@@ -2191,6 +2250,38 @@ create policy match_availabilities_update_self_or_captain on public.match_availa
 
 create policy match_availabilities_delete_self on public.match_availabilities
   for delete to authenticated using (user_id = auth.uid());
+
+-- Opponent scouting: any member of the scouting team can read; only captains
+-- can add / refresh / link / remove (mirrors team_matches_write_captain).
+alter table public.opponent_teams enable row level security;
+
+create policy opponent_teams_select_member on public.opponent_teams
+  for select to authenticated using (public.is_group_member(group_id));
+
+create policy opponent_teams_write_captain on public.opponent_teams
+  for all to authenticated
+  using (public.can_run_group(group_id))
+  with check (public.can_run_group(group_id));
+
+alter table public.opponent_players enable row level security;
+
+create policy opponent_players_select_member on public.opponent_players
+  for select to authenticated
+  using (
+    exists(select 1 from public.opponent_teams ot
+           where ot.id = opponent_team_id and public.is_group_member(ot.group_id))
+  );
+
+create policy opponent_players_write_captain on public.opponent_players
+  for all to authenticated
+  using (
+    exists(select 1 from public.opponent_teams ot
+           where ot.id = opponent_team_id and public.can_run_group(ot.group_id))
+  )
+  with check (
+    exists(select 1 from public.opponent_teams ot
+           where ot.id = opponent_team_id and public.can_run_group(ot.group_id))
+  );
 
 alter table public.practice_series enable row level security;
 

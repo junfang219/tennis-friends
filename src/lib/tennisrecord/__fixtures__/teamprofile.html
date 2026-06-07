@@ -1,0 +1,45 @@
+<!--
+  Representative sample of a tennisrecord.com team-profile page, trimmed to
+  the parts parse.ts reads (title, heading, roster table). This is NOT a live
+  capture — re-save a real page here if the parser's tests start failing
+  against production HTML. See parse.ts header.
+-->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Capitol Hill Smashers 4.0 - TennisRecord</title>
+</head>
+<body>
+  <h1>Capitol Hill Smashers 4.0</h1>
+  <table class="teamroster">
+    <thead>
+      <tr><th>Player</th><th>NTRP</th><th>Dynamic</th><th>Record</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><a href="/adult/playerprofile.aspx?playername=Jane%20Doe">Jane Doe</a></td>
+        <td>4.0</td>
+        <td>4.123</td>
+        <td>12-3</td>
+      </tr>
+      <tr>
+        <td><a href="/adult/playerprofile.aspx?playername=John%20Smith">John Smith</a></td>
+        <td>4.0</td>
+        <td>3.987</td>
+        <td>7-8</td>
+      </tr>
+      <tr>
+        <!-- New player: no rating or record yet. -->
+        <td><a href="/adult/playerprofile.aspx?playername=New%20Player">New Player</a></td>
+        <td>&nbsp;</td>
+        <td>&nbsp;</td>
+        <td>0-0</td>
+      </tr>
+      <tr>
+        <!-- Non-player row (e.g. a footer/summary): must be skipped. -->
+        <td colspan="4">Team totals: 19-11</td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>
