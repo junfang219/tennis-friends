@@ -6,6 +6,10 @@ import {
   TennisRecordFetchError,
 } from "@/lib/tennisrecord/fetch";
 import { parseTeamProfile } from "@/lib/tennisrecord/parse";
+import {
+  upsertOpponentTeam,
+  selectTeamWithPlayers,
+} from "@/lib/tennisrecord/persist";
 
 // POST /api/groups/[id]/scouting
 //
@@ -77,105 +81,20 @@ export async function POST(
   const name =
     profile.teamName || urlTeamName || parsed.teamName?.trim() || "Opponent team";
 
-  // Upsert the opponent_teams row for (group, tennisrecord team). The partial
-  // unique index can't be an onConflict target, so look it up explicitly.
-  const { data: existing } = await supabase
-    .from("opponent_teams")
-    .select("id")
-    .eq("group_id", groupId)
-    .eq("source_team_key", teamKey)
-    .maybeSingle();
-
-  const teamRow = {
-    group_id: groupId,
+  const result = await upsertOpponentTeam(supabase, groupId, {
+    teamKey,
     name,
-    source: "tennisrecord",
-    source_url: resolvedUrl,
-    source_team_key: teamKey,
-    last_fetched_at: new Date().toISOString(),
-    fetch_status: "ok",
-    fetch_error: "",
-    created_by_id: me,
-  };
-
-  let opponentTeamId: string;
-  if (existing) {
-    const { data: updated, error: updErr } = await supabase
-      .from("opponent_teams")
-      .update({
-        name,
-        source_url: resolvedUrl,
-        last_fetched_at: teamRow.last_fetched_at,
-        fetch_status: "ok",
-        fetch_error: "",
-      })
-      .eq("id", existing.id)
-      .select("id")
-      .single();
-    if (updErr || !updated) {
-      const status = updErr?.code === "42501" ? 403 : 400;
-      return NextResponse.json(
-        { error: updErr?.message ?? "Could not save opponent." },
-        { status },
-      );
-    }
-    opponentTeamId = updated.id;
-  } else {
-    const { data: inserted, error: insErr } = await supabase
-      .from("opponent_teams")
-      .insert(teamRow)
-      .select("id")
-      .single();
-    if (insErr || !inserted) {
-      const status = insErr?.code === "42501" ? 403 : 400;
-      return NextResponse.json(
-        { error: insErr?.message ?? "Could not save opponent." },
-        { status },
-      );
-    }
-    opponentTeamId = inserted.id;
+    resolvedUrl,
+    createdById: me,
+    isOwn: false,
+    fetchStatus: "ok",
+    fetchError: "",
+    players: profile.players,
+  });
+  if ("error" in result) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
-  // Replace the cached roster snapshot.
-  await supabase
-    .from("opponent_players")
-    .delete()
-    .eq("opponent_team_id", opponentTeamId);
-
-  if (profile.players.length > 0) {
-    const { error: playersErr } = await supabase.from("opponent_players").insert(
-      profile.players.map((p, i) => ({
-        opponent_team_id: opponentTeamId,
-        name: p.name,
-        source_player_url: p.sourcePlayerUrl,
-        ntrp_rating: p.ntrpRating,
-        dynamic_rating: p.dynamicRating,
-        wins: p.wins,
-        losses: p.losses,
-        record_raw: p.recordRaw,
-        order: i,
-      })),
-    );
-    if (playersErr) {
-      return NextResponse.json({ error: playersErr.message }, { status: 400 });
-    }
-  }
-
-  const { data: team } = await supabase
-    .from("opponent_teams")
-    .select(
-      "id, group_id, name, source, source_url, source_team_key, linked_group_id, last_fetched_at, fetch_status, fetch_error, created_at, updated_at",
-    )
-    .eq("id", opponentTeamId)
-    .single();
-
-  const { data: players } = await supabase
-    .from("opponent_players")
-    .select(
-      "id, opponent_team_id, name, source_player_url, ntrp_rating, dynamic_rating, wins, losses, record_raw, order, created_at",
-    )
-    .eq("opponent_team_id", opponentTeamId)
-    .order("order", { ascending: true });
-
-  return NextResponse.json({ team, players: players ?? [] }, { status: 200 });
+  const { team, players } = await selectTeamWithPlayers(supabase, result.teamId);
+  return NextResponse.json({ team, players }, { status: 200 });
 }

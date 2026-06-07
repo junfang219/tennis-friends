@@ -2830,6 +2830,7 @@ export type Database = {
           fetch_status: string
           group_id: string
           id: string
+          is_own: boolean
           last_fetched_at: string | null
           linked_group_id: string | null
           name: string
@@ -2845,6 +2846,7 @@ export type Database = {
           fetch_status?: string
           group_id: string
           id?: string
+          is_own?: boolean
           last_fetched_at?: string | null
           linked_group_id?: string | null
           name: string
@@ -2860,6 +2862,7 @@ export type Database = {
           fetch_status?: string
           group_id?: string
           id?: string
+          is_own?: boolean
           last_fetched_at?: string | null
           linked_group_id?: string | null
           name?: string

@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
-import { parseTeamUrl, parseTeamProfile } from "./parse";
+import {
+  parseTeamUrl,
+  parseTeamProfile,
+  parseSchedule,
+  discoverOpponentLinks,
+} from "./parse";
 
 const fixture = readFileSync(
   join(__dirname, "__fixtures__", "teamprofile.html"),
@@ -32,6 +37,18 @@ describe("parseTeamUrl", () => {
       teamKey: "teamname=for funzies&year=2026",
       query: "teamname=For%20Funzies&year=2026",
       teamName: "For Funzies",
+    });
+  });
+
+  it("preserves the s= disambiguator (several teams can share a name)", () => {
+    expect(
+      parseTeamUrl(
+        "https://www.tennisrecord.com/adult/teamprofile.aspx?teamname=Slice%20Girls&year=2026&s=36",
+      ),
+    ).toEqual({
+      teamKey: "teamname=slice girls&year=2026&s=36",
+      query: "teamname=Slice%20Girls&year=2026&s=36",
+      teamName: "Slice Girls",
     });
   });
 
@@ -117,6 +134,91 @@ describe("parseTeamProfile (synthetic fixture)", () => {
     expect(parseTeamProfile("<html><body>nothing here</body></html>").players).toEqual(
       [],
     );
+  });
+});
+
+describe("parseSchedule (real live capture)", () => {
+  const schedule = parseSchedule(realFixture);
+
+  it("parses only the wide table (no responsive duplicates)", () => {
+    expect(schedule).toHaveLength(6);
+  });
+
+  it("parses dates, opponents, and hrefs", () => {
+    expect(schedule[0]).toMatchObject({
+      dateISO: "2026-06-01",
+      opponentName: "Slice Girls",
+      matchSite: "TBA",
+      resultText: "0-0",
+    });
+    expect(schedule[0].opponentHref).toContain("teamname=Slice Girls");
+    expect(schedule.map((m) => m.opponentName)).toEqual([
+      "Slice Girls",
+      "Barrios-Woods",
+      "Sumertime Fun",
+      "Code Pink",
+      "WATT Happens on the Court",
+      "Sets on the Beach",
+    ]);
+  });
+
+  it("nulls the 3:00 AM placeholder time but keeps the raw text", () => {
+    for (const m of schedule) {
+      expect(m.timeRaw).toBe("3:00 AM");
+      expect(m.time).toBeNull();
+    }
+  });
+
+  it("discovers distinct opponents with normalized team keys", () => {
+    const links = discoverOpponentLinks(schedule);
+    expect(links).toHaveLength(6);
+    expect(links[0]).toMatchObject({
+      name: "Slice Girls",
+      teamKey: "teamname=slice girls&year=2026&s=36",
+    });
+    expect(links[0].teamUrl).toBe(
+      "https://www.tennisrecord.com/adult/teamprofile.aspx?teamname=Slice Girls&year=2026&s=36",
+    );
+    // Re-running over a double round-robin (same opponents twice) dedupes.
+    expect(discoverOpponentLinks([...schedule, ...schedule])).toHaveLength(6);
+  });
+});
+
+describe("parseSchedule (synthetic edge cases)", () => {
+  const wideHeader =
+    "<table><tr><th>Local Schedule</th><th>Time</th><th>Opponent</th>" +
+    "<th>Match Site</th><th>Result</th></tr>";
+  const row = (date: string, time: string, name: string) =>
+    `<tr><td>${date}</td><td>${time}</td>` +
+    `<td><a href="/adult/teamprofile.aspx?teamname=${name}&year=2026">${name}</a></td>` +
+    `<td>Lower Woodland</td><td>0-0</td></tr>`;
+
+  it("converts a real PM time to 24h", () => {
+    const html = wideHeader + row("07/04/2026", "6:30 PM", "Acers") + "</table>";
+    expect(parseSchedule(html)[0]).toMatchObject({
+      dateISO: "2026-07-04",
+      time: "18:30",
+      timeRaw: "6:30 PM",
+      matchSite: "Lower Woodland",
+    });
+  });
+
+  it("keeps a 12:15 AM time and leaves a malformed date empty", () => {
+    const html = wideHeader + row("7/4/26", "12:15 AM", "Acers") + "</table>";
+    expect(parseSchedule(html)[0]).toMatchObject({ dateISO: "", time: "00:15" });
+  });
+
+  it("returns [] when only the narrow responsive table exists", () => {
+    const html =
+      "<table><tr><th>Local Schedule</th><th>Opponent</th></tr>" +
+      "<tr><td>06/01/2026 3:00 AM</td>" +
+      '<td><a href="/adult/teamprofile.aspx?teamname=X&year=2026">X</a></td></tr>' +
+      "</table>";
+    expect(parseSchedule(html)).toEqual([]);
+  });
+
+  it("returns [] for markup with no schedule", () => {
+    expect(parseSchedule("<html><body>nope</body></html>")).toEqual([]);
   });
 });
 

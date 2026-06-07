@@ -15,10 +15,13 @@ import {
   listOpponents,
   getOpponentPlayers,
   scoutOpponent,
+  scoutLeague,
+  importSchedule,
   deleteOpponent,
   linkOpponentToGroup,
   type OpponentTeam,
   type OpponentPlayer,
+  type LeagueScheduleMatch,
 } from "@/lib/supabase/queries/scouting";
 import { errorMessage } from "@/lib/errorMessage";
 
@@ -33,6 +36,12 @@ function formatRating(p: OpponentPlayer): string {
   if (p.dynamic_rating != null) return p.dynamic_rating.toFixed(2);
   if (p.ntrp_rating != null) return p.ntrp_rating.toFixed(1);
   return "—";
+}
+
+function formatMatchDate(dateISO: string): string {
+  const d = new Date(`${dateISO}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return dateISO;
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
 export default function ScoutingPage() {
@@ -55,7 +64,17 @@ export default function ScoutingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Add-opponent form.
+  // League scout form (primary): paste YOUR team's link once.
+  const [leagueInput, setLeagueInput] = useState("");
+  const [leagueBusy, setLeagueBusy] = useState(false);
+  const [leagueNotices, setLeagueNotices] = useState<string[]>([]);
+
+  // Schedule import (offered after a league scout).
+  const [schedule, setSchedule] = useState<LeagueScheduleMatch[]>([]);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importResult, setImportResult] = useState("");
+
+  // Add-opponent form (secondary, manual).
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
@@ -94,6 +113,53 @@ export default function ScoutingPage() {
 
   const myMember = team?.members.find((m) => m.user.id === myId);
   const isCaptain = !!team && canCaptain({ isOwner: myId === team.ownerId, roles: myMember?.roles ?? [] });
+
+  const ownTeam = opponents.find((o) => o.is_own) ?? null;
+  const opponentRows = opponents.filter((o) => !o.is_own);
+
+  async function handleScoutLeague(url: string) {
+    if (!url.trim() || leagueBusy) return;
+    setLeagueBusy(true);
+    setFormError("");
+    setLeagueNotices([]);
+    setImportResult("");
+    try {
+      const result = await scoutLeague(groupId, { url: url.trim() });
+      const teams = [result.ownTeam, ...result.opponents.map((o) => o.team)];
+      setOpponents((prev) => {
+        const incoming = new Set(teams.map((t) => t.id));
+        return [...teams, ...prev.filter((o) => !incoming.has(o.id))];
+      });
+      setRosters((prev) => {
+        const next = { ...prev, [result.ownTeam.id]: result.ownPlayers };
+        for (const o of result.opponents) next[o.team.id] = o.players;
+        return next;
+      });
+      setSchedule(result.schedule);
+      setLeagueNotices(result.warnings);
+      setLeagueInput("");
+    } catch (err) {
+      setFormError(errorMessage(err, "Could not scout the league."));
+    }
+    setLeagueBusy(false);
+  }
+
+  async function handleImportSchedule() {
+    if (schedule.length === 0 || importBusy) return;
+    setImportBusy(true);
+    setImportResult("");
+    try {
+      const { imported, skipped } = await importSchedule(groupId, schedule);
+      setImportResult(
+        skipped > 0
+          ? `Imported ${imported} match${imported === 1 ? "" : "es"} · ${skipped} already on the calendar`
+          : `Imported ${imported} match${imported === 1 ? "" : "es"} to Availability`,
+      );
+    } catch (err) {
+      setImportResult(errorMessage(err, "Could not import the schedule."));
+    }
+    setImportBusy(false);
+  }
 
   async function loadRoster(opponentTeamId: string) {
     if (rosters[opponentTeamId]) return;
@@ -197,29 +263,116 @@ export default function ScoutingPage() {
       </div>
 
       {isCaptain && (
-        <form onSubmit={handleAdd} className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-4 mb-5">
-          <label htmlFor="tr-url" className="block text-xs font-semibold text-gray-600 mb-1">
-            Add an opponent from TennisRecord
-          </label>
-          <div className="flex gap-2">
-            <input
-              id="tr-url"
-              type="text"
-              inputMode="url"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Paste tennisrecord team link"
-              className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-court-green-soft"
-            />
-            <button type="submit" disabled={submitting || !input.trim()} className="btn-primary btn-sm whitespace-nowrap">
-              {submitting ? "Looking up…" : "Look up"}
+        <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-4 mb-5">
+          {ownTeam ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-gray-600">Scout the whole league</div>
+                <p className="text-[11px] text-gray-400 mt-0.5 truncate">
+                  Re-pulls every opponent from {ownTeam.name}&apos;s schedule.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleScoutLeague(ownTeam.source_url)}
+                disabled={leagueBusy}
+                className="btn-primary btn-sm whitespace-nowrap"
+              >
+                {leagueBusy ? "Scouting…" : "Refresh league"}
+              </button>
+            </div>
+          ) : (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleScoutLeague(leagueInput);
+              }}
+            >
+              <label htmlFor="tr-league-url" className="block text-xs font-semibold text-gray-600 mb-1">
+                Scout the whole league
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="tr-league-url"
+                  type="text"
+                  inputMode="url"
+                  value={leagueInput}
+                  onChange={(e) => setLeagueInput(e.target.value)}
+                  placeholder="Paste YOUR team's tennisrecord link"
+                  className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-court-green-soft"
+                />
+                <button type="submit" disabled={leagueBusy || !leagueInput.trim()} className="btn-primary btn-sm whitespace-nowrap">
+                  {leagueBusy ? "Scouting…" : "Scout league"}
+                </button>
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1.5">
+                Find your team on tennisrecord.com and paste its page URL — every
+                opponent on your schedule gets scouted automatically.
+              </p>
+            </form>
+          )}
+          {leagueBusy && (
+            <p className="text-xs text-gray-500 mt-2 animate-pulse">
+              Fetching opponents from your league schedule… this can take ~30 seconds.
+            </p>
+          )}
+          {leagueNotices.map((notice) => (
+            <p key={notice} className="text-xs text-amber-600 mt-2">{notice}</p>
+          ))}
+          {formError && <p className="text-sm text-red-600 mt-2">{formError}</p>}
+
+          <details className="mt-3">
+            <summary className="text-xs text-gray-500 cursor-pointer select-none">
+              Add one opponent manually
+            </summary>
+            <form onSubmit={handleAdd} className="mt-2">
+              <div className="flex gap-2">
+                <input
+                  id="tr-url"
+                  type="text"
+                  inputMode="url"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Paste an opponent's tennisrecord link"
+                  className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-court-green-soft"
+                />
+                <button type="submit" disabled={submitting || !input.trim()} className="btn-secondary btn-sm whitespace-nowrap">
+                  {submitting ? "Looking up…" : "Look up"}
+                </button>
+              </div>
+            </form>
+          </details>
+        </div>
+      )}
+
+      {isCaptain && schedule.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-4 mb-5">
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div>
+              <div className="text-sm font-semibold text-gray-800">League schedule found</div>
+              <p className="text-[11px] text-gray-400">
+                {schedule.length} match{schedule.length === 1 ? "" : "es"} — add them to your Availability tab.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleImportSchedule}
+              disabled={importBusy}
+              className="btn-primary btn-sm whitespace-nowrap"
+            >
+              {importBusy ? "Importing…" : `Import ${schedule.length} matches`}
             </button>
           </div>
-          <p className="text-[11px] text-gray-400 mt-1.5">
-            Open the opponent&apos;s team page on tennisrecord.com and paste its URL.
-          </p>
-          {formError && <p className="text-sm text-red-600 mt-2">{formError}</p>}
-        </form>
+          <ul className="divide-y divide-gray-100">
+            {schedule.map((m) => (
+              <li key={`${m.dateISO}|${m.opponentName}`} className="py-1.5 flex items-center justify-between gap-2 text-sm">
+                <span className="text-gray-500 tabular-nums shrink-0">{formatMatchDate(m.dateISO)}</span>
+                <span className="text-gray-900 truncate flex-1 text-right">{m.opponentName}</span>
+              </li>
+            ))}
+          </ul>
+          {importResult && <p className="text-xs text-court-green mt-2">{importResult}</p>}
+        </div>
       )}
 
       {loading ? (
@@ -238,13 +391,13 @@ export default function ScoutingPage() {
           <h3 className="font-display text-lg font-bold text-gray-800 mb-2">No opponents scouted yet</h3>
           <p className="text-gray-500 text-sm max-w-xs mx-auto">
             {isCaptain
-              ? "Paste a TennisRecord team link above to pull their roster, records, and ratings."
+              ? "Paste YOUR team's TennisRecord link above to scout your whole league in one go."
               : "When your captain scouts an opponent, their roster shows up here."}
           </p>
         </div>
       ) : (
         <ul className="space-y-3">
-          {opponents.map((o) => {
+          {[...(ownTeam ? [ownTeam] : []), ...opponentRows].map((o) => {
             const expanded = expandedId === o.id;
             const roster = rosters[o.id];
             const busy = busyId === o.id;
@@ -257,7 +410,14 @@ export default function ScoutingPage() {
                   className="w-full text-left p-4 flex items-start justify-between gap-3 hover:bg-gray-50"
                 >
                   <div className="min-w-0">
-                    <div className="font-display text-base font-bold text-gray-900 truncate">{o.name}</div>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="font-display text-base font-bold text-gray-900 truncate">{o.name}</div>
+                      {o.is_own && (
+                        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-court-green bg-court-green-pale/30 rounded-full px-2 py-0.5">
+                          Your team
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-gray-500">
                       {formatFetched(o.last_fetched_at)}
                       {linkedName ? ` · Linked to ${linkedName}` : ""}
@@ -311,21 +471,32 @@ export default function ScoutingPage() {
                       )}
                       {isCaptain && (
                         <>
-                          <button type="button" onClick={() => handleRefresh(o)} disabled={busy} className="btn-secondary btn-sm">
-                            {busy ? "Working…" : "Refresh"}
-                          </button>
-                          <select
-                            value={o.linked_group_id ?? ""}
-                            onChange={(e) => handleLink(o, e.target.value)}
-                            disabled={busy}
-                            className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 max-w-[10rem]"
-                            aria-label="Link to one of my teams"
+                          <button
+                            type="button"
+                            onClick={() => (o.is_own ? handleScoutLeague(o.source_url) : handleRefresh(o))}
+                            disabled={busy || (o.is_own && leagueBusy)}
+                            className="btn-secondary btn-sm"
                           >
-                            <option value="">Link a team…</option>
-                            {myGroups.map((g) => (
-                              <option key={g.id} value={g.id}>{g.name}</option>
-                            ))}
-                          </select>
+                            {busy || (o.is_own && leagueBusy)
+                              ? "Working…"
+                              : o.is_own
+                                ? "Refresh league"
+                                : "Refresh"}
+                          </button>
+                          {!o.is_own && (
+                            <select
+                              value={o.linked_group_id ?? ""}
+                              onChange={(e) => handleLink(o, e.target.value)}
+                              disabled={busy}
+                              className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 max-w-[10rem]"
+                              aria-label="Link to one of my teams"
+                            >
+                              <option value="">Link a team…</option>
+                              {myGroups.map((g) => (
+                                <option key={g.id} value={g.id}>{g.name}</option>
+                              ))}
+                            </select>
+                          )}
                           <button type="button" onClick={() => handleRemove(o)} disabled={busy} className="btn-ghost btn-sm text-red-600">
                             Remove
                           </button>

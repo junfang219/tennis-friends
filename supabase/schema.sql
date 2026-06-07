@@ -883,6 +883,9 @@ create table public.opponent_teams (
   source_url       text not null default '',
   source_team_key  text not null default '',
   linked_group_id  uuid references public.groups (id) on delete set null,
+  -- Own-team marker: the captain's own tennisrecord team, used as the
+  -- schedule source for league fan-out. At most one per group.
+  is_own           boolean not null default false,
   last_fetched_at  timestamptz,
   fetch_status     text not null default '',
   fetch_error      text not null default '',
@@ -895,6 +898,10 @@ create index opponent_teams_group_idx on public.opponent_teams (group_id);
 create unique index opponent_teams_group_key_unique
   on public.opponent_teams (group_id, source_team_key)
   where source_team_key <> '';
+-- Enforce a single own-team row per group.
+create unique index opponent_teams_one_own_per_group
+  on public.opponent_teams (group_id)
+  where is_own;
 
 create table public.opponent_players (
   id                uuid primary key default gen_random_uuid(),

@@ -16,6 +16,7 @@ export interface OpponentTeam {
   source_url: string;
   source_team_key: string;
   linked_group_id: string | null;
+  is_own: boolean;
   last_fetched_at: string | null;
   fetch_status: string;
   fetch_error: string;
@@ -38,7 +39,7 @@ export interface OpponentPlayer {
 
 const TEAM_COLUMNS =
   "id, group_id, name, source, source_url, source_team_key, linked_group_id, " +
-  "last_fetched_at, fetch_status, fetch_error, created_at, updated_at";
+  "is_own, last_fetched_at, fetch_status, fetch_error, created_at, updated_at";
 
 const PLAYER_COLUMNS =
   "id, opponent_team_id, name, source_player_url, ntrp_rating, dynamic_rating, " +
@@ -109,4 +110,65 @@ export async function scoutOpponent(
     throw new Error(json?.error ?? "Could not scout that team.");
   }
   return json as { team: OpponentTeam; players: OpponentPlayer[] };
+}
+
+export interface LeagueScheduleMatch {
+  dateISO: string;
+  timeRaw: string;
+  time: string | null;
+  opponentName: string;
+  opponentHref: string;
+  matchSite: string;
+  resultText: string;
+}
+
+export interface LeagueScoutResult {
+  ownTeam: OpponentTeam;
+  ownPlayers: OpponentPlayer[];
+  schedule: LeagueScheduleMatch[];
+  opponents: { team: OpponentTeam; players: OpponentPlayer[]; warning?: string }[];
+  warnings: string[];
+}
+
+// One-paste league scouting: pass the captain's OWN team link; the server
+// discovers and scouts every opponent from the page's Local Schedule.
+export async function scoutLeague(
+  groupId: string,
+  input: { url: string },
+): Promise<LeagueScoutResult> {
+  const res = await fetch(`/api/groups/${groupId}/scouting/league`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(json?.error ?? "Could not scout the league.");
+  }
+  return json as LeagueScoutResult;
+}
+
+// Import league-schedule rows into team_matches (insert-only; existing
+// matches on the same date vs the same opponent are skipped).
+export async function importSchedule(
+  groupId: string,
+  matches: LeagueScheduleMatch[],
+): Promise<{ imported: number; skipped: number }> {
+  const res = await fetch(`/api/groups/${groupId}/scouting/import-schedule`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      matches: matches.map((m) => ({
+        dateISO: m.dateISO,
+        time: m.time,
+        opponentName: m.opponentName,
+        opponentHref: m.opponentHref,
+      })),
+    }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(json?.error ?? "Could not import the schedule.");
+  }
+  return json as { imported: number; skipped: number };
 }

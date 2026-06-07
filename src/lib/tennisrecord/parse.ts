@@ -64,22 +64,25 @@ export function parseTeamUrl(input: string): ParsedTeamUrl | null {
   let team = "";
   let teamName = "";
   let year = "";
+  let s = "";
   for (const [key, value] of url.searchParams) {
     const k = key.toLowerCase();
     if (k === "team" && value.trim()) team = value.trim();
     if (k === "teamname" && value.trim()) teamName = value.trim();
     if (k === "year" && /^\d{4}$/.test(value.trim())) year = value.trim();
+    // "s" disambiguates teams that share a name (e.g. several "Slice Girls"
+    // across sections). Dropping it silently fetches the WRONG team.
+    if (k === "s" && /^\d+$/.test(value.trim())) s = value.trim();
   }
 
   if (team) {
     return { teamKey: `team=${team}`, query: `team=${encodeURIComponent(team)}` };
   }
   if (teamName) {
-    const query =
-      `teamname=${encodeURIComponent(teamName)}` + (year ? `&year=${year}` : "");
+    const suffix = (year ? `&year=${year}` : "") + (s ? `&s=${s}` : "");
     return {
-      teamKey: `teamname=${teamName.toLowerCase()}${year ? `&year=${year}` : ""}`,
-      query,
+      teamKey: `teamname=${teamName.toLowerCase()}${suffix}`,
+      query: `teamname=${encodeURIComponent(teamName)}${suffix}`,
       teamName,
     };
   }
@@ -175,6 +178,151 @@ function extractTeamName(html: string): string {
   }
   return "";
 }
+
+// ── League schedule ─────────────────────────────────────────────────────────
+
+export type ScheduledMatch = {
+  dateISO: string;      // "2026-06-01" (from MM/DD/YYYY); "" if unparseable
+  timeRaw: string;      // raw time cell text, e.g. "3:00 AM"
+  time: string | null;  // 24h "HH:MM", or null for tennisrecord's TBA
+  // sentinel (3:00 AM) / missing time
+  opponentName: string;
+  opponentHref: string; // "/adult/teamprofile.aspx?teamname=…&year=…"
+  matchSite: string;    // often "TBA"
+  resultText: string;   // "0-0", "W 3-2", …
+};
+
+const DATE_RE = /\b(\d{2})\/(\d{2})\/(\d{4})\b/;
+const TIME_RE = /\b(\d{1,2}):(\d{2})\s*([AP]M)\b/i;
+// tennisrecord renders 3:00 AM for matches whose time is TBA.
+const PLACEHOLDER_TIME_RE = /^3:00\s*AM$/i;
+const TEAM_HREF_RE =
+  /href\s*=\s*["']([^"']*teamprofile\.aspx\?[^"']*teamname=[^"']*)["']/i;
+
+function to24h(h: number, m: number, ampm: string): string {
+  let hour = h % 12;
+  if (/pm/i.test(ampm)) hour += 12;
+  return `${String(hour).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+// Parse the "Local Schedule" table of a team-profile page. The page renders
+// the schedule twice (wide 5-column table + narrow 2-column responsive
+// duplicate); we anchor on the WIDE header — the th row containing both
+// "Local Schedule" and "Time"/"Match Site" — and parse only that table.
+export function parseSchedule(html: string): ScheduledMatch[] {
+  // Find the wide header row.
+  let tableStart = -1;
+  const headerRowRe = /<tr\b[\s\S]*?<\/tr>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = headerRowRe.exec(html)) !== null) {
+    const row = m[0];
+    if (!/<th\b/i.test(row)) continue;
+    if (!/Local Schedule/i.test(row)) continue;
+    if (!/Opponent/i.test(row)) continue;
+    if (!/Time|Match Site/i.test(row)) continue;
+    tableStart = m.index + m[0].length;
+    break;
+  }
+  if (tableStart === -1) return [];
+
+  const tableEnd = html.indexOf("</table>", tableStart);
+  const body = html.slice(tableStart, tableEnd === -1 ? undefined : tableEnd);
+
+  const matches: ScheduledMatch[] = [];
+  const seen = new Set<string>();
+  for (const rowMatch of body.matchAll(/<tr\b[\s\S]*?<\/tr>/gi)) {
+    const row = rowMatch[0];
+    const hrefMatch = TEAM_HREF_RE.exec(row);
+    if (!hrefMatch) continue;
+    const opponentHref = decodeEntities(hrefMatch[1]);
+
+    const anchorMatch =
+      /<a\b[^>]*teamprofile\.aspx[^>]*>([\s\S]*?)<\/a>/i.exec(row);
+    const opponentName = anchorMatch ? stripTags(anchorMatch[1]) : "";
+    if (!opponentName) continue;
+
+    const cells = [...row.matchAll(/<td\b[\s\S]*?<\/td>/gi)].map((c) =>
+      stripTags(c[0]),
+    );
+
+    let dateISO = "";
+    let timeRaw = "";
+    let time: string | null = null;
+    let matchSite = "";
+    let resultText = "";
+    for (const cell of cells) {
+      const d = DATE_RE.exec(cell);
+      if (d && !dateISO) {
+        dateISO = `${d[3]}-${d[1]}-${d[2]}`;
+        continue;
+      }
+      const t = TIME_RE.exec(cell);
+      if (t && !timeRaw) {
+        timeRaw = t[0];
+        time = PLACEHOLDER_TIME_RE.test(timeRaw)
+          ? null
+          : to24h(Number(t[1]), Number(t[2]), t[3]);
+        continue;
+      }
+      if (cell === opponentName) continue;
+      if (/^[WL]?\s*\d+\s*-\s*\d+$/i.test(cell)) {
+        if (!resultText) resultText = cell;
+        continue;
+      }
+      if (cell && !matchSite) matchSite = cell;
+    }
+
+    const dedupeKey = `${dateISO}|${opponentHref}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    matches.push({
+      dateISO,
+      timeRaw,
+      time,
+      opponentName,
+      opponentHref,
+      matchSite,
+      resultText,
+    });
+  }
+  return matches;
+}
+
+export type OpponentLink = {
+  name: string;
+  href: string;
+  teamUrl: string; // absolute tennisrecord URL
+  teamKey: string; // normalized dedupe key from parseTeamUrl
+};
+
+// Distinct opponent team links from a schedule, in first-seen order. Keys are
+// normalized via parseTeamUrl so fan-out rows merge with any manually-pasted
+// opponent (same opponent_teams.source_team_key).
+export function discoverOpponentLinks(
+  schedule: ScheduledMatch[],
+): OpponentLink[] {
+  const links: OpponentLink[] = [];
+  const seen = new Set<string>();
+  for (const match of schedule) {
+    const teamUrl = match.opponentHref.startsWith("http")
+      ? match.opponentHref
+      : `https://www.tennisrecord.com${match.opponentHref}`;
+    const parsed = parseTeamUrl(teamUrl);
+    if (!parsed) continue;
+    if (seen.has(parsed.teamKey)) continue;
+    seen.add(parsed.teamKey);
+    links.push({
+      name: match.opponentName,
+      href: match.opponentHref,
+      teamUrl,
+      teamKey: parsed.teamKey,
+    });
+  }
+  return links;
+}
+
+// ── Roster ──────────────────────────────────────────────────────────────────
 
 // Parse a team-profile page into a team name + roster. Defensive: rows that
 // don't contain a player link are skipped; missing record/ratings just leave
