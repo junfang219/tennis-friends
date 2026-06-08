@@ -259,7 +259,10 @@ export default function PollDetailPage() {
       `/groups/${groupId}/availability` +
       `?prefillDate=${encodeURIComponent(w.date)}` +
       `&prefillTime=${encodeURIComponent(w.start)}` +
-      `&fromPollId=${encodeURIComponent(poll.id)}`;
+      `&fromPollId=${encodeURIComponent(poll.id)}` +
+      // Carry the window's members so the new match can pre-fill their
+      // availability as "Playing" — they already acknowledged this slot here.
+      `&prefillMembers=${encodeURIComponent(w.memberIds.join(","))}`;
     router.push(url);
   };
 

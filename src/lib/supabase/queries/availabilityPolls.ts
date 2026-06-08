@@ -124,6 +124,65 @@ export async function closePoll(
   if (error) throw error;
 }
 
+// One availability row joined with the player profile — the shape returned by
+// seedPlayingAvailability so callers can render the seeded "Playing" cells.
+export interface SeededAvailabilityRow {
+  id: string;
+  user_id: string;
+  status: string;
+  match_types: string;
+  lineup_slot: string;
+  user: { id: string; name: string; profile_image_url: string };
+}
+
+const SEEDED_AVAILABILITY_COLUMNS =
+  `id, user_id, status, match_types, lineup_slot, ` +
+  `user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url )`;
+
+// Pure row builder (unit-testable): mark the window's members "playing" and
+// everyone else on the team "not_playing" on a match. match_types is left blank
+// — the poll captured *when* people can play, not singles-vs-doubles, so that
+// stays for members/captain to fill in later.
+export function buildSeededAvailabilityRows(
+  matchId: string,
+  groups: { playing: string[]; notPlaying: string[] },
+) {
+  const row = (user_id: string, status: "playing" | "not_playing") => ({
+    event_kind: "match" as const,
+    match_id: matchId,
+    user_id,
+    status,
+    match_types: "",
+  });
+  return [
+    ...groups.playing.map((u) => row(u, "playing")),
+    ...groups.notPlaying.map((u) => row(u, "not_playing")),
+  ];
+}
+
+// Seed availability for everyone on the team when the captain converts a poll
+// window into a match: members who could make the window are marked "playing",
+// the rest "not_playing". They already answered the poll, so this saves them
+// re-marking it. Upsert (on match_id,user_id) so it never clobbers a
+// pre-existing response. Captain-only via RLS
+// (availabilities_insert_self_or_captain).
+export async function seedPollAvailability(
+  supabase: SupabaseClient<Database>,
+  args: { matchId: string; playingUserIds: string[]; notPlayingUserIds: string[] },
+): Promise<SeededAvailabilityRow[]> {
+  const rows = buildSeededAvailabilityRows(args.matchId, {
+    playing: args.playingUserIds,
+    notPlaying: args.notPlayingUserIds,
+  });
+  if (rows.length === 0) return [];
+  const { data, error } = await supabase
+    .from("availabilities")
+    .upsert(rows, { onConflict: "match_id,user_id" })
+    .select(SEEDED_AVAILABILITY_COLUMNS);
+  if (error) throw error;
+  return (data ?? []) as unknown as SeededAvailabilityRow[];
+}
+
 export async function deletePoll(
   supabase: SupabaseClient<Database>,
   pollId: string,

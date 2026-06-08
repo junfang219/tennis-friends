@@ -15,7 +15,7 @@ import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { errorMessage } from "@/lib/errorMessage";
 import { AvailabilityTabs } from "@/components/availability/AvailabilityTabs";
 import SendLineupMenu from "@/components/availability/SendLineupMenu";
-import { closePoll } from "@/lib/supabase/queries/availabilityPolls";
+import { closePoll, seedPollAvailability } from "@/lib/supabase/queries/availabilityPolls";
 import { buildLineupText, formatDateHeader } from "@/lib/lineupMessage";
 import { nativeShare } from "@/lib/lfpShare";
 
@@ -86,6 +86,12 @@ export default function AvailabilityPage() {
   const prefillTime = searchParams.get("prefillTime");
   const fromPollIdParam = searchParams.get("fromPollId");
   const fromPollIdRef = useRef<string | null>(fromPollIdParam);
+  // Members of the picked poll window — captured at mount (like fromPollId) so
+  // they survive the URL cleanup. On save we seed each as "Playing".
+  const prefillMembersParam = searchParams.get("prefillMembers");
+  const prefillMembersRef = useRef<string[] | null>(
+    prefillMembersParam ? prefillMembersParam.split(",").filter(Boolean) : null
+  );
   const { data: session } = useSession();
   const groupId = params.id as string;
   const myId = session?.user?.id || "";
@@ -350,6 +356,39 @@ export default function AvailabilityPage() {
       .select("id, match_date, match_time, location, opponent, notes")
       .single();
     if (!insErr && data) {
+      // When the match came from a poll window, pre-fill every member's
+      // availability: those who could make the window are marked "Playing", and
+      // everyone else "Not playing" — the poll already captured both answers, so
+      // re-marking them would be redundant. Non-fatal: the match is already
+      // created if this fails.
+      let seededAvailabilities: Availability[] = [];
+      if (prefillMembersRef.current) {
+        const playingUserIds = prefillMembersRef.current;
+        const playingSet = new Set(playingUserIds);
+        const notPlayingUserIds = (team?.members ?? [])
+          .map((m) => m.user.id)
+          .filter((id) => !playingSet.has(id));
+        try {
+          const rows = await seedPollAvailability(supabase, {
+            matchId: data.id,
+            playingUserIds,
+            notPlayingUserIds,
+          });
+          seededAvailabilities = rows.map((a) => ({
+            id: a.id,
+            userId: a.user_id,
+            status: a.status,
+            matchTypes: a.match_types,
+            lineupSlot: a.lineup_slot,
+            user: {
+              id: a.user.id,
+              name: a.user.name,
+              profileImageUrl: a.user.profile_image_url,
+            },
+          })) as unknown as Availability[];
+        } catch { /* non-fatal */ }
+        prefillMembersRef.current = null;
+      }
       const newMatch: Match = {
         id: data.id,
         matchDate: data.match_date,
@@ -358,7 +397,7 @@ export default function AvailabilityPage() {
         opponent: data.opponent,
         opponentTeamId: null,
         notes: data.notes,
-        availabilities: [],
+        availabilities: seededAvailabilities,
       } as unknown as Match;
       setMatches((prev) => [...prev, newMatch].sort((a, b) => (a.matchDate + a.matchTime).localeCompare(b.matchDate + b.matchTime)));
       // Close the source poll and link it to this new match. RLS already
