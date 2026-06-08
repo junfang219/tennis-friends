@@ -14,7 +14,10 @@ import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage } from "@/lib/
 import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { errorMessage } from "@/lib/errorMessage";
 import { AvailabilityTabs } from "@/components/availability/AvailabilityTabs";
+import SendLineupMenu from "@/components/availability/SendLineupMenu";
 import { closePoll } from "@/lib/supabase/queries/availabilityPolls";
+import { buildLineupText, formatDateHeader } from "@/lib/lineupMessage";
+import { nativeShare } from "@/lib/lfpShare";
 
 type Member = {
   id: string;
@@ -58,21 +61,6 @@ const TYPE_OPTIONS: { value: string; label: string; chip: string }[] = [
 
 const SLOT_OPTIONS = ["S1", "S2", "S3", "S4", "D1", "D2", "D3", "D4", "Reserve"];
 
-const SLOT_ORDER: Record<string, number> = {
-  S1: 1, S2: 2, S3: 3, S4: 4,
-  D1: 5, D2: 6, D3: 7, D4: 8,
-  Reserve: 9,
-};
-
-function compareSlots(a: string, b: string) {
-  const ao = SLOT_ORDER[a];
-  const bo = SLOT_ORDER[b];
-  if (ao !== undefined && bo !== undefined) return ao - bo;
-  if (ao !== undefined) return -1;
-  if (bo !== undefined) return 1;
-  return a.localeCompare(b);
-}
-
 function statusMeta(status: string) {
   // Normalize legacy values (available/if_needed/not_sure/not_available) into
   // the unified vocab so historical rows still render correctly until the
@@ -83,13 +71,6 @@ function statusMeta(status: string) {
 function typeChip(matchTypes: string) {
   const t = TYPE_OPTIONS.find((t) => t.value === matchTypes);
   return t?.chip || "";
-}
-
-function formatDateHeader(iso: string) {
-  if (!iso) return "";
-  // matchDate is "YYYY-MM-DD" — append T00:00 to avoid TZ shifts
-  const d = new Date(`${iso}T00:00`);
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
 export default function AvailabilityPage() {
@@ -510,25 +491,15 @@ export default function AvailabilityPage() {
     }
   };
 
-  const sendLineup = async (match: Match) => {
-    // Group assigned players by slot, in canonical order
-    const assigned = match.availabilities.filter((a) => a.lineupSlot && a.lineupSlot.trim());
-    if (assigned.length === 0) {
-      alert("Assign at least one player to a lineup slot first.");
+  const noLineupAssigned = () => alert("Assign at least one player to a lineup slot first.");
+
+  // Destination 1: post the lineup into the in-app team chat.
+  const postLineupToChat = async (match: Match) => {
+    const content = buildLineupText(match);
+    if (!content) {
+      noLineupAssigned();
       return;
     }
-
-    const bySlot = new Map<string, string[]>();
-    for (const a of assigned) {
-      const slot = a.lineupSlot.trim();
-      if (!bySlot.has(slot)) bySlot.set(slot, []);
-      bySlot.get(slot)!.push(a.user.name);
-    }
-    const sortedSlots = Array.from(bySlot.keys()).sort(compareSlots);
-    const lineupLines = sortedSlots.map((slot) => `${slot}: ${bySlot.get(slot)!.join(" & ")}`);
-
-    const header = `🎾 Lineup for ${formatDateHeader(match.matchDate)}${match.matchTime ? ` at ${match.matchTime}` : ""}\n📍 ${match.location}${match.opponent ? `\n🆚 ${match.opponent}` : ""}\n\n`;
-    const content = header + lineupLines.join("\n");
 
     setSendingLineupId(match.id);
     try {
@@ -538,6 +509,27 @@ export default function AvailabilityPage() {
     } catch (err) {
       alert(errorMessage(err, "Failed to send to team chat"));
       setSendingLineupId(null);
+    }
+  };
+
+  // Destination 2: hand the same text to the native iOS share sheet (Messages /
+  // iMessage). title/url are intentionally empty so nativeShare omits them and
+  // Messages sends plain text instead of a link card.
+  const shareLineupViaMessages = async (match: Match) => {
+    const content = buildLineupText(match);
+    if (!content) {
+      noLineupAssigned();
+      return;
+    }
+    const res = await nativeShare({ title: "", text: content, url: "" }, "lineupShare");
+    if (res.outcome === "failed") {
+      alert(res.error || "Couldn't open Messages.");
+      return;
+    }
+    if (res.outcome === "shared" || res.outcome === "copied") {
+      // Brief confirmation — unlike the chat path, this one stays on the page.
+      setLineupSentId(match.id);
+      setTimeout(() => setLineupSentId((id) => (id === match.id ? null : id)), 2500);
     }
   };
 
@@ -750,37 +742,13 @@ export default function AvailabilityPage() {
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
                             {isCaptain && (
-                              <button
-                                onClick={() => sendLineup(match)}
-                                disabled={!hasLineup || sending}
-                                className={`text-[10px] font-semibold px-2 py-1 rounded-md inline-flex items-center gap-1 transition-colors ${
-                                  justSent
-                                    ? "bg-green-100 text-green-700"
-                                    : hasLineup
-                                    ? "bg-court-green text-white hover:bg-court-green-light"
-                                    : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                                }`}
-                                title="Send lineup to team chat"
-                              >
-                                {sending ? (
-                                  "..."
-                                ) : justSent ? (
-                                  <>
-                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                      <polyline points="20,6 9,17 4,12" />
-                                    </svg>
-                                    Sent
-                                  </>
-                                ) : (
-                                  <>
-                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                      <line x1="22" y1="2" x2="11" y2="13" />
-                                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                                    </svg>
-                                    Send
-                                  </>
-                                )}
-                              </button>
+                              <SendLineupMenu
+                                hasLineup={hasLineup}
+                                sending={sending}
+                                justSent={justSent}
+                                onPostToChat={() => postLineupToChat(match)}
+                                onSendViaMessages={() => shareLineupViaMessages(match)}
+                              />
                             )}
                             {isCaptain && (
                               <button
