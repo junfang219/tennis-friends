@@ -428,9 +428,23 @@ export default function AvailabilityPage() {
   const deleteMatch = async (matchId: string) => {
     if (!confirm("Delete this match? Member availability for it will be removed.")) return;
     const supabase = createSupabaseBrowserClient();
-    const { error: delErr } = await supabase.from("team_matches").delete().eq("id", matchId);
-    if (!delErr) {
+    try {
+      let { error: delErr } = await supabase.from("team_matches").delete().eq("id", matchId);
+      // A stale access token (e.g. after the Capacitor WebView resumes from
+      // background — see lib/supabase/browser.ts) makes PostgREST reject the
+      // mutation even though the page's earlier SELECTs succeeded. Refresh once
+      // and retry before surfacing the failure.
+      if (delErr) {
+        await supabase.auth.refreshSession();
+        ({ error: delErr } = await supabase.from("team_matches").delete().eq("id", matchId));
+      }
+      if (delErr) {
+        alert(errorMessage(delErr, "Couldn't delete the match. Please try again."));
+        return;
+      }
       setMatches((prev) => prev.filter((m) => m.id !== matchId));
+    } catch (err) {
+      alert(errorMessage(err, "Couldn't delete the match. Please try again."));
     }
   };
 
