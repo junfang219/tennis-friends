@@ -102,6 +102,10 @@ export default function TeamPracticePage() {
   // Send roster spinner
   const [sendingPracticeId, setSendingPracticeId] = useState<string | null>(null);
 
+  // Narrow-screen view shows one practice date at a time per series; this maps
+  // each series id to its selected practice id.
+  const [activePracticeId, setActivePracticeId] = useState<Record<string, string>>({});
+
   // Inline edit per series
   const [editingSeriesId, setEditingSeriesId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -225,9 +229,30 @@ export default function TeamPracticePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId]);
 
+  // Keep each series' narrow-screen practice selector pointed at a valid date.
+  useEffect(() => {
+    if (seriesList.length === 0) return;
+    setActivePracticeId((cur) => {
+      const next = { ...cur };
+      let changed = false;
+      for (const s of seriesList) {
+        const valid = next[s.id] && s.practices.some((p) => p.id === next[s.id]);
+        if (!valid && s.practices.length > 0) {
+          next[s.id] = s.practices[0].id;
+          changed = true;
+        }
+      }
+      return changed ? next : cur;
+    });
+  }, [seriesList]);
+
   // Scroll to focused practice column when navigated from elsewhere (e.g. calendar)
   useEffect(() => {
     if (!focusPracticeId || loading || seriesList.length === 0) return;
+    // On narrow screens the table is hidden, so selecting the practice in its
+    // series is the mobile equivalent of the desktop scroll-into-view below.
+    const s = seriesList.find((s) => s.practices.some((p) => p.id === focusPracticeId));
+    if (s) setActivePracticeId((cur) => ({ ...cur, [s.id]: focusPracticeId }));
     requestAnimationFrame(() => {
       const el = practiceHeaderRefs.current[focusPracticeId];
       if (el) {
@@ -236,6 +261,9 @@ export default function TeamPracticePage() {
         setTimeout(() => setHighlightPracticeId(null), 2400);
       }
     });
+    // Intentionally keyed on seriesList.length (not the whole array) so the
+    // one-shot scroll/highlight doesn't re-fire on every availability change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusPracticeId, loading, seriesList.length]);
 
   const addSeries = async () => {
@@ -520,6 +548,94 @@ export default function TeamPracticePage() {
     if (b.user.id === team.ownerId) return 1;
     return a.user.name.localeCompare(b.user.name);
   });
+
+  // Shared render-helpers so the wide table and the narrow single-date card
+  // render identical controls/header from one source of truth.
+  const renderPracticeAvailControl = (practice: Practice, m: Member, a: Availability | undefined) => {
+    const isMe = m.user.id === myId;
+    const meta = a && a.status ? statusMeta(a.status) : null;
+    return isMe ? (
+      <button
+        onClick={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          // Status popover is w-44 (176px). Clamp so it doesn't overflow the
+          // right edge when the anchor cell is far right.
+          const popW = 176;
+          const maxLeft = window.innerWidth - popW - 8;
+          setStatusPopover({
+            practiceId: practice.id,
+            top: rect.bottom + 4,
+            left: Math.max(8, Math.min(rect.left, maxLeft)),
+          });
+        }}
+        className={`w-full text-left px-2 py-1.5 rounded-lg border ${
+          meta
+            ? `${meta.bg} ${meta.text} border-transparent`
+            : "border-dashed border-gray-300 text-gray-400 hover:border-court-green hover:text-court-green"
+        } text-xs font-semibold`}
+      >
+        {meta?.label || "Set status"}
+      </button>
+    ) : (
+      <div
+        className={`px-2 py-1.5 rounded-lg text-xs font-semibold ${
+          meta ? `${meta.bg} ${meta.text}` : "border border-dashed border-gray-200 text-gray-300"
+        }`}
+      >
+        {meta?.label || "—"}
+      </div>
+    );
+  };
+
+  const renderPracticeMeta = (practice: Practice) => (
+    <div className="min-w-0">
+      <p className="text-xs font-bold text-court-green">{formatDateHeader(practice.practiceDate)}</p>
+      <AttendanceTally availabilities={practice.availabilities} />
+    </div>
+  );
+
+  const renderPracticeActions = (series: Series, practice: Practice) => {
+    if (!isCaptain) return null;
+    const inCount = practice.availabilities.filter((a) => a.status === "playing").length;
+    const sending = sendingPracticeId === practice.id;
+    return (
+      <div className="flex items-center gap-1 shrink-0">
+        <button
+          onClick={() => sendPractice(series, practice)}
+          disabled={inCount === 0 || sending}
+          className={`text-[10px] font-semibold px-2 py-1 rounded-md inline-flex items-center gap-1 transition-colors ${
+            inCount > 0
+              ? "bg-court-green text-white hover:bg-court-green-light"
+              : "bg-gray-100 text-gray-400 cursor-not-allowed"
+          }`}
+          title={inCount > 0 ? `Send roster of ${inCount} to team chat` : "No one is in yet"}
+        >
+          {sending ? (
+            "..."
+          ) : (
+            <>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+              Send
+            </>
+          )}
+        </button>
+        <button
+          onClick={() => deletePractice(series.id, practice.id)}
+          className="text-gray-300 hover:text-red-500"
+          title="Delete this date"
+          aria-label="Delete this date"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+    );
+  };
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6">
@@ -812,7 +928,9 @@ export default function TeamPracticePage() {
                     All dates have been removed from this series.
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
+                  <>
+                  {/* Wide screens (md+): full members × dates matrix */}
+                  <div className="hidden md:block overflow-x-auto">
                     <table className="w-full border-collapse">
                       <thead>
                         <tr className="bg-gray-50 border-b border-gray-200">
@@ -821,8 +939,6 @@ export default function TeamPracticePage() {
                           </th>
                           {series.practices.map((practice) => {
                             const isHighlighted = highlightPracticeId === practice.id;
-                            const inCount = practice.availabilities.filter((a) => a.status === "playing").length;
-                            const sending = sendingPracticeId === practice.id;
                             return (
                               <th
                                 key={practice.id}
@@ -834,49 +950,8 @@ export default function TeamPracticePage() {
                                 }`}
                               >
                                 <div className="flex items-start justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <p className="text-xs font-bold text-court-green">{formatDateHeader(practice.practiceDate)}</p>
-                                    <AttendanceTally availabilities={practice.availabilities} />
-                                  </div>
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    {isCaptain && (
-                                      <button
-                                        onClick={() => sendPractice(series, practice)}
-                                        disabled={inCount === 0 || sending}
-                                        className={`text-[10px] font-semibold px-2 py-1 rounded-md inline-flex items-center gap-1 transition-colors ${
-                                          inCount > 0
-                                            ? "bg-court-green text-white hover:bg-court-green-light"
-                                            : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                                        }`}
-                                        title={inCount > 0 ? `Send roster of ${inCount} to team chat` : "No one is in yet"}
-                                      >
-                                        {sending ? (
-                                          "..."
-                                        ) : (
-                                          <>
-                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                              <line x1="22" y1="2" x2="11" y2="13" />
-                                              <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                                            </svg>
-                                            Send
-                                          </>
-                                        )}
-                                      </button>
-                                    )}
-                                    {isCaptain && (
-                                      <button
-                                        onClick={() => deletePractice(series.id, practice.id)}
-                                        className="text-gray-300 hover:text-red-500"
-                                        title="Delete this date"
-                                        aria-label="Delete this date"
-                                      >
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                                          <line x1="18" y1="6" x2="6" y2="18" />
-                                          <line x1="6" y1="6" x2="18" y2="18" />
-                                        </svg>
-                                      </button>
-                                    )}
-                                  </div>
+                                  {renderPracticeMeta(practice)}
+                                  {renderPracticeActions(series, practice)}
                                 </div>
                               </th>
                             );
@@ -913,42 +988,10 @@ export default function TeamPracticePage() {
                               </td>
                               {series.practices.map((practice) => {
                                 const a = getAvail(practice, m.user.id);
-                                const meta = a && a.status ? statusMeta(a.status) : null;
                                 const cellKey = `${practice.id}-${m.user.id}`;
                                 return (
                                   <td key={cellKey} className="p-3 border-r border-gray-200 align-top min-w-[180px]">
-                                    {isMe ? (
-                                      <button
-                                        onClick={(e) => {
-                                          const rect = e.currentTarget.getBoundingClientRect();
-                                          // Status popover is w-44 (176px). Clamp
-                                          // so it doesn't overflow the right edge
-                                          // when the anchor cell is far right.
-                                          const popW = 176;
-                                          const maxLeft = window.innerWidth - popW - 8;
-                                          setStatusPopover({
-                                            practiceId: practice.id,
-                                            top: rect.bottom + 4,
-                                            left: Math.max(8, Math.min(rect.left, maxLeft)),
-                                          });
-                                        }}
-                                        className={`w-full text-left px-2 py-1.5 rounded-lg border ${
-                                          meta
-                                            ? `${meta.bg} ${meta.text} border-transparent`
-                                            : "border-dashed border-gray-300 text-gray-400 hover:border-court-green hover:text-court-green"
-                                        } text-xs font-semibold`}
-                                      >
-                                        {meta?.label || "Set status"}
-                                      </button>
-                                    ) : (
-                                      <div
-                                        className={`px-2 py-1.5 rounded-lg text-xs font-semibold ${
-                                          meta ? `${meta.bg} ${meta.text}` : "border border-dashed border-gray-200 text-gray-300"
-                                        }`}
-                                      >
-                                        {meta?.label || "—"}
-                                      </div>
-                                    )}
+                                    {renderPracticeAvailControl(practice, m, a)}
                                   </td>
                                 );
                               })}
@@ -958,6 +1001,78 @@ export default function TeamPracticePage() {
                       </tbody>
                     </table>
                   </div>
+
+                  {/* Narrow screens: one date at a time (date chips + member list) */}
+                  {(() => {
+                    const activePractice =
+                      series.practices.find((p) => p.id === activePracticeId[series.id]) ?? series.practices[0];
+                    return (
+                      <div className="md:hidden p-3">
+                        <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
+                          {series.practices.map((practice) => {
+                            const active = activePractice?.id === practice.id;
+                            return (
+                              <button
+                                key={practice.id}
+                                onClick={() =>
+                                  setActivePracticeId((cur) => ({ ...cur, [series.id]: practice.id }))
+                                }
+                                className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                                  active
+                                    ? "bg-court-green text-white"
+                                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                                }`}
+                              >
+                                {formatDateHeader(practice.practiceDate)}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {activePractice && (
+                          <div className="mt-3 rounded-xl border border-gray-100 overflow-hidden">
+                            <div className="flex items-start justify-between gap-2 p-3 bg-gray-50 border-b border-gray-100">
+                              {renderPracticeMeta(activePractice)}
+                              {renderPracticeActions(series, activePractice)}
+                            </div>
+                            <div className="divide-y divide-gray-100">
+                              {sortedMembers.map((m) => {
+                                const isMe = m.user.id === myId;
+                                const isCapRow = m.user.id === team.ownerId;
+                                const a = getAvail(activePractice, m.user.id);
+                                return (
+                                  <div key={m.id} className="flex items-center gap-2 p-3">
+                                    <div className="relative shrink-0">
+                                      <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
+                                      {isCapRow && (
+                                        <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-ball-yellow flex items-center justify-center ring-2 ring-white shadow-sm">
+                                          <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className="text-court-green">
+                                            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                                          </svg>
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-sm font-semibold text-gray-900 truncate">
+                                        {m.user.name}{isMe ? " (you)" : ""}
+                                      </p>
+                                      {isCapRow && (
+                                        <p className="text-[9px] font-bold tracking-wider text-court-green">CAPTAIN</p>
+                                      )}
+                                    </div>
+                                    <div className="w-32 shrink-0">
+                                      {renderPracticeAvailControl(activePractice, m, a)}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  </>
                 )}
               </div>
             );
