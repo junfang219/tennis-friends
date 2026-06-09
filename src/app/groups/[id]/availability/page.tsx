@@ -136,6 +136,9 @@ export default function AvailabilityPage() {
   const [sendingLineupId, setSendingLineupId] = useState<string | null>(null);
   const [lineupSentId, setLineupSentId] = useState<string | null>(null);
 
+  // Narrow-screen view shows one match at a time; this is the selected match.
+  const [activeMatchId, setActiveMatchId] = useState<string | null>(null);
+
   // Captain (OPS) powers: the owner always, plus anyone holding the captain
   // role. Previously this was locked to the owner only.
   const myMember = team?.members.find((m) => m.user.id === myId);
@@ -263,9 +266,18 @@ export default function AvailabilityPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Keep the narrow-screen single-match selector pointed at a match that exists.
+  useEffect(() => {
+    if (matches.length === 0) return;
+    setActiveMatchId((cur) => (cur && matches.some((m) => m.id === cur) ? cur : matches[0].id));
+  }, [matches]);
+
   // Scroll to and highlight the focused match column when navigated from elsewhere (e.g. calendar)
   useEffect(() => {
     if (!focusMatchId || loading || matches.length === 0) return;
+    // On narrow screens the table is hidden, so selecting the match is the
+    // mobile equivalent of the desktop scroll-into-view below.
+    setActiveMatchId(focusMatchId);
     requestAnimationFrame(() => {
       const el = matchHeaderRefs.current[focusMatchId];
       if (el) {
@@ -596,6 +608,161 @@ export default function AvailabilityPage() {
     return a.user.name.localeCompare(b.user.name);
   });
 
+  const activeMatch = matches.find((m) => m.id === activeMatchId) ?? matches[0];
+
+  // Shared render-helpers so the wide table and the narrow single-match card
+  // render identical controls/header from one source of truth.
+  const renderAvailControl = (match: Match, m: Member, a: Availability | undefined) => {
+    const isMe = m.user.id === myId;
+    const meta = a && a.status ? statusMeta(a.status) : null;
+    return isMe ? (
+      <button
+        onClick={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          // Status popover is w-44 (176px). Clamp so it doesn't overflow the
+          // right edge on mobile when the anchor cell is far right.
+          const popW = 176;
+          const maxLeft = window.innerWidth - popW - 8;
+          setStatusPopover({
+            matchId: match.id,
+            top: rect.bottom + 4,
+            left: Math.max(8, Math.min(rect.left, maxLeft)),
+          });
+        }}
+        className={`w-full text-left px-2 py-1.5 rounded-lg border ${
+          meta
+            ? `${meta.bg} ${meta.text} border-transparent`
+            : "border-dashed border-gray-300 text-gray-400 hover:border-court-green hover:text-court-green"
+        } text-xs font-semibold flex items-center justify-between gap-1`}
+      >
+        <span className="truncate">{meta?.label || "Set status"}</span>
+        {a?.matchTypes && (
+          <span className="text-[9px] font-bold bg-white/30 px-1 rounded">
+            {typeChip(a.matchTypes)}
+          </span>
+        )}
+      </button>
+    ) : (
+      <div
+        className={`px-2 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-between gap-1 ${
+          meta ? `${meta.bg} ${meta.text}` : "border border-dashed border-gray-200 text-gray-300"
+        }`}
+      >
+        <span className="truncate">{meta?.label || "—"}</span>
+        {a?.matchTypes && (
+          <span className="text-[9px] font-bold bg-white/30 px-1 rounded">
+            {typeChip(a.matchTypes)}
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  const renderLineupControl = (match: Match, m: Member, a: Availability | undefined) =>
+    isCaptain ? (
+      <button
+        onClick={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          // Lineup popover is w-60 (240px). Clamp left so it doesn't overflow
+          // the viewport when the anchor cell is on the right side.
+          const popW = 240;
+          const maxLeft = window.innerWidth - popW - 8;
+          setLineupPopover({
+            matchId: match.id,
+            userId: m.user.id,
+            top: rect.bottom + 4,
+            left: Math.max(8, Math.min(rect.left, maxLeft)),
+          });
+          setCustomSlotInput(a?.lineupSlot || "");
+        }}
+        className={`w-full text-left px-2 py-1.5 rounded-lg border text-xs font-semibold ${
+          a?.lineupSlot
+            ? "bg-court-green-pale/40 text-court-green border-court-green-pale"
+            : "border-dashed border-gray-300 text-gray-400 hover:border-court-green hover:text-court-green"
+        }`}
+      >
+        {a?.lineupSlot || "Assign"}
+      </button>
+    ) : (
+      <div
+        className={`px-2 py-1.5 rounded-lg text-xs font-semibold ${
+          a?.lineupSlot
+            ? "bg-court-green-pale/40 text-court-green border border-court-green-pale"
+            : "border border-dashed border-gray-200 text-gray-300"
+        }`}
+      >
+        {a?.lineupSlot || "—"}
+      </div>
+    );
+
+  const renderMatchMeta = (match: Match) => (
+    <div className="min-w-0">
+      <p className="text-xs font-bold text-court-green">{formatDateHeader(match.matchDate)}</p>
+      {match.matchTime && (
+        <p className="text-[10px] text-gray-500">{match.matchTime}</p>
+      )}
+      <p className="text-[11px] text-gray-700 font-medium truncate" title={match.location}>
+        📍 {match.location}
+      </p>
+      {match.opponent && (
+        <p className="text-[11px] text-gray-700 font-medium truncate" title={match.opponent}>
+          🆚 {match.opponent}
+        </p>
+      )}
+      {match.opponentTeamId && (
+        <Link
+          href={`/groups/${groupId}/scouting`}
+          className="text-[11px] text-court-green font-medium hover:underline"
+        >
+          🔎 Scout opponent
+        </Link>
+      )}
+      {match.notes && (
+        <p className="text-[10px] text-gray-400 truncate" title={match.notes}>{match.notes}</p>
+      )}
+      <AttendanceTally availabilities={match.availabilities} />
+    </div>
+  );
+
+  const renderMatchActions = (match: Match) => {
+    const hasLineup = match.availabilities.some((a) => a.lineupSlot && a.lineupSlot.trim());
+    const sending = sendingLineupId === match.id;
+    const justSent = lineupSentId === match.id;
+    if (!isCaptain) return null;
+    return (
+      <div className="flex items-center gap-1 shrink-0">
+        <SendLineupMenu
+          hasLineup={hasLineup}
+          sending={sending}
+          justSent={justSent}
+          onPostToChat={() => postLineupToChat(match)}
+          onSendViaMessages={() => shareLineupViaMessages(match)}
+        />
+        <button
+          onClick={() => startEditMatch(match)}
+          className="text-gray-300 hover:text-court-green"
+          title="Edit match"
+          aria-label="Edit match"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+          </svg>
+        </button>
+        <button
+          onClick={() => deleteMatch(match.id)}
+          className="text-gray-300 hover:text-red-500"
+          title="Delete match"
+          aria-label="Delete match"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+    );
+  };
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-6">
       {/* Header */}
@@ -728,7 +895,9 @@ export default function AvailabilityPage() {
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden">
+        <>
+        {/* Wide screens (md+): full members × matches matrix */}
+        <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
@@ -737,9 +906,6 @@ export default function AvailabilityPage() {
                     Member
                   </th>
                   {matches.map((match) => {
-                    const hasLineup = match.availabilities.some((a) => a.lineupSlot && a.lineupSlot.trim());
-                    const sending = sendingLineupId === match.id;
-                    const justSent = lineupSentId === match.id;
                     const isHighlighted = highlightMatchId === match.id;
                     return (
                       <th
@@ -753,68 +919,8 @@ export default function AvailabilityPage() {
                         }`}
                       >
                         <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="text-xs font-bold text-court-green">{formatDateHeader(match.matchDate)}</p>
-                            {match.matchTime && (
-                              <p className="text-[10px] text-gray-500">{match.matchTime}</p>
-                            )}
-                            <p className="text-[11px] text-gray-700 font-medium truncate" title={match.location}>
-                              📍 {match.location}
-                            </p>
-                            {match.opponent && (
-                              <p className="text-[11px] text-gray-700 font-medium truncate" title={match.opponent}>
-                                🆚 {match.opponent}
-                              </p>
-                            )}
-                            {match.opponentTeamId && (
-                              <Link
-                                href={`/groups/${groupId}/scouting`}
-                                className="text-[11px] text-court-green font-medium hover:underline"
-                              >
-                                🔎 Scout opponent
-                              </Link>
-                            )}
-                            {match.notes && (
-                              <p className="text-[10px] text-gray-400 truncate" title={match.notes}>{match.notes}</p>
-                            )}
-                            <AttendanceTally availabilities={match.availabilities} />
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            {isCaptain && (
-                              <SendLineupMenu
-                                hasLineup={hasLineup}
-                                sending={sending}
-                                justSent={justSent}
-                                onPostToChat={() => postLineupToChat(match)}
-                                onSendViaMessages={() => shareLineupViaMessages(match)}
-                              />
-                            )}
-                            {isCaptain && (
-                              <button
-                                onClick={() => startEditMatch(match)}
-                                className="text-gray-300 hover:text-court-green"
-                                title="Edit match"
-                                aria-label="Edit match"
-                              >
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                                </svg>
-                              </button>
-                            )}
-                            {isCaptain && (
-                              <button
-                                onClick={() => deleteMatch(match.id)}
-                                className="text-gray-300 hover:text-red-500"
-                                title="Delete match"
-                                aria-label="Delete match"
-                              >
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                                  <line x1="18" y1="6" x2="6" y2="18" />
-                                  <line x1="6" y1="6" x2="18" y2="18" />
-                                </svg>
-                              </button>
-                            )}
-                          </div>
+                          {renderMatchMeta(match)}
+                          {renderMatchActions(match)}
                         </div>
                       </th>
                     );
@@ -863,91 +969,14 @@ export default function AvailabilityPage() {
                       </td>
                       {matches.map((match) => {
                         const a = getAvail(match, m.user.id);
-                        const meta = a && a.status ? statusMeta(a.status) : null;
                         const cellKey = `${match.id}-${m.user.id}`;
                         return (
                           <Fragment key={cellKey}>
                           <td className="p-3 border-r border-gray-100 align-top min-w-[130px]">
-                            {isMe ? (
-                              <button
-                                onClick={(e) => {
-                                  const rect = e.currentTarget.getBoundingClientRect();
-                                  // Status popover is w-44 (176px). Clamp so it
-                                  // doesn't overflow the right edge on mobile
-                                  // when the anchor cell is far right.
-                                  const popW = 176;
-                                  const maxLeft = window.innerWidth - popW - 8;
-                                  setStatusPopover({
-                                    matchId: match.id,
-                                    top: rect.bottom + 4,
-                                    left: Math.max(8, Math.min(rect.left, maxLeft)),
-                                  });
-                                }}
-                                className={`w-full text-left px-2 py-1.5 rounded-lg border ${
-                                  meta
-                                    ? `${meta.bg} ${meta.text} border-transparent`
-                                    : "border-dashed border-gray-300 text-gray-400 hover:border-court-green hover:text-court-green"
-                                } text-xs font-semibold flex items-center justify-between gap-1`}
-                              >
-                                <span className="truncate">{meta?.label || "Set status"}</span>
-                                {a?.matchTypes && (
-                                  <span className="text-[9px] font-bold bg-white/30 px-1 rounded">
-                                    {typeChip(a.matchTypes)}
-                                  </span>
-                                )}
-                              </button>
-                            ) : (
-                              <div
-                                className={`px-2 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-between gap-1 ${
-                                  meta ? `${meta.bg} ${meta.text}` : "border border-dashed border-gray-200 text-gray-300"
-                                }`}
-                              >
-                                <span className="truncate">{meta?.label || "—"}</span>
-                                {a?.matchTypes && (
-                                  <span className="text-[9px] font-bold bg-white/30 px-1 rounded">
-                                    {typeChip(a.matchTypes)}
-                                  </span>
-                                )}
-                              </div>
-                            )}
+                            {renderAvailControl(match, m, a)}
                           </td>
                           <td className="p-3 border-r border-gray-200 align-top min-w-[130px]">
-                            {isCaptain ? (
-                              <button
-                                onClick={(e) => {
-                                  const rect = e.currentTarget.getBoundingClientRect();
-                                  // Lineup popover is w-60 (240px). Clamp left
-                                  // so it doesn't overflow the viewport when
-                                  // the anchor cell is on the right side.
-                                  const popW = 240;
-                                  const maxLeft = window.innerWidth - popW - 8;
-                                  setLineupPopover({
-                                    matchId: match.id,
-                                    userId: m.user.id,
-                                    top: rect.bottom + 4,
-                                    left: Math.max(8, Math.min(rect.left, maxLeft)),
-                                  });
-                                  setCustomSlotInput(a?.lineupSlot || "");
-                                }}
-                                className={`w-full text-left px-2 py-1.5 rounded-lg border text-xs font-semibold ${
-                                  a?.lineupSlot
-                                    ? "bg-court-green-pale/40 text-court-green border-court-green-pale"
-                                    : "border-dashed border-gray-300 text-gray-400 hover:border-court-green hover:text-court-green"
-                                }`}
-                              >
-                                {a?.lineupSlot || "Assign"}
-                              </button>
-                            ) : (
-                              <div
-                                className={`px-2 py-1.5 rounded-lg text-xs font-semibold ${
-                                  a?.lineupSlot
-                                    ? "bg-court-green-pale/40 text-court-green border border-court-green-pale"
-                                    : "border border-dashed border-gray-200 text-gray-300"
-                                }`}
-                              >
-                                {a?.lineupSlot || "—"}
-                              </div>
-                            )}
+                            {renderLineupControl(match, m, a)}
                           </td>
                           </Fragment>
                         );
@@ -959,6 +988,84 @@ export default function AvailabilityPage() {
             </table>
           </div>
         </div>
+
+        {/* Narrow screens: one match at a time (date chips + single card) */}
+        <div className="md:hidden">
+          <div className="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4">
+            {matches.map((match) => {
+              const active = activeMatch?.id === match.id;
+              return (
+                <button
+                  key={match.id}
+                  onClick={() => setActiveMatchId(match.id)}
+                  className={`shrink-0 whitespace-nowrap px-3 py-2 rounded-xl text-left transition-colors ${
+                    active
+                      ? "bg-court-green text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+                >
+                  <span className="block text-xs font-bold leading-tight">{formatDateHeader(match.matchDate)}</span>
+                  {match.opponent && (
+                    <span className={`block text-[10px] leading-tight truncate max-w-[120px] ${active ? "text-white/80" : "text-gray-500"}`}>
+                      vs {match.opponent}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {activeMatch && (
+            <div className="mt-3 bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden">
+              <div className="flex items-start justify-between gap-2 p-4 border-b border-gray-100 bg-gray-50">
+                {renderMatchMeta(activeMatch)}
+                {renderMatchActions(activeMatch)}
+              </div>
+              <div className="divide-y divide-gray-100">
+                {sortedMembers.map((m) => {
+                  const isMe = m.user.id === myId;
+                  const isCapRow = m.user.id === team.ownerId;
+                  const a = getAvail(activeMatch, m.user.id);
+                  return (
+                    <div key={m.id} className="p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="relative shrink-0">
+                          <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
+                          {isCapRow && (
+                            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-ball-yellow flex items-center justify-center ring-2 ring-white shadow-sm">
+                              <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className="text-court-green">
+                                <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                              </svg>
+                            </span>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-gray-900 truncate">
+                            {m.user.name}{isMe ? " (you)" : ""}
+                          </p>
+                          {isCapRow && (
+                            <p className="text-[9px] font-bold tracking-wider text-court-green">CAPTAIN</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 pl-10">
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">Avail</p>
+                          {renderAvailControl(activeMatch, m, a)}
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">Lineup</p>
+                          {renderLineupControl(activeMatch, m, a)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+        </>
       )}
 
       {/* Legend */}
