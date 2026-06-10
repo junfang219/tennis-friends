@@ -14,14 +14,16 @@ import {
   createGroupExpenseColumn,
   updateGroupExpenseColumn,
   deleteGroupExpenseColumn,
-  setColumnsSettled,
+  setCellsSettled,
   type ExpenseColumn,
+  type ExpenseCell,
   type ExpenseEventOption,
 } from "@/lib/supabase/queries";
 import { canCaptain } from "@/lib/groupRoles";
 import {
   computeColumnNet,
   computeNetTotals,
+  withoutSettled,
   seedEqualShares,
   remainingCents,
   sumAmounts,
@@ -84,6 +86,7 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [view, setView] = useState<"grid" | "output">("grid");
+  const [settleMode, setSettleMode] = useState(false);
   const [editor, setEditor] = useState<{ column: ExpenseColumn | null } | null>(null);
 
   const load = useCallback(async () => {
@@ -131,14 +134,14 @@ export default function ExpensesPage() {
     [members]
   );
 
-  // Net per member for each column (Grid shows all columns, settled or not).
+  // Net per member for each column (full — every involved member's cell).
   const colNets = useMemo(() => columns.map((c) => computeColumnNet(toColLike(c))), [columns]);
-  // Totals + "Who pays who" only count OUTSTANDING (unsettled) columns, so a
-  // squared-up balance doesn't accumulate into the next events.
-  const outstanding = useMemo(() => columns.filter((c) => !c.settled_at), [columns]);
-  const outstandingNets = useMemo(() => outstanding.map((c) => computeColumnNet(toColLike(c))), [outstanding]);
-  const totals = useMemo(() => computeNetTotals(outstanding.map(toColLike)), [outstanding]);
-  const settledCount = columns.length - outstanding.length;
+  // Totals + "Who pays who" exclude SETTLED (member, bill) cells, so a squared-up
+  // balance doesn't accumulate into the next events.
+  const totals = useMemo(
+    () => computeNetTotals(columns.map((c) => withoutSettled(toColLike(c), c.settled_user_ids))),
+    [columns]
+  );
 
   // Payment handles for anyone who appears in a column (creditors always do,
   // since a creditor is someone who paid).
@@ -187,30 +190,34 @@ export default function ExpensesPage() {
     }
   };
 
-  const onToggleSettled = async (c: ExpenseColumn) => {
-    try {
-      const supabase = createSupabaseBrowserClient();
-      await setColumnsSettled(supabase, [c.id], !c.settled_at);
-      await load();
-    } catch (err) {
-      alert(errorMessage(err, "Could not update settled status."));
-    }
-  };
-
-  // Settle every outstanding column the current user is allowed to settle
-  // (involved in, or creator/captain).
-  const onSettleAll = async () => {
-    const ids = outstanding.filter(canSettleColumn).map((c) => c.id);
-    if (ids.length === 0) return;
-    if (!confirm(`Mark ${ids.length} outstanding column${ids.length === 1 ? "" : "s"} as settled? They'll stop counting toward the running total.`)) return;
-    try {
-      const supabase = createSupabaseBrowserClient();
-      await setColumnsSettled(supabase, ids, true);
-      await load();
-    } catch (err) {
-      alert(errorMessage(err, "Could not settle."));
-    }
-  };
+  // Settle / un-settle a set of (member, bill) cells. Optimistically updates the
+  // local settled sets, then persists via the RPC (which re-checks permission
+  // per cell). On failure we reload to fall back to server truth.
+  const settleCells = useCallback(
+    async (cells: ExpenseCell[], settled: boolean) => {
+      if (cells.length === 0) return;
+      setColumns((prev) =>
+        prev.map((c) => {
+          const ids = cells.filter((x) => x.expenseId === c.id).map((x) => x.userId);
+          if (ids.length === 0) return c;
+          const set = new Set(c.settled_user_ids);
+          for (const id of ids) {
+            if (settled) set.add(id);
+            else set.delete(id);
+          }
+          return { ...c, settled_user_ids: [...set] };
+        })
+      );
+      try {
+        const supabase = createSupabaseBrowserClient();
+        await setCellsSettled(supabase, cells, settled);
+      } catch (err) {
+        alert(errorMessage(err, "Could not update settled status."));
+        await load();
+      }
+    },
+    [load]
+  );
 
   if (loading) {
     return (
@@ -258,9 +265,19 @@ export default function ExpensesPage() {
       </div>
 
       {isMember && (
-        <button onClick={() => setEditor({ column: null })} className="btn-primary btn-sm mb-4">
-          + Add a column
-        </button>
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <button onClick={() => setEditor({ column: null })} className="btn-primary btn-sm">
+            + Add a column
+          </button>
+          {view === "grid" && columns.length > 0 && (
+            <button
+              onClick={() => setSettleMode((s) => !s)}
+              className={settleMode ? "btn-primary btn-sm" : "btn-secondary btn-sm"}
+            >
+              {settleMode ? "Done settling" : "Settle…"}
+            </button>
+          )}
+        </div>
       )}
 
       {view === "grid" ? (
@@ -268,21 +285,19 @@ export default function ExpensesPage() {
           members={members}
           columns={columns}
           colNets={colNets}
-          canEditColumn={canEditColumn}
+          settleMode={settleMode}
           canSettleColumn={canSettleColumn}
+          canEditColumn={canEditColumn}
           onEdit={(c) => setEditor({ column: c })}
           onDelete={onDelete}
-          onToggleSettled={onToggleSettled}
+          settleCells={settleCells}
         />
       ) : (
         <OutputView
           members={members}
-          columns={outstanding}
-          colNets={outstandingNets}
+          columns={columns}
+          colNets={colNets}
           totals={totals}
-          settledCount={settledCount}
-          canSettleAll={outstanding.some(canSettleColumn)}
-          onSettleAll={onSettleAll}
           myId={myId}
           myHandles={myHandles}
           handlesByUser={handlesByUser}
@@ -315,27 +330,31 @@ function NetAmount({ cents }: { cents: number }) {
 }
 
 // ===========================================================================
-// Grid: rows = members, columns = events. Editable. Shows paid / owed / net.
+// Grid: rows = members, columns = events. Shows paid / owed / net per cell.
+// In Settle mode, each involved cell + whole bill (column) + whole member (row)
+// becomes a checkbox to mark that (member, bill) settled.
 // ===========================================================================
 
 function ExpenseGrid({
   members,
   columns,
   colNets,
-  canEditColumn,
+  settleMode,
   canSettleColumn,
+  canEditColumn,
   onEdit,
   onDelete,
-  onToggleSettled,
+  settleCells,
 }: {
   members: Member[];
   columns: ExpenseColumn[];
   colNets: Map<string, number>[];
-  canEditColumn: (c: ExpenseColumn) => boolean;
+  settleMode: boolean;
   canSettleColumn: (c: ExpenseColumn) => boolean;
+  canEditColumn: (c: ExpenseColumn) => boolean;
   onEdit: (c: ExpenseColumn) => void;
   onDelete: (c: ExpenseColumn) => void;
-  onToggleSettled: (c: ExpenseColumn) => void;
+  settleCells: (cells: ExpenseCell[], settled: boolean) => void;
 }) {
   if (members.length === 0) {
     return <p className="text-center text-sm text-gray-500 py-10">No team members yet.</p>;
@@ -351,6 +370,25 @@ function ExpenseGrid({
 
   const shareOf = (c: ExpenseColumn, id: string) => c.shares.find((s) => s.user_id === id)?.amount_cents ?? null;
   const paidOf = (c: ExpenseColumn, id: string) => c.payments.find((p) => p.user_id === id)?.amount_cents ?? 0;
+  const involvedIn = (c: ExpenseColumn, id: string) => shareOf(c, id) !== null || paidOf(c, id) > 0;
+  const isSettled = (c: ExpenseColumn, id: string) => c.settled_user_ids.includes(id);
+  const involvedIds = (c: ExpenseColumn) => members.filter((m) => involvedIn(c, m.id)).map((m) => m.id);
+
+  // Whole bill (column header): settle/unsettle every involved member's cell.
+  const settleBill = (c: ExpenseColumn) => {
+    const ids = involvedIds(c);
+    if (ids.length === 0) return;
+    const allSettled = ids.every((id) => isSettled(c, id));
+    settleCells(ids.map((id) => ({ expenseId: c.id, userId: id })), !allSettled);
+  };
+  // Whole member (row): settle their cells across the bills the user may settle.
+  const memberSettleCols = (mId: string) => columns.filter((c) => canSettleColumn(c) && involvedIn(c, mId));
+  const settleMember = (mId: string) => {
+    const cols = memberSettleCols(mId);
+    if (cols.length === 0) return;
+    const allSettled = cols.every((c) => isSettled(c, mId));
+    settleCells(cols.map((c) => ({ expenseId: c.id, userId: mId })), !allSettled);
+  };
 
   return (
     <div className="overflow-x-auto rounded-2xl border border-court-green-pale/20 bg-white">
@@ -361,97 +399,117 @@ function ExpenseGrid({
               Member
             </th>
             {columns.map((c) => {
-              const settled = !!c.settled_at;
+              const ids = involvedIds(c);
+              const fullySettled = ids.length > 0 && ids.every((id) => isSettled(c, id));
               const canSettle = canSettleColumn(c);
               const canEdit = canEditColumn(c);
               return (
-              <th key={c.id} className={`text-left align-top px-3 py-2 border-b border-l border-gray-100 min-w-[10rem] ${settled ? "bg-gray-50" : ""}`}>
-                <div className="flex items-start justify-between gap-1.5">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <p className={`text-xs font-semibold truncate ${settled ? "text-gray-400" : "text-gray-800"}`} title={c.event_label ?? ""}>
-                        {c.event_label || "Column"}
-                      </p>
-                      {settled && (
-                        <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-green-700 bg-green-50 border border-green-200 px-1 py-0.5 rounded">
-                          settled
-                        </span>
-                      )}
+                <th key={c.id} className="text-left align-top px-3 py-2 border-b border-l border-gray-100 min-w-[10rem]">
+                  <div className="flex items-start justify-between gap-1.5">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        {settleMode && canSettle && ids.length > 0 && (
+                          <input
+                            type="checkbox"
+                            checked={fullySettled}
+                            onChange={() => settleBill(c)}
+                            title="Settle / re-open whole bill"
+                            className="w-3.5 h-3.5 accent-court-green shrink-0"
+                          />
+                        )}
+                        <p className="text-xs font-semibold text-gray-800 truncate" title={c.event_label ?? ""}>
+                          {c.event_label || "Column"}
+                        </p>
+                      </div>
+                      <p className="text-[11px] text-gray-500">total ${dollarsString(c.amount_cents)}</p>
                     </div>
-                    <p className="text-[11px] text-gray-500">total ${dollarsString(c.amount_cents)}</p>
-                  </div>
-                  {(canSettle || canEdit) && (
-                    <div className="flex flex-col gap-1 shrink-0">
-                      {canSettle && (
-                        <button
-                          onClick={() => onToggleSettled(c)}
-                          title={settled ? "Re-open (mark outstanding)" : "Mark settled"}
-                          aria-label={settled ? "Re-open column" : "Mark column settled"}
-                          className={`p-1 rounded hover:bg-gray-100 ${settled ? "text-green-600" : "text-gray-400 hover:text-green-700"}`}
-                        >
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="20 6 9 17 4 12" />
-                          </svg>
-                        </button>
-                      )}
-                      {canEdit && (
+                    {!settleMode && canEdit && (
+                      <div className="flex flex-col gap-1 shrink-0">
                         <button onClick={() => onEdit(c)} title="Edit" aria-label="Edit column" className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100">
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                           </svg>
                         </button>
-                      )}
-                      {canEdit && (
                         <button onClick={() => onDelete(c)} title="Delete" aria-label="Delete column" className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50">
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <polyline points="3 6 5 6 21 6" />
                             <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
                           </svg>
                         </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </th>
+                      </div>
+                    )}
+                  </div>
+                </th>
               );
             })}
           </tr>
         </thead>
         <tbody>
-          {members.map((m) => (
-            <tr key={m.id} className="odd:bg-white even:bg-gray-50/40">
-              <td className="sticky left-0 z-10 bg-inherit px-3 py-2 border-b border-gray-100 min-w-[8rem]">
-                <div className="flex items-center gap-2">
-                  <Avatar name={m.name} image={m.image} size="sm" />
-                  <span className="text-xs font-medium text-gray-800 truncate">{m.name}</span>
-                </div>
-              </td>
-              {columns.map((c, i) => {
-                const share = shareOf(c, m.id);
-                const paid = paidOf(c, m.id);
-                const net = colNets[i].get(m.id) ?? 0;
-                const involved = share !== null || paid > 0;
-                const settled = !!c.settled_at;
-                return (
-                  <td key={c.id} className={`px-3 py-2 border-b border-l border-gray-100 align-top whitespace-nowrap ${settled ? "bg-gray-50 opacity-50" : ""}`}>
-                    {involved ? (
-                      <div className="space-y-0.5">
-                        <NetAmount cents={net} />
-                        <p className="text-[10px] text-gray-400">
-                          {paid > 0 && <>paid ${dollarsString(paid)}</>}
-                          {paid > 0 && share !== null && " · "}
-                          {share !== null && <>owes ${dollarsString(share)}</>}
-                        </p>
-                      </div>
-                    ) : (
-                      <span className="text-gray-300">—</span>
+          {members.map((m) => {
+            const rowCols = memberSettleCols(m.id);
+            const rowAllSettled = rowCols.length > 0 && rowCols.every((c) => isSettled(c, m.id));
+            return (
+              <tr key={m.id} className="odd:bg-white even:bg-gray-50/40">
+                <td className="sticky left-0 z-10 bg-inherit px-3 py-2 border-b border-gray-100 min-w-[8rem]">
+                  <div className="flex items-center gap-2">
+                    {settleMode && rowCols.length > 0 && (
+                      <input
+                        type="checkbox"
+                        checked={rowAllSettled}
+                        onChange={() => settleMember(m.id)}
+                        title="Settle / re-open this member across all bills"
+                        className="w-3.5 h-3.5 accent-court-green shrink-0"
+                      />
                     )}
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
+                    <Avatar name={m.name} image={m.image} size="sm" />
+                    <span className="text-xs font-medium text-gray-800 truncate">{m.name}</span>
+                  </div>
+                </td>
+                {columns.map((c, i) => {
+                  const share = shareOf(c, m.id);
+                  const paid = paidOf(c, m.id);
+                  const net = colNets[i].get(m.id) ?? 0;
+                  const involved = share !== null || paid > 0;
+                  const settled = involved && isSettled(c, m.id);
+                  return (
+                    <td key={c.id} className={`px-3 py-2 border-b border-l border-gray-100 align-top whitespace-nowrap ${settled ? "bg-gray-50" : ""}`}>
+                      {!involved ? (
+                        <span className="text-gray-300">—</span>
+                      ) : (
+                        <div className="flex items-start gap-1.5">
+                          {settleMode && canSettleColumn(c) && (
+                            <input
+                              type="checkbox"
+                              checked={settled}
+                              onChange={() => settleCells([{ expenseId: c.id, userId: m.id }], !settled)}
+                              title={settled ? "Re-open this cell" : "Mark settled"}
+                              className="w-3.5 h-3.5 mt-0.5 accent-court-green shrink-0"
+                            />
+                          )}
+                          <div className={`space-y-0.5 ${settled ? "opacity-50" : ""}`}>
+                            <div className="flex items-center gap-1">
+                              <NetAmount cents={net} />
+                              {settled && (
+                                <span className="text-[9px] font-bold uppercase tracking-wide text-green-700 bg-green-50 border border-green-200 px-1 rounded">
+                                  settled
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-gray-400">
+                              {paid > 0 && <>paid ${dollarsString(paid)}</>}
+                              {paid > 0 && share !== null && " · "}
+                              {share !== null && <>owes ${dollarsString(share)}</>}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -467,9 +525,6 @@ function OutputView({
   columns,
   colNets,
   totals,
-  settledCount,
-  canSettleAll,
-  onSettleAll,
   myId,
   myHandles,
   handlesByUser,
@@ -477,12 +532,9 @@ function OutputView({
   reload,
 }: {
   members: Member[];
-  columns: ExpenseColumn[]; // outstanding columns only
-  colNets: Map<string, number>[];
-  totals: Map<string, number>;
-  settledCount: number;
-  canSettleAll: boolean;
-  onSettleAll: () => void;
+  columns: ExpenseColumn[];
+  colNets: Map<string, number>[]; // full per-column nets (settled cells flagged separately)
+  totals: Map<string, number>; // excludes settled cells
   myId: string;
   myHandles: Handles;
   handlesByUser: Map<string, Handles>;
@@ -509,16 +561,10 @@ function OutputView({
     if (res.kind === "copied") setToast(`Copied: ${res.text}. Open your bank's Zelle to send.`);
   };
 
-  const settledNote =
-    settledCount > 0 ? `${settledCount} settled column${settledCount === 1 ? "" : "s"} hidden — see the Grid for history.` : "";
+  const allSettled = members.every((m) => (totals.get(m.id) ?? 0) === 0);
 
   if (columns.length === 0) {
-    return (
-      <div className="text-center py-12 bg-white rounded-2xl border border-court-green-pale/20">
-        <p className="text-sm text-gray-600">All settled up. 🎾</p>
-        {settledNote && <p className="text-xs text-gray-400 mt-1">{settledNote}</p>}
-      </div>
-    );
+    return <p className="text-center text-sm text-gray-500 py-10">No expense columns yet.</p>;
   }
 
   return (
@@ -529,14 +575,9 @@ function OutputView({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[11px] text-gray-400">{settledNote || "Settled columns drop out of these totals."}</p>
-        {canSettleAll && (
-          <button onClick={onSettleAll} className="btn-secondary btn-sm">
-            Mark all settled
-          </button>
-        )}
-      </div>
+      <p className="text-[11px] text-gray-400">
+        Settled cells (greyed in the Grid) drop out of these totals.{allSettled ? " All settled up. 🎾" : ""}
+      </p>
 
       {/* Net matrix: rows = members, columns = events, + Total */}
       <div className="overflow-x-auto rounded-2xl border border-court-green-pale/20 bg-white">
@@ -565,11 +606,18 @@ function OutputView({
                     <span className="text-xs font-medium text-gray-800 truncate">{m.name}</span>
                   </div>
                 </td>
-                {columns.map((c, i) => (
-                  <td key={c.id} className="px-3 py-2 border-b border-l border-gray-100 text-xs whitespace-nowrap">
-                    <NetAmount cents={colNets[i].get(m.id) ?? 0} />
-                  </td>
-                ))}
+                {columns.map((c, i) => {
+                  const settled = c.settled_user_ids.includes(m.id);
+                  return (
+                    <td key={c.id} className={`px-3 py-2 border-b border-l border-gray-100 text-xs whitespace-nowrap ${settled ? "bg-gray-50" : ""}`}>
+                      {settled ? (
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-green-700">settled</span>
+                      ) : (
+                        <NetAmount cents={colNets[i].get(m.id) ?? 0} />
+                      )}
+                    </td>
+                  );
+                })}
                 <td className="px-3 py-2 border-b border-l-2 border-court-green-pale/40 bg-court-green-pale/10 text-xs whitespace-nowrap">
                   <NetAmount cents={totals.get(m.id) ?? 0} />
                 </td>

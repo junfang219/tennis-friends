@@ -1269,6 +1269,42 @@ export type Database = {
           },
         ]
       }
+      expense_settlements: {
+        Row: {
+          expense_id: string
+          id: string
+          settled_at: string
+          user_id: string
+        }
+        Insert: {
+          expense_id: string
+          id?: string
+          settled_at?: string
+          user_id: string
+        }
+        Update: {
+          expense_id?: string
+          id?: string
+          settled_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "expense_settlements_expense_id_fkey"
+            columns: ["expense_id"]
+            isOneToOne: false
+            referencedRelation: "expenses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expense_settlements_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       expense_shares: {
         Row: {
           amount_cents: number
@@ -1324,7 +1360,6 @@ export type Database = {
           match_id: string | null
           payer_id: string | null
           practice_id: string | null
-          settled_at: string | null
           source_kind: string | null
         }
         Insert: {
@@ -1339,7 +1374,6 @@ export type Database = {
           match_id?: string | null
           payer_id?: string | null
           practice_id?: string | null
-          settled_at?: string | null
           source_kind?: string | null
         }
         Update: {
@@ -1354,7 +1388,6 @@ export type Database = {
           match_id?: string | null
           payer_id?: string | null
           practice_id?: string | null
-          settled_at?: string | null
           source_kind?: string | null
         }
         Relationships: [
@@ -3353,8 +3386,8 @@ export type Database = {
         Returns: Json
       }
       seed_ladder_lineup: { Args: { p_event_id: string }; Returns: Json }
-      set_expense_columns_settled: {
-        Args: { p_expense_ids: string[]; p_settled: boolean }
+      set_expense_cells_settled: {
+        Args: { p_pairs: Json; p_settled: boolean }
         Returns: undefined
       }
       transfer_group_ownership: {

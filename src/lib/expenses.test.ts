@@ -5,9 +5,37 @@ import {
   remainingCents,
   computeColumnNet,
   computeNetTotals,
+  withoutSettled,
   settleUp,
   type ColumnLike,
 } from "./expenses";
+
+describe("withoutSettled", () => {
+  it("drops settled members from both payments and shares", () => {
+    const col: ColumnLike = {
+      payments: [
+        { userId: "anna", amountCents: 3000 },
+        { userId: "ben", amountCents: 2000 },
+      ],
+      shares: [
+        { userId: "anna", amountCents: 1667 },
+        { userId: "ben", amountCents: 1667 },
+        { userId: "cara", amountCents: 1666 },
+      ],
+    };
+    const out = withoutSettled(col, ["cara"]);
+    expect(out.payments).toHaveLength(2);
+    expect(out.shares.map((s) => s.userId)).toEqual(["anna", "ben"]);
+    // Cara's owed no longer counts toward anyone's running total.
+    const net = computeColumnNet(out);
+    expect(net.has("cara")).toBe(false);
+  });
+
+  it("returns the column unchanged when nothing is settled", () => {
+    const col: ColumnLike = { payments: [{ userId: "a", amountCents: 100 }], shares: [{ userId: "a", amountCents: 100 }] };
+    expect(withoutSettled(col, [])).toEqual(col);
+  });
+});
 
 describe("seedEqualShares", () => {
   it("splits evenly when divisible", () => {

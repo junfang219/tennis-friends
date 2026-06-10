@@ -8819,3 +8819,85 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION public.set_expense_columns_settled(uuid[], boolean) FROM anon, public;
 GRANT  EXECUTE ON FUNCTION public.set_expense_columns_settled(uuid[], boolean) TO authenticated;
+
+-- =====================================================================
+-- 0017_expense_cell_settlements
+-- =====================================================================
+
+-- Migration 0017: move team-expense settling from whole-column (expenses.settled_at)
+-- to per-(member, bill) CELL granularity. A row in expense_settlements means
+-- "member <user_id> has settled their part of bill <expense_id>". Settled cells
+-- drop out of running net totals / "who pays who" (kept visible in the Grid).
+-- Selecting a whole bill or a whole member just settles the relevant set of cells.
+
+CREATE TABLE public.expense_settlements (
+  id          uuid primary key default gen_random_uuid(),
+  expense_id  uuid not null references public.expenses (id) on delete cascade,
+  user_id     uuid not null references public.profiles (id) on delete cascade,
+  settled_at  timestamptz not null default now(),
+  constraint expense_settlements_unique unique (expense_id, user_id)
+);
+CREATE INDEX expense_settlements_expense_idx ON public.expense_settlements (expense_id);
+
+ALTER TABLE public.expense_settlements ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY expense_settlements_select_group_member ON public.expense_settlements FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.expenses e
+    WHERE e.id = expense_settlements.expense_id
+      AND e.group_id IS NOT NULL
+      AND public.is_group_member(e.group_id)
+  ));
+
+-- Backfill: any column that was settled as a whole becomes a settled cell for
+-- every member involved in it (participant or payer).
+INSERT INTO public.expense_settlements (expense_id, user_id)
+SELECT e.id, m.user_id
+FROM public.expenses e
+JOIN LATERAL (
+  SELECT s.user_id FROM public.expense_shares s WHERE s.expense_id = e.id AND s.user_id IS NOT NULL
+  UNION
+  SELECT p.user_id FROM public.expense_payments p WHERE p.expense_id = e.id
+) m ON true
+WHERE e.group_id IS NOT NULL AND e.settled_at IS NOT NULL
+ON CONFLICT (expense_id, user_id) DO NOTHING;
+
+DROP FUNCTION IF EXISTS public.set_expense_columns_settled(uuid[], boolean);
+ALTER TABLE public.expenses DROP COLUMN settled_at;
+
+CREATE OR REPLACE FUNCTION public.set_expense_cells_settled(p_pairs jsonb, p_settled boolean)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT (x->>'e')::uuid AS expense_id, (x->>'u')::uuid AS user_id
+    FROM jsonb_array_elements(p_pairs) x
+  LOOP
+    IF EXISTS (
+      SELECT 1 FROM public.expenses e
+      WHERE e.id = r.expense_id AND e.group_id IS NOT NULL
+        AND public.is_group_member(e.group_id)
+        AND (
+          public.can_run_group(e.group_id)
+          OR e.created_by_id = (SELECT auth.uid())
+          OR EXISTS (SELECT 1 FROM public.expense_shares s   WHERE s.expense_id = e.id  AND s.user_id  = (SELECT auth.uid()))
+          OR EXISTS (SELECT 1 FROM public.expense_payments pm WHERE pm.expense_id = e.id AND pm.user_id = (SELECT auth.uid()))
+        )
+    ) THEN
+      IF p_settled THEN
+        INSERT INTO public.expense_settlements (expense_id, user_id)
+        VALUES (r.expense_id, r.user_id) ON CONFLICT (expense_id, user_id) DO NOTHING;
+      ELSE
+        DELETE FROM public.expense_settlements WHERE expense_id = r.expense_id AND user_id = r.user_id;
+      END IF;
+    END IF;
+  END LOOP;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.set_expense_cells_settled(jsonb, boolean) FROM anon, public;
+GRANT  EXECUTE ON FUNCTION public.set_expense_cells_settled(jsonb, boolean) TO authenticated;

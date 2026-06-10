@@ -102,15 +102,17 @@ export interface ExpenseColumn {
   practice_id: string | null;
   event_label: string | null;
   amount_cents: number; // total (kept = sum of payments)
-  settled_at: string | null; // when set, excluded from running totals / payouts
   created_at: string;
   shares: ColumnShare[]; // participants' owed amounts
   payments: ColumnPayment[]; // who paid how much
+  /** user_ids whose (member, bill) cell is settled — excluded from net totals. */
+  settled_user_ids: string[];
 }
 
-const COLUMN_SELECT = `id, group_id, created_by_id, source_kind, match_id, practice_id, event_label, amount_cents, settled_at, created_at,
+const COLUMN_SELECT = `id, group_id, created_by_id, source_kind, match_id, practice_id, event_label, amount_cents, created_at,
    shares:expense_shares ( id, user_id, amount_cents, user:profiles ( ${PAYMENT_PROFILE_COLUMNS} ) ),
-   payments:expense_payments ( id, user_id, amount_cents, user:profiles ( ${PAYMENT_PROFILE_COLUMNS} ) )`;
+   payments:expense_payments ( id, user_id, amount_cents, user:profiles ( ${PAYMENT_PROFILE_COLUMNS} ) ),
+   settlements:expense_settlements ( user_id )`;
 
 /** All team expense columns, oldest-first so they read left-to-right by date added. */
 export async function listGroupExpenseColumns(
@@ -123,10 +125,12 @@ export async function listGroupExpenseColumns(
     .eq("group_id", groupId)
     .order("created_at", { ascending: true });
   if (error) throw error;
-  return ((data ?? []) as unknown as ExpenseColumn[]).map((c) => ({
+  type RawSettlement = { user_id: string };
+  return ((data ?? []) as unknown as (ExpenseColumn & { settlements: RawSettlement[] | null })[]).map((c) => ({
     ...c,
     shares: (c.shares ?? []).filter((s) => s.user_id !== null),
     payments: (c.payments ?? []).filter((p) => p.user_id !== null),
+    settled_user_ids: (c.settlements ?? []).map((s) => s.user_id),
   }));
 }
 
@@ -200,25 +204,30 @@ export async function deleteGroupExpenseColumn(
   if (error) throw error;
 }
 
+export interface ExpenseCell {
+  expenseId: string;
+  userId: string;
+}
+
 /**
- * Mark one or more team columns settled (or re-open them with settled=false).
- * Settled columns drop out of the running Total + "Who pays who" payouts so a
+ * Mark a set of (member, bill) cells settled (or re-open with settled=false).
+ * Settled cells drop out of the running Total + "Who pays who" payouts so a
  * squared-up balance doesn't carry into future events.
  *
- * Goes through the set_expense_columns_settled RPC (SECURITY DEFINER) so any
- * member INVOLVED in a column (a participant or a payer) — as well as the
- * creator or a captain — can settle it, while only ever touching settled_at.
- * The RPC re-checks permission per row, so ids the caller isn't allowed to
+ * Goes through the set_expense_cells_settled RPC (SECURITY DEFINER) so any
+ * member INVOLVED in a bill (participant or payer) — as well as the creator or
+ * a captain — can settle its cells, while only ever touching expense_settlements.
+ * The RPC re-checks permission per cell, so ones the caller isn't allowed to
  * settle are silently skipped.
  */
-export async function setColumnsSettled(
+export async function setCellsSettled(
   supabase: SupabaseClient<Database>,
-  expenseIds: string[],
+  cells: ExpenseCell[],
   settled: boolean
 ): Promise<void> {
-  if (expenseIds.length === 0) return;
-  const { error } = await supabase.rpc("set_expense_columns_settled", {
-    p_expense_ids: expenseIds,
+  if (cells.length === 0) return;
+  const { error } = await supabase.rpc("set_expense_cells_settled", {
+    p_pairs: cells.map((c) => ({ e: c.expenseId, u: c.userId })),
     p_settled: settled,
   });
   if (error) throw error;

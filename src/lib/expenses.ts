@@ -49,6 +49,18 @@ export function remainingCents(totalCents: number, shares: ExpenseShareLike[]): 
   return totalCents - sumAmounts(shares);
 }
 
+/**
+ * A copy of the column with settled members removed, so settled (member, bill)
+ * cells don't count toward running totals or "who pays who".
+ */
+export function withoutSettled(col: ColumnLike, settledUserIds: Iterable<string>): ColumnLike {
+  const settled = new Set(settledUserIds);
+  return {
+    payments: col.payments.filter((p) => !settled.has(p.userId)),
+    shares: col.shares.filter((s) => !settled.has(s.userId)),
+  };
+}
+
 /** Net per member for one column: owed share − amount paid. */
 export function computeColumnNet(col: ColumnLike): Map<string, number> {
   const net = new Map<string, number>();
