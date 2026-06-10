@@ -9,6 +9,8 @@ import { getMyProfile, updateMyProfile } from "@/lib/supabase/queries";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 import Avatar from "@/components/Avatar";
+// BETA FEEDBACK — remove before public launch
+import { FeedbackModal } from "@/components/FeedbackModal";
 
 const SETTINGS_CACHE_KEY = "settings:profile";
 
@@ -16,6 +18,8 @@ export default function SettingsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
+  // BETA FEEDBACK — remove before public launch
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   // Lightweight profile fetch — just the fields these controls own
   // (is_private, latitude, longitude). Kept on its own cache key so it
@@ -276,6 +280,25 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      {/* BETA FEEDBACK — remove before public launch */}
+      <section className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden mb-4">
+        <button
+          onClick={() => setFeedbackOpen(true)}
+          className="w-full flex items-center gap-3 px-4 py-4 text-sm font-semibold text-court-green hover:bg-court-green-pale/10 transition-colors text-left"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
+            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+          </svg>
+          <span className="flex-1 min-w-0">
+            Send feedback
+            <span className="block text-[11px] font-normal text-gray-500">
+              Beta testers: report a bug or request a feature.
+            </span>
+          </span>
+        </button>
+      </section>
+      {/* END BETA FEEDBACK */}
+
       {/* Sign out */}
       <section className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden">
         <button
@@ -398,6 +421,15 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      {/* BETA FEEDBACK — remove before public launch */}
+      {feedbackOpen && (
+        <FeedbackModal
+          defaultEmail={session?.user?.email ?? profile?.email ?? undefined}
+          onClose={() => setFeedbackOpen(false)}
+        />
+      )}
+      {/* END BETA FEEDBACK */}
     </div>
   );
 }
