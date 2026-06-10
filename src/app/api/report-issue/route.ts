@@ -7,7 +7,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 // server-only, so this report path can't be a direct supabase call.
 
 const FROM_ADDRESS = "TennisFriend <reports@mytennisfriends.com>";
-const TO_ADDRESS = process.env.REPORT_ISSUE_TO ?? "junfang219@gmail.com";
+const TO_ADDRESS = process.env.REPORT_EMAIL ?? "tennisfriends123@gmail.com";
 
 const Body = z.object({
   courtId: z.string().min(1),

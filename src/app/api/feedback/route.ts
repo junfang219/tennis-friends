@@ -2,7 +2,7 @@
 //
 // Lets beta testers send feedback / feature requests / suggestions straight to
 // my inbox. Same shape as report-missing-court: authenticated POST, Zod-
-// validated, emailed via Resend. Reuses RESEND_API_KEY + REPORT_ISSUE_TO; no
+// validated, emailed via Resend. Reuses RESEND_API_KEY + REPORT_EMAIL; no
 // new env vars.
 
 import { NextResponse } from "next/server";
@@ -11,7 +11,7 @@ import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const FROM_ADDRESS = "TennisFriend <reports@mytennisfriends.com>";
-const TO_ADDRESS = process.env.REPORT_ISSUE_TO ?? "junfang219@gmail.com";
+const TO_ADDRESS = process.env.REPORT_EMAIL ?? "tennisfriends123@gmail.com";
 
 const CATEGORY_LABELS: Record<string, string> = {
   bug: "Bug",

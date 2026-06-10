@@ -7,7 +7,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 // as report-issue but feeds the curated-court backlog.
 
 const FROM_ADDRESS = "TennisFriend <reports@mytennisfriends.com>";
-const TO_ADDRESS = process.env.REPORT_ISSUE_TO ?? "junfang219@gmail.com";
+const TO_ADDRESS = process.env.REPORT_EMAIL ?? "tennisfriends123@gmail.com";
 
 const Body = z
   .object({
