@@ -8588,3 +8588,316 @@ $$;
 REVOKE ALL ON FUNCTION public.accept_club_invite_link(text) FROM public;
 REVOKE EXECUTE ON FUNCTION public.accept_club_invite_link(text) FROM anon;
 GRANT EXECUTE ON FUNCTION public.accept_club_invite_link(text) TO authenticated;
+
+-- =====================================================================
+-- 0013_group_expenses
+-- =====================================================================
+
+-- Migration 0013: Widen `expenses` so a bill can be scoped to a TEAM (group)
+-- and linked to a match / practice / custom event, in addition to the existing
+-- per-chat "Split a cost" flow. The team Expenses tab is a spreadsheet of bills:
+-- rows = members, columns = bills, each split among its marked participants.
+-- We reuse expenses + expense_shares (one source of truth, shared settlement +
+-- payment-handle logic) rather than adding parallel tables.
+--
+-- A bill is either chat-scoped (chat_id set, the legacy flow) OR group-scoped
+-- (group_id set). The two never mix — enforced by expenses_scope_check. Because
+-- SplitCostSheet queries strictly by chat_id and the team tab strictly by
+-- group_id, the two views stay naturally partitioned over the same table.
+
+ALTER TABLE public.expenses ALTER COLUMN chat_id DROP NOT NULL;
+
+ALTER TABLE public.expenses
+  ADD COLUMN group_id      uuid REFERENCES public.groups (id)         ON DELETE CASCADE,
+  ADD COLUMN created_by_id uuid REFERENCES public.profiles (id)       ON DELETE SET NULL,
+  ADD COLUMN source_kind   text,
+  ADD COLUMN match_id      uuid REFERENCES public.team_matches (id)   ON DELETE SET NULL,
+  ADD COLUMN practice_id   uuid REFERENCES public.team_practices (id) ON DELETE SET NULL,
+  ADD COLUMN event_label   text;
+
+-- Exactly one scope: a chat bill or a group bill, never both / neither.
+ALTER TABLE public.expenses
+  ADD CONSTRAINT expenses_scope_check CHECK (
+    (chat_id IS NOT NULL AND group_id IS NULL)
+    OR (chat_id IS NULL AND group_id IS NOT NULL)
+  );
+
+ALTER TABLE public.expenses
+  ADD CONSTRAINT expenses_source_kind_check CHECK (
+    source_kind IS NULL OR source_kind IN ('match', 'practice', 'custom')
+  );
+
+-- For group bills, source_kind drives which link column must be set; a custom
+-- event carries a free-text label instead of an event id. Chat bills (group_id
+-- NULL) are exempt.
+ALTER TABLE public.expenses
+  ADD CONSTRAINT expenses_group_source_check CHECK (
+    group_id IS NULL OR (
+      (source_kind = 'match'    AND match_id    IS NOT NULL AND practice_id IS NULL) OR
+      (source_kind = 'practice' AND practice_id IS NOT NULL AND match_id    IS NULL) OR
+      (source_kind = 'custom'   AND match_id IS NULL AND practice_id IS NULL
+                                AND event_label IS NOT NULL AND event_label <> '')
+    )
+  );
+
+CREATE INDEX expenses_group_idx ON public.expenses (group_id, created_at) WHERE group_id IS NOT NULL;
+
+-- RLS — additive policies for the group scope. Postgres ORs permissive policies,
+-- so the existing chat-scoped policies are untouched: a chat bill (group_id NULL)
+-- can't satisfy any of these (each requires group_id IS NOT NULL), and a group
+-- bill (chat_id NULL) can't satisfy the chat policies (is_chat_participant(NULL)
+-- is false / payer self-insert still allowed but the scope check blocks a row
+-- with both NULL).
+
+-- Any team member can SEE their team's bills.
+CREATE POLICY expenses_select_group_member ON public.expenses FOR SELECT TO authenticated
+  USING (group_id IS NOT NULL AND public.is_group_member(group_id));
+
+-- Any team member can ADD a bill; they must stamp themselves as the creator
+-- (the payer can be a different member).
+CREATE POLICY expenses_insert_group_member ON public.expenses FOR INSERT TO authenticated
+  WITH CHECK (
+    group_id IS NOT NULL
+    AND public.is_group_member(group_id)
+    AND created_by_id = (SELECT auth.uid())
+  );
+
+-- The bill's creator or a captain/owner can edit or delete it.
+CREATE POLICY expenses_update_group_editor ON public.expenses FOR UPDATE TO authenticated
+  USING (group_id IS NOT NULL AND (created_by_id = (SELECT auth.uid()) OR public.can_run_group(group_id)))
+  WITH CHECK (group_id IS NOT NULL AND (created_by_id = (SELECT auth.uid()) OR public.can_run_group(group_id)));
+
+CREATE POLICY expenses_delete_group_editor ON public.expenses FOR DELETE TO authenticated
+  USING (group_id IS NOT NULL AND (created_by_id = (SELECT auth.uid()) OR public.can_run_group(group_id)));
+
+-- expense_shares: members can read shares of their team's bills; the bill's
+-- creator or a captain can write them. (The existing expense_shares_write_payer
+-- ALL-policy already lets the bill's payer manage + settle its shares regardless
+-- of scope, and expense_shares_update_self_settle lets a participant mark their
+-- own share — both carry over to group bills unchanged.)
+CREATE POLICY expense_shares_select_group_member ON public.expense_shares FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.expenses e
+    WHERE e.id = expense_shares.expense_id
+      AND e.group_id IS NOT NULL
+      AND public.is_group_member(e.group_id)
+  ));
+
+CREATE POLICY expense_shares_write_group_editor ON public.expense_shares FOR ALL TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.expenses e
+    WHERE e.id = expense_shares.expense_id
+      AND e.group_id IS NOT NULL
+      AND (e.created_by_id = (SELECT auth.uid()) OR public.can_run_group(e.group_id))
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM public.expenses e
+    WHERE e.id = expense_shares.expense_id
+      AND e.group_id IS NOT NULL
+      AND (e.created_by_id = (SELECT auth.uid()) OR public.can_run_group(e.group_id))
+  ));
+
+COMMENT ON COLUMN public.expenses.group_id IS
+  'Set for team-scoped bills (the Expenses tab). Mutually exclusive with chat_id (expenses_scope_check).';
+COMMENT ON COLUMN public.expenses.source_kind IS
+  'For group bills: match | practice | custom. Drives which of match_id/practice_id/event_label is set (expenses_group_source_check).';
+
+-- =====================================================================
+-- 0014_expense_payments
+-- =====================================================================
+
+-- Migration 0014: support MULTIPLE payers per team expense. A team "column" is
+-- now one expenses row per event (match/practice/custom) whose total is split
+-- among participants (expense_shares) and whose payments come from one or more
+-- members (new expense_payments). Net per member = owed share - amount paid.
+-- Chat bills are unchanged (single payer via expenses.payer_id).
+
+ALTER TABLE public.expenses ALTER COLUMN payer_id DROP NOT NULL;
+
+ALTER TABLE public.expenses
+  ADD CONSTRAINT expenses_chat_payer_check CHECK (chat_id IS NULL OR payer_id IS NOT NULL);
+
+CREATE TABLE public.expense_payments (
+  id           uuid primary key default gen_random_uuid(),
+  expense_id   uuid not null references public.expenses (id) on delete cascade,
+  user_id      uuid not null references public.profiles (id) on delete cascade,
+  amount_cents integer not null check (amount_cents >= 0),
+  created_at   timestamptz not null default now(),
+  constraint expense_payments_unique unique (expense_id, user_id)
+);
+CREATE INDEX expense_payments_expense_idx ON public.expense_payments (expense_id);
+
+ALTER TABLE public.expense_payments ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY expense_payments_select_group_member ON public.expense_payments FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.expenses e
+    WHERE e.id = expense_payments.expense_id
+      AND e.group_id IS NOT NULL
+      AND public.is_group_member(e.group_id)
+  ));
+
+CREATE POLICY expense_payments_write_group_editor ON public.expense_payments FOR ALL TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.expenses e
+    WHERE e.id = expense_payments.expense_id
+      AND e.group_id IS NOT NULL
+      AND (e.created_by_id = (SELECT auth.uid()) OR public.can_run_group(e.group_id))
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM public.expenses e
+    WHERE e.id = expense_payments.expense_id
+      AND e.group_id IS NOT NULL
+      AND (e.created_by_id = (SELECT auth.uid()) OR public.can_run_group(e.group_id))
+  ));
+
+COMMENT ON TABLE public.expense_payments IS
+  'Who paid how much toward a team expense (supports multiple payers per event). Chat bills do not use this table — they keep a single expenses.payer_id.';
+
+-- Backfill: convert any legacy single-payer group expenses (payer_id + shares,
+-- no payments) into the multi-payer model — one payment from the original payer,
+-- then null out payer_id so group rows uniformly use expense_payments.
+INSERT INTO public.expense_payments (expense_id, user_id, amount_cents)
+SELECT e.id, e.payer_id, e.amount_cents
+FROM public.expenses e
+WHERE e.group_id IS NOT NULL
+  AND e.payer_id IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM public.expense_payments p WHERE p.expense_id = e.id);
+
+UPDATE public.expenses SET payer_id = NULL WHERE group_id IS NOT NULL AND payer_id IS NOT NULL;
+
+-- =====================================================================
+-- 0015_expense_column_settled
+-- =====================================================================
+
+-- Migration 0015: let a team expense column be marked "settled" once its
+-- members have squared up. Settled columns stay visible as history in the Grid
+-- but are excluded from the running Total and the "Who pays who" payouts, so a
+-- settled balance does not accumulate into future events. Writable by the
+-- column's creator or a captain (existing expenses_update_group_editor policy).
+ALTER TABLE public.expenses ADD COLUMN settled_at timestamptz;
+
+COMMENT ON COLUMN public.expenses.settled_at IS
+  'Team columns only: when set, the column is settled and excluded from running net totals / payouts (kept as history). NULL = outstanding.';
+
+-- =====================================================================
+-- 0016_settle_expense_columns_rpc
+-- =====================================================================
+
+-- Migration 0016: let any member INVOLVED in a team expense column (a
+-- participant with a share, or a payer) mark it settled / re-open it — without
+-- granting them rights to edit the column's amounts. RLS can't scope an UPDATE
+-- to a single column, so settling goes through this SECURITY DEFINER RPC which
+-- only ever touches settled_at and re-checks permission per row. Captains/owners
+-- and the column's creator can also settle (superset of the old rule).
+
+CREATE OR REPLACE FUNCTION public.set_expense_columns_settled(
+  p_expense_ids uuid[],
+  p_settled boolean
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  UPDATE public.expenses e
+  SET settled_at = CASE WHEN p_settled THEN now() ELSE NULL END
+  WHERE e.id = ANY(p_expense_ids)
+    AND e.group_id IS NOT NULL
+    AND public.is_group_member(e.group_id)
+    AND (
+      public.can_run_group(e.group_id)
+      OR e.created_by_id = (SELECT auth.uid())
+      OR EXISTS (SELECT 1 FROM public.expense_shares s
+                 WHERE s.expense_id = e.id AND s.user_id = (SELECT auth.uid()))
+      OR EXISTS (SELECT 1 FROM public.expense_payments pm
+                 WHERE pm.expense_id = e.id AND pm.user_id = (SELECT auth.uid()))
+    );
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.set_expense_columns_settled(uuid[], boolean) FROM anon, public;
+GRANT  EXECUTE ON FUNCTION public.set_expense_columns_settled(uuid[], boolean) TO authenticated;
+
+-- =====================================================================
+-- 0017_expense_cell_settlements
+-- =====================================================================
+
+-- Migration 0017: move team-expense settling from whole-column (expenses.settled_at)
+-- to per-(member, bill) CELL granularity. A row in expense_settlements means
+-- "member <user_id> has settled their part of bill <expense_id>". Settled cells
+-- drop out of running net totals / "who pays who" (kept visible in the Grid).
+-- Selecting a whole bill or a whole member just settles the relevant set of cells.
+
+CREATE TABLE public.expense_settlements (
+  id          uuid primary key default gen_random_uuid(),
+  expense_id  uuid not null references public.expenses (id) on delete cascade,
+  user_id     uuid not null references public.profiles (id) on delete cascade,
+  settled_at  timestamptz not null default now(),
+  constraint expense_settlements_unique unique (expense_id, user_id)
+);
+CREATE INDEX expense_settlements_expense_idx ON public.expense_settlements (expense_id);
+
+ALTER TABLE public.expense_settlements ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY expense_settlements_select_group_member ON public.expense_settlements FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.expenses e
+    WHERE e.id = expense_settlements.expense_id
+      AND e.group_id IS NOT NULL
+      AND public.is_group_member(e.group_id)
+  ));
+
+-- Backfill: any column that was settled as a whole becomes a settled cell for
+-- every member involved in it (participant or payer).
+INSERT INTO public.expense_settlements (expense_id, user_id)
+SELECT e.id, m.user_id
+FROM public.expenses e
+JOIN LATERAL (
+  SELECT s.user_id FROM public.expense_shares s WHERE s.expense_id = e.id AND s.user_id IS NOT NULL
+  UNION
+  SELECT p.user_id FROM public.expense_payments p WHERE p.expense_id = e.id
+) m ON true
+WHERE e.group_id IS NOT NULL AND e.settled_at IS NOT NULL
+ON CONFLICT (expense_id, user_id) DO NOTHING;
+
+DROP FUNCTION IF EXISTS public.set_expense_columns_settled(uuid[], boolean);
+ALTER TABLE public.expenses DROP COLUMN settled_at;
+
+CREATE OR REPLACE FUNCTION public.set_expense_cells_settled(p_pairs jsonb, p_settled boolean)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT (x->>'e')::uuid AS expense_id, (x->>'u')::uuid AS user_id
+    FROM jsonb_array_elements(p_pairs) x
+  LOOP
+    IF EXISTS (
+      SELECT 1 FROM public.expenses e
+      WHERE e.id = r.expense_id AND e.group_id IS NOT NULL
+        AND public.is_group_member(e.group_id)
+        AND (
+          public.can_run_group(e.group_id)
+          OR e.created_by_id = (SELECT auth.uid())
+          OR EXISTS (SELECT 1 FROM public.expense_shares s   WHERE s.expense_id = e.id  AND s.user_id  = (SELECT auth.uid()))
+          OR EXISTS (SELECT 1 FROM public.expense_payments pm WHERE pm.expense_id = e.id AND pm.user_id = (SELECT auth.uid()))
+        )
+    ) THEN
+      IF p_settled THEN
+        INSERT INTO public.expense_settlements (expense_id, user_id)
+        VALUES (r.expense_id, r.user_id) ON CONFLICT (expense_id, user_id) DO NOTHING;
+      ELSE
+        DELETE FROM public.expense_settlements WHERE expense_id = r.expense_id AND user_id = r.user_id;
+      END IF;
+    END IF;
+  END LOOP;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.set_expense_cells_settled(jsonb, boolean) FROM anon, public;
+GRANT  EXECUTE ON FUNCTION public.set_expense_cells_settled(jsonb, boolean) TO authenticated;

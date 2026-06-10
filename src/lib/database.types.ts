@@ -117,6 +117,39 @@ export type Database = {
           },
         ]
       }
+      auth_debug_events: {
+        Row: {
+          created_at: string
+          details: Json | null
+          event: string
+          has_session: boolean | null
+          id: string
+          platform: string | null
+          prior_user_id: string | null
+          user_initiated: boolean
+        }
+        Insert: {
+          created_at?: string
+          details?: Json | null
+          event: string
+          has_session?: boolean | null
+          id?: string
+          platform?: string | null
+          prior_user_id?: string | null
+          user_initiated?: boolean
+        }
+        Update: {
+          created_at?: string
+          details?: Json | null
+          event?: string
+          has_session?: boolean | null
+          id?: string
+          platform?: string | null
+          prior_user_id?: string | null
+          user_initiated?: boolean
+        }
+        Relationships: []
+      }
       availabilities: {
         Row: {
           created_at: string
@@ -465,13 +498,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "chat_messages_shared_post_id_fkey"
-            columns: ["shared_post_id"]
-            isOneToOne: false
-            referencedRelation: "posts"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "chat_messages_expense_id_fkey"
             columns: ["expense_id"]
             isOneToOne: false
@@ -483,6 +509,13 @@ export type Database = {
             columns: ["sender_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_shared_post_id_fkey"
+            columns: ["shared_post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
             referencedColumns: ["id"]
           },
         ]
@@ -1197,6 +1230,81 @@ export type Database = {
           },
         ]
       }
+      expense_payments: {
+        Row: {
+          amount_cents: number
+          created_at: string
+          expense_id: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          amount_cents: number
+          created_at?: string
+          expense_id: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          amount_cents?: number
+          created_at?: string
+          expense_id?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "expense_payments_expense_id_fkey"
+            columns: ["expense_id"]
+            isOneToOne: false
+            referencedRelation: "expenses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expense_payments_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      expense_settlements: {
+        Row: {
+          expense_id: string
+          id: string
+          settled_at: string
+          user_id: string
+        }
+        Insert: {
+          expense_id: string
+          id?: string
+          settled_at?: string
+          user_id: string
+        }
+        Update: {
+          expense_id?: string
+          id?: string
+          settled_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "expense_settlements_expense_id_fkey"
+            columns: ["expense_id"]
+            isOneToOne: false
+            referencedRelation: "expenses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expense_settlements_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       expense_shares: {
         Row: {
           amount_cents: number
@@ -1242,27 +1350,45 @@ export type Database = {
       expenses: {
         Row: {
           amount_cents: number
-          chat_id: string
+          chat_id: string | null
           created_at: string
+          created_by_id: string | null
           description: string
+          event_label: string | null
+          group_id: string | null
           id: string
-          payer_id: string
+          match_id: string | null
+          payer_id: string | null
+          practice_id: string | null
+          source_kind: string | null
         }
         Insert: {
           amount_cents: number
-          chat_id: string
+          chat_id?: string | null
           created_at?: string
+          created_by_id?: string | null
           description?: string
+          event_label?: string | null
+          group_id?: string | null
           id?: string
-          payer_id: string
+          match_id?: string | null
+          payer_id?: string | null
+          practice_id?: string | null
+          source_kind?: string | null
         }
         Update: {
           amount_cents?: number
-          chat_id?: string
+          chat_id?: string | null
           created_at?: string
+          created_by_id?: string | null
           description?: string
+          event_label?: string | null
+          group_id?: string | null
           id?: string
-          payer_id?: string
+          match_id?: string | null
+          payer_id?: string | null
+          practice_id?: string | null
+          source_kind?: string | null
         }
         Relationships: [
           {
@@ -1273,10 +1399,38 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "expenses_created_by_id_fkey"
+            columns: ["created_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expenses_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expenses_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: false
+            referencedRelation: "team_matches"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "expenses_payer_id_fkey"
             columns: ["payer_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expenses_practice_id_fkey"
+            columns: ["practice_id"]
+            isOneToOne: false
+            referencedRelation: "team_practices"
             referencedColumns: ["id"]
           },
         ]
@@ -1309,6 +1463,45 @@ export type Database = {
             columns: ["updated_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      friend_group_invite_links: {
+        Row: {
+          created_at: string
+          created_by_id: string
+          friend_group_id: string
+          id: string
+          token: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_id: string
+          friend_group_id: string
+          id?: string
+          token: string
+        }
+        Update: {
+          created_at?: string
+          created_by_id?: string
+          friend_group_id?: string
+          id?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "friend_group_invite_links_created_by_id_fkey"
+            columns: ["created_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "friend_group_invite_links_friend_group_id_fkey"
+            columns: ["friend_group_id"]
+            isOneToOne: true
+            referencedRelation: "friend_groups"
             referencedColumns: ["id"]
           },
         ]
@@ -1359,45 +1552,6 @@ export type Database = {
           {
             foreignKeyName: "friend_group_invites_inviter_id_fkey"
             columns: ["inviter_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      friend_group_invite_links: {
-        Row: {
-          created_at: string
-          created_by_id: string
-          friend_group_id: string
-          id: string
-          token: string
-        }
-        Insert: {
-          created_at?: string
-          created_by_id: string
-          friend_group_id: string
-          id?: string
-          token: string
-        }
-        Update: {
-          created_at?: string
-          created_by_id?: string
-          friend_group_id?: string
-          id?: string
-          token?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "friend_group_invite_links_friend_group_id_fkey"
-            columns: ["friend_group_id"]
-            isOneToOne: true
-            referencedRelation: "friend_groups"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "friend_group_invite_links_created_by_id_fkey"
-            columns: ["created_by_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -2087,13 +2241,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "notifications_group_message_id_fkey"
-            columns: ["group_message_id"]
-            isOneToOne: false
-            referencedRelation: "group_messages"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "notifications_comment_id_fkey"
             columns: ["comment_id"]
             isOneToOne: false
@@ -2112,6 +2259,13 @@ export type Database = {
             columns: ["friend_group_id"]
             isOneToOne: false
             referencedRelation: "friend_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_group_message_id_fkey"
+            columns: ["group_message_id"]
+            isOneToOne: false
+            referencedRelation: "group_messages"
             referencedColumns: ["id"]
           },
           {
@@ -2147,6 +2301,129 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      opponent_players: {
+        Row: {
+          created_at: string
+          dynamic_rating: number | null
+          id: string
+          losses: number
+          name: string
+          ntrp_rating: number | null
+          opponent_team_id: string
+          order: number
+          record_raw: string
+          source_player_url: string
+          wins: number
+        }
+        Insert: {
+          created_at?: string
+          dynamic_rating?: number | null
+          id?: string
+          losses?: number
+          name: string
+          ntrp_rating?: number | null
+          opponent_team_id: string
+          order?: number
+          record_raw?: string
+          source_player_url?: string
+          wins?: number
+        }
+        Update: {
+          created_at?: string
+          dynamic_rating?: number | null
+          id?: string
+          losses?: number
+          name?: string
+          ntrp_rating?: number | null
+          opponent_team_id?: string
+          order?: number
+          record_raw?: string
+          source_player_url?: string
+          wins?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opponent_players_opponent_team_id_fkey"
+            columns: ["opponent_team_id"]
+            isOneToOne: false
+            referencedRelation: "opponent_teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      opponent_teams: {
+        Row: {
+          created_at: string
+          created_by_id: string | null
+          fetch_error: string
+          fetch_status: string
+          group_id: string
+          id: string
+          is_own: boolean
+          last_fetched_at: string | null
+          linked_group_id: string | null
+          name: string
+          source: string
+          source_team_key: string
+          source_url: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_id?: string | null
+          fetch_error?: string
+          fetch_status?: string
+          group_id: string
+          id?: string
+          is_own?: boolean
+          last_fetched_at?: string | null
+          linked_group_id?: string | null
+          name: string
+          source?: string
+          source_team_key?: string
+          source_url?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by_id?: string | null
+          fetch_error?: string
+          fetch_status?: string
+          group_id?: string
+          id?: string
+          is_own?: boolean
+          last_fetched_at?: string | null
+          linked_group_id?: string | null
+          name?: string
+          source?: string
+          source_team_key?: string
+          source_url?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opponent_teams_created_by_id_fkey"
+            columns: ["created_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opponent_teams_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opponent_teams_linked_group_id_fkey"
+            columns: ["linked_group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
             referencedColumns: ["id"]
           },
         ]
@@ -2407,17 +2684,17 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "post_targets_target_user_id_fkey"
-            columns: ["target_user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "post_targets_post_id_fkey"
             columns: ["post_id"]
             isOneToOne: false
             referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_targets_target_user_id_fkey"
+            columns: ["target_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -2822,129 +3099,6 @@ export type Database = {
           },
         ]
       }
-      opponent_teams: {
-        Row: {
-          created_at: string
-          created_by_id: string | null
-          fetch_error: string
-          fetch_status: string
-          group_id: string
-          id: string
-          is_own: boolean
-          last_fetched_at: string | null
-          linked_group_id: string | null
-          name: string
-          source: string
-          source_team_key: string
-          source_url: string
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          created_by_id?: string | null
-          fetch_error?: string
-          fetch_status?: string
-          group_id: string
-          id?: string
-          is_own?: boolean
-          last_fetched_at?: string | null
-          linked_group_id?: string | null
-          name: string
-          source?: string
-          source_team_key?: string
-          source_url?: string
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          created_by_id?: string | null
-          fetch_error?: string
-          fetch_status?: string
-          group_id?: string
-          id?: string
-          is_own?: boolean
-          last_fetched_at?: string | null
-          linked_group_id?: string | null
-          name?: string
-          source?: string
-          source_team_key?: string
-          source_url?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "opponent_teams_group_id_fkey"
-            columns: ["group_id"]
-            isOneToOne: false
-            referencedRelation: "groups"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "opponent_teams_linked_group_id_fkey"
-            columns: ["linked_group_id"]
-            isOneToOne: false
-            referencedRelation: "groups"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "opponent_teams_created_by_id_fkey"
-            columns: ["created_by_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      opponent_players: {
-        Row: {
-          created_at: string
-          dynamic_rating: number | null
-          id: string
-          losses: number
-          name: string
-          ntrp_rating: number | null
-          opponent_team_id: string
-          order: number
-          record_raw: string
-          source_player_url: string
-          wins: number
-        }
-        Insert: {
-          created_at?: string
-          dynamic_rating?: number | null
-          id?: string
-          losses?: number
-          name: string
-          ntrp_rating?: number | null
-          opponent_team_id: string
-          order?: number
-          record_raw?: string
-          source_player_url?: string
-          wins?: number
-        }
-        Update: {
-          created_at?: string
-          dynamic_rating?: number | null
-          id?: string
-          losses?: number
-          name?: string
-          ntrp_rating?: number | null
-          opponent_team_id?: string
-          order?: number
-          record_raw?: string
-          source_player_url?: string
-          wins?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "opponent_players_opponent_team_id_fkey"
-            columns: ["opponent_team_id"]
-            isOneToOne: false
-            referencedRelation: "opponent_teams"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       team_matches: {
         Row: {
           created_at: string
@@ -3143,6 +3297,7 @@ export type Database = {
     Functions: {
       _delete_user_owned_rows: { Args: { uid: string }; Returns: undefined }
       accept_club_invite: { Args: { p_invite_id: string }; Returns: Json }
+      accept_club_invite_link: { Args: { p_token: string }; Returns: Json }
       accept_group_invite: { Args: { p_token: string }; Returns: Json }
       active_season_id: { Args: { g: string }; Returns: string }
       advance_event_match_to_next_round: {
@@ -3173,9 +3328,11 @@ export type Database = {
       }
       get_club_invite_link: { Args: { p_token: string }; Returns: Json }
       get_invite_by_token: { Args: { p_token: string }; Returns: Json }
-      get_or_create_club_invite_link: { Args: { p_friend_group_id: string }; Returns: Json }
-      rotate_club_invite_link: { Args: { p_friend_group_id: string }; Returns: Json }
-      accept_club_invite_link: { Args: { p_token: string }; Returns: Json }
+      get_or_create_club_invite_link: {
+        Args: { p_friend_group_id: string }
+        Returns: Json
+      }
+      has_pending_club_invite: { Args: { fg: string }; Returns: boolean }
       invite_to_event: {
         Args: { p_event_id: string; p_user_ids: string[] }
         Returns: Json
@@ -3186,6 +3343,7 @@ export type Database = {
       }
       is_blocked: { Args: { a: string; b: string }; Returns: boolean }
       is_chat_participant: { Args: { c: string }; Returns: boolean }
+      is_club: { Args: { fg: string }; Returns: boolean }
       is_friend: { Args: { other_user: string }; Returns: boolean }
       is_friend_group_member: { Args: { fg: string }; Returns: boolean }
       is_group_member: { Args: { g: string }; Returns: boolean }
@@ -3219,11 +3377,19 @@ export type Database = {
         Args: { p_court_id: string; p_has_empty: boolean; p_post_id?: string }
         Returns: Json
       }
+      rotate_club_invite_link: {
+        Args: { p_friend_group_id: string }
+        Returns: Json
+      }
       seed_event_bracket: {
         Args: { p_event_id: string; p_pairs: Json }
         Returns: Json
       }
       seed_ladder_lineup: { Args: { p_event_id: string }; Returns: Json }
+      set_expense_cells_settled: {
+        Args: { p_pairs: Json; p_settled: boolean }
+        Returns: undefined
+      }
       transfer_group_ownership: {
         Args: { p_group_id: string; p_new_owner_id: string }
         Returns: undefined

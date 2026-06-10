@@ -12,3 +12,4 @@ export * from "./courts";
 export * from "./chats";
 export * from "./misc";
 export * from "./clubs";
+export * from "./expenses";
