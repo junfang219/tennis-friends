@@ -1,5 +1,6 @@
 import "server-only";
-import { parseTeamUrl } from "./parse";
+import { parseTeamUrl, parseSearchResults } from "./parse";
+import type { TeamSearchResult } from "./parse";
 
 // Network layer for tennisrecord. Kept separate from parse.ts so the parser
 // stays pure/testable and the fetch strategy can be swapped without touching
@@ -15,6 +16,7 @@ import { parseTeamUrl } from "./parse";
 
 const TEAM_PROFILE_BASE =
   "https://www.tennisrecord.com/adult/teamprofile.aspx";
+const TEAM_SEARCH_URL = "https://www.tennisrecord.com/adult/teamsearch.aspx";
 
 // Browser-like headers — tennisrecord 403s obvious bots.
 const BROWSER_HEADERS: Record<string, string> = {
@@ -107,4 +109,59 @@ export async function fetchTennisRecordTeam(
 
   const html = await res.text();
   return { html, resolvedUrl: url, teamKey, urlTeamName };
+}
+
+export type SearchTeamsInput = {
+  teamName: string;
+  year?: string;       // "2026"; defaults to the form's first option upstream
+  section?: string;    // exact teamsearch option value, e.g. "Pacific NW"
+  leagueType?: string; // exact option value, e.g. "Adult 18+"; "" = All
+};
+
+// Search tennisrecord for teams by name (+ optional year/section/league-type
+// filters). teamsearch.aspx is a plain form POST (no ASP.NET viewstate), so we
+// replicate it with a normal POST and parse the results table. This is the
+// "find your team" path that replaces asking the captain to paste a raw link.
+export async function searchTennisRecordTeams(
+  input: SearchTeamsInput,
+): Promise<TeamSearchResult[]> {
+  const teamName = input.teamName.trim();
+  if (!teamName) {
+    throw new TennisRecordFetchError("Enter a team name to search.");
+  }
+
+  const form = new URLSearchParams({
+    yearnum: input.year?.trim() || "2026",
+    leaguetypename: input.leagueType?.trim() ?? "",
+    sectionname: input.section?.trim() ?? "",
+    teamname: teamName,
+  });
+
+  let res: Response;
+  try {
+    res = await fetch(TEAM_SEARCH_URL, {
+      method: "POST",
+      headers: {
+        ...BROWSER_HEADERS,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: form.toString(),
+      // ── puppeteer fallback seam: same bot-block risk as team-profile GETs.
+      cache: "no-store",
+      redirect: "follow",
+    });
+  } catch (err) {
+    throw new TennisRecordFetchError(
+      err instanceof Error ? err.message : "Could not reach tennisrecord.",
+    );
+  }
+
+  if (!res.ok) {
+    throw new TennisRecordFetchError(
+      `tennisrecord returned ${res.status}.`,
+      res.status,
+    );
+  }
+
+  return parseSearchResults(await res.text());
 }

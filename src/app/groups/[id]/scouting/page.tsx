@@ -24,6 +24,7 @@ import {
   type LeagueScheduleMatch,
 } from "@/lib/supabase/queries/scouting";
 import { errorMessage } from "@/lib/errorMessage";
+import FindUstaTeam from "@/components/scouting/FindUstaTeam";
 
 function formatFetched(iso: string | null): string {
   if (!iso) return "Never refreshed";
@@ -161,6 +162,15 @@ export default function ScoutingPage() {
     setImportBusy(false);
   }
 
+  async function reloadOpponents() {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      setOpponents(await listOpponents(supabase, groupId));
+    } catch {
+      // Keep current state; the import already succeeded server-side.
+    }
+  }
+
   async function loadRoster(opponentTeamId: string) {
     if (rosters[opponentTeamId]) return;
     try {
@@ -282,34 +292,36 @@ export default function ScoutingPage() {
               </button>
             </div>
           ) : (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void handleScoutLeague(leagueInput);
-              }}
-            >
-              <label htmlFor="tr-league-url" className="block text-xs font-semibold text-gray-600 mb-1">
-                Scout the whole league
-              </label>
-              <div className="flex gap-2">
-                <input
-                  id="tr-league-url"
-                  type="text"
-                  inputMode="url"
-                  value={leagueInput}
-                  onChange={(e) => setLeagueInput(e.target.value)}
-                  placeholder="Paste YOUR team's tennisrecord link"
-                  className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-court-green-soft"
-                />
-                <button type="submit" disabled={leagueBusy || !leagueInput.trim()} className="btn-primary btn-sm whitespace-nowrap">
-                  {leagueBusy ? "Scouting…" : "Scout league"}
-                </button>
-              </div>
-              <p className="text-[11px] text-gray-400 mt-1.5">
-                Find your team on tennisrecord.com and paste its page URL — every
-                opponent on your schedule gets scouted automatically.
-              </p>
-            </form>
+            <>
+              <FindUstaTeam groupId={groupId} onImported={reloadOpponents} />
+              <details className="mt-3">
+                <summary className="text-xs text-gray-500 cursor-pointer select-none">
+                  Or paste your team&apos;s TennisRecord link
+                </summary>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handleScoutLeague(leagueInput);
+                  }}
+                  className="mt-2"
+                >
+                  <div className="flex gap-2">
+                    <input
+                      id="tr-league-url"
+                      type="text"
+                      inputMode="url"
+                      value={leagueInput}
+                      onChange={(e) => setLeagueInput(e.target.value)}
+                      placeholder="Paste YOUR team's tennisrecord link"
+                      className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-court-green-soft"
+                    />
+                    <button type="submit" disabled={leagueBusy || !leagueInput.trim()} className="btn-secondary btn-sm whitespace-nowrap">
+                      {leagueBusy ? "Scouting…" : "Scout league"}
+                    </button>
+                  </div>
+                </form>
+              </details>
+            </>
           )}
           {leagueBusy && (
             <p className="text-xs text-gray-500 mt-2 animate-pulse">

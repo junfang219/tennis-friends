@@ -289,6 +289,83 @@ export function parseSchedule(html: string): ScheduledMatch[] {
   return matches;
 }
 
+// ── Team search ──────────────────────────────────────────────────────────────
+
+const TEAM_PROFILE_BASE =
+  "https://www.tennisrecord.com/adult/teamprofile.aspx";
+
+export type TeamSearchResult = {
+  name: string;        // display name (anchor text), e.g. "AYTC-Slice Girls"
+  teamUrl: string;     // canonical absolute team-profile URL (re-fetchable)
+  teamKey: string;     // normalized key (matches opponent_teams.source_team_key)
+  leagueType: string;  // "Adult 18+", "Mixed 40+", … ("" if absent)
+  section: string;     // "Pacific NW", … ("" if absent)
+  gender: string;      // "F" / "M" / "X" ("" if absent)
+  ntrp: number | null; // 3.0, 3.5, … (null if absent/unparseable)
+};
+
+// Parse the results of a tennisrecord team search (teamsearch.aspx POST). Each
+// result row is a <td> with a teamprofile.aspx anchor followed by cells for
+// league type, section, gender and NTRP level — the columns a captain uses to
+// pick the right team among same-named results. "No Teams Found" → []. Rows are
+// deduped by normalized team key (the page can echo a result more than once).
+export function parseSearchResults(html: string): TeamSearchResult[] {
+  if (/No Teams Found/i.test(html)) return [];
+
+  const results: TeamSearchResult[] = [];
+  const seen = new Set<string>();
+  for (const rowMatch of html.matchAll(/<tr\b[\s\S]*?<\/tr>/gi)) {
+    const row = rowMatch[0];
+    const anchorMatch =
+      /<a\b[^>]*href\s*=\s*["']([^"']*teamprofile\.aspx\?[^"']*)["'][^>]*>([\s\S]*?)<\/a>/i.exec(
+        row,
+      );
+    if (!anchorMatch) continue;
+
+    const name = stripTags(anchorMatch[2]);
+    if (!name) continue;
+
+    // hrefs come back inconsistently encoded (literal spaces, %27 for "'"),
+    // so normalize to a well-formed absolute URL before parseTeamUrl/new URL.
+    const rawHref = decodeEntities(anchorMatch[1]);
+    const absolute = rawHref.startsWith("http")
+      ? rawHref
+      : `https://www.tennisrecord.com${rawHref}`;
+    // Normalize without double-encoding existing %-escapes: decodeURI turns
+    // %27→' and %20→space, then encodeURI re-encodes only the literal spaces
+    // (it leaves apostrophes and already-encoded reserved chars alone).
+    let safeUrl: string;
+    try {
+      safeUrl = encodeURI(decodeURI(absolute));
+    } catch {
+      safeUrl = absolute.replace(/ /g, "%20");
+    }
+    const parsedUrl = parseTeamUrl(safeUrl);
+    if (!parsedUrl) continue;
+    if (seen.has(parsedUrl.teamKey)) continue;
+    seen.add(parsedUrl.teamKey);
+
+    // Cells after the name carry league type, section, gender, NTRP in order.
+    const cells = [...row.matchAll(/<td\b[\s\S]*?<\/td>/gi)].map((c) =>
+      stripTags(c[0]),
+    );
+    const after = cells.slice(1).filter((c) => c && !/^-+$/.test(c));
+    const ntrpCell = after.find((c) => /^\d\.\d$/.test(c));
+    const genderCell = after.find((c) => /^[FMX]$/i.test(c));
+
+    results.push({
+      name,
+      teamUrl: `${TEAM_PROFILE_BASE}?${parsedUrl.query}`,
+      teamKey: parsedUrl.teamKey,
+      leagueType: after[0] ?? "",
+      section: after[1] ?? "",
+      gender: genderCell ? genderCell.toUpperCase() : "",
+      ntrp: ntrpCell ? Number(ntrpCell) : null,
+    });
+  }
+  return results;
+}
+
 export type OpponentLink = {
   name: string;
   href: string;

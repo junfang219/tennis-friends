@@ -554,8 +554,10 @@ function SwipeTeamRow({
 /* ───────── Create Group Form ───────── */
 
 function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntry[]; onCreated: () => void; onCancel: () => void }) {
+  const router = useRouter();
   const [name, setName] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isUsta, setIsUsta] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const [search, setSearch] = useState("");
@@ -609,6 +611,12 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
         }
       }
       setCreating(false);
+      if (isUsta) {
+        // Hand off to the new team's scouting view to find & import its USTA
+        // league schedule right after setup.
+        router.push(`/groups/${g.id}/scouting?import=usta`);
+        return;
+      }
       onCreated();
     } catch (err) {
       setCreateError(
@@ -630,7 +638,8 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
         <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm" placeholder="e.g. Saturday Doubles Crew" autoFocus />
       </div>
       <div className="mb-4">
-        <label className="block text-sm font-semibold text-gray-700 mb-2">Select Friends ({selectedIds.size} selected)</label>
+        <label className="block text-sm font-semibold text-gray-700 mb-1">Select Friends ({selectedIds.size} selected)</label>
+        <p className="text-xs text-gray-500 mb-2">Optional — you can invite or remove members anytime later from the team roster.</p>
         {friends.length === 0 ? (
           <p className="text-sm text-gray-400 py-4 text-center">No friends to add yet. You can still create the team and add members later.</p>
         ) : (
@@ -679,13 +688,27 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
           </>
         )}
       </div>
+      <label className="mb-4 flex items-start gap-3 p-3 rounded-xl border border-gray-200 cursor-pointer hover:bg-gray-50">
+        <input
+          type="checkbox"
+          checked={isUsta}
+          onChange={(e) => setIsUsta(e.target.checked)}
+          className="mt-0.5 w-4 h-4 accent-court-green"
+        />
+        <span className="text-sm">
+          <span className="font-semibold text-gray-800">This is a USTA league team</span>
+          <span className="block text-xs text-gray-500 mt-0.5">
+            We&apos;ll help you find your team and import its match schedule next — no USTA login needed.
+          </span>
+        </span>
+      </label>
       {createError && (
         <div className="mb-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
           {createError}
         </div>
       )}
       <div className="flex items-center gap-3">
-        <button onClick={handleCreate} disabled={!name.trim() || creating} className="btn-primary">{creating ? "Creating..." : "Create Team"}</button>
+        <button onClick={handleCreate} disabled={!name.trim() || creating} className="btn-primary">{creating ? "Creating..." : isUsta ? "Create & import schedule" : "Create Team"}</button>
         <button onClick={onCancel} className="btn-secondary">Cancel</button>
       </div>
     </div>

@@ -5,11 +5,23 @@ import {
   parseTeamUrl,
   parseTeamProfile,
   parseSchedule,
+  parseSearchResults,
   discoverOpponentLinks,
 } from "./parse";
 
 const fixture = readFileSync(
   join(__dirname, "__fixtures__", "teamprofile.html"),
+  "utf8",
+);
+
+// Live captures of tennisrecord team-search results (teamname "Slice Girls",
+// Pacific NW, 2026) and an empty search — guards against search-markup drift.
+const searchFixture = readFileSync(
+  join(__dirname, "__fixtures__", "searchresults.html"),
+  "utf8",
+);
+const searchEmptyFixture = readFileSync(
+  join(__dirname, "__fixtures__", "searchresults-empty.html"),
   "utf8",
 );
 
@@ -247,5 +259,49 @@ describe("parseTeamProfile (real live capture)", () => {
     expect(angela.ntrpRating).toBe(3.0);
     expect(angela.recordRaw).toBe("7-5");
     expect(angela.dynamicRating).toBeCloseTo(2.85, 2);
+  });
+});
+
+describe("parseSearchResults (real live capture)", () => {
+  const results = parseSearchResults(searchFixture);
+
+  it("extracts every result row with its disambiguation columns", () => {
+    expect(results).toHaveLength(14);
+    const first = results[0];
+    expect(first.name).toBe("AYTC-Slice Girls Don't Blink-Thompson");
+    expect(first.leagueType).toBe("Adult 18+");
+    expect(first.section).toBe("Pacific NW");
+    expect(first.gender).toBe("F");
+    expect(first.ntrp).toBe(3.5);
+  });
+
+  it("disambiguates same-named teams via the &s= team key", () => {
+    const sliceGirls = results.filter((r) => r.name === "Slice Girls");
+    expect(sliceGirls.length).toBeGreaterThan(1);
+    // Every same-named row resolves to a distinct, re-fetchable team key.
+    const keys = sliceGirls.map((r) => r.teamKey);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toContain("teamname=slice girls&year=2026&s=29");
+    const s37 = sliceGirls.find((r) => r.teamKey.endsWith("&s=37"));
+    expect(s37?.ntrp).toBe(2.5); // level still distinguishes some of them
+  });
+
+  it("round-trips %27/space-encoded hrefs into a clean team URL + key", () => {
+    const apos = results.find((r) => r.name.includes("Don't"));
+    expect(apos?.teamKey).toBe(
+      "teamname=aytc-slice girls don't blink-thompson&year=2026",
+    );
+    expect(apos?.teamUrl).toContain("/adult/teamprofile.aspx?");
+    // The canonical URL must be a valid, parseable URL (no raw spaces).
+    expect(() => new URL(apos!.teamUrl)).not.toThrow();
+  });
+
+  it("dedupes to distinct team keys across all results", () => {
+    const keys = results.map((r) => r.teamKey);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("returns [] for a 'No Teams Found' page", () => {
+    expect(parseSearchResults(searchEmptyFixture)).toEqual([]);
   });
 });

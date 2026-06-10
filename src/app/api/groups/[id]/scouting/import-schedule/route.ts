@@ -25,6 +25,7 @@ const Body = z.object({
           .optional(),
         opponentName: z.string().trim().min(1).max(200),
         opponentHref: z.string().trim().max(2000).optional(),
+        matchSite: z.string().trim().max(200).optional(),
       }),
     )
     .min(1)
@@ -83,7 +84,7 @@ export async function POST(
   if (rows.length > 0) {
     const { error: insErr } = await supabase
       .from("team_matches")
-      .insert(rows.map((r) => ({ ...r, group_id: groupId, location: "" })));
+      .insert(rows.map((r) => ({ ...r, group_id: groupId })));
     if (insErr) {
       const status = insErr.code === "42501" ? 403 : 400;
       return NextResponse.json({ error: insErr.message }, { status });

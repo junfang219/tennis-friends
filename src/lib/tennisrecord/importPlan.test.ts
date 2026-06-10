@@ -26,8 +26,20 @@ describe("planScheduleImport", () => {
     const { rows, skipped } = planScheduleImport(candidates, [], teamIds);
     expect(skipped).toBe(0);
     expect(rows).toEqual([
-      { match_date: "2026-06-01", match_time: "", opponent: "Slice Girls", opponent_team_id: "team-slice" },
-      { match_date: "2026-06-08", match_time: "18:30", opponent: "Barrios-Woods", opponent_team_id: null },
+      { match_date: "2026-06-01", match_time: "", opponent: "Slice Girls", opponent_team_id: "team-slice", location: "" },
+      { match_date: "2026-06-08", match_time: "18:30", opponent: "Barrios-Woods", opponent_team_id: null, location: "" },
+    ]);
+  });
+
+  it("carries a real matchSite into location but drops 'TBA'", () => {
+    const withSites = [
+      { ...candidates[0], matchSite: "Amy Yee Tennis Center" },
+      { ...candidates[1], matchSite: "TBA" },
+    ];
+    const { rows } = planScheduleImport(withSites, [], new Map());
+    expect(rows.map((r) => r.location)).toEqual([
+      "Amy Yee Tennis Center",
+      "",
     ]);
   });
 

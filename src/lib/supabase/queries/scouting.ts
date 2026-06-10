@@ -2,6 +2,9 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../types";
+import type { TeamSearchResult } from "@/lib/tennisrecord/parse";
+
+export type { TeamSearchResult };
 
 // Reads for the opponent-scouting feature. Adding/refreshing an opponent goes
 // through POST /api/groups/[id]/scouting (it needs server-side network +
@@ -130,6 +133,59 @@ export interface LeagueScoutResult {
   warnings: string[];
 }
 
+// Find a team on tennisrecord by name (+ optional filters) so the captain can
+// pick theirs without hunting for a URL. Returns the candidate teams; the
+// chosen one's `teamUrl` feeds scoutLeague() to import its schedule.
+export async function searchTeams(
+  groupId: string,
+  params: {
+    teamName: string;
+    year?: string;
+    section?: string;
+    leagueType?: string;
+  },
+): Promise<TeamSearchResult[]> {
+  const res = await fetch(`/api/groups/${groupId}/scouting/search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(json?.error ?? "Could not search tennisrecord.");
+  }
+  return (json.results ?? []) as TeamSearchResult[];
+}
+
+export interface TeamPreview {
+  teamName: string;
+  players: {
+    name: string;
+    ntrpRating: number | null;
+    dynamicRating: number | null;
+    recordRaw: string;
+  }[];
+  schedule: LeagueScheduleMatch[];
+}
+
+// Read-only roster + schedule preview for a candidate team, so the captain can
+// confirm it's theirs (recognize teammates) before committing the import.
+export async function previewTeam(
+  groupId: string,
+  url: string,
+): Promise<TeamPreview> {
+  const res = await fetch(`/api/groups/${groupId}/scouting/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(json?.error ?? "Could not load that team.");
+  }
+  return json as TeamPreview;
+}
+
 // One-paste league scouting: pass the captain's OWN team link; the server
 // discovers and scouts every opponent from the page's Local Schedule.
 export async function scoutLeague(
@@ -163,6 +219,7 @@ export async function importSchedule(
         time: m.time,
         opponentName: m.opponentName,
         opponentHref: m.opponentHref,
+        matchSite: m.matchSite,
       })),
     }),
   });

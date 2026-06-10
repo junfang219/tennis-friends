@@ -10,6 +10,7 @@ export type ImportCandidate = {
   time?: string | null; // 24h HH:MM, or null/absent for TBA
   opponentName: string;
   opponentHref?: string;
+  matchSite?: string; // venue from tennisrecord; "TBA"/"" → blank location
 };
 
 export type ExistingMatch = {
@@ -23,9 +24,16 @@ export type PlannedRow = {
   match_time: string;
   opponent: string;
   opponent_team_id: string | null;
+  location: string;
 };
 
 const normalizeName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+// tennisrecord uses "TBA" for an undecided venue — not a real location.
+const cleanSite = (site: string | undefined) => {
+  const s = (site ?? "").trim();
+  return /^tba$/i.test(s) ? "" : s;
+};
 
 // Resolve an opponent href to its normalized tennisrecord team key ("" if
 // unusable) — the same key opponent_teams.source_team_key stores.
@@ -81,6 +89,7 @@ export function planScheduleImport(
       match_time: candidate.time ?? "",
       opponent: candidate.opponentName,
       opponent_team_id: opponentTeamId,
+      location: cleanSite(candidate.matchSite),
     });
   }
 

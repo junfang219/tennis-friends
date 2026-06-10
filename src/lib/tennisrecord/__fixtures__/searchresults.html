@@ -1,0 +1,540 @@
+
+
+<!DOCTYPE HTML>
+<html lang="en">
+<head>
+	
+        <title>TennisRecord.com - Estimated Tennis Ratings & Stats</title>
+        <meta charset="UTF-8" />
+	    <meta name="description" content="Lookup adult and junior tennis players and stats." />
+	    <meta name="keywords" content="Estimated NTRP ratings, computer ratings, tennis ratings, adult tennis, junior tennis, junior team tennis, tennis stats, tennis rankings" />
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    
+        <link rel="canonical" href="https://www.tennisrecord.com/adult/teamsearch.aspx" />
+    
+
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16x16.png" sizes="16x16" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#5bbad5" />
+    <meta name="theme-color" content="#ffffff" />
+
+	<!-- Main css --> 
+	<link rel="stylesheet" type="text/css" href="/stylesheets/global226.css" />	
+
+    
+        <!-- Global site tag (gtag.js) - Google Analytics -->
+        <script async src="https://www.googletagmanager.com/gtag/js?id=G-T9QVVS0Q6K"></script>
+        <script>
+            window.dataLayer = window.dataLayer || [];
+            function gtag() { dataLayer.push(arguments); }
+            gtag("js", new Date());
+            
+            gtag("config", "G-T9QVVS0Q6K");
+        </script>
+
+        
+                <!-- GeoEdge -->
+                <script>
+                    window.grumi = { key: '92c848ea-8716-40c2-ae5b-3b2f3977c5d3' };
+                </script>
+                <script async type="text/javascript" src="//rumcdn.geoedge.be/grumi-ip.js"></script>
+            
+                    <!-- New PubLift -->
+                    <script async src="https://cdn.fuseplatform.net/publift/tags/2/3301/fuse.js"></script>
+                
+</head>
+
+
+
+<body onload=displayads(); stickycheck();>
+    
+                    <div id="adsticky" class="container-adsticky">
+                        <div class="container-adstickybottom">
+                            <!-- GAM 71161633/TNNSRCRD_tennisrecord/sticky_footer -->
+                            <div class="container-ad" data-fuse="22971196317"></div>
+                        </div>
+                    </div>
+
+                    <!-- Sticky Ad -->
+                    <script>
+                        document.onscroll = function () {
+                            if (window.innerHeight + window.scrollY >= document.body.clientHeight - 100) {
+                                document.getElementById('adsticky').style.display = 'none';
+                            } else {
+                                document.getElementById('adsticky').style.display = 'block';
+                            }
+                        }
+
+                        function stickycheck() {
+                            if (window.innerHeight + window.scrollY >= document.body.clientHeight - 100) {
+                                document.getElementById('adsticky').style.display = 'none';
+                            } else {
+                                document.getElementById('adsticky').style.display = 'block';
+                                clearTimeout(timer1);
+                            }
+
+                            if (document.getElementById('time1').innerHTML >= 10) { clearTimeout(timer1); }
+                        }
+
+                        timer1 = setInterval(stickycheck, 1000);
+                    </script>
+                
+
+    <header class="header">
+        <div class="headercontainer">
+            <div class="wrapper">
+                <div class="logo" style="display:table-cell; vertical-align:middle;">
+                    <a href="/index.aspx">
+                        <div class="logo-image"></div>
+                        <div class="logo-title">TENNIS<span style="color:#ffffff;">RECORD</span></div>
+                    </a>
+                </div>
+
+                <div class="containermenu" style="display:table-cell; vertical-align:middle;">
+                    <input id="menu-btn" class="menu-btn" type="checkbox" />
+                    <label for="menu-btn" class="menu-icon"><span class="navicon"></span></label>
+
+                    <ul class="menu menu-inner-pos">
+                        <li><a href="/adult/ratingssection.aspx">player ratings</a></li>
+                        <li><a href="/adult/search.aspx">player search</a></li>
+                        <li><a href="/adult/teamsearch.aspx">team search</a></li>
+                        <li><a href="/adult/league/index.aspx">find league</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div>
+            <div class="header-footer">
+                <span>Statistical Analysis and Estimated Tennis Ratings to the 10,000th of a Point</span>
+            </div>
+        </div>
+    </header>
+
+    <div class="content">
+        <div class="contentcenter">
+            
+                <div id="leftsticky" class="container-stickytopleft">
+                    <!-- Left Side Bar Sticky -->
+                    <!-- GAM 71161633/TNNSRCRD_tennisrecord/search_vrec_1 -->
+                    <div data-fuse="22981108270"></div>
+                </div>
+            
+
+            <div class="container">
+        	    
+                        <div id="adheader" class="container-adheader">
+                            <div class="container-adheadercenter">
+                                <!-- GAM 71161633/TNNSRCRD_tennisrecord/search_header -->
+                                <div class="container-ad" data-fuse="22971196305"></div>
+                            </div>
+                        </div>
+                    
+
+                <main>
+                    <div class="container-page">
+                        <div id="time1" style="display:none;"></div>
+
+
+
+<div class="wrapper1000">
+    <div class="container496">
+        <table style="margin:auto; width:100%;" class="responsive14">
+            <tr style="height:50px; color:#7a7a7a; background-color:#f9f9f9; border-bottom:1px solid #ddd;">
+                <td style="text-align:center; font-weight:bold;" class="responsive18">Team Search</td>
+            </tr>
+            <tr style="height:50px; color:#7a7a7a; background-color:#f9f9f9; border-bottom:1px solid #ddd;">
+                <td style="text-align:center;">Select year, specify options, and enter team name</td>
+            </tr>
+        </table>
+
+        <form action="/adult/teamsearch.aspx" method="post" name="searchform">
+            <table style="margin:auto;" class="responsive14">
+                <tr style="height:45px;">
+                    <td style="text-align:right;">Year</td>
+                    <td style="text-align:left;">
+                        
+
+                        <select style="padding:5px; border:1px solid #ddd; border-radius:4px;" name="yearnum">
+                            
+                                    <option value="2026" selected>2026</option>
+                                
+                                    <option value="2025">2025</option>
+                                
+                                    <option value="2024">2024</option>
+                                
+                                    <option value="2023">2023</option>
+                                
+                                    <option value="2022">2022</option>
+                                
+                                    <option value="2021">2021</option>
+                                
+                                    <option value="2020">2020</option>
+                                
+                                    <option value="2019">2019</option>
+                                
+                                    <option value="2018">2018</option>
+                                
+                                    <option value="2017">2017</option>
+                                
+                                    <option value="2016">2016</option>
+                                
+                                    <option value="2015">2015</option>
+                                
+                                    <option value="2014">2014</option>
+                                
+                        </select>
+                    </td>
+                </tr>
+                <tr style="height:45px;">
+                    <td style="text-align:right;">League Type</td>
+                    <td style="text-align:left;">
+                        
+
+                        <select style="padding:5px; border:1px solid #ddd; border-radius:4px;" name="leaguetypename">
+                            
+                                <option value="" selected>All</option>
+                            
+                                    <option value="Adult 18+">Adult 18+</option>
+                                
+                                    <option value="Adult 40+">Adult 40+</option>
+                                
+                                    <option value="Adult 55+">Adult 55+</option>
+                                
+                                    <option value="Adult 65+">Adult 65+</option>
+                                
+                                    <option value="Adult 70+">Adult 70+</option>
+                                
+                                    <option value="Adult Other">Adult Other</option>
+                                
+                                    <option value="Combo">Combo</option>
+                                
+                                    <option value="Mixed 18+">Mixed 18+</option>
+                                
+                                    <option value="Mixed 40+">Mixed 40+</option>
+                                
+                                    <option value="Mixed Other">Mixed Other</option>
+                                
+                                    <option value="Tri-Level 18+">Tri-Level 18+</option>
+                                
+                                    <option value="Tri-Level 40+">Tri-Level 40+</option>
+                                
+                                    <option value="Tri-Level 55+">Tri-Level 55+</option>
+                                
+                                    <option value="Flex Format">Flex Format</option>
+                                
+                                    <option value="Adult 18-39">Adult 18-39</option>
+                                
+                        </select>
+                    </td>
+                </tr>
+                <tr style="height:45px;">
+                    <td style="text-align:right;">Section</td>
+                    <td style="text-align:left;">
+                        
+
+                        <select style="padding:5px; border:1px solid #ddd; border-radius:4px;" name="sectionname">
+                            
+                                <option value="">All</option>
+                            
+                                    <option value="Caribbean">Caribbean</option>
+                                
+                                    <option value="Eastern">Eastern</option>
+                                
+                                    <option value="Florida">Florida</option>
+                                
+                                    <option value="Foreign">Foreign</option>
+                                
+                                    <option value="Hawaii">Hawaii</option>
+                                
+                                    <option value="Intermountain">Intermountain</option>
+                                
+                                    <option value="Mid-Atlantic">Mid-Atlantic</option>
+                                
+                                    <option value="Middle States">Middle States</option>
+                                
+                                    <option value="Midwest">Midwest</option>
+                                
+                                    <option value="Missouri Valley">Missouri Valley</option>
+                                
+                                    <option value="New England">New England</option>
+                                
+                                    <option value="No California">No California</option>
+                                
+                                    <option value="Northern">Northern</option>
+                                
+                                    <option value="Pacific NW" selected>Pacific NW</option>
+                                
+                                    <option value="So California">So California</option>
+                                
+                                    <option value="Southern">Southern</option>
+                                
+                                    <option value="Southwest">Southwest</option>
+                                
+                                    <option value="Texas">Texas</option>
+                                
+                        </select>
+                    </td>
+                </tr>
+                <tr style="height:45px;">
+                    <td style="text-align:right;">Team Name</td>
+                    <td style="text-align:left;"><input type="text" name="teamname" size="20" maxlength="100" style="padding:5px; border:1px solid #ddd; border-radius:4px;" value="Slice Girls"/></td>
+                </tr>
+            </table>
+            <table style="margin:auto; width:100%;" class="responsive14">
+                <tr style="height:45px; border-top:1px solid #ddd;">
+                    <td><input style="padding:5px; border:1px solid #ddd; border-radius:4px;" type="submit" value="SUBMIT" /></td>
+                </tr>
+            </table>
+        </form>
+    </div>
+
+    
+        <div class="wrapper1000" style="margin-top:16px;">
+            
+                <div style="text-align:left; padding-left:5px; font-size:12px;">14 team(s) found for Slice Girls.</div>
+            
+        </div>
+
+        <div class="container1000" style="margin:0;">
+            <table style="margin:auto; width:100%;" class="responsive14">
+                <tr style="height:50px; color:#7a7a7a; background-color:#f9f9f9; border-bottom:1px solid #ddd;">
+                    <th style="text-align:left;" class="responsivewidth padding10">Team Name</th>
+                    <th style="text-align:center;" class="hide">Type</th>
+                    <th style="text-align:center;" class="hide">Section</th>
+                    <th style="text-align:center;">Gender</th>
+                    <th style="text-align:center;">Rating</th>
+                    <th style="text-align:center;">Match Start</th>
+                </tr>
+                
+                        <tr style="height:45px; border-bottom:1px solid #ddd;">
+                            <td style="text-align:left;" class="responsivewidth padding10"><a class="link" href="/adult/teamprofile.aspx?year=2026&teamname=AYTC-Slice Girls Don%27t Blink-Thompson">AYTC-Slice Girls Don't Blink-Thompson</a></td>
+                            <td style="text-align:center;" class="hide">Adult 18+</td>
+                            <td style="text-align:center;" class="hide">Pacific NW</td>
+                            <td style="text-align:center;">F</td>
+                            <td style="text-align:center;">3.5</td>
+                            <td style="text-align:center;">
+                                
+                                    ----------
+                                
+                            </td>
+                        </tr>
+                    
+                        <tr style="height:45px; border-bottom:1px solid #ddd;">
+                            <td style="text-align:left;" class="responsivewidth padding10"><a class="link" href="/adult/teamprofile.aspx?year=2026&teamname=PFC-The Slice Girls">PFC-The Slice Girls</a></td>
+                            <td style="text-align:center;" class="hide">Adult 18+</td>
+                            <td style="text-align:center;" class="hide">Pacific NW</td>
+                            <td style="text-align:center;">F</td>
+                            <td style="text-align:center;">3.5</td>
+                            <td style="text-align:center;">
+                                
+                                    ----------
+                                
+                            </td>
+                        </tr>
+                    
+                        <tr style="height:45px; border-bottom:1px solid #ddd;">
+                            <td style="text-align:left;" class="responsivewidth padding10"><a class="link" href="/adult/teamprofile.aspx?year=2026&teamname=TUK-Slice Girls-Wines">TUK-Slice Girls-Wines</a></td>
+                            <td style="text-align:center;" class="hide">Adult 18+</td>
+                            <td style="text-align:center;" class="hide">Pacific NW</td>
+                            <td style="text-align:center;">F</td>
+                            <td style="text-align:center;">3.0</td>
+                            <td style="text-align:center;">
+                                
+                                    ----------
+                                
+                            </td>
+                        </tr>
+                    
+                        <tr style="height:45px; border-bottom:1px solid #ddd;">
+                            <td style="text-align:left;" class="responsivewidth padding10"><a class="link" href="/adult/teamprofile.aspx?year=2026&teamname=AYTC-Slice Girls-Cowden-Templeton">AYTC-Slice Girls-Cowden-Templeton</a></td>
+                            <td style="text-align:center;" class="hide">Adult 40+</td>
+                            <td style="text-align:center;" class="hide">Pacific NW</td>
+                            <td style="text-align:center;">F</td>
+                            <td style="text-align:center;">3.5</td>
+                            <td style="text-align:center;">
+                                
+                                    ----------
+                                
+                            </td>
+                        </tr>
+                    
+                        <tr style="height:45px; border-bottom:1px solid #ddd;">
+                            <td style="text-align:left;" class="responsivewidth padding10"><a class="link" href="/adult/teamprofile.aspx?year=2026&teamname=BC-Slice Girls-D%27Souza">BC-Slice Girls-D'Souza</a></td>
+                            <td style="text-align:center;" class="hide">Adult 40+</td>
+                            <td style="text-align:center;" class="hide">Pacific NW</td>
+                            <td style="text-align:center;">F</td>
+                            <td style="text-align:center;">3.0</td>
+                            <td style="text-align:center;">
+                                
+                                    ----------
+                                
+                            </td>
+                        </tr>
+                    
+                        <tr style="height:45px; border-bottom:1px solid #ddd;">
+                            <td style="text-align:left;" class="responsivewidth padding10"><a class="link" href="/adult/teamprofile.aspx?year=2026&teamname=Slice Girls&s=29">Slice Girls</a></td>
+                            <td style="text-align:center;" class="hide">Adult Other</td>
+                            <td style="text-align:center;" class="hide">Pacific NW</td>
+                            <td style="text-align:center;">F</td>
+                            <td style="text-align:center;">3.0</td>
+                            <td style="text-align:center;">
+                                
+                                    ----------
+                                
+                            </td>
+                        </tr>
+                    
+                        <tr style="height:45px; border-bottom:1px solid #ddd;">
+                            <td style="text-align:left;" class="responsivewidth padding10"><a class="link" href="/adult/teamprofile.aspx?year=2026&teamname=Slice Girls&s=33">Slice Girls</a></td>
+                            <td style="text-align:center;" class="hide">Adult Other</td>
+                            <td style="text-align:center;" class="hide">Pacific NW</td>
+                            <td style="text-align:center;">F</td>
+                            <td style="text-align:center;">3.0</td>
+                            <td style="text-align:center;">
+                                
+                                    ----------
+                                
+                            </td>
+                        </tr>
+                    
+                        <tr style="height:45px; border-bottom:1px solid #ddd;">
+                            <td style="text-align:left;" class="responsivewidth padding10"><a class="link" href="/adult/teamprofile.aspx?year=2026&teamname=Slice Girls&s=34">Slice Girls</a></td>
+                            <td style="text-align:center;" class="hide">Adult Other</td>
+                            <td style="text-align:center;" class="hide">Pacific NW</td>
+                            <td style="text-align:center;">F</td>
+                            <td style="text-align:center;">3.5</td>
+                            <td style="text-align:center;">
+                                
+                                    ----------
+                                
+                            </td>
+                        </tr>
+                    
+                        <tr style="height:45px; border-bottom:1px solid #ddd;">
+                            <td style="text-align:left;" class="responsivewidth padding10"><a class="link" href="/adult/teamprofile.aspx?year=2026&teamname=Slice Girls&s=37">Slice Girls</a></td>
+                            <td style="text-align:center;" class="hide">Adult Other</td>
+                            <td style="text-align:center;" class="hide">Pacific NW</td>
+                            <td style="text-align:center;">F</td>
+                            <td style="text-align:center;">2.5</td>
+                            <td style="text-align:center;">
+                                
+                                    ----------
+                                
+                            </td>
+                        </tr>
+                    
+                        <tr style="height:45px; border-bottom:1px solid #ddd;">
+                            <td style="text-align:left;" class="responsivewidth padding10"><a class="link" href="/adult/teamprofile.aspx?year=2026&teamname=Slice Girls&s=38">Slice Girls</a></td>
+                            <td style="text-align:center;" class="hide">Adult Other</td>
+                            <td style="text-align:center;" class="hide">Pacific NW</td>
+                            <td style="text-align:center;">F</td>
+                            <td style="text-align:center;">3.0</td>
+                            <td style="text-align:center;">
+                                
+                                    ----------
+                                
+                            </td>
+                        </tr>
+                    
+                        <tr style="height:45px; border-bottom:1px solid #ddd;">
+                            <td style="text-align:left;" class="responsivewidth padding10"><a class="link" href="/adult/teamprofile.aspx?year=2026&teamname=Slice Girls&s=39">Slice Girls</a></td>
+                            <td style="text-align:center;" class="hide">Adult Other</td>
+                            <td style="text-align:center;" class="hide">Pacific NW</td>
+                            <td style="text-align:center;">F</td>
+                            <td style="text-align:center;">3.5</td>
+                            <td style="text-align:center;">
+                                
+                                    ----------
+                                
+                            </td>
+                        </tr>
+                    
+                        <tr style="height:45px; border-bottom:1px solid #ddd;">
+                            <td style="text-align:left;" class="responsivewidth padding10"><a class="link" href="/adult/teamprofile.aspx?year=2026&teamname=Slice Girls&s=40">Slice Girls</a></td>
+                            <td style="text-align:center;" class="hide">Adult Other</td>
+                            <td style="text-align:center;" class="hide">Pacific NW</td>
+                            <td style="text-align:center;">F</td>
+                            <td style="text-align:center;">3.0</td>
+                            <td style="text-align:center;">
+                                
+                                    ----------
+                                
+                            </td>
+                        </tr>
+                    
+                        <tr style="height:45px; border-bottom:1px solid #ddd;">
+                            <td style="text-align:left;" class="responsivewidth padding10"><a class="link" href="/adult/teamprofile.aspx?year=2026&teamname=The Slice Girls&s=2">The Slice Girls</a></td>
+                            <td style="text-align:center;" class="hide">Adult Other</td>
+                            <td style="text-align:center;" class="hide">Pacific NW</td>
+                            <td style="text-align:center;">F</td>
+                            <td style="text-align:center;">3.0</td>
+                            <td style="text-align:center;">
+                                
+                                    ----------
+                                
+                            </td>
+                        </tr>
+                    
+                        <tr style="height:45px;">
+                            <td style="text-align:left;" class="responsivewidth padding10"><a class="link" href="/adult/teamprofile.aspx?year=2026&teamname=The Slice Girls&s=4">The Slice Girls</a></td>
+                            <td style="text-align:center;" class="hide">Adult Other</td>
+                            <td style="text-align:center;" class="hide">Pacific NW</td>
+                            <td style="text-align:center;">F</td>
+                            <td style="text-align:center;">3.0</td>
+                            <td style="text-align:center;">
+                                
+                                    ----------
+                                
+                            </td>
+                        </tr>
+                    
+            </table>
+        </div>
+    
+</div>
+
+
+                            <div class="wrapper336to728" style="margin-top: 50px;">
+                                <div id="adrectangle" class="container-adrectangle">
+                                    <!-- GAM 71161633/TNNSRCRD_tennisrecord/search_mrec_1 -->
+                                    <div class="container-ad" data-fuse="22971196311"></div>
+                                </div>
+
+                                <div id="adrectangle2" class="container-adrectangle hidead3-2">
+                                    <!-- GAM 71161633/TNNSRCRD_tennisrecord/search_mrec_2 -->
+                                    <div class="container-ad" data-fuse="22971196314"></div>
+                                </div>    
+                            </div>    
+                        </div>
+
+                        <div id="adtrailer" class="container-adtrailer" style="margin-top: 8px;">
+                            <!-- GAM 71161633/TNNSRCRD_tennisrecord/search_hrec -->
+                            <div class="container-ad" data-fuse="22971196308"></div>
+                        </div>
+                    
+                </main>
+
+                <div style="width:100%; text-align:center; padding: 50px 0px 20px 0px;">
+                    This site is not affiliated, endorsed, or associated by or with the USTA in any manner nor are the ratings affiliated with the NTRP rating system.<br>
+                    Copyright &copy; 2016-2026 <a class="link" href="/index.aspx" title="TennisRecord.com">TennisRecord.com</a> All rights reserved.
+                    <br><br>
+                    <a class="link" href="/privacy.aspx" title="Privacy Policy">Privacy Policy</a>&nbsp;&nbsp;|&nbsp;&nbsp;<a class="link" href="/sitemap.aspx" title="Sitemap">Sitemap</a>
+                </div>
+            </div>
+
+            
+                <div id="rightsticky" class="container-stickytopright">
+                    <!-- Right Side Bar Sticky -->
+                    <!-- GAM 71161633/TNNSRCRD_tennisrecord/search_vrec_2 -->
+                    <div data-fuse="22981184638"></div>
+                </div>
+            
+        </div>
+    </div>
+</body>
+</html>
