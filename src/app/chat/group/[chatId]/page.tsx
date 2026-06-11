@@ -675,7 +675,7 @@ export default function GroupChatThreadPage() {
   // + input bar follow the keyboardHeight from useKeyboardHeight
   // (Capacitor events on native, VisualViewport on web).
   const surface = (
-    <div className={isDesktop ? "absolute inset-0 flex flex-col bg-surface" : "fixed inset-0 z-50 flex flex-col bg-surface"}>
+    <div data-keyboard-dismiss="off" className={isDesktop ? "absolute inset-0 flex flex-col bg-surface" : "fixed inset-0 z-50 flex flex-col bg-surface"}>
       {/* Header. paddingTop pulls in the iOS top safe area
           (notch / dynamic island). */}
       <div

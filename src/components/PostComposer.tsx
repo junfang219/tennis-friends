@@ -24,6 +24,7 @@ import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 import { errorMessage } from "@/lib/errorMessage";
 import { computeCourtFacilityId } from "@/lib/facilities";
 import CourtLocationPicker from "./CourtLocationPicker";
+import { useKeyboardHeight } from "@/hooks/useKeyboardHeight";
 
 const PLACEHOLDERS = [
   "Just finished a great match...",
@@ -189,6 +190,10 @@ export function ComposerModal({
   onPost: (post: Record<string, unknown>) => void;
   onClose: () => void;
 }) {
+  // This modal is a fixed full-screen portal, so the global body bottom-padding
+  // from KeyboardAssist doesn't reach it — reserve our own room so the lower
+  // fields can scroll above the keyboard + Done bar.
+  const keyboardHeight = useKeyboardHeight();
   const [content, setContent] = useState("");
   const [posting, setPosting] = useState(false);
   const [postError, setPostError] = useState("");
@@ -717,6 +722,7 @@ export function ComposerModal({
     >
       <div
         className="bg-white w-full sm:max-w-lg sm:rounded-2xl shadow-2xl min-h-screen sm:min-h-0 sm:my-8 flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] sm:pt-0 sm:pb-0"
+        style={keyboardHeight > 0 ? { paddingBottom: `${keyboardHeight}px` } : undefined}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

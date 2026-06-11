@@ -4,6 +4,7 @@ import Navbar from "@/components/Navbar";
 import BottomNav from "@/components/BottomNav";
 import PushRegistrar from "@/components/PushRegistrar";
 import KeyboardInit from "@/components/KeyboardInit";
+import KeyboardAssist from "@/components/KeyboardAssist";
 import LastActiveHeartbeat from "@/components/LastActiveHeartbeat";
 import AppUrlOpenListener from "@/components/AppUrlOpenListener";
 import AuthRefreshController from "@/components/AuthRefreshController";
@@ -42,6 +43,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-surface" suppressHydrationWarning>
         <PushRegistrar />
         <KeyboardInit />
+        <KeyboardAssist />
         <AuthRefreshController />
         <LastActiveHeartbeat />
         <AppUrlOpenListener />
