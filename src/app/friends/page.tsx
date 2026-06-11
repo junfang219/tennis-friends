@@ -638,11 +638,33 @@ export default function FriendsPage() {
 
   const saveEditGroup = async () => {
     if (!editingGroupId) return;
-    setGroupSaving(true);
     const original = friendGroups.find((g) => g.id === editingGroupId);
     const originalIds = original?.members.map((m) => m.user.id) || [];
     const addMemberIds = editGroupMembers.filter((id) => !originalIds.includes(id));
     const removeMemberIds = originalIds.filter((id) => !editGroupMembers.includes(id));
+
+    // When membership changes, confirm — and remind that the same people are
+    // added to / removed from this circle's group chat, which is kept in sync.
+    if (addMemberIds.length > 0 || removeMemberIds.length > 0) {
+      const nameOf = (id: string) =>
+        original?.members.find((m) => m.user.id === id)?.user.name ??
+        data?.friends.find((f) => f.user.id === id)?.user.name ??
+        "this member";
+      const lines: string[] = [];
+      if (addMemberIds.length > 0) {
+        lines.push(
+          `Add ${addMemberIds.map(nameOf).join(", ")} — they'll also be added to the circle group chat.`
+        );
+      }
+      if (removeMemberIds.length > 0) {
+        lines.push(
+          `Remove ${removeMemberIds.map(nameOf).join(", ")} — they'll also be removed from the circle group chat.`
+        );
+      }
+      if (!confirm(`${lines.join("\n")}\n\nContinue?`)) return;
+    }
+
+    setGroupSaving(true);
     const supabase = createSupabaseBrowserClient();
     await supabase
       .from("friend_groups")
@@ -660,8 +682,35 @@ export default function FriendsPage() {
         .eq("friend_group_id", editingGroupId)
         .in("user_id", removeMemberIds);
     }
+
+    // Keep the circle's group chat membership in sync with the circle itself.
+    // The chat is created lazily (see openFriendGroupChat), so only sync if one
+    // already backs this circle.
+    if (addMemberIds.length > 0 || removeMemberIds.length > 0) {
+      const { data: chat } = await supabase
+        .from("chats")
+        .select("id")
+        .eq("friend_group_id", editingGroupId)
+        .maybeSingle();
+      if (chat?.id) {
+        if (addMemberIds.length > 0) {
+          await supabase.from("chat_participants").insert(
+            addMemberIds.map((uid) => ({ chat_id: chat.id, user_id: uid }))
+          );
+        }
+        if (removeMemberIds.length > 0) {
+          await supabase
+            .from("chat_participants")
+            .delete()
+            .eq("chat_id", chat.id)
+            .in("user_id", removeMemberIds);
+        }
+      }
+    }
+
     setEditingGroupId(null);
     loadFriendGroups();
+    loadChats();
     setGroupSaving(false);
   };
 
