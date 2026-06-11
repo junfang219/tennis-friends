@@ -6,6 +6,7 @@ import {
   makeTestUser,
   type TestUser,
 } from "./_helpers";
+import { leaveClub } from "@/lib/supabase/queries";
 
 // Reusable club QR invite link (friend_group_invite_links) end-to-end against
 // the live project. This is the feature that lets a club bring in NON-friends /
@@ -311,6 +312,53 @@ describe.skipIf(!integrationEnvReady)("Club QR invite link (live Supabase)", () 
       });
       expect(error).toBeNull();
       expect((accepted as { ok: boolean }).ok).toBe(true);
+    });
+  });
+
+  // Voluntary leave: a member removes themselves from the club + its chat.
+  describe("leaving a club", () => {
+    it("a member leaves: removed from the club and its chat, loses chat access", async () => {
+      await leaveClub(joinerB.client, clubId); // joinerB joined earlier
+
+      const admin = adminClient();
+      const { data: mem } = await admin
+        .from("friend_group_members")
+        .select("id")
+        .eq("friend_group_id", clubId)
+        .eq("user_id", joinerB.id);
+      expect(mem?.length).toBe(0);
+
+      const { data: part } = await admin
+        .from("chat_participants")
+        .select("user_id")
+        .eq("chat_id", chatId)
+        .eq("user_id", joinerB.id);
+      expect(part?.length).toBe(0);
+
+      // RLS: the leaver can no longer read the club chat.
+      const { data: chatRow } = await joinerB.client.from("chats").select("id").eq("id", chatId);
+      expect(chatRow?.length).toBe(0);
+
+      // The club and the owner are unaffected.
+      const { data: roster } = await admin
+        .from("friend_group_members")
+        .select("user_id")
+        .eq("friend_group_id", clubId);
+      expect(roster?.some((m) => m.user_id === owner.id)).toBe(true);
+      expect(roster?.some((m) => m.user_id === joinerB.id)).toBe(false);
+    });
+
+    it("a member who left can rejoin via the link (the seat is freed)", async () => {
+      const { error } = await joinerB.client.rpc("accept_club_invite_link", { p_token: token });
+      expect(error).toBeNull();
+
+      const admin = adminClient();
+      const { data: mem } = await admin
+        .from("friend_group_members")
+        .select("id")
+        .eq("friend_group_id", clubId)
+        .eq("user_id", joinerB.id);
+      expect(mem?.length).toBe(1);
     });
   });
 });

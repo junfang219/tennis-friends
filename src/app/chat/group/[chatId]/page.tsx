@@ -27,6 +27,7 @@ import {
   removeReaction,
   listReactionsForMessages,
   loadSharedPosts,
+  leaveClub,
 } from "@/lib/supabase/queries";
 import { toChatMessageCamel } from "@/lib/supabase/adapters";
 import { errorMessage } from "@/lib/errorMessage";
@@ -48,6 +49,12 @@ type ChatInfo = {
   name: string;
   creatorId: string;
   friendGroupId: string | null;
+  /** For friend-group-backed chats (clubs/circles), the group kind — drives the
+   *  "Leave club"/"Leave circle" menu wording. Null for session/game chats. */
+  friendGroupKind: "club" | "circle" | null;
+  /** Authoritative owner of the backing friend group; the owner can't leave
+   *  (deleting the group is their exit). Null for session/game chats. */
+  friendGroupOwnerId: string | null;
   participants: { id: string; name: string; profileImageUrl: string }[];
   guestNames: string[];
 };
@@ -260,11 +267,26 @@ export default function GroupChatThreadPage() {
           return;
         }
         const { chat: c, participants, messages: msgs } = bundle;
+        // Resolve club vs circle for friend-group-backed chats so "Leave"
+        // can be worded correctly. Cheap single-row read; only group chats.
+        let friendGroupKind: "club" | "circle" | null = null;
+        let friendGroupOwnerId: string | null = null;
+        if (c.friend_group_id) {
+          const { data: fg } = await supabase
+            .from("friend_groups")
+            .select("kind, owner_id")
+            .eq("id", c.friend_group_id)
+            .maybeSingle();
+          friendGroupKind = (fg?.kind as "club" | "circle" | null) ?? null;
+          friendGroupOwnerId = fg?.owner_id ?? null;
+        }
         setChatInfo({
           id: c.id,
           name: c.name,
           creatorId: c.creator_id,
           friendGroupId: c.friend_group_id,
+          friendGroupKind,
+          friendGroupOwnerId,
           participants: participants.map((p) => ({
             id: p.user.id,
             name: p.user.name,
@@ -549,11 +571,29 @@ export default function GroupChatThreadPage() {
   };
 
   const leaveChat = async () => {
-    if (!confirm("Leave this chat? You won't see new messages.")) return;
     const supabase = createSupabaseBrowserClient();
     const { data: auth } = await supabase.auth.getUser();
     if (!auth.user) return;
-    // Soft-leave: hide the participant row for this user.
+
+    // Club/circle chats: a real, permanent leave — remove the member from the
+    // group and its chat (frees a seat, stops messages/pushes, doesn't
+    // re-surface on the next message the way a soft-hide does). The owner is
+    // gated out in the menu; deleting the group is their exit (from /friends).
+    if (chatInfo?.friendGroupId) {
+      const noun = chatInfo.friendGroupKind === "circle" ? "circle" : "club";
+      if (!confirm(`Leave ${chatInfo.name}? You'll be removed from the ${noun} and its chat.`)) return;
+      try {
+        await leaveClub(supabase, chatInfo.friendGroupId);
+        router.push("/friends");
+      } catch (err) {
+        setSendError(errorMessage(err, "Couldn't leave."));
+      }
+      return;
+    }
+
+    // Session/game chats: soft-leave (hide the participant row). These are
+    // ephemeral and auto-remove after the game, so hiding is the right scope.
+    if (!confirm("Leave this chat? You won't see new messages.")) return;
     const { error: hideErr } = await supabase
       .from("chat_participants")
       .update({ hidden_at: new Date().toISOString() })
@@ -1204,17 +1244,28 @@ export default function GroupChatThreadPage() {
               <span className="text-base">🧹</span>
               <span>Clear chat history</span>
             </button>
-            <div className="border-t border-gray-100" />
-            <button
-              onClick={() => {
-                setShowMenu(false);
-                leaveChat();
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-50 text-left text-sm text-red-600"
-            >
-              <span className="text-base">🚪</span>
-              <span>Leave chat</span>
-            </button>
+            {/* The club/circle owner can't leave their own group — deleting it
+                (from the Chats list) is their exit. Everyone else can leave;
+                session chats are always leavable (soft-hide). */}
+            {!(chatInfo.friendGroupId && myId === chatInfo.friendGroupOwnerId) && (
+              <>
+                <div className="border-t border-gray-100" />
+                <button
+                  onClick={() => {
+                    setShowMenu(false);
+                    leaveChat();
+                  }}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-50 text-left text-sm text-red-600"
+                >
+                  <span className="text-base">🚪</span>
+                  <span>
+                    {chatInfo.friendGroupId
+                      ? `Leave ${chatInfo.friendGroupKind === "circle" ? "circle" : "club"}`
+                      : "Leave chat"}
+                  </span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
