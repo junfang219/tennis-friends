@@ -31,19 +31,22 @@ export function ClubQRModal({ clubId, clubName, inviterName, onClose }: Props) {
   const [loadError, setLoadError] = useState("");
   const [shareNote, setShareNote] = useState("");
   const [isOwner, setIsOwner] = useState(false);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [resetting, setResetting] = useState(false);
 
-  // Fetch-or-create the stable QR token on open.
+  // Fetch-or-create the stable QR token on open. Opening the modal also slides
+  // the link's expiry forward, so a club that's actively inviting never lapses.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const supabase = createSupabaseBrowserClient();
-        const { token, isOwner: owner } = await getOrCreateClubInviteLink(supabase, clubId);
+        const { token, isOwner: owner, expiresAt: exp } = await getOrCreateClubInviteLink(supabase, clubId);
         if (cancelled) return;
         setUrl(`${publicSiteUrl()}/club-invite/${token}`);
         setIsOwner(owner);
+        setExpiresAt(exp);
       } catch (err) {
         if (cancelled) return;
         setLoadError(errorMessage(err, "Couldn't create the invite."));
@@ -59,8 +62,9 @@ export function ClubQRModal({ clubId, clubName, inviterName, onClose }: Props) {
     setShareNote("");
     try {
       const supabase = createSupabaseBrowserClient();
-      const { token } = await rotateClubInviteLink(supabase, clubId);
+      const { token, expiresAt: exp } = await rotateClubInviteLink(supabase, clubId);
       setUrl(`${publicSiteUrl()}/club-invite/${token}`);
+      setExpiresAt(exp);
       setConfirmingReset(false);
       setShareNote("Link reset. The old QR no longer works.");
     } catch (err) {
@@ -165,6 +169,17 @@ export function ClubQRModal({ clubId, clubName, inviterName, onClose }: Props) {
                 Point a phone camera at this code, or send the link. New to TennisFriend? They can
                 sign up and they&apos;ll land right in the {clubName} chat.
               </p>
+              {expiresAt && (
+                <p className="text-[11px] text-gray-400 mt-2">
+                  Expires{" "}
+                  {new Date(expiresAt).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                  {" "}· refreshes each time you open this. Clubs hold up to 100 members.
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => void share()}

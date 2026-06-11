@@ -225,7 +225,7 @@ export async function deleteClub(
 export async function getOrCreateClubInviteLink(
   supabase: SupabaseClient<Database>,
   clubId: string
-): Promise<{ token: string; clubName: string; friendGroupId: string; isOwner: boolean }> {
+): Promise<{ token: string; clubName: string; friendGroupId: string; isOwner: boolean; expiresAt: string | null }> {
   const { data, error } = await supabase.rpc("get_or_create_club_invite_link", {
     p_friend_group_id: clubId,
   });
@@ -235,6 +235,7 @@ export async function getOrCreateClubInviteLink(
     club_name?: string;
     friend_group_id?: string;
     is_owner?: boolean;
+    expires_at?: string;
   } | null;
   if (!result?.token) throw new Error("Couldn't create the invite link.");
   return {
@@ -242,38 +243,46 @@ export async function getOrCreateClubInviteLink(
     clubName: result.club_name ?? "",
     friendGroupId: result.friend_group_id ?? clubId,
     isOwner: !!result.is_owner,
+    expiresAt: result.expires_at ?? null,
   };
 }
 
 /** Owner-only. Reset the club's QR link to a fresh token, immediately
- *  invalidating the old QR everywhere. Returns the new token. */
+ *  invalidating the old QR everywhere. Returns the new token + expiry. */
 export async function rotateClubInviteLink(
   supabase: SupabaseClient<Database>,
   clubId: string
-): Promise<{ token: string }> {
+): Promise<{ token: string; expiresAt: string | null }> {
   const { data, error } = await supabase.rpc("rotate_club_invite_link", {
     p_friend_group_id: clubId,
   });
   if (error) throw new Error(error.message);
-  const result = data as { token?: string } | null;
+  const result = data as { token?: string; expires_at?: string } | null;
   if (!result?.token) throw new Error("Couldn't reset the invite link.");
-  return { token: result.token };
+  return { token: result.token, expiresAt: result.expires_at ?? null };
 }
 
 /** Public preview of a club invite link (club + inviter name) for the
- *  /club-invite landing page — callable before the visitor signs in. */
+ *  /club-invite landing page — callable before the visitor signs in.
+ *  `expired` lets the page short-circuit before account creation. */
 export async function getClubInviteLink(
   supabase: SupabaseClient<Database>,
   token: string
-): Promise<{ friendGroupId: string; clubName: string; inviterName: string } | null> {
+): Promise<{ friendGroupId: string; clubName: string; inviterName: string; expired: boolean } | null> {
   const { data, error } = await supabase.rpc("get_club_invite_link", { p_token: token });
   if (error) throw new Error(error.message);
-  const result = data as { friend_group_id?: string; club_name?: string; inviter_name?: string } | null;
+  const result = data as {
+    friend_group_id?: string;
+    club_name?: string;
+    inviter_name?: string;
+    expired?: boolean;
+  } | null;
   if (!result?.friend_group_id) return null;
   return {
     friendGroupId: result.friend_group_id,
     clubName: result.club_name ?? "",
     inviterName: result.inviter_name ?? "",
+    expired: !!result.expired,
   };
 }
 

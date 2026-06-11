@@ -248,4 +248,69 @@ describe.skipIf(!integrationEnvReady)("Club QR invite link (live Supabase)", () 
       expect(asStranger?.length).toBe(0);
     });
   });
+
+  // Invite-link expiry (guardrail B). The club member cap (guardrail A, 100)
+  // can't be exercised here without minting 100 auth users, so it's verified
+  // by a rolled-back DB-level functional test instead; this covers expiry,
+  // which is feasible with the existing personas + the service-role client.
+  describe("invite link expiry", () => {
+    it("get_or_create returns an expires_at roughly 30 days out", async () => {
+      const { data } = await owner.client.rpc("get_or_create_club_invite_link", {
+        p_friend_group_id: clubId,
+      });
+      const r = data as { expires_at: string };
+      expect(r.expires_at).toBeTruthy();
+      const days = (new Date(r.expires_at).getTime() - Date.now()) / 86_400_000;
+      expect(days).toBeGreaterThan(25);
+      expect(days).toBeLessThan(35);
+    });
+
+    it("an expired link is flagged by preview and rejected on accept", async () => {
+      const admin = adminClient();
+      const past = new Date(Date.now() - 86_400_000).toISOString();
+      const { error: upErr } = await admin
+        .from("friend_group_invite_links")
+        .update({ expires_at: past })
+        .eq("friend_group_id", clubId);
+      expect(upErr).toBeNull();
+
+      const { data: preview } = await stranger.client.rpc("get_club_invite_link", {
+        p_token: token,
+      });
+      expect((preview as { expired: boolean }).expired).toBe(true);
+
+      const { error: acceptErr } = await stranger.client.rpc("accept_club_invite_link", {
+        p_token: token,
+      });
+      expect(acceptErr).not.toBeNull();
+
+      // The rejected attempt did not add stranger to the club.
+      const { data: m } = await admin
+        .from("friend_group_members")
+        .select("id")
+        .eq("friend_group_id", clubId)
+        .eq("user_id", stranger.id);
+      expect(m?.length).toBe(0);
+    });
+
+    it("viewing the QR refreshes expiry, re-enabling joins", async () => {
+      const { data } = await owner.client.rpc("get_or_create_club_invite_link", {
+        p_friend_group_id: clubId,
+      });
+      expect(new Date((data as { expires_at: string }).expires_at).getTime()).toBeGreaterThan(
+        Date.now()
+      );
+
+      const { data: preview } = await stranger.client.rpc("get_club_invite_link", {
+        p_token: token,
+      });
+      expect((preview as { expired: boolean }).expired).toBe(false);
+
+      const { data: accepted, error } = await stranger.client.rpc("accept_club_invite_link", {
+        p_token: token,
+      });
+      expect(error).toBeNull();
+      expect((accepted as { ok: boolean }).ok).toBe(true);
+    });
+  });
 });

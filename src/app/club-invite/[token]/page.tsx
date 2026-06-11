@@ -12,6 +12,7 @@ type LinkInfo = {
   friendGroupId: string;
   clubName: string;
   inviterName: string;
+  expired: boolean;
 };
 
 /**
@@ -68,7 +69,7 @@ export default function ClubInviteAcceptPage() {
   // the consent. The ref guards against re-fires from dep changes.
   const autoAttempted = useRef(false);
   useEffect(() => {
-    if (!autoAttempted.current && info && sessionStatus === "authenticated") {
+    if (!autoAttempted.current && info && !info.expired && sessionStatus === "authenticated") {
       autoAttempted.current = true;
       void accept();
     }
@@ -78,6 +79,19 @@ export default function ClubInviteAcceptPage() {
     return (
       <Centered>
         <p className="text-gray-500">{loadError}</p>
+        <Link href="/" className="btn-primary mt-4 inline-block">Go home</Link>
+      </Centered>
+    );
+  }
+  // Expired link: stop before account creation / auto-join. The owner can mint
+  // a fresh QR from the club's invite screen.
+  if (info?.expired) {
+    return (
+      <Centered>
+        <p className="text-gray-700 font-medium">This invite link has expired.</p>
+        <p className="text-sm text-gray-500 mt-1">
+          Ask {info.inviterName || "the club"} for a fresh invite link or QR code.
+        </p>
         <Link href="/" className="btn-primary mt-4 inline-block">Go home</Link>
       </Centered>
     );

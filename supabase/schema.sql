@@ -8438,10 +8438,57 @@ CREATE TABLE public.friend_group_invite_links (
   token           text NOT NULL UNIQUE,
   created_by_id   uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   created_at      timestamptz NOT NULL DEFAULT now(),
+  -- A reusable QR link is a standing bearer token. It expires so a leaked /
+  -- over-shared code stops working on its own; get_or_create slides the window
+  -- forward every time a member views the QR, so links in active use never die
+  -- while abandoned ones lapse. See CLUB_INVITE_LINK_TTL in the RPCs below.
+  expires_at      timestamptz NOT NULL DEFAULT (now() + interval '30 days'),
   CONSTRAINT friend_group_invite_links_one_per_group UNIQUE (friend_group_id)
 );
 
 ALTER TABLE public.friend_group_invite_links ENABLE ROW LEVEL SECURITY;
+
+-- ---- Club membership cap ------------------------------------------------
+-- Clubs grow via an open QR link (any member reshares; any signed-in user
+-- auto-joins). Without a ceiling a leaked link could admit thousands, and the
+-- per-message push fan-out + chat_participants loads are O(members). Cap club
+-- size at the data layer so EVERY insert path is covered — the DEFINER accept
+-- RPCs, the owner-only RLS insert, and any future path — in one place.
+-- Circles are owner-curated (no open link) and are intentionally exempt.
+-- Note: a returning member re-opening the link is exempt, so re-clicks on a
+-- full club don't error. The count/insert pair is not serialized, so a burst
+-- of simultaneous joins can overshoot the cap by a few — acceptable here.
+CREATE OR REPLACE FUNCTION public.enforce_club_member_cap()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_kind  text;
+  v_count integer;
+BEGIN
+  SELECT kind INTO v_kind FROM friend_groups WHERE id = NEW.friend_group_id;
+  IF v_kind IS DISTINCT FROM 'club' THEN
+    RETURN NEW;  -- cap applies to clubs only
+  END IF;
+  -- Existing members pass (re-redeeming the link is a no-op, not a new seat).
+  IF EXISTS (
+    SELECT 1 FROM friend_group_members
+    WHERE friend_group_id = NEW.friend_group_id AND user_id = NEW.user_id
+  ) THEN
+    RETURN NEW;
+  END IF;
+  SELECT count(*) INTO v_count FROM friend_group_members
+    WHERE friend_group_id = NEW.friend_group_id;
+  IF v_count >= 100 THEN  -- CLUB_MEMBER_CAP
+    RAISE EXCEPTION 'Club is full (maximum 100 members)' USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_enforce_club_member_cap ON public.friend_group_members;
+CREATE TRIGGER trg_enforce_club_member_cap
+  BEFORE INSERT ON public.friend_group_members
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_club_member_cap();
+
 -- Members may read their club's link to render/re-share the QR. All writes go
 -- through the DEFINER RPCs below (no INSERT/UPDATE/DELETE policy = denied).
 CREATE POLICY friend_group_invite_links_select_member ON public.friend_group_invite_links
@@ -8452,10 +8499,11 @@ CREATE POLICY friend_group_invite_links_select_member ON public.friend_group_inv
 CREATE OR REPLACE FUNCTION public.get_or_create_club_invite_link(p_friend_group_id uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
-  v_caller uuid := auth.uid();
-  v_token  text;
-  v_name   text;
-  v_owner  uuid;
+  v_caller  uuid := auth.uid();
+  v_token   text;
+  v_name    text;
+  v_owner   uuid;
+  v_expires timestamptz;
 BEGIN
   IF v_caller IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
   IF NOT public.is_friend_group_member(p_friend_group_id) THEN
@@ -8478,10 +8526,19 @@ BEGIN
     RETURNING token INTO v_token;
   END IF;
 
+  -- Slide the expiry window forward each time a member surfaces the QR
+  -- (CLUB_INVITE_LINK_TTL = 30 days). A link in active use never lapses; a
+  -- leaked link nobody reshares expires on its own.
+  UPDATE friend_group_invite_links
+    SET expires_at = now() + interval '30 days'
+    WHERE friend_group_id = p_friend_group_id
+    RETURNING expires_at INTO v_expires;
+
   -- is_owner drives the owner-only "Reset link" action in the UI.
   RETURN jsonb_build_object(
     'token', v_token, 'club_name', v_name,
-    'friend_group_id', p_friend_group_id, 'is_owner', v_owner = v_caller
+    'friend_group_id', p_friend_group_id, 'is_owner', v_owner = v_caller,
+    'expires_at', v_expires
   );
 END;
 $$;
@@ -8494,10 +8551,11 @@ GRANT EXECUTE ON FUNCTION public.get_or_create_club_invite_link(uuid) TO authent
 CREATE OR REPLACE FUNCTION public.rotate_club_invite_link(p_friend_group_id uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
-  v_caller uuid := auth.uid();
-  v_owner  uuid;
-  v_name   text;
-  v_token  text := replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '');
+  v_caller  uuid := auth.uid();
+  v_owner   uuid;
+  v_name    text;
+  v_token   text := replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '');
+  v_expires timestamptz;
 BEGIN
   IF v_caller IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
   SELECT owner_id, name INTO v_owner, v_name FROM friend_groups WHERE id = p_friend_group_id AND kind = 'club';
@@ -8506,13 +8564,15 @@ BEGIN
     RAISE EXCEPTION 'Only the club owner can reset the invite link' USING ERRCODE = 'insufficient_privilege';
   END IF;
 
-  INSERT INTO friend_group_invite_links (friend_group_id, token, created_by_id)
-  VALUES (p_friend_group_id, v_token, v_caller)
+  INSERT INTO friend_group_invite_links (friend_group_id, token, created_by_id, expires_at)
+  VALUES (p_friend_group_id, v_token, v_caller, now() + interval '30 days')
   ON CONFLICT (friend_group_id)
-    DO UPDATE SET token = excluded.token, created_by_id = excluded.created_by_id, created_at = now()
-  RETURNING token INTO v_token;
+    DO UPDATE SET token = excluded.token, created_by_id = excluded.created_by_id,
+                  created_at = now(), expires_at = excluded.expires_at
+  RETURNING token, expires_at INTO v_token, v_expires;
 
-  RETURN jsonb_build_object('token', v_token, 'club_name', v_name, 'friend_group_id', p_friend_group_id, 'is_owner', true);
+  RETURN jsonb_build_object('token', v_token, 'club_name', v_name, 'friend_group_id', p_friend_group_id,
+                            'is_owner', true, 'expires_at', v_expires);
 END;
 $$;
 REVOKE ALL ON FUNCTION public.rotate_club_invite_link(uuid) FROM public;
@@ -8533,10 +8593,13 @@ BEGIN
   IF v_link.id IS NULL THEN RETURN NULL; END IF;
   SELECT name INTO v_name FROM friend_groups WHERE id = v_link.friend_group_id;
   SELECT name INTO v_inviter FROM profiles WHERE id = v_link.created_by_id;
+  -- expired lets the landing page show a "link expired" state before the
+  -- visitor bothers creating an account (accept also re-checks server-side).
   RETURN jsonb_build_object(
     'friend_group_id', v_link.friend_group_id,
     'club_name', COALESCE(v_name, ''),
-    'inviter_name', COALESCE(v_inviter, '')
+    'inviter_name', COALESCE(v_inviter, ''),
+    'expired', v_link.expires_at < now()
   );
 END;
 $$;
@@ -8557,7 +8620,13 @@ BEGIN
   IF p_token IS NULL OR length(trim(p_token)) = 0 THEN RAISE EXCEPTION 'Missing token' USING ERRCODE = 'invalid_parameter_value'; END IF;
   SELECT * INTO v_link FROM friend_group_invite_links WHERE token = p_token;
   IF v_link.id IS NULL THEN RAISE EXCEPTION 'Invite not found' USING ERRCODE = 'no_data_found'; END IF;
+  IF v_link.expires_at < now() THEN
+    RAISE EXCEPTION 'This invite link has expired' USING ERRCODE = 'no_data_found';
+  END IF;
 
+  -- The club member cap is enforced by trg_enforce_club_member_cap on this
+  -- INSERT: a new member past the cap raises 'Club is full'; an existing
+  -- member is exempt, so re-redeeming the link stays a harmless no-op.
   INSERT INTO friend_group_members (friend_group_id, user_id)
   VALUES (v_link.friend_group_id, v_caller)
   ON CONFLICT (friend_group_id, user_id) DO NOTHING;

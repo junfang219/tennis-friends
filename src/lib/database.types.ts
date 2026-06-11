@@ -1471,6 +1471,7 @@ export type Database = {
         Row: {
           created_at: string
           created_by_id: string
+          expires_at: string
           friend_group_id: string
           id: string
           token: string
@@ -1478,6 +1479,7 @@ export type Database = {
         Insert: {
           created_at?: string
           created_by_id: string
+          expires_at?: string
           friend_group_id: string
           id?: string
           token: string
@@ -1485,6 +1487,7 @@ export type Database = {
         Update: {
           created_at?: string
           created_by_id?: string
+          expires_at?: string
           friend_group_id?: string
           id?: string
           token?: string
