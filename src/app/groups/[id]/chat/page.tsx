@@ -510,6 +510,7 @@ export default function GroupChatPage() {
 
   return (
     <div
+      data-keyboard-dismiss="off"
       className={isDesktop ? "absolute inset-0 flex flex-col bg-surface" : "max-w-2xl mx-auto flex flex-col relative"}
       // Don't subtract safe-area-inset-bottom here — the input bar absorbs
       // the home-indicator inset via its own padding-bottom so its

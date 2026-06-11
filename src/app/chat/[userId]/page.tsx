@@ -503,7 +503,7 @@ export default function ChatPage() {
   // `position: fixed`. On desktop the parent right pane is `relative`, so
   // `absolute inset-0` contains the chat surface to that pane.
   const surface = (
-    <div className={isDesktop ? "absolute inset-0 flex flex-col bg-surface" : "fixed inset-0 z-50 flex flex-col bg-surface"}>
+    <div data-keyboard-dismiss="off" className={isDesktop ? "absolute inset-0 flex flex-col bg-surface" : "fixed inset-0 z-50 flex flex-col bg-surface"}>
       {/* Chat header */}
       <div
         className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shrink-0"
