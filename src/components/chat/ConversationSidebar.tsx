@@ -9,6 +9,7 @@ import { useRealtimeTable } from "@/lib/supabase/realtime";
 import { markDmRead, markChatRead, markTeamRead } from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 import { loadInbox } from "@/lib/inboxLoader";
+import { buildInboxSections } from "@/lib/inboxSections";
 
 // Map the current pathname to the inbox-row key that ConversationRow can match against.
 // Patterns:
@@ -142,14 +143,7 @@ export default function ConversationSidebar() {
     }
   };
 
-  const sessionItems = items
-    .filter((i) => i.type === "group" && i.kind === "session")
-    .sort((a, b) => {
-      const aEnd = a.type === "group" && a.sessionEndAt ? new Date(a.sessionEndAt).getTime() : Infinity;
-      const bEnd = b.type === "group" && b.sessionEndAt ? new Date(b.sessionEndAt).getTime() : Infinity;
-      return aEnd - bEnd;
-    });
-  const otherItems = items.filter((i) => !(i.type === "group" && i.kind === "session"));
+  const sections = useMemo(() => buildInboxSections(items), [items]);
 
   const renderRow = (item: InboxItem) => {
     const key = `${item.type}-${item.id}`;
@@ -205,23 +199,18 @@ export default function ConversationSidebar() {
           </div>
         ) : (
           <>
-            {sessionItems.length > 0 && (
-              <div className="border-b border-gray-100">
+            {sections.map((section) => (
+              <div key={section.key} className="border-b border-gray-100">
                 <div className="flex items-center gap-2 px-4 pt-3 pb-1">
-                  <h2 className="font-display text-[10px] font-bold tracking-wider uppercase text-court-green">
-                    Upcoming games
+                  <h2 className={`font-display text-[10px] font-bold tracking-wider uppercase ${section.headerClass}`}>
+                    {section.header}
                   </h2>
                 </div>
                 <div className="divide-y divide-gray-100">
-                  {sessionItems.map(renderRow)}
+                  {section.items.map(renderRow)}
                 </div>
               </div>
-            )}
-            {otherItems.length > 0 && (
-              <div className="divide-y divide-gray-100">
-                {otherItems.map(renderRow)}
-              </div>
-            )}
+            ))}
           </>
         )}
       </div>

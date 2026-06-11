@@ -9,6 +9,7 @@ import { useRealtimeTable } from "@/lib/supabase/realtime";
 import { markDmRead, markChatRead, markTeamRead } from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 import { loadInbox } from "@/lib/inboxLoader";
+import { buildInboxSections } from "@/lib/inboxSections";
 import { useIsDesktopChat } from "@/hooks/useIsDesktopChat";
 
 export default function ChatPage() {
@@ -222,16 +223,7 @@ export default function ChatPage() {
       ) : (
         <>
           {(() => {
-            const sessionItems = items
-              .filter((i) => i.type === "group" && i.kind === "session")
-              .sort((a, b) => {
-                // Session-scoped: sort by upcoming game end (soonest first);
-                // null end goes last.
-                const aEnd = a.type === "group" && a.sessionEndAt ? new Date(a.sessionEndAt).getTime() : Infinity;
-                const bEnd = b.type === "group" && b.sessionEndAt ? new Date(b.sessionEndAt).getTime() : Infinity;
-                return aEnd - bEnd;
-              });
-            const otherItems = items.filter((i) => !(i.type === "group" && i.kind === "session"));
+            const sections = buildInboxSections(items);
 
             const renderRow = (item: InboxItem) => {
               const key = `${item.type}-${item.id}`;
@@ -267,26 +259,21 @@ export default function ChatPage() {
 
             return (
               <>
-                {sessionItems.length > 0 && (
-                  <div className="mb-4">
+                {sections.map((section) => (
+                  <div key={section.key} className="mb-4">
                     <div className="flex items-center gap-2 px-1 mb-2">
-                      <h2 className="font-display text-xs font-bold tracking-wider uppercase text-court-green">
-                        Upcoming games
+                      <h2 className={`font-display text-xs font-bold tracking-wider uppercase ${section.headerClass}`}>
+                        {section.header}
                       </h2>
-                      <span className="text-[10px] text-gray-400">
-                        Auto-removes 3 days after the game
-                      </span>
+                      {section.caption && (
+                        <span className="text-[10px] text-gray-400">{section.caption}</span>
+                      )}
                     </div>
-                    <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/40 overflow-hidden divide-y divide-gray-100">
-                      {sessionItems.map(renderRow)}
+                    <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden divide-y divide-gray-100">
+                      {section.items.map(renderRow)}
                     </div>
                   </div>
-                )}
-                {otherItems.length > 0 && (
-                  <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden divide-y divide-gray-100">
-                    {otherItems.map(renderRow)}
-                  </div>
-                )}
+                ))}
               </>
             );
           })()}

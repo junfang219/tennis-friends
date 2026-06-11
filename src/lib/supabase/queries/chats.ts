@@ -80,6 +80,11 @@ export interface ChatThread {
   unread_count: number;
   muted: boolean;
   pinned_at: string | null;
+  // For chats backed by a friend group (chats.friend_group_id), the group's
+  // kind — so the inbox can bucket club vs circle chats into their own
+  // sections instead of lumping them with game/session chats. Null for
+  // game chats (post_id-backed) and any chat without a friend group.
+  friend_group_kind: "circle" | "club" | null;
 }
 
 export async function listMyChatThreads(
@@ -132,6 +137,28 @@ export async function listMyChatThreads(
   if (chatsRes.error) throw chatsRes.error;
   if (msgsRes.error) throw msgsRes.error;
 
+  // Resolve the kind (circle vs club) of any friend-group-backed chats so the
+  // inbox can give them their own sections. Game chats (post_id-backed) have
+  // no friend_group_id and stay null.
+  const fgIds = [
+    ...new Set(
+      ((chatsRes.data ?? []) as Chat[])
+        .map((c) => c.friend_group_id)
+        .filter((id): id is string => !!id)
+    ),
+  ];
+  const fgKindById = new Map<string, "circle" | "club">();
+  if (fgIds.length > 0) {
+    const { data: fgRows, error: fgErr } = await supabase
+      .from("friend_groups")
+      .select("id, kind")
+      .in("id", fgIds);
+    if (fgErr) throw fgErr;
+    for (const row of (fgRows ?? []) as { id: string; kind: "circle" | "club" }[]) {
+      fgKindById.set(row.id, row.kind);
+    }
+  }
+
   type MsgRow = {
     id: string;
     chat_id: string;
@@ -175,6 +202,9 @@ export async function listMyChatThreads(
       unread_count: unread,
       muted: state.muted,
       pinned_at: state.pinned_at,
+      friend_group_kind: chat.friend_group_id
+        ? fgKindById.get(chat.friend_group_id) ?? null
+        : null,
     });
   }
 

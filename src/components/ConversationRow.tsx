@@ -27,7 +27,7 @@ export type GroupItem = {
   muted: boolean;
   pinnedAt: string | null;
   href: string;
-  kind?: "session" | "group";
+  kind?: "session" | "group" | "club" | "circle";
   sessionEndAt?: string | null;
 };
 
@@ -203,6 +203,8 @@ export default function ConversationRow({
   // Foreground background must be OPAQUE so the action panel behind doesn't bleed through on iOS.
   // For unread items we use a solid pale tint instead of a translucent overlay.
   const isSession = item.type === "group" && item.kind === "session";
+  const isClub = item.type === "group" && item.kind === "club";
+  const isCircle = item.type === "group" && item.kind === "circle";
   const isTeam = item.type === "team";
   const rowBg = isSelected
     ? "bg-[#D6EAD3]"
@@ -210,6 +212,14 @@ export default function ConversationRow({
     ? item.unreadCount > 0
       ? "bg-[#E3F1E1]"
       : "bg-[#EFF7ED]"
+    : isClub
+    ? item.unreadCount > 0
+      ? "bg-[#EDE7FB]"
+      : "bg-[#F5F1FD]"
+    : isCircle
+    ? item.unreadCount > 0
+      ? "bg-[#E1EEFB]"
+      : "bg-[#F0F6FD]"
     : isTeam
     ? item.unreadCount > 0
       ? "bg-[#F7E6D4]"
@@ -224,6 +234,10 @@ export default function ConversationRow({
     ? "border-l-4 border-l-court-green"
     : isSession
     ? "border-l-4 border-l-court-green"
+    : isClub
+    ? "border-l-4 border-l-violet-500"
+    : isCircle
+    ? "border-l-4 border-l-blue-500"
     : isTeam
     ? "border-l-4 border-l-clay"
     : "";
@@ -368,6 +382,31 @@ export default function ConversationRow({
                 </span>
               )}
             </div>
+          ) : isClub ? (
+            <div className="relative">
+              <div className={`${layout === "page" ? "w-12 h-12 text-lg" : "w-10 h-10 text-sm"} rounded-xl bg-gradient-to-br from-violet-400 to-violet-600 flex items-center justify-center text-white font-bold shadow-sm`}>
+                {item.title.charAt(0).toUpperCase()}
+              </div>
+              <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-violet-500 flex items-center justify-center">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 00-3-3.87" />
+                  <path d="M16 3.13a4 4 0 010 7.75" />
+                </svg>
+              </span>
+            </div>
+          ) : isCircle ? (
+            <div className="relative">
+              <div className={`${layout === "page" ? "w-12 h-12 text-lg" : "w-10 h-10 text-sm"} rounded-xl bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white font-bold shadow-sm`}>
+                {item.title.charAt(0).toUpperCase()}
+              </div>
+              <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+                  <circle cx="12" cy="12" r="9" />
+                </svg>
+              </span>
+            </div>
           ) : (
             <div className="flex -space-x-3">
               {item.participants.slice(0, 2).map((p) => (
@@ -404,6 +443,16 @@ export default function ConversationRow({
               {isSession && (
                 <span className="ml-1.5 text-[9px] font-bold tracking-wider text-white bg-court-green px-1.5 py-0.5 rounded uppercase">
                   🎾 Game
+                </span>
+              )}
+              {isClub && (
+                <span className="ml-1.5 text-[9px] font-bold tracking-wider text-violet-700 bg-violet-100 px-1 py-0.5 rounded uppercase">
+                  Club
+                </span>
+              )}
+              {isCircle && (
+                <span className="ml-1.5 text-[9px] font-bold tracking-wider text-blue-700 bg-blue-100 px-1 py-0.5 rounded uppercase">
+                  Circle
                 </span>
               )}
               {item.muted && (
