@@ -1406,9 +1406,9 @@ export default function FriendsPage() {
                     chat.type === "group" && chat.kind === "session"
                       ? "bg-gradient-to-r from-court-green-pale/25 to-white border-l-4 border-l-court-green"
                       : chat.type === "group" && chat.kind === "club"
-                      ? "bg-gradient-to-r from-violet-100/60 to-white border-l-4 border-l-violet-500"
+                      ? "bg-gradient-to-r from-club-purple-tint to-white border-l-4 border-l-club-purple"
                       : chat.type === "group" && chat.kind === "circle"
-                      ? "bg-gradient-to-r from-blue-100/60 to-white border-l-4 border-l-blue-500"
+                      ? "bg-gradient-to-r from-circle-lime-tint to-white border-l-4 border-l-circle-lime"
                       : chat.type === "team" && chat.eventId
                       ? "bg-gradient-to-r from-ball-yellow/20 to-white border-l-4 border-l-ball-yellow"
                       : chat.type === "team"
@@ -1464,10 +1464,10 @@ export default function FriendsPage() {
                         </div>
                       ) : chat.type === "group" && chat.kind === "club" ? (
                         <div className="relative">
-                          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-violet-400 to-violet-600 flex items-center justify-center text-white font-bold text-base shadow-md ring-2 ring-white">
+                          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-club-purple-soft to-club-purple flex items-center justify-center text-white font-bold text-base shadow-md ring-2 ring-white">
                             {chat.title.charAt(0).toUpperCase()}
                           </div>
-                          <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-violet-500 flex items-center justify-center shadow-sm ring-2 ring-white">
+                          <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-club-purple flex items-center justify-center shadow-sm ring-2 ring-white">
                             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
                               <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
                               <circle cx="9" cy="7" r="4" />
@@ -1478,10 +1478,10 @@ export default function FriendsPage() {
                         </div>
                       ) : chat.type === "group" && chat.kind === "circle" ? (
                         <div className="relative">
-                          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white font-bold text-base shadow-md ring-2 ring-white">
+                          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-[#8FAE2C] to-circle-lime-deep flex items-center justify-center text-white font-bold text-base shadow-md ring-2 ring-white">
                             {chat.title.charAt(0).toUpperCase()}
                           </div>
-                          <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center shadow-sm ring-2 ring-white">
+                          <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-circle-lime-deep flex items-center justify-center shadow-sm ring-2 ring-white">
                             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
                               <circle cx="12" cy="12" r="9" />
                             </svg>
@@ -1521,12 +1521,12 @@ export default function FriendsPage() {
                             </span>
                           )}
                           {chat.type === "group" && chat.kind === "club" && (
-                            <span className="text-[9px] font-bold tracking-wider text-violet-700 bg-violet-100 px-1.5 py-0.5 rounded uppercase shrink-0">
+                            <span className="text-[9px] font-bold tracking-wider text-club-purple-deep bg-club-purple-tint px-1.5 py-0.5 rounded uppercase shrink-0">
                               Club
                             </span>
                           )}
                           {chat.type === "group" && chat.kind === "circle" && (
-                            <span className="text-[9px] font-bold tracking-wider text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded uppercase shrink-0">
+                            <span className="text-[9px] font-bold tracking-wider text-circle-lime-deep bg-circle-lime-tint px-1.5 py-0.5 rounded uppercase shrink-0">
                               Circle
                             </span>
                           )}

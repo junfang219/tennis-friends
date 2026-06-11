@@ -214,12 +214,12 @@ export default function ConversationRow({
       : "bg-[#EFF7ED]"
     : isClub
     ? item.unreadCount > 0
-      ? "bg-[#EDE7FB]"
-      : "bg-[#F5F1FD]"
+      ? "bg-club-purple-tint"
+      : "bg-club-purple-wash"
     : isCircle
     ? item.unreadCount > 0
-      ? "bg-[#E1EEFB]"
-      : "bg-[#F0F6FD]"
+      ? "bg-circle-lime-tint"
+      : "bg-circle-lime-wash"
     : isTeam
     ? item.unreadCount > 0
       ? "bg-[#F7E6D4]"
@@ -235,9 +235,9 @@ export default function ConversationRow({
     : isSession
     ? "border-l-4 border-l-court-green"
     : isClub
-    ? "border-l-4 border-l-violet-500"
+    ? "border-l-4 border-l-club-purple"
     : isCircle
-    ? "border-l-4 border-l-blue-500"
+    ? "border-l-4 border-l-circle-lime"
     : isTeam
     ? "border-l-4 border-l-clay"
     : "";
@@ -384,10 +384,10 @@ export default function ConversationRow({
             </div>
           ) : isClub ? (
             <div className="relative">
-              <div className={`${layout === "page" ? "w-12 h-12 text-lg" : "w-10 h-10 text-sm"} rounded-xl bg-gradient-to-br from-violet-400 to-violet-600 flex items-center justify-center text-white font-bold shadow-sm`}>
+              <div className={`${layout === "page" ? "w-12 h-12 text-lg" : "w-10 h-10 text-sm"} rounded-xl bg-gradient-to-br from-club-purple-soft to-club-purple flex items-center justify-center text-white font-bold shadow-sm`}>
                 {item.title.charAt(0).toUpperCase()}
               </div>
-              <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-violet-500 flex items-center justify-center">
+              <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-club-purple flex items-center justify-center">
                 <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
                   <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
                   <circle cx="9" cy="7" r="4" />
@@ -398,10 +398,10 @@ export default function ConversationRow({
             </div>
           ) : isCircle ? (
             <div className="relative">
-              <div className={`${layout === "page" ? "w-12 h-12 text-lg" : "w-10 h-10 text-sm"} rounded-xl bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white font-bold shadow-sm`}>
+              <div className={`${layout === "page" ? "w-12 h-12 text-lg" : "w-10 h-10 text-sm"} rounded-xl bg-gradient-to-br from-[#8FAE2C] to-circle-lime-deep flex items-center justify-center text-white font-bold shadow-sm`}>
                 {item.title.charAt(0).toUpperCase()}
               </div>
-              <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center">
+              <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-circle-lime-deep flex items-center justify-center">
                 <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
                   <circle cx="12" cy="12" r="9" />
                 </svg>
@@ -446,12 +446,12 @@ export default function ConversationRow({
                 </span>
               )}
               {isClub && (
-                <span className="ml-1.5 text-[9px] font-bold tracking-wider text-violet-700 bg-violet-100 px-1 py-0.5 rounded uppercase">
+                <span className="ml-1.5 text-[9px] font-bold tracking-wider text-club-purple-deep bg-club-purple-tint px-1 py-0.5 rounded uppercase">
                   Club
                 </span>
               )}
               {isCircle && (
-                <span className="ml-1.5 text-[9px] font-bold tracking-wider text-blue-700 bg-blue-100 px-1 py-0.5 rounded uppercase">
+                <span className="ml-1.5 text-[9px] font-bold tracking-wider text-circle-lime-deep bg-circle-lime-tint px-1 py-0.5 rounded uppercase">
                   Circle
                 </span>
               )}

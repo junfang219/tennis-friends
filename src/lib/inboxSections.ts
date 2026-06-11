@@ -38,8 +38,9 @@ const SECTION_META: Omit<InboxSection, "items">[] = [
     headerClass: "text-court-green",
   },
   { key: "teams", header: "Team chats", headerClass: "text-clay" },
-  { key: "clubs", header: "Clubs", headerClass: "text-violet-600" },
-  { key: "circles", header: "Circles", headerClass: "text-blue-600" },
+  { key: "clubs", header: "Clubs", headerClass: "text-club-purple" },
+  // The lime DEFAULT is too light on white — use the deep variant for the header.
+  { key: "circles", header: "Circles", headerClass: "text-circle-lime-deep" },
   { key: "direct", header: "Direct messages", headerClass: "text-gray-500" },
 ];
 
