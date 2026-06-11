@@ -28,16 +28,15 @@ function googleMapsUrl(
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
-function appleMapsUrl(
-  lat: number,
-  lng: number,
-  origin?: { lat: number; lng: number } | null,
-): string {
-  // Apple's Maps URL Scheme — daddr is destination, saddr is origin. When
-  // saddr is omitted, Apple Maps uses the device's current location.
+function appleMapsUrl(lat: number, lng: number): string {
+  // Apple's Maps URL Scheme — daddr is destination, dirflg=d requests driving
+  // directions. We deliberately omit saddr: when the origin is left out Apple
+  // Maps routes from the device's *live* current location and offers the green
+  // "GO" turn-by-turn button. Passing explicit saddr coordinates makes it treat
+  // the trip as between two fixed points and only shows the "Steps" overview.
   const params = new URLSearchParams();
-  if (origin) params.set("saddr", `${origin.lat},${origin.lng}`);
   params.set("daddr", `${lat},${lng}`);
+  params.set("dirflg", "d");
   return `https://maps.apple.com/?${params.toString()}`;
 }
 
@@ -64,7 +63,7 @@ export function DirectionsButton({
       </button>
       {open && (
         <DirectionsSheet
-          appleUrl={appleMapsUrl(lat, lng, myLocation)}
+          appleUrl={appleMapsUrl(lat, lng)}
           googleUrl={googleMapsUrl(lat, lng, myLocation)}
           destinationLabel={destinationLabel}
           onClose={() => setOpen(false)}
