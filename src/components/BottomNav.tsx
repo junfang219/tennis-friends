@@ -55,10 +55,13 @@ export default function BottomNav() {
       : null;
 
   const handleTabTap = (href: string) => {
-    if (pathname === href || pathname.startsWith(href + "/")) {
-      // Already here — no nav.
+    if (pathname === href) {
+      // Already at the tab root — no nav.
       return;
     }
+    // On a deeper page within this tab's section (e.g. /groups/[id]), tapping
+    // the tab pops back to its root list rather than no-opping. Falls through
+    // to router.push(href).
     setPendingHref(href);
     // startTransition keeps the bottom-nav (and the rest of the previous
     // page) interactive while React renders the new route, so the active
