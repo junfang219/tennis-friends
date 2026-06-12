@@ -225,8 +225,9 @@ export async function removeClubMember(
   if (error) throw error;
 }
 
-/** Owner-only. Deletes the backing chat first (chats.friend_group_id is
- *  ON DELETE SET NULL, which would orphan the chat in members' inboxes). */
+/** Owner-only. Deleting the friend_groups row cascade-deletes the backing chat
+ *  (chats.friend_group_id is ON DELETE CASCADE), but we delete the chat first
+ *  anyway so the operation is explicit and order-independent. */
 export async function deleteClub(
   supabase: SupabaseClient<Database>,
   clubId: string

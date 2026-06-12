@@ -709,7 +709,7 @@ create table public.chats (
   name                text not null default '',
   creator_id          uuid not null references public.profiles (id) on delete restrict,
   post_id             uuid references public.posts (id) on delete set null,
-  friend_group_id     uuid unique references public.friend_groups (id) on delete set null,
+  friend_group_id     uuid unique references public.friend_groups (id) on delete cascade,
   session_end_at      timestamptz,
   manual_player_names text not null default '',
   created_at          timestamptz not null default now(),
