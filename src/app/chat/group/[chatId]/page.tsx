@@ -28,6 +28,7 @@ import {
   listReactionsForMessages,
   loadSharedPosts,
   leaveClub,
+  removeClubMember,
 } from "@/lib/supabase/queries";
 import { toChatMessageCamel } from "@/lib/supabase/adapters";
 import { errorMessage } from "@/lib/errorMessage";
@@ -98,6 +99,7 @@ export default function GroupChatThreadPage() {
   const [showRename, setShowRename] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [showMembers, setShowMembers] = useState(false);
+  const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
   const [showSplit, setShowSplit] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showQr, setShowQr] = useState(false);
@@ -600,6 +602,27 @@ export default function GroupChatThreadPage() {
       .eq("chat_id", chatId)
       .eq("user_id", auth.user.id);
     if (!hideErr) router.push("/friends");
+  };
+
+  // Club chats: the creator can remove another member, which drops them from
+  // both the club and its chat (mirrors a self-leave). RLS gates the writes to
+  // the club owner / chat creator — for a club that's the same person, so the
+  // Remove control is only surfaced to the creator below.
+  const removeMember = async (userId: string, name: string) => {
+    if (!chatInfo?.friendGroupId || removingMemberId) return;
+    const noun = chatInfo.friendGroupKind === "circle" ? "circle" : "club";
+    if (!confirm(`Remove ${name} from ${chatInfo.name || `this ${noun}`}? They'll lose access to the ${noun} and its chat.`)) return;
+    setRemovingMemberId(userId);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await removeClubMember(supabase, chatInfo.friendGroupId, userId);
+      setChatInfo((prev) =>
+        prev ? { ...prev, participants: prev.participants.filter((p) => p.id !== userId) } : prev
+      );
+    } catch (err) {
+      setSendError(errorMessage(err, "Couldn't remove member."));
+    }
+    setRemovingMemberId(null);
   };
 
   const clearHistory = async () => {
@@ -1150,32 +1173,51 @@ export default function GroupChatThreadPage() {
               {chatInfo.participants.map((p) => {
                 const isMe = p.id === myId;
                 const isCreator = p.id === chatInfo.creatorId;
+                // Club chats: the creator can remove anyone but themselves.
+                const canRemove =
+                  chatInfo.friendGroupKind === "club" &&
+                  myId === chatInfo.creatorId &&
+                  !isMe &&
+                  !isCreator;
                 return (
-                  <button
+                  <div
                     key={p.id}
-                    onClick={() => {
-                      setShowMembers(false);
-                      if (!isMe) router.push(`/profile/${p.id}`);
-                    }}
-                    className="w-full flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors text-left"
+                    className="w-full flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors"
                   >
-                    <Avatar name={p.name} image={p.profileImageUrl} size="md" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-gray-900 truncate">
-                          {p.name}{isMe ? " (You)" : ""}
-                        </p>
-                        {isCreator && (
-                          <span className="text-[10px] font-bold text-court-green bg-court-green-pale/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
-                            Creator
-                          </span>
+                    <button
+                      onClick={() => {
+                        setShowMembers(false);
+                        if (!isMe) router.push(`/profile/${p.id}`);
+                      }}
+                      className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                    >
+                      <Avatar name={p.name} image={p.profileImageUrl} size="md" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-gray-900 truncate">
+                            {p.name}{isMe ? " (You)" : ""}
+                          </p>
+                          {isCreator && (
+                            <span className="text-[10px] font-bold text-court-green bg-court-green-pale/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                              Creator
+                            </span>
+                          )}
+                        </div>
+                        {!isMe && (
+                          <p className="text-xs text-gray-400">Tap to view profile</p>
                         )}
                       </div>
-                      {!isMe && (
-                        <p className="text-xs text-gray-400">Tap to view profile</p>
-                      )}
-                    </div>
-                  </button>
+                    </button>
+                    {canRemove && (
+                      <button
+                        onClick={() => removeMember(p.id, p.name)}
+                        disabled={removingMemberId === p.id}
+                        className="shrink-0 text-xs font-semibold text-red-600 hover:text-red-700 px-2.5 py-1.5 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+                      >
+                        {removingMemberId === p.id ? "Removing…" : "Remove"}
+                      </button>
+                    )}
+                  </div>
                 );
               })}
               {chatInfo.guestNames.length > 0 && (

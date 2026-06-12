@@ -196,6 +196,35 @@ export async function leaveClub(
   if (error) throw error;
 }
 
+/** Remove another member from a club: drop their membership and their seat in
+ *  the club chat. Mirrors {@link leaveClub} but targets a specific user — RLS
+ *  only lets this through for the club owner (friend_group_members) and the chat
+ *  creator (chat_participants), which for a club is the same person. */
+export async function removeClubMember(
+  supabase: SupabaseClient<Database>,
+  clubId: string,
+  userId: string
+): Promise<void> {
+  const { data: chat } = await supabase
+    .from("chats")
+    .select("id")
+    .eq("friend_group_id", clubId)
+    .maybeSingle();
+  if (chat) {
+    await supabase
+      .from("chat_participants")
+      .delete()
+      .eq("chat_id", chat.id)
+      .eq("user_id", userId);
+  }
+  const { error } = await supabase
+    .from("friend_group_members")
+    .delete()
+    .eq("friend_group_id", clubId)
+    .eq("user_id", userId);
+  if (error) throw error;
+}
+
 /** Owner-only. Deletes the backing chat first (chats.friend_group_id is
  *  ON DELETE SET NULL, which would orphan the chat in members' inboxes). */
 export async function deleteClub(
