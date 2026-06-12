@@ -13,6 +13,8 @@ import { CourtStatusReporter } from "@/components/courts/CourtStatusReporter";
 import { isReportEligibleCategory } from "@/lib/courtPrompt";
 import { DirectionsButton } from "@/components/courts/DirectionsButton";
 import { getFacilityByCourtId, getSeattleParksDashboardUrl } from "@/lib/facilities";
+import { resolveSeattleVenue } from "@/lib/activenetSeattleCourts";
+import AvailabilityGrid from "@/components/courts/AvailabilityGrid";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listCourtReviews } from "@/lib/supabase/queries";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
@@ -55,8 +57,16 @@ interface CourtDetail {
     | "indoor_facility";
   status: "active" | "temporarily_closed";
   bucket: "city" | "club" | "school";
-  /** Power BI dashboard URL when the venue is a reservable Seattle Parks court. */
+  /** Power BI dashboard URL — set only when the venue is a reservable Seattle
+   *  Parks court that we CAN'T resolve to a native ActiveNet center. */
   dashboardUrl: string | null;
+  /** ActiveNet center ID when the venue resolves to our seed; drives the
+   *  native live-availability grid (and suppresses the dashboard). */
+  activeNetCenterId: number | null;
+  /** Seattle Parks live/today dashboard URL when the venue is dashboard-
+   *  eligible — linked from the grid's view-only notice (e.g. today). Set
+   *  even for natively-resolved venues, unlike dashboardUrl. */
+  liveAvailabilityUrl: string | null;
 }
 
 type ReviewsPayload = {
@@ -147,21 +157,36 @@ export default function CourtDetailPage() {
       if (!facility) {
         throw new Error("Court not found");
       }
-      // Static-catalog facility plus the legacy "dashboard URL" computed
-      // client-side. Replaces the deleted /api/courts/[id] route which
-      // wrapped this lookup. Gating mirrors the original API: only SPR
-      // venues that are actually reservable, and not opted-out via
-      // `showAvailabilityDashboard: false` (e.g. high-school complexes
-      // not on the dashboard's reservable list).
-      const dashboardUrl =
+      // Availability surface, computed client-side (replaces the deleted
+      // /api/courts/[id] route). Eligibility mirrors the original API: SPR
+      // venues that are actually reservable and not opted-out via
+      // `showAvailabilityDashboard: false` (e.g. high-school complexes not
+      // on the dashboard's reservable list).
+      //
+      // Preference: a NATIVE live grid when we can resolve the venue to an
+      // ActiveNet center (35/40 via the booking URL's facilityCenterIds, a
+      // few more via name match). Otherwise fall back to the Seattle Parks
+      // Power BI dashboard. The two are mutually exclusive — a non-null
+      // centerId nulls out dashboardUrl, so the dashboard button + iframe
+      // machinery stay dormant for natively-covered venues.
+      const dashEligible =
         facility.managedBy === "Seattle Parks & Recreation" &&
-        facility.bookingUrl &&
-        facility.showAvailabilityDashboard
-          ? getSeattleParksDashboardUrl()
-          : null;
+        !!facility.bookingUrl &&
+        facility.showAvailabilityDashboard;
+      const activeNetCenterId = dashEligible
+        ? resolveSeattleVenue({ bookingUrl: facility.bookingUrl, name: facility.name })
+            ?.centerId ?? null
+        : null;
+      const liveAvailabilityUrl = dashEligible ? getSeattleParksDashboardUrl() : null;
+      // Page-level dashboard modal only for venues we CAN'T cover natively;
+      // resolved venues get the grid (which reuses liveAvailabilityUrl for its
+      // view-only / same-day notice).
+      const dashboardUrl = activeNetCenterId == null ? liveAvailabilityUrl : null;
       const detail: CourtDetail = {
         ...facility,
         dashboardUrl,
+        activeNetCenterId,
+        liveAvailabilityUrl,
       } as unknown as CourtDetail;
       setCourt(detail);
     } catch (e) {
@@ -592,6 +617,21 @@ export default function CourtDetailPage() {
                 </button>
               )}
             </div>
+          )}
+
+          {/* Native live-availability grid for venues we can resolve to an
+              ActiveNet center. Pulls open booking windows per court per day
+              straight from Seattle Parks. Replaces the Power BI dashboard for
+              these venues (which is why dashboardUrl is null when this shows). */}
+          {!isClosed && court.activeNetCenterId != null && (
+            <Section title="Live availability">
+              <AvailabilityGrid
+                centerId={court.activeNetCenterId}
+                venueName={court.name}
+                bookingUrl={court.bookingUrl}
+                liveViewUrl={court.liveAvailabilityUrl}
+              />
+            </Section>
           )}
 
           {/* How to book / reservation policy */}

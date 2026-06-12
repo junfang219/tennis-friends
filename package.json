@@ -12,6 +12,7 @@
     "ios:prod": "npx cap sync ios",
     "ios:ip": "node scripts/sync-ios-lan-ip.mjs",
     "geocode:facilities": "node scripts/geocode-facilities.mjs",
+    "verify:availability": "node scripts/verify-availability.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

@@ -723,6 +723,33 @@ export type Database = {
           },
         ]
       }
+      court_availability_snapshot: {
+        Row: {
+          captured_at: string
+          center_id: number
+          date: string
+          day_status: number
+          resource_id: number
+          windows: Json
+        }
+        Insert: {
+          captured_at?: string
+          center_id: number
+          date: string
+          day_status: number
+          resource_id: number
+          windows?: Json
+        }
+        Update: {
+          captured_at?: string
+          center_id?: number
+          date?: string
+          day_status?: number
+          resource_id?: number
+          windows?: Json
+        }
+        Relationships: []
+      }
       court_review_photos: {
         Row: {
           created_at: string

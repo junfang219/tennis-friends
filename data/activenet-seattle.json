@@ -1,0 +1,1673 @@
+{
+  "_source": "Resource/center IDs cross-referenced from the open matchatennis/courts index (providers/activenet-seattle) and verified against Seattle Parks ActiveNet. IDs are facts from the public reservation system.",
+  "org": "seattle",
+  "venues": [
+    {
+      "name": "Amy Yee Tennis Center (AYTC)",
+      "centerId": 2,
+      "coordinate": {
+        "lng": -122.2976804,
+        "lat": 47.5851958
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "AYTC Outdoor Tennis Court 01",
+          "centerId": 2,
+          "resourceId": 279,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "AYTC Outdoor Tennis Court 02",
+          "centerId": 2,
+          "resourceId": 280,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "AYTC Outdoor Tennis Court 03",
+          "centerId": 2,
+          "resourceId": 281,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "AYTC Outdoor Tennis Court 04",
+          "centerId": 2,
+          "resourceId": 282,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "AYTC Outdoor Tennis Court 05",
+          "centerId": 2,
+          "resourceId": 283,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "AYTC Outdoor Tennis Court 06",
+          "centerId": 2,
+          "resourceId": 284,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Ballard High School Playfield",
+      "centerId": 150,
+      "coordinate": {
+        "lng": -122.3746198,
+        "lat": 47.6768953
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Ballard HS Tennis Court 1",
+          "centerId": 150,
+          "resourceId": 1089,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Ballard HS Tennis Court 2",
+          "centerId": 150,
+          "resourceId": 1091,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Ballard HS Tennis Court 3",
+          "centerId": 150,
+          "resourceId": 1092,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Ballard HS Tennis Court 4",
+          "centerId": 150,
+          "resourceId": 1093,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Beacon Hill Playfield",
+      "centerId": 136,
+      "coordinate": {
+        "lng": -122.3117497,
+        "lat": 47.5792709
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Beacon Hill Playfield Tennis Court 01",
+          "centerId": 136,
+          "resourceId": 1319,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Beacon Hill Playfield Tennis Court 02",
+          "centerId": 136,
+          "resourceId": 1320,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Bitter Lake Playfield",
+      "centerId": 137,
+      "coordinate": {
+        "lng": -122.3491569,
+        "lat": 47.7241403
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Bitter Lake Playfield Tennis Court 01",
+          "centerId": 137,
+          "resourceId": 1315,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Bitter Lake Playfield Tennis Court 02",
+          "centerId": 137,
+          "resourceId": 1316,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Bitter Lake Playfield Tennis Court 03",
+          "centerId": 137,
+          "resourceId": 1317,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Bitter Lake Playfield Tennis Court 04",
+          "centerId": 137,
+          "resourceId": 1318,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Brighton Playfield",
+      "centerId": 138,
+      "coordinate": {
+        "lng": -122.2821047,
+        "lat": 47.5484278
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Brighton Playfield Tennis Court 01",
+          "centerId": 138,
+          "resourceId": 1323,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Brighton Playfield Tennis Court 02",
+          "centerId": 138,
+          "resourceId": 1324,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Bryant Playground",
+      "centerId": 73,
+      "coordinate": {
+        "lng": -122.2837329,
+        "lat": 47.6752853
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Bryant Playground Tennis Court 01",
+          "centerId": 73,
+          "resourceId": 1325,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Bryant Playground Tennis Court 02",
+          "centerId": 73,
+          "resourceId": 1326,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "David Rodgers Park",
+      "centerId": 93,
+      "coordinate": {
+        "lng": -122.3591781,
+        "lat": 47.644545
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "David Rodgers Park Tennis Court 01",
+          "centerId": 93,
+          "resourceId": 1330,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "David Rodgers Park Tennis Court 02",
+          "centerId": 93,
+          "resourceId": 1331,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "David Rodgers Park Tennis Court 03",
+          "centerId": 93,
+          "resourceId": 1332,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Dearborn Park",
+      "centerId": 44,
+      "coordinate": {
+        "lng": -122.2953007,
+        "lat": 47.5527922
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Dearborn Park Tennis Court 01",
+          "centerId": 44,
+          "resourceId": 1333,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Dearborn Park Tennis Court 02",
+          "centerId": 44,
+          "resourceId": 1334,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Delridge Playfield",
+      "centerId": 141,
+      "coordinate": {
+        "lng": -122.3644781,
+        "lat": 47.5627722
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Delridge Playfield Tennis Court 01",
+          "centerId": 141,
+          "resourceId": 1335,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Delridge Playfield Tennis Court 02",
+          "centerId": 141,
+          "resourceId": 1336,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Discovery Park",
+      "centerId": 96,
+      "coordinate": {
+        "lng": -122.4173069,
+        "lat": 47.6593754
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Discovery Park Tennis Court 01",
+          "centerId": 96,
+          "resourceId": 1337,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Discovery Park Tennis Court 02",
+          "centerId": 96,
+          "resourceId": 1338,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Froula Playground",
+      "centerId": 208,
+      "coordinate": {
+        "lng": -122.3150123,
+        "lat": 47.6806313
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Froula Playground Tennis Court 01",
+          "centerId": 208,
+          "resourceId": 1339,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Froula Playground Tennis Court 02",
+          "centerId": 208,
+          "resourceId": 1340,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Garfield Playfield",
+      "centerId": 144,
+      "coordinate": {
+        "lng": -122.301239,
+        "lat": 47.606659
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Garfield Playfield Tennis Court 01",
+          "centerId": 144,
+          "resourceId": 1341,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Garfield Playfield Tennis Court 02",
+          "centerId": 144,
+          "resourceId": 1342,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Gilman Playfield",
+      "centerId": 146,
+      "coordinate": {
+        "lng": -122.3697481,
+        "lat": 47.6673172
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Gilman Playfield Tennis Court 02",
+          "centerId": 146,
+          "resourceId": 1345,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Gilman Playfield Tennis Court 01",
+          "centerId": 146,
+          "resourceId": 1344,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Green Lake Park",
+      "centerId": 10,
+      "coordinate": {
+        "lng": -122.328118,
+        "lat": 47.679328
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Green Lake Park West Tennis Court 01",
+          "centerId": 10,
+          "resourceId": 181,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Green Lake Park West Tennis Court 02",
+          "centerId": 10,
+          "resourceId": 183,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Hiawatha Playfield",
+      "centerId": 147,
+      "coordinate": {
+        "lng": -122.3844123,
+        "lat": 47.5781469
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Hiawatha Playfield Tennis Court 01",
+          "centerId": 147,
+          "resourceId": 1346,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Hiawatha Playfield Tennis Court 02",
+          "centerId": 147,
+          "resourceId": 1347,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Hiawatha Playfield Tennis Court 03",
+          "centerId": 147,
+          "resourceId": 1348,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Ingraham High School Athletics Complex",
+      "centerId": 159,
+      "coordinate": {
+        "lng": -122.3380208,
+        "lat": 47.7262045
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Ingraham HS Tennis Court 1",
+          "centerId": 159,
+          "resourceId": 1095,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Ingraham HS Tennis Court 2",
+          "centerId": 159,
+          "resourceId": 1096,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Ingraham HS Tennis Court 3",
+          "centerId": 159,
+          "resourceId": 1097,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Ingraham HS Tennis Court 4",
+          "centerId": 159,
+          "resourceId": 1098,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Ingraham HS Tennis Court 5",
+          "centerId": 159,
+          "resourceId": 2695,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Ingraham HS Tennis Court 6",
+          "centerId": 159,
+          "resourceId": 2696,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Jefferson Park (previously Lid Playfield)",
+      "centerId": 271,
+      "coordinate": {
+        "lng": -122.310491,
+        "lat": 47.569592
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Jefferson Park Lid Tennis Court Upper 02",
+          "centerId": 271,
+          "resourceId": 778,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Jefferson Park Lid Tennis Court Lower 02",
+          "centerId": 271,
+          "resourceId": 2278,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Jefferson Park Lid Tennis Court Upper 01",
+          "centerId": 271,
+          "resourceId": 777,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Jefferson Park Lid Tennis Court Lower 01",
+          "centerId": 271,
+          "resourceId": 2277,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Laurelhurst Playfield",
+      "centerId": 372,
+      "coordinate": {
+        "lng": -122.2779704,
+        "lat": 47.6598524
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Laurelhurst Playfield Tennis Court 01",
+          "centerId": 372,
+          "resourceId": 1353,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Laurelhurst Playfield Tennis Court 02",
+          "centerId": 372,
+          "resourceId": 1354,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Laurelhurst Playfield Tennis Court 03",
+          "centerId": 372,
+          "resourceId": 1355,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Laurelhurst Playfield Tennis Court 04",
+          "centerId": 372,
+          "resourceId": 1356,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Lower & Upper Woodland Playfield",
+      "centerId": 13,
+      "coordinate": {
+        "lng": -122.3433208,
+        "lat": 47.6686243
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Court 1 (Upper)",
+          "centerId": 13,
+          "resourceId": 369,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Court 2 (Upper)",
+          "centerId": 13,
+          "resourceId": 370,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Court 3 (Upper)",
+          "centerId": 13,
+          "resourceId": 371,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Court 4 (Upper)",
+          "centerId": 13,
+          "resourceId": 372,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Court 1 (Lower)",
+          "centerId": 13,
+          "resourceId": 353,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Court 2 (Lower)",
+          "centerId": 13,
+          "resourceId": 354,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Court 3 (Lower)",
+          "centerId": 13,
+          "resourceId": 355,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Court 4 (Lower)",
+          "centerId": 13,
+          "resourceId": 356,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Court 5 (Lower)",
+          "centerId": 13,
+          "resourceId": 357,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Court 6 (Lower)",
+          "centerId": 13,
+          "resourceId": 358,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Court 7 (Lower)",
+          "centerId": 13,
+          "resourceId": 359,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Court 8 (Lower)",
+          "centerId": 13,
+          "resourceId": 360,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Court 9 (Lower)",
+          "centerId": 13,
+          "resourceId": 361,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Court 10 (Lower)",
+          "centerId": 13,
+          "resourceId": 362,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Madison Park",
+      "centerId": 427,
+      "coordinate": {
+        "lng": -122.2771186,
+        "lat": 47.6356423
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Madison Park Tennis Court 01",
+          "centerId": 427,
+          "resourceId": 1359,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Madison Park Tennis Court 02",
+          "centerId": 427,
+          "resourceId": 1360,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Madrona Playground",
+      "centerId": 449,
+      "coordinate": {
+        "lng": -122.2898837,
+        "lat": 47.6110283
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Madrona Playground Tennis Court 01",
+          "centerId": 449,
+          "resourceId": 2279,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Madrona Playground Tennis Court 02",
+          "centerId": 449,
+          "resourceId": 2280,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Magnolia Park",
+      "centerId": 454,
+      "coordinate": {
+        "lng": -122.3980042,
+        "lat": 47.6334679
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Magnolia Park Tennis Court 01",
+          "centerId": 454,
+          "resourceId": 1361,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Magnolia Park Tennis Court 02",
+          "centerId": 454,
+          "resourceId": 1362,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Magnolia Playfield",
+      "centerId": 455,
+      "coordinate": {
+        "lng": -122.3996258,
+        "lat": 47.641191
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Magnolia Playfield Tennis Court 01",
+          "centerId": 455,
+          "resourceId": 1363,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Magnolia Playfield Tennis Court 02",
+          "centerId": 455,
+          "resourceId": 1364,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Magnolia Playfield Tennis Court 03",
+          "centerId": 455,
+          "resourceId": 1365,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Magnolia Playfield Tennis Court 04",
+          "centerId": 455,
+          "resourceId": 1366,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Meadowbrook Playfield",
+      "centerId": 295,
+      "coordinate": {
+        "lng": -122.2939,
+        "lat": 47.70652
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Meadowbrook Playfield Tennis Court 01",
+          "centerId": 295,
+          "resourceId": 1367,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Meadowbrook Playfield Tennis Court 02",
+          "centerId": 295,
+          "resourceId": 1368,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Meadowbrook Playfield Tennis Court 03",
+          "centerId": 295,
+          "resourceId": 1369,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Meadowbrook Playfield Tennis Court 04",
+          "centerId": 295,
+          "resourceId": 1370,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Meadowbrook Playfield Tennis Court 05",
+          "centerId": 295,
+          "resourceId": 1371,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Meadowbrook Playfield Tennis Court 06",
+          "centerId": 295,
+          "resourceId": 1372,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Miller Playfield",
+      "centerId": 304,
+      "coordinate": {
+        "lng": -122.3060354,
+        "lat": 47.6214842
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Miller Playfield Tennis Court 01",
+          "centerId": 304,
+          "resourceId": 1373,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Miller Playfield Tennis Court 02",
+          "centerId": 304,
+          "resourceId": 1374,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Montlake Playfield",
+      "centerId": 307,
+      "coordinate": {
+        "lng": -122.3090315,
+        "lat": 47.6411332
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Montlake Playfield Tennis Court 01",
+          "centerId": 307,
+          "resourceId": 1375,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Montlake Playfield Tennis Court 02",
+          "centerId": 307,
+          "resourceId": 1376,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Mount Baker Park",
+      "centerId": 310,
+      "coordinate": {
+        "lng": -122.2888491,
+        "lat": 47.5796543
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Mount Baker Park Tennis Court 01",
+          "centerId": 310,
+          "resourceId": 1377,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Mount Baker Park Tennis Court 02",
+          "centerId": 310,
+          "resourceId": 1378,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Observatory Courts",
+      "centerId": 349,
+      "coordinate": {
+        "lng": -122.3553436,
+        "lat": 47.6313132
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Observatory Tennis Court 01",
+          "centerId": 349,
+          "resourceId": 1119,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Observatory Tennis Court 02",
+          "centerId": 349,
+          "resourceId": 1120,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Rainier Beach Playfield",
+      "centerId": 407,
+      "coordinate": {
+        "lng": -122.2729945,
+        "lat": 47.5249428
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Rainier Beach Playfield Tennis Court 01",
+          "centerId": 407,
+          "resourceId": 1379,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Rainier Beach Playfield Tennis Court 02",
+          "centerId": 407,
+          "resourceId": 1380,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Rainier Beach Playfield Tennis Court 03",
+          "centerId": 407,
+          "resourceId": 1381,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Rainier Beach Playfield Tennis Court 04",
+          "centerId": 407,
+          "resourceId": 1382,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Rainier Playfield",
+      "centerId": 410,
+      "coordinate": {
+        "lng": -122.2863646,
+        "lat": 47.5617828
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Rainier Playfield Tennis Court 01",
+          "centerId": 410,
+          "resourceId": 1383,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Rainier Playfield Tennis Court 02",
+          "centerId": 410,
+          "resourceId": 1384,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Rainier Playfield Tennis Court 03",
+          "centerId": 410,
+          "resourceId": 1385,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Rainier Playfield Tennis Court 04",
+          "centerId": 410,
+          "resourceId": 1386,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Riverview Playfield",
+      "centerId": 423,
+      "coordinate": {
+        "lng": -122.3499227,
+        "lat": 47.5373147
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Riverview Playfield Tennis Court 01",
+          "centerId": 423,
+          "resourceId": 1387,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Riverview Playfield Tennis Court 02",
+          "centerId": 423,
+          "resourceId": 1388,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Rogers (Eastlake) Playfield",
+      "centerId": 425,
+      "coordinate": {
+        "lng": -122.3252388,
+        "lat": 47.6425877
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Rogers Playfield Tennis Court 01",
+          "centerId": 425,
+          "resourceId": 1389,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Rogers Playfield Tennis Court 02",
+          "centerId": 425,
+          "resourceId": 1390,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Sam Smith Park (I-90 Lid)",
+      "centerId": 429,
+      "coordinate": {
+        "lng": -122.2957193,
+        "lat": 47.5898121
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Sam Smith (I90 Lid) Park Tennis Court 01",
+          "centerId": 429,
+          "resourceId": 1391,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Sam Smith (I90 Lid) Park Tennis Court 02",
+          "centerId": 429,
+          "resourceId": 1392,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Sealth High School Stadium Complex",
+      "centerId": 439,
+      "coordinate": {
+        "lng": -122.3668641,
+        "lat": 47.5273779
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Sealth HS Complex Tennis Court 01",
+          "centerId": 439,
+          "resourceId": 2281,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Sealth HS Complex Tennis Court 02",
+          "centerId": 439,
+          "resourceId": 2282,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Sealth HS Complex Tennis Court 03",
+          "centerId": 439,
+          "resourceId": 2283,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Sealth HS Complex Tennis Court 04",
+          "centerId": 439,
+          "resourceId": 2284,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Sealth HS Complex Tennis Court 05",
+          "centerId": 439,
+          "resourceId": 2285,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Sealth HS Complex Tennis Court 06",
+          "centerId": 439,
+          "resourceId": 2286,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Seward Park",
+      "centerId": 20,
+      "coordinate": {
+        "lng": -122.250967,
+        "lat": 47.554055
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Seward Park Tennis Court 01",
+          "centerId": 20,
+          "resourceId": 373,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Seward Park Tennis Court 02",
+          "centerId": 20,
+          "resourceId": 2437,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Solstice Park",
+      "centerId": 219,
+      "coordinate": {
+        "lng": -122.3905449,
+        "lat": 47.536398
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Solstice Park Tennis Court 01",
+          "centerId": 219,
+          "resourceId": 1393,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Solstice Park Tennis Court 02",
+          "centerId": 219,
+          "resourceId": 1394,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Solstice Park Tennis Court 03",
+          "centerId": 219,
+          "resourceId": 1395,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Solstice Park Tennis Court 04",
+          "centerId": 219,
+          "resourceId": 1396,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Solstice Park Tennis Court 05",
+          "centerId": 219,
+          "resourceId": 1397,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Solstice Park Tennis Court 06",
+          "centerId": 219,
+          "resourceId": 1398,
+          "tags": [
+            "walk-in",
+            "lighted",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Soundview Playfield (Athletics)",
+      "centerId": 230,
+      "coordinate": {
+        "lng": -122.3788178,
+        "lat": 47.6953815
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Soundview Playfield Tennis Court 01",
+          "centerId": 230,
+          "resourceId": 1399,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Soundview Playfield Tennis Court 02",
+          "centerId": 230,
+          "resourceId": 1400,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Volunteer Park",
+      "centerId": 21,
+      "coordinate": {
+        "lng": -122.3155841,
+        "lat": 47.6303711
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Volunteer Park Court 01 - Upper",
+          "centerId": 21,
+          "resourceId": 365,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Volunteer Park Court 02 - Upper",
+          "centerId": 21,
+          "resourceId": 366,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Volunteer Park Court 03 - Lower",
+          "centerId": 21,
+          "resourceId": 363,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Volunteer Park Court 04 - Lower",
+          "centerId": 21,
+          "resourceId": 364,
+          "tags": [
+            "lighted",
+            "reservable",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Wallingford Playfield (Athletics)",
+      "centerId": 260,
+      "coordinate": {
+        "lng": -122.3365885,
+        "lat": 47.6589419
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Wallingford Playfield Tennis Court 01",
+          "centerId": 260,
+          "resourceId": 1408,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Wallingford Playfield Tennis Court 02",
+          "centerId": 260,
+          "resourceId": 1409,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Walt Hundley Playfield",
+      "centerId": 253,
+      "coordinate": {
+        "lng": -122.3735031,
+        "lat": 47.5402813
+      },
+      "timezone": "America/Los_Angeles",
+      "courts": [
+        {
+          "name": "Walt Hundley Playfield Tennis Court 01",
+          "centerId": 253,
+          "resourceId": 1410,
+          "tags": [
+            "reservable",
+            "outdoor"
+          ]
+        },
+        {
+          "name": "Walt Hundley Playfield Tennis Court 02",
+          "centerId": 253,
+          "resourceId": 1411,
+          "tags": [
+            "walk-in",
+            "outdoor"
+          ]
+        }
+      ]
+    }
+  ]
+}

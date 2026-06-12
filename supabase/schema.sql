@@ -1128,6 +1128,25 @@ create table public.facility_pin_overrides (
   updated_by  uuid references public.profiles (id) on delete set null
 );
 
+-- Nightly snapshot of Seattle Parks court availability (ActiveNet), keyed by
+-- the public center/resource IDs from data/activenet-seattle.json (no FK —
+-- those live in a JSON seed, not a table). The snapshot-availability cron
+-- captures the next ~15 days and upserts only BOOKABLE (status-0) days; this
+-- lets /api/courts/availability serve "today" from the date's last bookable
+-- night, since same-day online booking is disabled (ActiveNet returns nothing
+-- for the current day). `windows` is a JSON array of {start,end} clock strings.
+create table public.court_availability_snapshot (
+  center_id    integer not null,
+  resource_id  integer not null,
+  date         date    not null,
+  windows      jsonb   not null default '[]'::jsonb,
+  day_status   integer not null,
+  captured_at  timestamptz not null default now(),
+  primary key (resource_id, date)
+);
+create index court_availability_snapshot_center_date_idx
+  on public.court_availability_snapshot (center_id, date);
+
 -- =========================================================================
 -- Highlights (story-style media on profile)
 -- =========================================================================
@@ -2556,6 +2575,15 @@ create policy facility_pin_overrides_write_developer
   for all to authenticated
   using ((auth.jwt() ->> 'email') = 'junfang219@gmail.com')
   with check ((auth.jwt() ->> 'email') = 'junfang219@gmail.com');
+
+-- Public court availability — anyone may read; only the snapshot cron writes,
+-- and it uses the service-role admin client (which bypasses RLS), so there is
+-- intentionally no insert/update policy.
+alter table public.court_availability_snapshot enable row level security;
+
+create policy court_availability_snapshot_select_all
+  on public.court_availability_snapshot
+  for select to anon, authenticated using (true);
 
 -- =========================================================================
 -- Highlights + device tokens
