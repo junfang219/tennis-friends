@@ -74,6 +74,29 @@ export function buildSnapshotRows(
   return rows;
 }
 
+/** "HH:mm[:ss]" → minutes from midnight (e.g. "17:15:00" → 1035). */
+export function clockToMinutes(t: string): number {
+  const [h, m] = t.split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+/**
+ * Does an open window [winStart, winEnd] overlap the requested filter range?
+ * A null bound means "unbounded" on that side (i.e. an "any time" search).
+ * Touching endpoints don't count as overlap (a window ending exactly at the
+ * range start isn't usable for that range).
+ */
+export function windowOverlaps(
+  winStartMin: number,
+  winEndMin: number,
+  rangeStartMin: number | null,
+  rangeEndMin: number | null
+): boolean {
+  const lo = rangeStartMin ?? Number.NEGATIVE_INFINITY;
+  const hi = rangeEndMin ?? Number.POSITIVE_INFINITY;
+  return winStartMin < hi && winEndMin > lo;
+}
+
 /** Rehydrate stored windows into Timeslots for a date (all marked available —
  *  a snapshot only ever holds windows that were open). */
 export function windowsToSlots(date: string, windows: SnapshotWindow[]): Timeslot[] {

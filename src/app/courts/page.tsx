@@ -8,6 +8,7 @@ import {
   type CourtSummary,
 } from "@/components/courts/CourtSummaryCard";
 import { AddMissingCourtModal } from "@/components/courts/AddMissingCourtModal";
+import AvailabilityFinder from "@/components/courts/AvailabilityFinder";
 import {
   filterFacilitiesByBbox,
   getFacilityByCourtId,
@@ -265,6 +266,11 @@ export default function CourtsPage() {
   // bucket matches are drawn (OSM gap-fill pins are hidden too, since they
   // have no bucket).
   const [bucketFilter, setBucketFilter] = useState<ManagedByBucket | null>(null);
+
+  // "Find open courts" availability filter — when active, holds the set of
+  // matching court ids so the map dims its pins to those venues. null = no
+  // availability filter applied.
+  const [availMatchIds, setAvailMatchIds] = useState<Set<string> | null>(null);
 
   // Current map center + zoom. The card uses this to encode the user's
   // exact view into the Details link so we can restore it on return.
@@ -783,8 +789,8 @@ export default function CourtsPage() {
     for (const c of courts) {
       if (c.source === "osm") {
         // OSM gap-fill pins have no bucket; suppress them when any bucket
-        // filter is active so the legend filter behaves consistently.
-        if (bucketFilter !== null) continue;
+        // or availability filter is active so the filters behave consistently.
+        if (bucketFilter !== null || availMatchIds !== null) continue;
         // Inert marker — drop pin only, no click handler, no id→marker
         // entry (the edit-pin path only applies to facilities anyway).
         const marker = L.marker([c.lat, c.lng], {
@@ -796,6 +802,8 @@ export default function CourtsPage() {
       }
       const bucket: ManagedByBucket = c.bucket ?? "city";
       if (bucketFilter !== null && bucket !== bucketFilter) continue;
+      // Availability filter: only keep venues that matched the date/time search.
+      if (availMatchIds !== null && !availMatchIds.has(c.id)) continue;
       const marker = L.marker([c.lat, c.lng], { icon: iconFor(bucket) }).addTo(map);
       // Tap → open the slide-up summary card. Replaces the old Leaflet popup
       // so we can render React (photos, ratings, actions) inside it.
@@ -803,7 +811,7 @@ export default function CourtsPage() {
       markersRef.current.push(marker);
       markersByIdRef.current.set(c.id, marker);
     }
-  }, [courts, mapReady, editingCourtId, bucketFilter]);
+  }, [courts, mapReady, editingCourtId, bucketFilter, availMatchIds]);
 
   // Enable/disable drag on the marker currently being edited.
   useEffect(() => {
@@ -1035,6 +1043,16 @@ export default function CourtsPage() {
         {/* ── MAP (RIGHT) ── */}
         <div className="relative flex-1 h-full min-w-0">
           <div ref={mapRef} className="absolute inset-0" />
+
+          {/* "Find open courts" availability filter — date + time → list of
+              venues with bookable courts, dimming the map to those venues. */}
+          {mapReady && (
+            <AvailabilityFinder
+              myLocation={myLocation}
+              mapView={mapView}
+              onMatchesChange={setAvailMatchIds}
+            />
+          )}
 
           {/* Map search — debounced Nominatim geocoder. Typing pans the map
               to the selected result, which fires moveend → scheduleFetch,

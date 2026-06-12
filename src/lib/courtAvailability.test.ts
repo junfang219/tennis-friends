@@ -5,6 +5,8 @@ import {
   toSnapshotWindows,
   buildSnapshotRows,
   windowsToSlots,
+  clockToMinutes,
+  windowOverlaps,
 } from "./courtAvailability";
 import type { DayAvailability, Timeslot } from "./activenet";
 
@@ -71,6 +73,34 @@ describe("buildSnapshotRows", () => {
     const rows = buildSnapshotRows(2, 279, [{ date: "2026-06-15", status: 0, slots: [] }]);
     expect(rows).toHaveLength(1);
     expect(rows[0].windows).toEqual([]);
+  });
+});
+
+describe("clockToMinutes", () => {
+  it("parses HH:mm and HH:mm:ss", () => {
+    expect(clockToMinutes("07:00")).toBe(420);
+    expect(clockToMinutes("17:15:00")).toBe(1035);
+    expect(clockToMinutes("00:00")).toBe(0);
+  });
+});
+
+describe("windowOverlaps", () => {
+  const win = [1020, 1260]; // 17:00–21:00
+  it("matches a range that overlaps the window", () => {
+    expect(windowOverlaps(win[0], win[1], 1080, 1200)).toBe(true); // 18:00–20:00 inside
+    expect(windowOverlaps(win[0], win[1], 900, 1080)).toBe(true); // 15:00–18:00 partial
+  });
+  it("rejects a range fully outside the window", () => {
+    expect(windowOverlaps(win[0], win[1], 420, 600)).toBe(false); // 7–10a
+  });
+  it("treats touching endpoints as no overlap", () => {
+    expect(windowOverlaps(win[0], win[1], 1260, 1320)).toBe(false); // starts at 21:00
+    expect(windowOverlaps(win[0], win[1], 900, 1020)).toBe(false); // ends at 17:00
+  });
+  it("null bounds mean any-time (always overlaps a real window)", () => {
+    expect(windowOverlaps(win[0], win[1], null, null)).toBe(true);
+    expect(windowOverlaps(win[0], win[1], 1200, null)).toBe(true);
+    expect(windowOverlaps(win[0], win[1], null, 600)).toBe(false); // before 10a only
   });
 });
 
