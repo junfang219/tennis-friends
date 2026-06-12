@@ -709,6 +709,17 @@ export default function GroupChatThreadPage() {
     : "";
   const others = chatInfo ? chatInfo.participants.filter((p) => p.id !== myId) : [];
 
+  // Club/circle chats are kept minimal like team chats: no cost-split, rename,
+  // or clear-history. Only session/game chats (no friend group) keep those.
+  // QR invite is club-only; circles are invite-by-friendship. The overflow menu
+  // is hidden entirely when it would have no items (e.g. a club/circle owner,
+  // who can't leave their own group).
+  const isClubChat = chatInfo?.friendGroupKind === "club";
+  const showChatUtilities = !!chatInfo && !chatInfo.friendGroupId;
+  const canLeaveChat =
+    !!chatInfo && !(chatInfo.friendGroupId && myId === chatInfo.friendGroupOwnerId);
+  const hasMenuItems = showChatUtilities || canLeaveChat;
+
   // Group messages by date
   const messagesByDate: { date: string; messages: Message[] }[] = [];
   messages.forEach((msg) => {
@@ -792,9 +803,10 @@ export default function GroupChatThreadPage() {
                 </button>
               )}
             </div>
-            {/* Club chats: surface the reusable QR invite so any member can
-                bring a non-user straight into this chat. */}
-            {!showRename && chatInfo.friendGroupId && (
+            {/* Club chats only: surface the reusable QR invite so any member can
+                bring a non-user straight into this chat. Circles are
+                invite-by-friendship only, so they get no QR. */}
+            {!showRename && isClubChat && (
               <button
                 onClick={() => setShowQr(true)}
                 className="p-1.5 rounded-lg hover:bg-court-green-pale/30 transition-colors text-court-green shrink-0"
@@ -813,8 +825,10 @@ export default function GroupChatThreadPage() {
               </button>
             )}
             {/* Overflow menu hides while the rename input is up so the
-                input + Save/Cancel don't collide with it. */}
-            {!showRename && (
+                input + Save/Cancel don't collide with it. It also hides when
+                there are no actions to show (e.g. a club/circle owner, whose
+                only would-be action — Leave — doesn't apply). */}
+            {!showRename && hasMenuItems && (
               <button
                 onClick={() => setShowMenu(true)}
                 className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500 shrink-0"
@@ -1255,43 +1269,50 @@ export default function GroupChatThreadPage() {
             className="bg-white rounded-2xl shadow-2xl w-56 overflow-hidden animate-fade-in-up"
             onClick={(e) => e.stopPropagation()}
           >
-            <button
-              onClick={() => {
-                setShowMenu(false);
-                setShowSplit(true);
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left text-sm text-gray-700"
-            >
-              <span className="text-base">💵</span>
-              <span>Split a cost</span>
-            </button>
-            <button
-              onClick={() => {
-                setShowMenu(false);
-                setRenameValue(chatInfo.name);
-                setShowRename(true);
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left text-sm text-gray-700"
-            >
-              <span className="text-base">✏️</span>
-              <span>Rename chat</span>
-            </button>
-            <button
-              onClick={() => {
-                setShowMenu(false);
-                clearHistory();
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left text-sm text-gray-700"
-            >
-              <span className="text-base">🧹</span>
-              <span>Clear chat history</span>
-            </button>
+            {/* Cost-split, rename, and clear-history apply only to session/game
+                chats. Club and circle chats stay minimal like team chats — no
+                splitting, renaming, or per-user history clearing. */}
+            {showChatUtilities && (
+              <>
+                <button
+                  onClick={() => {
+                    setShowMenu(false);
+                    setShowSplit(true);
+                  }}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left text-sm text-gray-700"
+                >
+                  <span className="text-base">💵</span>
+                  <span>Split a cost</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setShowMenu(false);
+                    setRenameValue(chatInfo.name);
+                    setShowRename(true);
+                  }}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left text-sm text-gray-700"
+                >
+                  <span className="text-base">✏️</span>
+                  <span>Rename chat</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setShowMenu(false);
+                    clearHistory();
+                  }}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left text-sm text-gray-700"
+                >
+                  <span className="text-base">🧹</span>
+                  <span>Clear chat history</span>
+                </button>
+              </>
+            )}
             {/* The club/circle owner can't leave their own group — deleting it
                 (from the Chats list) is their exit. Everyone else can leave;
                 session chats are always leavable (soft-hide). */}
-            {!(chatInfo.friendGroupId && myId === chatInfo.friendGroupOwnerId) && (
+            {canLeaveChat && (
               <>
-                <div className="border-t border-gray-100" />
+                {showChatUtilities && <div className="border-t border-gray-100" />}
                 <button
                   onClick={() => {
                     setShowMenu(false);
