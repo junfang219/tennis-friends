@@ -91,6 +91,47 @@ function normalizeVenueName(name: string): string {
  * Park (whose URL omits the id) without risking a wrong match for ambiguous
  * pairs like "Green Lake Park East" vs the seed's single "Green Lake Park".
  */
+/**
+ * A few ActiveNet centers are one physical complex that the catalog splits
+ * into two venues (Lower & Upper Woodland is the only one today: center 13
+ * holds both "Court N (Upper)" and "Court N (Lower)"). These map each catalog
+ * facility (`courtId`) to its center plus the court-name tag that identifies
+ * its courts within that shared center, so each venue's availability shows
+ * only its own courts.
+ */
+export const SPLIT_VENUE_OVERRIDES: Record<
+  string,
+  { centerId: number; courtNameIncludes: string }
+> = {
+  "tf-20": { centerId: 13, courtNameIncludes: "(Lower)" }, // Lower Woodland
+  "tf-39": { centerId: 13, courtNameIncludes: "(Upper)" }, // Upper Woodland
+};
+
+export interface AvailabilityTarget {
+  centerId: number;
+  /** Only courts whose name includes this substring belong to this facility
+   *  (a split shared center). null = all of the center's courts. */
+  courtNameIncludes: string | null;
+}
+
+/**
+ * Resolve a catalog facility to its availability source: a centerId plus an
+ * optional court-name filter. Prefers an explicit split override (keyed by
+ * courtId); otherwise the normal one-center-one-venue resolution.
+ */
+export function resolveAvailabilityTarget(opts: {
+  courtId?: string | null;
+  bookingUrl?: string | null;
+  name?: string | null;
+}): AvailabilityTarget | null {
+  if (opts.courtId && SPLIT_VENUE_OVERRIDES[opts.courtId]) {
+    const o = SPLIT_VENUE_OVERRIDES[opts.courtId];
+    return { centerId: o.centerId, courtNameIncludes: o.courtNameIncludes };
+  }
+  const venue = resolveSeattleVenue({ bookingUrl: opts.bookingUrl, name: opts.name });
+  return venue ? { centerId: venue.centerId, courtNameIncludes: null } : null;
+}
+
 export function resolveSeattleVenue(opts: {
   bookingUrl?: string | null;
   name?: string | null;

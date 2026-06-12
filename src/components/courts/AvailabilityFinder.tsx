@@ -114,6 +114,13 @@ export default function AvailabilityFinder({
   const [customStart, setCustomStart] = useState("17:00");
   const [customEnd, setCustomEnd] = useState("20:00");
   const [results, setResults] = useState<VenueMatch[] | null>(null);
+  // The date/range actually searched, carried into each result's detail link
+  // so the court page opens on that day with the window highlighted.
+  const [applied, setApplied] = useState<{
+    date: string;
+    start: string | null;
+    end: string | null;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
 
@@ -143,6 +150,7 @@ export default function AvailabilityFinder({
         });
       }
       setResults(venues);
+      setApplied({ date, start: ps, end: pe });
       setPanelOpen(false);
       onMatchesChange(new Set(venues.map((v) => v.courtId)));
     } catch {
@@ -160,13 +168,22 @@ export default function AvailabilityFinder({
   }, [onMatchesChange]);
 
   const detailHref = useCallback(
-    (courtId: string) =>
-      mapView
-        ? `/courts/${encodeURIComponent(courtId)}?z=${mapView.zoom}&lat=${mapView.lat.toFixed(
-            6
-          )}&lng=${mapView.lng.toFixed(6)}`
-        : `/courts/${encodeURIComponent(courtId)}`,
-    [mapView]
+    (courtId: string) => {
+      const params = new URLSearchParams();
+      if (mapView) {
+        params.set("z", String(mapView.zoom));
+        params.set("lat", mapView.lat.toFixed(6));
+        params.set("lng", mapView.lng.toFixed(6));
+      }
+      if (applied) {
+        params.set("date", applied.date);
+        if (applied.start) params.set("start", applied.start);
+        if (applied.end) params.set("end", applied.end);
+      }
+      const qs = params.toString();
+      return `/courts/${encodeURIComponent(courtId)}${qs ? `?${qs}` : ""}`;
+    },
+    [mapView, applied]
   );
 
   const selectedDay = days.find((d) => d.value === date);

@@ -13,7 +13,7 @@ import { CourtStatusReporter } from "@/components/courts/CourtStatusReporter";
 import { isReportEligibleCategory } from "@/lib/courtPrompt";
 import { DirectionsButton } from "@/components/courts/DirectionsButton";
 import { getFacilityByCourtId, getSeattleParksDashboardUrl } from "@/lib/facilities";
-import { resolveSeattleVenue } from "@/lib/activenetSeattleCourts";
+import { resolveAvailabilityTarget } from "@/lib/activenetSeattleCourts";
 import AvailabilityGrid from "@/components/courts/AvailabilityGrid";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listCourtReviews } from "@/lib/supabase/queries";
@@ -63,6 +63,10 @@ interface CourtDetail {
   /** ActiveNet center ID when the venue resolves to our seed; drives the
    *  native live-availability grid (and suppresses the dashboard). */
   activeNetCenterId: number | null;
+  /** For a venue that shares an ActiveNet center with another (Lower/Upper
+   *  Woodland), the court-name tag identifying this venue's courts. null = all
+   *  of the center's courts belong to this venue. */
+  availabilityCourtFilter: string | null;
   /** Seattle Parks live/today dashboard URL when the venue is dashboard-
    *  eligible — linked from the grid's view-only notice (e.g. today). Set
    *  even for natively-resolved venues, unlike dashboardUrl. */
@@ -173,10 +177,15 @@ export default function CourtDetailPage() {
         facility.managedBy === "Seattle Parks & Recreation" &&
         !!facility.bookingUrl &&
         facility.showAvailabilityDashboard;
-      const activeNetCenterId = dashEligible
-        ? resolveSeattleVenue({ bookingUrl: facility.bookingUrl, name: facility.name })
-            ?.centerId ?? null
+      const target = dashEligible
+        ? resolveAvailabilityTarget({
+            courtId: facility.courtId,
+            bookingUrl: facility.bookingUrl,
+            name: facility.name,
+          })
         : null;
+      const activeNetCenterId = target?.centerId ?? null;
+      const availabilityCourtFilter = target?.courtNameIncludes ?? null;
       const liveAvailabilityUrl = dashEligible ? getSeattleParksDashboardUrl() : null;
       // Page-level dashboard modal only for venues we CAN'T cover natively;
       // resolved venues get the grid (which reuses liveAvailabilityUrl for its
@@ -186,6 +195,7 @@ export default function CourtDetailPage() {
         ...facility,
         dashboardUrl,
         activeNetCenterId,
+        availabilityCourtFilter,
         liveAvailabilityUrl,
       } as unknown as CourtDetail;
       setCourt(detail);
@@ -630,6 +640,10 @@ export default function CourtDetailPage() {
                 venueName={court.name}
                 bookingUrl={court.bookingUrl}
                 liveViewUrl={court.liveAvailabilityUrl}
+                courtFilter={court.availabilityCourtFilter}
+                initialDate={searchParams.get("date")}
+                highlightStart={searchParams.get("start")}
+                highlightEnd={searchParams.get("end")}
               />
             </Section>
           )}

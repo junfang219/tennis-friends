@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getFacilities, type Facility } from "@/lib/facilities";
-import { resolveSeattleVenue } from "@/lib/activenetSeattleCourts";
+import { getFacilities, getFacilityByCourtId, type Facility } from "@/lib/facilities";
+import {
+  resolveSeattleVenue,
+  getCourtByResourceId,
+  SPLIT_VENUE_OVERRIDES,
+} from "@/lib/activenetSeattleCourts";
 import {
   clockToMinutes,
   windowOverlaps,
@@ -58,6 +62,28 @@ function facilityForCenter(centerId: number): Facility | null {
   return centerToFacility.get(centerId) ?? null;
 }
 
+// Centers that one physical complex shares between two catalog venues
+// (Lower/Upper Woodland). For these, a court belongs to a facility by its
+// court-name tag, not just the center.
+const SPLIT_CENTER_IDS = new Set(
+  Object.values(SPLIT_VENUE_OVERRIDES).map((o) => o.centerId)
+);
+
+/** The catalog facility a single snapshot row (center + resource) belongs to. */
+function facilityForRow(centerId: number, resourceId: number): Facility | null {
+  if (SPLIT_CENTER_IDS.has(centerId)) {
+    const court = getCourtByResourceId(resourceId);
+    if (!court) return null;
+    for (const [courtId, o] of Object.entries(SPLIT_VENUE_OVERRIDES)) {
+      if (o.centerId === centerId && court.name.includes(o.courtNameIncludes)) {
+        return getFacilityByCourtId(courtId);
+      }
+    }
+    return null;
+  }
+  return facilityForCenter(centerId);
+}
+
 interface VenueMatch {
   courtId: string;
   centerId: number;
@@ -97,10 +123,11 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Aggregate matching courts per center.
-  const byCenter = new Map<
-    number,
-    { resources: Set<number>; startMin: number; endMin: number; asOf: string }
+  // Aggregate matching courts per catalog facility (a shared center like
+  // Woodland splits into its Lower and Upper facilities here).
+  const byFacility = new Map<
+    string,
+    { facility: Facility; centerId: number; resources: Set<number>; startMin: number; endMin: number }
   >();
   let asOf: string | null = null;
   for (const row of data ?? []) {
@@ -121,27 +148,32 @@ export async function GET(req: Request) {
     }
     if (matchEnd <= matchStart) continue; // no overlapping window on this court
 
+    const facility = facilityForRow(row.center_id, row.resource_id);
+    if (!facility) continue;
     const g =
-      byCenter.get(row.center_id) ??
-      { resources: new Set<number>(), startMin: Infinity, endMin: -Infinity, asOf: row.captured_at };
+      byFacility.get(facility.courtId) ??
+      {
+        facility,
+        centerId: row.center_id,
+        resources: new Set<number>(),
+        startMin: Infinity,
+        endMin: -Infinity,
+      };
     g.resources.add(row.resource_id);
     g.startMin = Math.min(g.startMin, matchStart);
     g.endMin = Math.max(g.endMin, matchEnd);
-    if (row.captured_at > g.asOf) g.asOf = row.captured_at;
-    byCenter.set(row.center_id, g);
+    byFacility.set(facility.courtId, g);
     if (!asOf || row.captured_at > asOf) asOf = row.captured_at;
   }
 
   const venues: VenueMatch[] = [];
-  for (const [centerId, g] of byCenter) {
-    const f = facilityForCenter(centerId);
-    if (!f) continue;
+  for (const g of byFacility.values()) {
     venues.push({
-      courtId: f.courtId,
-      centerId,
-      name: f.name,
-      latitude: f.latitude,
-      longitude: f.longitude,
+      courtId: g.facility.courtId,
+      centerId: g.centerId,
+      name: g.facility.name,
+      latitude: g.facility.latitude,
+      longitude: g.facility.longitude,
       courtCount: g.resources.size,
       startMin: g.startMin,
       endMin: g.endMin,

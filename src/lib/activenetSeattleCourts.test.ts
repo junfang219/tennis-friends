@@ -3,6 +3,7 @@ import {
   parseCenterIdFromBookingUrl,
   resolveSeattleVenue,
   getSeattleVenueByCenterId,
+  resolveAvailabilityTarget,
 } from "./activenetSeattleCourts";
 
 // Real Seattle Parks booking URLs from data/tennis_courts.json.
@@ -58,6 +59,28 @@ describe("resolveSeattleVenue", () => {
       name: "Alki Playfield Tennis Courts",
     });
     expect(v).toBeNull();
+  });
+});
+
+describe("resolveAvailabilityTarget", () => {
+  it("splits Lower/Upper Woodland to center 13 with the right court tag", () => {
+    expect(resolveAvailabilityTarget({ courtId: "tf-20" })).toEqual({
+      centerId: 13,
+      courtNameIncludes: "(Lower)",
+    });
+    expect(resolveAvailabilityTarget({ courtId: "tf-39" })).toEqual({
+      centerId: 13,
+      courtNameIncludes: "(Upper)",
+    });
+  });
+
+  it("falls back to the normal resolution (no filter) for a regular venue", () => {
+    const t = resolveAvailabilityTarget({ courtId: "tf-2", bookingUrl: AMY_YEE_URL, name: "Amy Yee" });
+    expect(t).toEqual({ centerId: 2, courtNameIncludes: null });
+  });
+
+  it("returns null for an unresolvable venue", () => {
+    expect(resolveAvailabilityTarget({ courtId: "tf-999", bookingUrl: null, name: "Nowhere" })).toBeNull();
   });
 });
 

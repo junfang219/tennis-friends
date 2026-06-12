@@ -7,7 +7,7 @@
 // placeholder (and, on the detail page, the Power BI dashboard) for any venue
 // we can resolve to an ActiveNet center.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { buildResourceBookingUrl, type Timeslot } from "@/lib/activenet";
 
 interface CourtAvailability {
@@ -28,6 +28,16 @@ interface AvailabilityGridProps {
    *  view-only notice on days where online booking is closed (e.g. today,
    *  where same-day reservations aren't offered but courts can be checked). */
   liveViewUrl?: string | null;
+  /** Open on this date instead of today (e.g. arriving from the map's
+   *  "find open courts" filter). Ignored if outside the 15-day window. */
+  initialDate?: string | null;
+  /** Searched time window ("HH:mm") to highlight + scroll into view on the
+   *  initialDate. */
+  highlightStart?: string | null;
+  highlightEnd?: string | null;
+  /** For a venue sharing an ActiveNet center with another (Lower/Upper
+   *  Woodland), only keep courts whose name includes this substring. */
+  courtFilter?: string | null;
 }
 
 // ActiveNet exposes today + the next 14 days (the official site's 15-day
@@ -84,8 +94,11 @@ function formatRangeShort(startMin: number, endMin: number): string {
 
 /** "AYTC Outdoor Tennis Court 01" → "Court 01"; otherwise the full name. */
 function shortCourtName(name: string): string {
-  const m = name.match(/(court\s+\S+)\s*$/i);
-  return m ? m[1].replace(/^c/, "C") : name;
+  // Drop a trailing sub-group tag like "(Lower)" — once the table is filtered
+  // to one venue it's redundant on every row.
+  const cleaned = name.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const m = cleaned.match(/(court\s+\S+)\s*$/i);
+  return m ? m[1].replace(/^c/, "C") : cleaned;
 }
 
 export default function AvailabilityGrid({
@@ -93,9 +106,18 @@ export default function AvailabilityGrid({
   venueName,
   bookingUrl,
   liveViewUrl,
+  initialDate,
+  highlightStart,
+  highlightEnd,
+  courtFilter,
 }: AvailabilityGridProps) {
   const [days] = useState<Date[]>(() => nextDays(DAYS_SHOWN));
-  const [selected, setSelected] = useState<string>(() => ymd(new Date()));
+  const [selected, setSelected] = useState<string>(() =>
+    initialDate && nextDays(DAYS_SHOWN).some((d) => ymd(d) === initialDate)
+      ? initialDate
+      : ymd(new Date())
+  );
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const [courts, setCourts] = useState<CourtAvailability[] | null>(null);
   const [dayStatus, setDayStatus] = useState<number | null>(null);
   const [source, setSource] = useState<"live" | "snapshot">("live");
@@ -117,7 +139,11 @@ export default function AvailabilityGrid({
         source?: "live" | "snapshot";
         snapshotAsOf?: string | null;
       };
-      setCourts(data.courts);
+      // For a shared center (Lower/Upper Woodland) keep only this venue's courts.
+      const courts = courtFilter
+        ? data.courts.filter((c) => c.courtName.includes(courtFilter))
+        : data.courts;
+      setCourts(courts);
       setDayStatus(data.dayStatus);
       setSource(data.source ?? "live");
       setSnapshotAsOf(data.snapshotAsOf ?? null);
@@ -127,7 +153,7 @@ export default function AvailabilityGrid({
     } finally {
       setLoading(false);
     }
-  }, [centerId, selected]);
+  }, [centerId, selected, courtFilter]);
 
   useEffect(() => {
     load();
@@ -175,6 +201,21 @@ export default function AvailabilityGrid({
   const trackWidth = spanHours * PX_PER_HOUR;
   const hourTicks = Array.from({ length: spanHours }, (_, i) => axisStartH + i);
   const LABEL_W = 78; // court-name column width in px
+
+  // Highlight + scroll-to the time window the user searched on the map filter,
+  // but only on the date they searched.
+  const showHighlight =
+    hasWindows && !!highlightStart && !!highlightEnd && !!initialDate && selected === initialDate;
+  const clampPx = (px: number) => Math.max(0, Math.min(trackWidth, px));
+  const hlLeft = highlightStart ? clampPx((toMinutes(highlightStart) / 60 - axisStartH) * PX_PER_HOUR) : 0;
+  const hlRight = highlightEnd ? clampPx((toMinutes(highlightEnd) / 60 - axisStartH) * PX_PER_HOUR) : 0;
+  const hlWidth = Math.max(0, hlRight - hlLeft);
+
+  useEffect(() => {
+    if (!showHighlight || loading) return;
+    const el = scrollRef.current;
+    if (el) el.scrollLeft = Math.max(0, hlLeft - 12);
+  }, [showHighlight, loading, hlLeft]);
 
   return (
     <div className="rounded-xl border border-gray-200 overflow-hidden">
@@ -276,7 +317,7 @@ export default function AvailabilityGrid({
                   : "No open times on this day."}
               </p>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto" ref={scrollRef}>
                 <div style={{ width: LABEL_W + trackWidth }}>
                   {/* Hour axis */}
                   <div className="flex">
@@ -298,7 +339,15 @@ export default function AvailabilityGrid({
                   </div>
 
                   {/* One track per court, bars positioned by exact minute. */}
-                  {courtRows.map((c) => (
+                  <div className="relative">
+                    {/* Highlight band over the time window searched on the map. */}
+                    {showHighlight && hlWidth > 0 && (
+                      <div
+                        className="absolute top-0 bottom-0 bg-court-green/[0.07] border-x border-court-green/30 pointer-events-none"
+                        style={{ left: LABEL_W + hlLeft, width: hlWidth }}
+                      />
+                    )}
+                    {courtRows.map((c) => (
                     <div key={c.resourceId} className="flex border-t border-gray-100">
                       <div
                         className="sticky left-0 z-10 bg-white shrink-0 flex items-center justify-end pr-2.5 border-r border-gray-200 text-xs font-semibold text-gray-700 whitespace-nowrap"
@@ -348,7 +397,8 @@ export default function AvailabilityGrid({
                         })}
                       </div>
                     </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
