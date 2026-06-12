@@ -643,6 +643,25 @@ export default function FriendsPage() {
     const addMemberIds = editGroupMembers.filter((id) => !originalIds.includes(id));
     const removeMemberIds = originalIds.filter((id) => !editGroupMembers.includes(id));
 
+    // A circle with zero members is a degenerate state — its group chat would be
+    // left with only the owner. Rather than save an empty circle, offer to delete
+    // it outright. Deleting the circle cascade-deletes its group chat (chats
+    // .friend_group_id ON DELETE CASCADE), so both go together.
+    if (editGroupMembers.length === 0) {
+      const del = confirm(
+        "A circle needs at least one member. Removing everyone would leave an empty circle and group chat.\n\nDelete this circle instead? This also deletes its group chat for everyone."
+      );
+      if (!del) return; // keep them in the editor so they can re-add someone
+      setGroupSaving(true);
+      const supabase = createSupabaseBrowserClient();
+      await sbDeleteFriendGroup(supabase, editingGroupId);
+      setEditingGroupId(null);
+      loadFriendGroups();
+      loadChats();
+      setGroupSaving(false);
+      return;
+    }
+
     // When membership changes, confirm — and remind that the same people are
     // added to / removed from this circle's group chat, which is kept in sync.
     if (addMemberIds.length > 0 || removeMemberIds.length > 0) {
