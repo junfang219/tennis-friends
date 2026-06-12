@@ -8,7 +8,7 @@
 // we can resolve to an ActiveNet center.
 
 import { useCallback, useEffect, useState } from "react";
-import type { Timeslot } from "@/lib/activenet";
+import { buildResourceBookingUrl, type Timeslot } from "@/lib/activenet";
 
 interface CourtAvailability {
   resourceId: number;
@@ -331,7 +331,7 @@ export default function AvailabilityGrid({
                           return bookingUrl && !isSnapshot ? (
                             <a
                               key={idx}
-                              href={bookingUrl}
+                              href={buildResourceBookingUrl(c.resourceId)}
                               target="_blank"
                               rel="noopener noreferrer"
                               title={`${label} · book ${c.name} on Seattle Parks`}

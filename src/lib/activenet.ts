@@ -301,8 +301,18 @@ export function groupByVenue(
 }
 
 /**
- * Build a booking URL for a specific court on ActiveNet.
+ * Build a keyword-search booking URL for a court by name on ActiveNet.
  */
 export function buildBookingUrl(courtName: string): string {
   return `https://anc.apm.activecommunities.com/seattle/reservation/search?keyword=${encodeURIComponent(courtName)}&resourceType=0&equipmentQty=0`;
+}
+
+/**
+ * Deep link straight to a single court's reservation page, e.g. resource 280
+ * (AYTC Outdoor Tennis Court 02) → /seattle/reservation/search/detail/280.
+ * This is the page that opens the day's reservation calendar for exactly that
+ * court, so a tapped availability slot lands the user on the right court.
+ */
+export function buildResourceBookingUrl(resourceId: number): string {
+  return `https://anc.apm.activecommunities.com/seattle/reservation/search/detail/${resourceId}?locale=en-US`;
 }
