@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
@@ -96,8 +96,8 @@ export default function AvailabilityPage() {
   const groupId = params.id as string;
   const myId = session?.user?.id || "";
 
-  // Refs for each match column header so we can scroll/highlight when navigated from the calendar
-  const matchHeaderRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
+  // Refs for each match card so we can scroll/highlight when navigated from the calendar
+  const matchHeaderRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [highlightMatchId, setHighlightMatchId] = useState<string | null>(null);
 
   const [team, setTeam] = useState<Team | null>(null);
@@ -793,6 +793,59 @@ export default function AvailabilityPage() {
     );
   };
 
+  // A full match card: meta/actions header + the roster (each member's Avail and
+  // Lineup controls). Shared by the desktop card grid and the narrow-screen
+  // single-match view so both render from one source of truth.
+  const renderMatchCardInner = (match: Match) => (
+    <>
+      <div className="flex items-start justify-between gap-2 p-4 border-b border-gray-100 bg-gray-50">
+        {renderMatchMeta(match)}
+        {renderMatchActions(match)}
+      </div>
+      <div className="divide-y divide-gray-100">
+        {sortedMembers.map((m) => {
+          const isMe = m.user.id === myId;
+          const isCapRow = m.user.id === team.ownerId;
+          const a = getAvail(match, m.user.id);
+          return (
+            <div key={m.id} className="p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="relative shrink-0">
+                  <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
+                  {isCapRow && (
+                    <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-ball-yellow flex items-center justify-center ring-2 ring-white shadow-sm">
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className="text-court-green">
+                        <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                      </svg>
+                    </span>
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 truncate">
+                    {m.user.name}{isMe ? " (you)" : ""}
+                  </p>
+                  {isCapRow && (
+                    <p className="text-[9px] font-bold tracking-wider text-court-green">CAPTAIN</p>
+                  )}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 pl-10">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">Avail</p>
+                  {renderAvailControl(match, m, a)}
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">Lineup</p>
+                  {renderLineupControl(match, m, a)}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-6">
       {/* Header */}
@@ -926,97 +979,25 @@ export default function AvailabilityPage() {
         </div>
       ) : (
         <>
-        {/* Wide screens (md+): full members × matches matrix */}
-        <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  <th rowSpan={2} className="sticky left-0 z-20 bg-gray-50 p-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 border-r border-gray-200 min-w-[160px]">
-                    Member
-                  </th>
-                  {matches.map((match) => {
-                    const isHighlighted = highlightMatchId === match.id;
-                    return (
-                      <th
-                        key={match.id}
-                        colSpan={2}
-                        ref={(el) => {
-                          matchHeaderRefs.current[match.id] = el;
-                        }}
-                        className={`p-3 text-left min-w-[260px] border-r border-gray-200 transition-colors ${
-                          isHighlighted ? "bg-court-green-pale/30 ring-2 ring-court-green ring-inset" : ""
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          {renderMatchMeta(match)}
-                          {renderMatchActions(match)}
-                        </div>
-                      </th>
-                    );
-                  })}
-                </tr>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  {matches.map((match) => (
-                    <Fragment key={match.id}>
-                      <th className="text-[10px] uppercase tracking-wider text-gray-400 font-bold px-3 py-1.5 text-left border-r border-gray-100 min-w-[130px]">
-                        Avail
-                      </th>
-                      <th className="text-[10px] uppercase tracking-wider text-gray-400 font-bold px-3 py-1.5 text-left border-r border-gray-200 min-w-[130px]">
-                        Lineup
-                      </th>
-                    </Fragment>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedMembers.map((m) => {
-                  const isMe = m.user.id === myId;
-                  const isCapRow = m.user.id === team.ownerId;
-                  return (
-                    <tr key={m.id} className="border-b border-gray-100 last:border-b-0">
-                      <td className="sticky left-0 z-10 bg-white p-3 border-r border-gray-200">
-                        <div className="flex items-center gap-2">
-                          <div className="relative shrink-0">
-                            <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
-                            {isCapRow && (
-                              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-ball-yellow flex items-center justify-center ring-2 ring-white shadow-sm">
-                                <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className="text-court-green">
-                                  <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
-                                </svg>
-                              </span>
-                            )}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold text-gray-900 truncate">
-                              {m.user.name}{isMe ? " (you)" : ""}
-                            </p>
-                            {isCapRow && (
-                              <p className="text-[9px] font-bold tracking-wider text-court-green">CAPTAIN</p>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                      {matches.map((match) => {
-                        const a = getAvail(match, m.user.id);
-                        const cellKey = `${match.id}-${m.user.id}`;
-                        return (
-                          <Fragment key={cellKey}>
-                          <td className="p-3 border-r border-gray-100 align-top min-w-[130px]">
-                            {renderAvailControl(match, m, a)}
-                          </td>
-                          <td className="p-3 border-r border-gray-200 align-top min-w-[130px]">
-                            {renderLineupControl(match, m, a)}
-                          </td>
-                          </Fragment>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+        {/* Wide screens (md+): responsive grid of match cards — no horizontal
+            scrolling; cards wrap to as many columns as the viewport allows. */}
+        <div className="hidden md:grid md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
+          {matches.map((match) => {
+            const isHighlighted = highlightMatchId === match.id;
+            return (
+              <div
+                key={match.id}
+                ref={(el) => {
+                  matchHeaderRefs.current[match.id] = el;
+                }}
+                className={`bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden transition-colors ${
+                  isHighlighted ? "ring-2 ring-court-green ring-inset bg-court-green-pale/30" : ""
+                }`}
+              >
+                {renderMatchCardInner(match)}
+              </div>
+            );
+          })}
         </div>
 
         {/* Narrow screens: one match at a time (date chips + single card) */}
@@ -1047,51 +1028,7 @@ export default function AvailabilityPage() {
 
           {activeMatch && (
             <div className="mt-3 bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden">
-              <div className="flex items-start justify-between gap-2 p-4 border-b border-gray-100 bg-gray-50">
-                {renderMatchMeta(activeMatch)}
-                {renderMatchActions(activeMatch)}
-              </div>
-              <div className="divide-y divide-gray-100">
-                {sortedMembers.map((m) => {
-                  const isMe = m.user.id === myId;
-                  const isCapRow = m.user.id === team.ownerId;
-                  const a = getAvail(activeMatch, m.user.id);
-                  return (
-                    <div key={m.id} className="p-3">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="relative shrink-0">
-                          <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
-                          {isCapRow && (
-                            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-ball-yellow flex items-center justify-center ring-2 ring-white shadow-sm">
-                              <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className="text-court-green">
-                                <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
-                              </svg>
-                            </span>
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-gray-900 truncate">
-                            {m.user.name}{isMe ? " (you)" : ""}
-                          </p>
-                          {isCapRow && (
-                            <p className="text-[9px] font-bold tracking-wider text-court-green">CAPTAIN</p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 pl-10">
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">Avail</p>
-                          {renderAvailControl(activeMatch, m, a)}
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">Lineup</p>
-                          {renderLineupControl(activeMatch, m, a)}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              {renderMatchCardInner(activeMatch)}
             </div>
           )}
         </div>
