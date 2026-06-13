@@ -17,6 +17,9 @@ export interface SeattleCourt {
   centerId: number;
   resourceId: number;
   tags: string[];
+  /** Whether the court can be reserved online. Drop-in / first-come courts
+   *  (ActiveNet `no_internet_permits`) are false — see scripts/enrich-reservable.mjs. */
+  reservable: boolean;
 }
 
 export interface SeattleVenue {

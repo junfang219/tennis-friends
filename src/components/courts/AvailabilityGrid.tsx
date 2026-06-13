@@ -15,6 +15,7 @@ interface CourtAvailability {
   courtName: string;
   slots: Timeslot[];
   error: boolean;
+  reservable: boolean;
 }
 
 interface AvailabilityGridProps {
@@ -44,6 +45,10 @@ interface AvailabilityGridProps {
 // window). Today is view-only (no same-day online booking); the other 14 are
 // bookable. Day 15+ falls outside the window, so we don't offer those tabs.
 const DAYS_SHOWN = 15;
+
+// Seattle Parks tennis reservation line (Amy Yee Tennis Center) — used to
+// reserve walk-on / non-online-bookable courts by phone.
+const RESERVE_PHONE = "(206) 684-4764";
 
 /** Local YYYY-MM-DD (the date the user is standing in, not UTC). */
 function ymd(d: Date): string {
@@ -177,15 +182,20 @@ export default function AvailabilityGrid({
   // Wide enough that even a 30-min bar (½ hour) comfortably fits its time
   // label inside, so labels sit ON the block without overhanging.
   const PX_PER_HOUR = 92; // column width in px
-  const courtRows = (courts ?? []).map((c) => ({
+  const allRows = (courts ?? []).map((c) => ({
     resourceId: c.resourceId,
     name: shortCourtName(c.courtName),
     error: c.error,
+    reservable: c.reservable,
     bars: c.slots.map((s) => ({
       start: toMinutes(s.startTime),
       end: toMinutes(s.endTime),
     })),
   }));
+  // Every court's availability is shown. Non-reservable (walk-on / phone-only)
+  // courts are drawn in a muted colour and aren't booking links.
+  const courtRows = allRows;
+  const hasNonReservable = allRows.some((c) => !c.reservable);
   let minMin = Infinity;
   let maxMin = -Infinity;
   for (const c of courtRows) {
@@ -366,18 +376,29 @@ export default function AvailabilityGrid({
                           const left = (b.start / 60 - axisStartH) * PX_PER_HOUR;
                           const width = ((b.end - b.start) / 60) * PX_PER_HOUR;
                           const label = formatRangeShort(b.start, b.end);
-                          const fill = isSnapshot ? "bg-ball-yellow/50" : "bg-ball-yellow";
+                          // Reservable courts: tennis-ball yellow + booking
+                          // link. Walk-on / phone-only courts: muted grey, not a
+                          // link (you can see the opening but not book it here).
+                          const fill = !c.reservable
+                            ? "bg-gray-300"
+                            : isSnapshot
+                              ? "bg-ball-yellow/50"
+                              : "bg-ball-yellow";
                           // Label is always centered ON the bar. For a bar too
                           // narrow to contain it, the text overhangs the edges
                           // symmetrically (no clipping) so it still reads as
                           // sitting on the block.
                           const common = `absolute inset-y-1 rounded-md flex items-center justify-center ${fill}`;
                           const text = (
-                            <span className="px-1 text-[9px] font-semibold leading-none text-court-green whitespace-nowrap">
+                            <span
+                              className={`px-1 text-[9px] font-semibold leading-none whitespace-nowrap ${
+                                c.reservable ? "text-court-green" : "text-gray-600"
+                              }`}
+                            >
                               {label}
                             </span>
                           );
-                          return bookingUrl && !isSnapshot ? (
+                          return bookingUrl && !isSnapshot && c.reservable ? (
                             <a
                               key={idx}
                               href={buildResourceBookingUrl(c.resourceId)}
@@ -402,18 +423,35 @@ export default function AvailabilityGrid({
                 </div>
               </div>
             )}
-            <p className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2 text-[11px] text-gray-400">
-              <span
-                className={`inline-block w-4 h-2.5 rounded-full ${
-                  isSnapshot ? "bg-ball-yellow/50" : "bg-ball-yellow"
-                }`}
-              />
-              {isSnapshot
-                ? `Available as of last night${snapshotAsOf ? ` (${new Date(snapshotAsOf).toLocaleString([], { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })})` : ""} · same-day not bookable online`
-                : totalOpen > 0
-                  ? "Available to book · live from Seattle Parks · tap a slot to book"
-                  : "Live from Seattle Parks · no open windows on this day"}
-            </p>
+            {/* Legend + status line */}
+            <div className="mt-3 pt-3 border-t border-gray-100 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-400">
+              <span className="flex items-center gap-1.5">
+                <span
+                  className={`inline-block w-4 h-2.5 rounded-full ${
+                    isSnapshot ? "bg-ball-yellow/50" : "bg-ball-yellow"
+                  }`}
+                />
+                {isSnapshot
+                  ? `Available as of last night${snapshotAsOf ? ` (${new Date(snapshotAsOf).toLocaleString([], { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })})` : ""}`
+                  : "Book online · tap a slot"}
+              </span>
+              {hasNonReservable && (
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-4 h-2.5 rounded-full bg-gray-300" />
+                  Walk-on · reserve by phone
+                </span>
+              )}
+            </div>
+            {/* Walk-on / phone-only note */}
+            {hasNonReservable && (
+              <p className="mt-1.5 text-[11px] text-gray-500">
+                Gray courts can&apos;t be reserved online — walk on, or call{" "}
+                <a href={`tel:${RESERVE_PHONE.replace(/[^\d]/g, "")}`} className="text-court-green font-medium hover:underline">
+                  {RESERVE_PHONE}
+                </a>{" "}
+                to reserve.
+              </p>
+            )}
           </>
         )}
       </div>

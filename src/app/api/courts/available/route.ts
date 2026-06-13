@@ -131,6 +131,9 @@ export async function GET(req: Request) {
   >();
   let asOf: string | null = null;
   for (const row of data ?? []) {
+    // Drop-in / first-come courts can't be booked online — exclude from results.
+    const court = getCourtByResourceId(row.resource_id);
+    if (court && !court.reservable) continue;
     const windows = (row.windows as unknown as SnapshotWindow[]) ?? [];
     let matchStart = Infinity;
     let matchEnd = -Infinity;

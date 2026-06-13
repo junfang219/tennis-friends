@@ -4,6 +4,7 @@ import {
   resolveSeattleVenue,
   getSeattleVenueByCenterId,
   resolveAvailabilityTarget,
+  getSeattleCourts,
 } from "./activenetSeattleCourts";
 
 // Real Seattle Parks booking URLs from data/tennis_courts.json.
@@ -81,6 +82,20 @@ describe("resolveAvailabilityTarget", () => {
 
   it("returns null for an unresolvable venue", () => {
     expect(resolveAvailabilityTarget({ courtId: "tf-999", bookingUrl: null, name: "Nowhere" })).toBeNull();
+  });
+});
+
+describe("reservable seed flag", () => {
+  it("every court carries a boolean reservable flag", () => {
+    const courts = getSeattleCourts();
+    expect(courts.length).toBeGreaterThan(0);
+    expect(courts.every((c) => typeof c.reservable === "boolean")).toBe(true);
+  });
+
+  it("has both reservable and drop-in courts", () => {
+    const courts = getSeattleCourts();
+    expect(courts.some((c) => c.reservable)).toBe(true);
+    expect(courts.some((c) => !c.reservable)).toBe(true);
   });
 });
 

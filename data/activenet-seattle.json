@@ -1,5 +1,5 @@
 {
-  "_source": "Resource/center IDs cross-referenced from the open matchatennis/courts index (providers/activenet-seattle) and verified against Seattle Parks ActiveNet. IDs are facts from the public reservation system.",
+  "_source": "Resource/center IDs cross-referenced from the open matchatennis/courts index (providers/activenet-seattle) and verified against Seattle Parks ActiveNet. IDs are facts from the public reservation system. | reservable flags from ActiveNet no_internet_permits (scripts/enrich-reservable.mjs)",
   "org": "seattle",
   "venues": [
     {
@@ -18,7 +18,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "AYTC Outdoor Tennis Court 02",
@@ -27,7 +28,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "AYTC Outdoor Tennis Court 03",
@@ -36,7 +38,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "AYTC Outdoor Tennis Court 04",
@@ -45,7 +48,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "AYTC Outdoor Tennis Court 05",
@@ -54,7 +58,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "AYTC Outdoor Tennis Court 06",
@@ -63,7 +68,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -83,7 +89,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Ballard HS Tennis Court 2",
@@ -92,7 +99,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Ballard HS Tennis Court 3",
@@ -101,7 +109,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Ballard HS Tennis Court 4",
@@ -110,7 +119,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -130,7 +140,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Beacon Hill Playfield Tennis Court 02",
@@ -139,7 +150,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -160,7 +172,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Bitter Lake Playfield Tennis Court 02",
@@ -170,7 +183,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Bitter Lake Playfield Tennis Court 03",
@@ -180,7 +194,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Bitter Lake Playfield Tennis Court 04",
@@ -190,7 +205,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -210,7 +226,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Brighton Playfield Tennis Court 02",
@@ -219,7 +236,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -239,7 +257,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Bryant Playground Tennis Court 02",
@@ -248,7 +267,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -268,7 +288,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "David Rodgers Park Tennis Court 02",
@@ -277,7 +298,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "David Rodgers Park Tennis Court 03",
@@ -286,7 +308,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -306,7 +329,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Dearborn Park Tennis Court 02",
@@ -315,7 +339,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -335,7 +360,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Delridge Playfield Tennis Court 02",
@@ -344,7 +370,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -364,7 +391,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Discovery Park Tennis Court 02",
@@ -373,7 +401,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -393,7 +422,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Froula Playground Tennis Court 02",
@@ -402,7 +432,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -423,7 +454,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Garfield Playfield Tennis Court 02",
@@ -433,7 +465,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -453,7 +486,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Gilman Playfield Tennis Court 01",
@@ -462,7 +496,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -482,7 +517,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Green Lake Park West Tennis Court 02",
@@ -491,7 +527,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -512,7 +549,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Hiawatha Playfield Tennis Court 02",
@@ -522,7 +560,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Hiawatha Playfield Tennis Court 03",
@@ -532,7 +571,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -552,7 +592,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Ingraham HS Tennis Court 2",
@@ -561,7 +602,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Ingraham HS Tennis Court 3",
@@ -570,7 +612,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Ingraham HS Tennis Court 4",
@@ -579,7 +622,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Ingraham HS Tennis Court 5",
@@ -588,7 +632,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Ingraham HS Tennis Court 6",
@@ -597,7 +642,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -618,7 +664,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Jefferson Park Lid Tennis Court Lower 02",
@@ -628,7 +675,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Jefferson Park Lid Tennis Court Upper 01",
@@ -638,7 +686,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Jefferson Park Lid Tennis Court Lower 01",
@@ -648,7 +697,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -669,7 +719,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Laurelhurst Playfield Tennis Court 02",
@@ -679,7 +730,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Laurelhurst Playfield Tennis Court 03",
@@ -689,7 +741,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Laurelhurst Playfield Tennis Court 04",
@@ -699,7 +752,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -719,7 +773,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Court 2 (Upper)",
@@ -728,7 +783,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Court 3 (Upper)",
@@ -737,7 +793,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Court 4 (Upper)",
@@ -746,7 +803,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Court 1 (Lower)",
@@ -756,7 +814,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Court 2 (Lower)",
@@ -766,7 +825,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Court 3 (Lower)",
@@ -776,7 +836,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Court 4 (Lower)",
@@ -786,7 +847,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Court 5 (Lower)",
@@ -796,7 +858,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Court 6 (Lower)",
@@ -806,7 +869,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Court 7 (Lower)",
@@ -816,7 +880,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Court 8 (Lower)",
@@ -826,7 +891,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Court 9 (Lower)",
@@ -836,7 +902,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Court 10 (Lower)",
@@ -846,7 +913,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -867,7 +935,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Madison Park Tennis Court 02",
@@ -877,7 +946,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -898,7 +968,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Madrona Playground Tennis Court 02",
@@ -908,7 +979,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -928,7 +1000,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Magnolia Park Tennis Court 02",
@@ -937,7 +1010,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -957,7 +1031,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Magnolia Playfield Tennis Court 02",
@@ -966,7 +1041,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Magnolia Playfield Tennis Court 03",
@@ -975,7 +1051,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Magnolia Playfield Tennis Court 04",
@@ -984,7 +1061,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -1005,7 +1083,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Meadowbrook Playfield Tennis Court 02",
@@ -1015,7 +1094,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Meadowbrook Playfield Tennis Court 03",
@@ -1025,7 +1105,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Meadowbrook Playfield Tennis Court 04",
@@ -1035,7 +1116,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Meadowbrook Playfield Tennis Court 05",
@@ -1045,7 +1127,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Meadowbrook Playfield Tennis Court 06",
@@ -1055,7 +1138,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -1076,7 +1160,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Miller Playfield Tennis Court 02",
@@ -1086,7 +1171,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -1106,7 +1192,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Montlake Playfield Tennis Court 02",
@@ -1115,7 +1202,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -1136,7 +1224,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Mount Baker Park Tennis Court 02",
@@ -1146,7 +1235,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -1166,7 +1256,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Observatory Tennis Court 02",
@@ -1175,7 +1266,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -1196,7 +1288,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Rainier Beach Playfield Tennis Court 02",
@@ -1206,7 +1299,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Rainier Beach Playfield Tennis Court 03",
@@ -1216,7 +1310,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Rainier Beach Playfield Tennis Court 04",
@@ -1226,7 +1321,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -1247,7 +1343,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Rainier Playfield Tennis Court 02",
@@ -1257,7 +1354,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Rainier Playfield Tennis Court 03",
@@ -1267,7 +1365,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Rainier Playfield Tennis Court 04",
@@ -1277,7 +1376,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -1297,7 +1397,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Riverview Playfield Tennis Court 02",
@@ -1306,7 +1407,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -1326,7 +1428,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Rogers Playfield Tennis Court 02",
@@ -1335,7 +1438,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -1355,7 +1459,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Sam Smith (I90 Lid) Park Tennis Court 02",
@@ -1364,7 +1469,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -1384,7 +1490,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Sealth HS Complex Tennis Court 02",
@@ -1393,7 +1500,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Sealth HS Complex Tennis Court 03",
@@ -1402,7 +1510,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Sealth HS Complex Tennis Court 04",
@@ -1411,7 +1520,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Sealth HS Complex Tennis Court 05",
@@ -1420,7 +1530,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Sealth HS Complex Tennis Court 06",
@@ -1429,7 +1540,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -1449,7 +1561,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Seward Park Tennis Court 02",
@@ -1458,7 +1571,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -1479,7 +1593,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Solstice Park Tennis Court 02",
@@ -1489,7 +1604,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Solstice Park Tennis Court 03",
@@ -1499,7 +1615,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Solstice Park Tennis Court 04",
@@ -1509,7 +1626,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Solstice Park Tennis Court 05",
@@ -1519,7 +1637,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Solstice Park Tennis Court 06",
@@ -1529,7 +1648,8 @@
             "walk-in",
             "lighted",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -1549,7 +1669,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Soundview Playfield Tennis Court 02",
@@ -1558,7 +1679,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -1578,7 +1700,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Volunteer Park Court 02 - Upper",
@@ -1587,7 +1710,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         },
         {
           "name": "Volunteer Park Court 03 - Lower",
@@ -1597,7 +1721,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Volunteer Park Court 04 - Lower",
@@ -1607,7 +1732,8 @@
             "lighted",
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         }
       ]
     },
@@ -1627,7 +1753,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Wallingford Playfield Tennis Court 02",
@@ -1636,7 +1763,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     },
@@ -1656,7 +1784,8 @@
           "tags": [
             "reservable",
             "outdoor"
-          ]
+          ],
+          "reservable": true
         },
         {
           "name": "Walt Hundley Playfield Tennis Court 02",
@@ -1665,7 +1794,8 @@
           "tags": [
             "walk-in",
             "outdoor"
-          ]
+          ],
+          "reservable": false
         }
       ]
     }

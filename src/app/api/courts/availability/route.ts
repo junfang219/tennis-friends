@@ -36,6 +36,7 @@ export interface CourtAvailability {
   courtName: string;
   slots: Timeslot[]; // open windows only
   error: boolean; // true when this court's lookup failed
+  reservable: boolean; // false = drop-in / first-come (can't book online)
 }
 
 /** Current date in Seattle (en-CA formats as YYYY-MM-DD), independent of the
@@ -67,6 +68,9 @@ export async function GET(req: Request) {
 
   const results = await Promise.all(
     venue.courts.map(async (court) => {
+      // Non-reservable (walk-on / phone-only) courts still have real
+      // availability worth showing — fetch it, just flag them so the UI marks
+      // them as not online-bookable.
       try {
         const days = await fetchTimeslots(court.resourceId, date);
         const slots = openWindows(days[0]?.slots ?? []);
@@ -75,6 +79,7 @@ export async function GET(req: Request) {
           courtName: court.name,
           slots,
           error: false,
+          reservable: court.reservable,
         };
         return { court: court_, status: days[0]?.status ?? null };
       } catch {
@@ -84,6 +89,7 @@ export async function GET(req: Request) {
             courtName: court.name,
             slots: [],
             error: true,
+            reservable: court.reservable,
           } as CourtAvailability,
           status: null,
         };
@@ -131,7 +137,7 @@ export async function GET(req: Request) {
 async function loadSnapshot(
   center: number,
   date: string,
-  venueCourts: { resourceId: number; name: string }[]
+  venueCourts: { resourceId: number; name: string; reservable: boolean }[]
 ): Promise<{ courts: CourtAvailability[]; asOf: string | null } | null> {
   try {
     const admin = createSupabaseAdminClient();
@@ -154,6 +160,7 @@ async function loadSnapshot(
       courtName: court.name,
       slots: windowsToSlots(date, byResource.get(court.resourceId) ?? []),
       error: false,
+      reservable: court.reservable,
     }));
     return { courts, asOf };
   } catch {
