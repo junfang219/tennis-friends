@@ -116,9 +116,12 @@ export default function AvailabilityPage() {
   const [adding, setAdding] = useState(false);
   const matchFormRef = useRef<HTMLDivElement | null>(null);
 
-  // Inline editor for self-availability — portal-anchored to avoid clipping by overflow-x table
+  // Inline editor for availability — portal-anchored to avoid clipping by
+  // overflow-x table. userId is normally the current user, but a captain can
+  // open it on any member's row to edit on their behalf.
   const [statusPopover, setStatusPopover] = useState<{
     matchId: string;
+    userId: string;
     top: number;
     left: number;
   } | null>(null);
@@ -448,17 +451,23 @@ export default function AvailabilityPage() {
     }
   };
 
-  const setMyAvailability = async (matchId: string, status: string, matchTypes: string) => {
+  // Upsert availability for `userId`. Members may only target their own row;
+  // captains may target anyone's (the RLS policy
+  // availabilities_update_self_or_captain enforces this server-side too).
+  const setAvailability = async (
+    matchId: string,
+    userId: string,
+    status: string,
+    matchTypes: string
+  ) => {
     const supabase = createSupabaseBrowserClient();
-    const { data: auth } = await supabase.auth.getUser();
-    if (!auth.user) return;
     const { data, error: upErr } = await supabase
       .from("availabilities")
       .upsert(
         {
           event_kind: "match",
           match_id: matchId,
-          user_id: auth.user.id,
+          user_id: userId,
           status,
           match_types: matchTypes,
         },
@@ -469,7 +478,11 @@ export default function AvailabilityPage() {
          user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url )`
       )
       .single();
-    if (!upErr && data) {
+    if (upErr) {
+      alert(errorMessage(upErr, "Failed to set availability"));
+      return;
+    }
+    if (data) {
       const a = data as unknown as {
         id: string;
         user_id: string;
@@ -493,7 +506,7 @@ export default function AvailabilityPage() {
       setMatches((prev) =>
         prev.map((m) => {
           if (m.id !== matchId) return m;
-          const others = m.availabilities.filter((a2) => a2.userId !== myId);
+          const others = m.availabilities.filter((a2) => a2.userId !== userId);
           return { ...m, availabilities: [...others, upserted] as Availability[] };
         })
       );
@@ -628,8 +641,10 @@ export default function AvailabilityPage() {
   // render identical controls/header from one source of truth.
   const renderAvailControl = (match: Match, m: Member, a: Availability | undefined) => {
     const isMe = m.user.id === myId;
+    // Members edit only their own availability; captains can edit anyone's.
+    const canEdit = isMe || isCaptain;
     const meta = a && a.status ? statusMeta(a.status) : null;
-    return isMe ? (
+    return canEdit ? (
       <button
         onClick={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
@@ -639,6 +654,7 @@ export default function AvailabilityPage() {
           const maxLeft = window.innerWidth - popW - 8;
           setStatusPopover({
             matchId: match.id,
+            userId: m.user.id,
             top: rect.bottom + 4,
             left: Math.max(8, Math.min(rect.left, maxLeft)),
           });
@@ -1102,15 +1118,19 @@ export default function AvailabilityPage() {
             </span>
           ))}
           {isCaptain && (
-            <span className="text-gray-400 italic">· Tap any Lineup cell to assign a slot.</span>
+            <span className="text-gray-400 italic">· As captain, tap any Avail or Lineup cell to edit it for any member.</span>
           )}
         </div>
       )}
 
-      {/* Status popover (self, portal) — escapes the table's overflow clipping */}
+      {/* Status popover (self or, for captains, any member; portal) — escapes the table's overflow clipping */}
       {statusPopover && typeof document !== "undefined" && (() => {
         const m = matches.find((mm) => mm.id === statusPopover.matchId);
-        const a = m?.availabilities.find((aa) => aa.userId === myId);
+        const a = m?.availabilities.find((aa) => aa.userId === statusPopover.userId);
+        // When a captain edits someone else's row, label the popover with that
+        // member's name so it's clear whose status is being changed.
+        const targetMember = team.members.find((mm) => mm.user.id === statusPopover.userId);
+        const editingOther = statusPopover.userId !== myId;
         return createPortal(
           <>
             <div className="fixed inset-0 z-[998]" onClick={() => setStatusPopover(null)} />
@@ -1119,14 +1139,14 @@ export default function AvailabilityPage() {
               style={{ top: statusPopover.top, left: statusPopover.left }}
               onClick={(e) => e.stopPropagation()}
             >
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-1">
-                Status
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-1 truncate">
+                {editingOther && targetMember ? targetMember.user.name : "Status"}
               </p>
               <div className="mb-2">
                 <RsvpPicker
                   value={normalizeMatchStatus(a?.status || "")}
                   onSelect={(status) => {
-                    setMyAvailability(statusPopover.matchId, status, a?.matchTypes || "");
+                    setAvailability(statusPopover.matchId, statusPopover.userId, status, a?.matchTypes || "");
                     setStatusPopover(null);
                   }}
                 />
@@ -1140,9 +1160,9 @@ export default function AvailabilityPage() {
                     key={opt.value}
                     onClick={() => {
                       if (!a?.status) {
-                        setMyAvailability(statusPopover.matchId, RSVP.PLAYING, opt.value);
+                        setAvailability(statusPopover.matchId, statusPopover.userId, RSVP.PLAYING, opt.value);
                       } else {
-                        setMyAvailability(statusPopover.matchId, a.status, opt.value);
+                        setAvailability(statusPopover.matchId, statusPopover.userId, a.status, opt.value);
                       }
                       setStatusPopover(null);
                     }}

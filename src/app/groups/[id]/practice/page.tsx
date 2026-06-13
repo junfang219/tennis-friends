@@ -93,8 +93,11 @@ export default function TeamPracticePage() {
   const [addError, setAddError] = useState("");
 
   // Status popover (member sets own status)
+  // userId is normally the current user, but a captain can open it on any
+  // member's row to edit on their behalf.
   const [statusPopover, setStatusPopover] = useState<{
     practiceId: string;
+    userId: string;
     top: number;
     left: number;
   } | null>(null);
@@ -441,17 +444,23 @@ export default function TeamPracticePage() {
     }
   };
 
-  const setMyAvailability = async (seriesId: string, practiceId: string, status: string) => {
+  // Upsert practice availability for `userId`. Members may only target their own
+  // row; captains may target anyone's (the RLS policy
+  // availabilities_update_self_or_captain enforces this server-side too).
+  const setAvailability = async (
+    seriesId: string,
+    practiceId: string,
+    userId: string,
+    status: string
+  ) => {
     const supabase = createSupabaseBrowserClient();
-    const { data: auth } = await supabase.auth.getUser();
-    if (!auth.user) return;
     const { data, error: upErr } = await supabase
       .from("availabilities")
       .upsert(
         {
           event_kind: "practice",
           practice_id: practiceId,
-          user_id: auth.user.id,
+          user_id: userId,
           status,
         },
         { onConflict: "practice_id,user_id" }
@@ -461,7 +470,11 @@ export default function TeamPracticePage() {
          user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url )`
       )
       .single();
-    if (!upErr && data) {
+    if (upErr) {
+      alert(errorMessage(upErr, "Failed to set availability"));
+      return;
+    }
+    if (data) {
       const a = data as unknown as {
         id: string;
         user_id: string;
@@ -485,7 +498,7 @@ export default function TeamPracticePage() {
             ...s,
             practices: s.practices.map((p) => {
               if (p.id !== practiceId) return p;
-              const others = p.availabilities.filter((av) => av.userId !== myId);
+              const others = p.availabilities.filter((av) => av.userId !== userId);
               return { ...p, availabilities: [...others, upserted] };
             }),
           };
@@ -553,8 +566,10 @@ export default function TeamPracticePage() {
   // render identical controls/header from one source of truth.
   const renderPracticeAvailControl = (practice: Practice, m: Member, a: Availability | undefined) => {
     const isMe = m.user.id === myId;
+    // Members edit only their own availability; captains can edit anyone's.
+    const canEdit = isMe || isCaptain;
     const meta = a && a.status ? statusMeta(a.status) : null;
-    return isMe ? (
+    return canEdit ? (
       <button
         onClick={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
@@ -564,6 +579,7 @@ export default function TeamPracticePage() {
           const maxLeft = window.innerWidth - popW - 8;
           setStatusPopover({
             practiceId: practice.id,
+            userId: m.user.id,
             top: rect.bottom + 4,
             left: Math.max(8, Math.min(rect.left, maxLeft)),
           });
@@ -1095,12 +1111,16 @@ export default function TeamPracticePage() {
         </div>
       )}
 
-      {/* Status popover (self, portal) */}
+      {/* Status popover (self or, for captains, any member; portal) */}
       {statusPopover && typeof document !== "undefined" && (() => {
         const series = seriesList.find((s) => s.practices.some((p) => p.id === statusPopover.practiceId));
         const practice = series?.practices.find((p) => p.id === statusPopover.practiceId);
-        const a = practice?.availabilities.find((aa) => aa.userId === myId);
+        const a = practice?.availabilities.find((aa) => aa.userId === statusPopover.userId);
         if (!series || !practice) return null;
+        // When a captain edits someone else's row, label the popover with that
+        // member's name so it's clear whose status is being changed.
+        const targetMember = team.members.find((mm) => mm.user.id === statusPopover.userId);
+        const editingOther = statusPopover.userId !== myId;
         return createPortal(
           <>
             <div className="fixed inset-0 z-[998]" onClick={() => setStatusPopover(null)} />
@@ -1109,13 +1129,13 @@ export default function TeamPracticePage() {
               style={{ top: statusPopover.top, left: statusPopover.left }}
               onClick={(e) => e.stopPropagation()}
             >
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-1">
-                Status
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-1 mb-1 truncate">
+                {editingOther && targetMember ? targetMember.user.name : "Status"}
               </p>
               <RsvpPicker
                 value={normalizePracticeStatus(a?.status || "")}
                 onSelect={(status) => {
-                  setMyAvailability(series.id, practice.id, status);
+                  setAvailability(series.id, practice.id, statusPopover.userId, status);
                   setStatusPopover(null);
                 }}
                 cols={2}

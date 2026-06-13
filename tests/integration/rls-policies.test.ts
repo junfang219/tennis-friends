@@ -716,4 +716,118 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
       expect(data?.location).toBe("Lower Woodland");
     });
   });
+
+  // The availability page lets a captain fill in/override any member's
+  // availability for matches AND practices on their behalf. Verify the
+  // availabilities_{update,insert}_self_or_captain policies: captain can write
+  // another member's row; a non-captain member can only write their own.
+  describe("captain edits member availability", () => {
+    let groupId: string;
+    let matchId: string;
+    let practiceId: string;
+
+    beforeAll(async () => {
+      const admin = adminClient();
+      const { data: g } = await admin
+        .from("groups")
+        .insert({ name: "Avail Captain Test", owner_id: alice.id })
+        .select("id")
+        .single();
+      groupId = g!.id;
+      // alice = owner (captain). bob = plain member, carol = stranger.
+      await admin.from("group_members").insert({ group_id: groupId, user_id: bob.id, roles: [] });
+
+      const { data: m } = await admin
+        .from("team_matches")
+        .insert({ group_id: groupId, match_date: "2026-08-01", match_time: "18:00", location: "Magnuson" })
+        .select("id")
+        .single();
+      matchId = m!.id;
+
+      const { data: ps } = await admin
+        .from("practice_series")
+        .insert({ group_id: groupId, name: "Drills", practice_time: "19:00", location: "Woodland" })
+        .select("id")
+        .single();
+      const { data: tp } = await admin
+        .from("team_practices")
+        .insert({ series_id: ps!.id, practice_date: "2026-08-02" })
+        .select("id")
+        .single();
+      practiceId = tp!.id;
+    }, 60_000);
+
+    afterAll(async () => {
+      if (groupId) await adminClient().from("groups").delete().eq("id", groupId);
+    });
+
+    it("the captain can set another member's MATCH availability", async () => {
+      const { error } = await alice.client
+        .from("availabilities")
+        .upsert(
+          { event_kind: "match", match_id: matchId, user_id: bob.id, status: "playing", match_types: "singles" },
+          { onConflict: "match_id,user_id" }
+        );
+      expect(error).toBeNull();
+      const { data } = await adminClient()
+        .from("availabilities")
+        .select("status, match_types")
+        .eq("match_id", matchId)
+        .eq("user_id", bob.id)
+        .single();
+      expect(data).toMatchObject({ status: "playing", match_types: "singles" });
+    });
+
+    it("the captain can override an existing member MATCH availability", async () => {
+      const { error } = await alice.client
+        .from("availabilities")
+        .upsert(
+          { event_kind: "match", match_id: matchId, user_id: bob.id, status: "not_playing", match_types: "doubles" },
+          { onConflict: "match_id,user_id" }
+        );
+      expect(error).toBeNull();
+      const { data } = await adminClient()
+        .from("availabilities")
+        .select("status, match_types")
+        .eq("match_id", matchId)
+        .eq("user_id", bob.id)
+        .single();
+      expect(data).toMatchObject({ status: "not_playing", match_types: "doubles" });
+    });
+
+    it("the captain can set another member's PRACTICE availability", async () => {
+      const { error } = await alice.client
+        .from("availabilities")
+        .upsert(
+          { event_kind: "practice", practice_id: practiceId, user_id: bob.id, status: "playing" },
+          { onConflict: "practice_id,user_id" }
+        );
+      expect(error).toBeNull();
+      const { data } = await adminClient()
+        .from("availabilities")
+        .select("status")
+        .eq("practice_id", practiceId)
+        .eq("user_id", bob.id)
+        .single();
+      expect(data?.status).toBe("playing");
+    });
+
+    it("a non-captain member cannot write another member's availability", async () => {
+      // bob (plain member) tries to set alice's match availability. INSERT is
+      // blocked by the WITH CHECK; surfaces as an RLS error.
+      const { error } = await bob.client
+        .from("availabilities")
+        .upsert(
+          { event_kind: "match", match_id: matchId, user_id: alice.id, status: "not_playing", match_types: "" },
+          { onConflict: "match_id,user_id" }
+        );
+      expect(error).not.toBeNull();
+      const { data } = await adminClient()
+        .from("availabilities")
+        .select("id")
+        .eq("match_id", matchId)
+        .eq("user_id", alice.id);
+      expect(data?.length).toBe(0);
+    });
+  });
 });

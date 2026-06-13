@@ -7112,10 +7112,16 @@ CREATE POLICY availabilities_update_self_or_captain ON public.availabilities
   FOR UPDATE TO authenticated
   USING ((user_id = (SELECT auth.uid()))
          OR ((match_id IS NOT NULL) AND EXISTS (SELECT 1 FROM public.team_matches tm
-              WHERE tm.id = availabilities.match_id AND public.can_run_group(tm.group_id))))
+              WHERE tm.id = availabilities.match_id AND public.can_run_group(tm.group_id)))
+         OR ((practice_id IS NOT NULL) AND EXISTS (SELECT 1 FROM public.team_practices tp
+              JOIN public.practice_series ps ON ps.id = tp.series_id
+              WHERE tp.id = availabilities.practice_id AND public.can_run_group(ps.group_id))))
   WITH CHECK ((user_id = (SELECT auth.uid()))
          OR ((match_id IS NOT NULL) AND EXISTS (SELECT 1 FROM public.team_matches tm
-              WHERE tm.id = availabilities.match_id AND public.can_run_group(tm.group_id))));
+              WHERE tm.id = availabilities.match_id AND public.can_run_group(tm.group_id)))
+         OR ((practice_id IS NOT NULL) AND EXISTS (SELECT 1 FROM public.team_practices tp
+              JOIN public.practice_series ps ON ps.id = tp.series_id
+              WHERE tp.id = availabilities.practice_id AND public.can_run_group(ps.group_id))));
 DROP POLICY IF EXISTS availabilities_insert_self_or_captain ON public.availabilities;
 CREATE POLICY availabilities_insert_self_or_captain ON public.availabilities
   FOR INSERT TO authenticated
@@ -7128,6 +7134,9 @@ CREATE POLICY availabilities_insert_self_or_captain ON public.availabilities
               WHERE tp.id = availabilities.practice_id AND public.is_group_member(ps.group_id)))))
     OR ((match_id IS NOT NULL) AND EXISTS (SELECT 1 FROM public.team_matches tm
               WHERE tm.id = availabilities.match_id AND public.can_run_group(tm.group_id)))
+    OR ((practice_id IS NOT NULL) AND EXISTS (SELECT 1 FROM public.team_practices tp
+              JOIN public.practice_series ps ON ps.id = tp.series_id
+              WHERE tp.id = availabilities.practice_id AND public.can_run_group(ps.group_id)))
   );
 
 -- Role writers switched from role to roles.
