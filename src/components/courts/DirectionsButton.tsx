@@ -4,8 +4,11 @@ import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 type Props = {
-  lat: number;
-  lng: number;
+  /** Destination coordinates. Preferred when available (exact pin). */
+  lat?: number;
+  lng?: number;
+  /** Place/address string — used when lat/lng aren't known (free-text venue). */
+  query?: string;
   /** Shown as a subtitle in the action sheet so the user knows where they're heading. */
   destinationLabel?: string;
   /** When set, included as the route origin so the map app skips the "from where?" prompt. */
@@ -17,25 +20,27 @@ type Props = {
   ariaLabel?: string;
 };
 
-function googleMapsUrl(
-  lat: number,
-  lng: number,
-  origin?: { lat: number; lng: number } | null,
-): string {
+/** Coordinates win (exact pin); otherwise route to the place/address text. */
+function destString(lat?: number, lng?: number, query?: string): string {
+  if (typeof lat === "number" && typeof lng === "number") return `${lat},${lng}`;
+  return query ?? "";
+}
+
+function googleMapsUrl(dest: string, origin?: { lat: number; lng: number } | null): string {
   const params = new URLSearchParams({ api: "1" });
   if (origin) params.set("origin", `${origin.lat},${origin.lng}`);
-  params.set("destination", `${lat},${lng}`);
+  params.set("destination", dest);
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
-function appleMapsUrl(lat: number, lng: number): string {
+function appleMapsUrl(dest: string): string {
   // Apple's Maps URL Scheme — daddr is destination, dirflg=d requests driving
   // directions. We deliberately omit saddr: when the origin is left out Apple
   // Maps routes from the device's *live* current location and offers the green
   // "GO" turn-by-turn button. Passing explicit saddr coordinates makes it treat
   // the trip as between two fixed points and only shows the "Steps" overview.
   const params = new URLSearchParams();
-  params.set("daddr", `${lat},${lng}`);
+  params.set("daddr", dest);
   params.set("dirflg", "d");
   return `https://maps.apple.com/?${params.toString()}`;
 }
@@ -43,6 +48,7 @@ function appleMapsUrl(lat: number, lng: number): string {
 export function DirectionsButton({
   lat,
   lng,
+  query,
   destinationLabel,
   myLocation,
   className,
@@ -50,6 +56,7 @@ export function DirectionsButton({
   ariaLabel,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const dest = destString(lat, lng, query);
 
   return (
     <>
@@ -63,8 +70,8 @@ export function DirectionsButton({
       </button>
       {open && (
         <DirectionsSheet
-          appleUrl={appleMapsUrl(lat, lng)}
-          googleUrl={googleMapsUrl(lat, lng, myLocation)}
+          appleUrl={appleMapsUrl(dest)}
+          googleUrl={googleMapsUrl(dest, myLocation)}
           destinationLabel={destinationLabel}
           onClose={() => setOpen(false)}
         />
