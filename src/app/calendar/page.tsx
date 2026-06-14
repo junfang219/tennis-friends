@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
-import { buildGoogleCalendarUrl, downloadIcs } from "@/lib/calendarExport";
+import { buildGoogleCalendarUrl, downloadIcs, type ExportEvent } from "@/lib/calendarExport";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 import { listMyPersonalEvents, type PersonalEvent } from "@/lib/supabase/queries";
@@ -702,6 +702,99 @@ export default function CalendarPage() {
   );
 }
 
+// ── Calendar export: map each event type to the neutral ExportEvent ────────
+function gameToExport(ev: CalendarEvent): ExportEvent {
+  const type = ev.gameType
+    ? ev.gameType.charAt(0).toUpperCase() + ev.gameType.slice(1)
+    : "Game";
+  const desc: string[] = [`${ev.isComplete ? "Confirmed" : "Open"} ${type.toLowerCase()}`];
+  const names = (ev.playerNames ?? []).filter((n) => n && n.trim());
+  if (names.length > 0) {
+    desc.push(`Players (${names.length}/${ev.playersNeeded + 1}): ${names.join(", ")}`);
+  } else {
+    desc.push(`Players: ${ev.playersConfirmed + 1}/${ev.playersNeeded + 1}`);
+  }
+  if (ev.courtBooked) desc.push("Court booked");
+  if (ev.author?.name) desc.push(`Organizer: ${ev.author.name}`);
+  return {
+    id: `game-${ev.id}`,
+    title: `Tennis — ${type}${ev.courtLocation ? ` at ${ev.courtLocation}` : ""}`,
+    description: desc.join("\n"),
+    date: ev.playDate,
+    time: ev.playTime,
+    durationMinutes: ev.playDuration,
+    location: ev.courtLocation,
+    facilityId: ev.courtFacilityId,
+  };
+}
+
+function matchToExport(m: TeamMatchEvent): ExportEvent {
+  const desc: string[] = [];
+  if (m.lineupSlot) desc.push(`Your spot: ${m.lineupSlot}`);
+  if (m.notes) desc.push(m.notes);
+  return {
+    id: `match-${m.id}`,
+    title: `Tennis match — ${m.teamName}`,
+    description: desc.join("\n"),
+    date: m.matchDate,
+    time: m.matchTime,
+    location: m.location,
+  };
+}
+
+function practiceToExport(p: TeamPracticeEvent): ExportEvent {
+  const desc: string[] = [`${p.teamName} practice`];
+  if (p.notes) desc.push(p.notes);
+  return {
+    id: `practice-${p.id}`,
+    title: `Practice — ${p.seriesName}`,
+    description: desc.join("\n"),
+    date: p.practiceDate,
+    time: p.practiceTime,
+    location: p.location,
+  };
+}
+
+function personalToExport(e: PersonalEvent): ExportEvent {
+  return {
+    id: `personal-${e.id}`,
+    title: e.title,
+    description: e.notes,
+    date: e.event_date,
+    time: e.event_time,
+    durationMinutes: e.duration_minutes ?? undefined,
+    location: e.location,
+    facilityId: e.court_facility_id,
+  };
+}
+
+/** Apple/.ics + Google "Add to calendar" buttons, shared by every card.
+ *  preventDefault/stopPropagation so it works inside a Link or a clickable
+ *  card without triggering the card's own navigation/edit. */
+function CalendarExportButtons({ event }: { event: ExportEvent }) {
+  return (
+    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
+      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Add to calendar</span>
+      <button
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); downloadIcs(event); }}
+        className="text-xs font-semibold px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
+      >
+        Apple / .ics
+      </button>
+      <button
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.open(buildGoogleCalendarUrl(event), "_blank", "noopener,noreferrer");
+        }}
+        className="text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+      >
+        Google
+      </button>
+    </div>
+  );
+}
+
 function EventCard({ event: ev }: { event: CalendarEvent }) {
   const roleBadge = ev.role === "creator"
     ? { label: "Organizer", cls: "bg-court-green text-white" }
@@ -771,27 +864,7 @@ function EventCard({ event: ev }: { event: CalendarEvent }) {
             </div>
           )}
 
-          {ev.isComplete && (
-            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-green-100/70">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Add to calendar</span>
-              <button
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); downloadIcs(ev); }}
-                className="text-xs font-semibold px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
-              >
-                Apple / .ics
-              </button>
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  window.open(buildGoogleCalendarUrl(ev), "_blank", "noopener,noreferrer");
-                }}
-                className="text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
-              >
-                Google
-              </button>
-            </div>
-          )}
+          <CalendarExportButtons event={gameToExport(ev)} />
         </div>
       </div>
     </Link>
@@ -861,6 +934,7 @@ function TeamMatchCard({ match }: { match: TeamMatchEvent }) {
           {match.notes && (
             <p className="text-[11px] text-gray-400 italic truncate">{match.notes}</p>
           )}
+          <CalendarExportButtons event={matchToExport(match)} />
         </div>
       </div>
     </Link>
@@ -938,6 +1012,7 @@ function PersonalEventCard({
             <p className="text-[11px] text-gray-400 italic truncate">{event.notes}</p>
           )}
           <p className="text-[10px] text-purple-400 font-medium mt-1">Tap to edit · tap location for directions</p>
+          <CalendarExportButtons event={personalToExport(event)} />
         </div>
       </div>
     </div>
@@ -983,6 +1058,7 @@ function TeamPracticeCard({ practice }: { practice: TeamPracticeEvent }) {
           {practice.notes && (
             <p className="text-[11px] text-gray-400 italic truncate">{practice.notes}</p>
           )}
+          <CalendarExportButtons event={practiceToExport(practice)} />
         </div>
       </div>
     </Link>
