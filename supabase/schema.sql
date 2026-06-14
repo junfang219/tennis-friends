@@ -8965,3 +8965,38 @@ alter table public.notifications add column if not exists court_id text;
 --            'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets
 --                          WHERE name='cron_secret' LIMIT 1)),
 --          timeout_milliseconds := 60000) $$);
+
+-- =========================================================================
+-- Personal calendar events
+--
+-- A user's own manual entries on /calendar, shown alongside find-players
+-- games, team matches, and team practices. Private to the owner (RLS self).
+-- Wall-clock date/time/timezone strings, matching team_matches/team_practices
+-- so the same parsing/reminder helpers apply.
+-- =========================================================================
+create table if not exists public.personal_events (
+  id               uuid primary key default gen_random_uuid(),
+  user_id          uuid not null references public.profiles (id) on delete cascade,
+  title            text not null,
+  event_date       text not null,                          -- 'YYYY-MM-DD'
+  event_time       text not null default '',               -- 'HH:MM' or '' (all-day)
+  duration_minutes integer,                                 -- optional
+  location         text not null default '',
+  notes            text not null default '',
+  timezone         text not null default 'America/Los_Angeles',
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now()
+);
+create index if not exists personal_events_user_date_idx
+  on public.personal_events (user_id, event_date);
+
+alter table public.personal_events enable row level security;
+
+create policy personal_events_select_self on public.personal_events
+  for select to authenticated using (user_id = (select auth.uid()));
+create policy personal_events_insert_self on public.personal_events
+  for insert to authenticated with check (user_id = (select auth.uid()));
+create policy personal_events_update_self on public.personal_events
+  for update to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+create policy personal_events_delete_self on public.personal_events
+  for delete to authenticated using (user_id = (select auth.uid()));

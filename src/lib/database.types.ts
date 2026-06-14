@@ -2584,6 +2584,56 @@ export type Database = {
           },
         ]
       }
+      personal_events: {
+        Row: {
+          created_at: string
+          duration_minutes: number | null
+          event_date: string
+          event_time: string
+          id: string
+          location: string
+          notes: string
+          timezone: string
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          duration_minutes?: number | null
+          event_date: string
+          event_time?: string
+          id?: string
+          location?: string
+          notes?: string
+          timezone?: string
+          title: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          duration_minutes?: number | null
+          event_date?: string
+          event_time?: string
+          id?: string
+          location?: string
+          notes?: string
+          timezone?: string
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "personal_events_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       play_requests: {
         Row: {
           created_at: string

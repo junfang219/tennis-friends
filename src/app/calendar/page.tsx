@@ -6,6 +6,8 @@ import Avatar from "@/components/Avatar";
 import { buildGoogleCalendarUrl, downloadIcs } from "@/lib/calendarExport";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useCachedQuery } from "@/lib/useCachedQuery";
+import { listMyPersonalEvents, type PersonalEvent } from "@/lib/supabase/queries";
+import { PersonalEventModal } from "@/components/calendar/PersonalEventModal";
 
 type CalendarEvent = {
   id: string;
@@ -86,6 +88,7 @@ type CalendarBundle = {
   events: CalendarEvent[];
   matches: TeamMatchEvent[];
   practices: TeamPracticeEvent[];
+  personalEvents: PersonalEvent[];
   userGroups: GroupOption[];
 };
 
@@ -107,7 +110,7 @@ export default function CalendarPage() {
     const { data: auth } = await supabase.auth.getUser();
     const me = auth.user?.id;
     if (!me) {
-      return { events: [], matches: [], practices: [], userGroups: [] };
+      return { events: [], matches: [], practices: [], personalEvents: [], userGroups: [] };
     }
 
     // 1) Non-archived group memberships — drives the filter dropdown and
@@ -384,13 +387,24 @@ export default function CalendarPage() {
         (a.practiceDate + a.practiceTime).localeCompare(b.practiceDate + b.practiceTime)
       );
 
-    return { events: filteredEvents, matches, practices, userGroups };
+    // 5) Personal events — the user's own manual calendar entries. Not tied to
+    // any group, and always the user's own, so they show in every view
+    // (including a team filter) rather than vanishing when one is applied.
+    const personalEvents = await listMyPersonalEvents(supabase);
+
+    return { events: filteredEvents, matches, practices, personalEvents, userGroups };
   });
 
   const events = bundle.data?.events ?? [];
   const matches = bundle.data?.matches ?? [];
   const practices = bundle.data?.practices ?? [];
+  const personalEvents = bundle.data?.personalEvents ?? [];
   const groups = bundle.data?.userGroups ?? [];
+
+  // Modal state: { } for a fresh event, { event } to edit an existing one.
+  const [eventModal, setEventModal] = useState<
+    { event: PersonalEvent | null } | null
+  >(null);
 
   // Build event map by date
   const eventsByDate = new Map<string, CalendarEvent[]>();
@@ -421,6 +435,15 @@ export default function CalendarPage() {
     practicesByDate.get(key)!.push(p);
   });
 
+  const personalByDate = new Map<string, PersonalEvent[]>();
+  personalEvents.forEach((p) => {
+    const d = parseDate(p.event_date);
+    if (!d) return;
+    const key = dateKey(d);
+    if (!personalByDate.has(key)) personalByDate.set(key, []);
+    personalByDate.get(key)!.push(p);
+  });
+
   // Calendar grid
   const { year, month } = currentMonth;
   const firstDay = new Date(year, month, 1);
@@ -444,8 +467,9 @@ export default function CalendarPage() {
   const selectedEvents = selectedDate ? (eventsByDate.get(selectedDate) || []) : [];
   const selectedMatches = selectedDate ? (matchesByDate.get(selectedDate) || []) : [];
   const selectedPractices = selectedDate ? (practicesByDate.get(selectedDate) || []) : [];
+  const selectedPersonal = selectedDate ? (personalByDate.get(selectedDate) || []) : [];
   const selectedTotal =
-    selectedEvents.length + selectedMatches.length + selectedPractices.length;
+    selectedEvents.length + selectedMatches.length + selectedPractices.length + selectedPersonal.length;
 
   // Today and future events only, sorted for list view
   const sortedEvents = events
@@ -462,7 +486,14 @@ export default function CalendarPage() {
       a.practiceDate.localeCompare(b.practiceDate) ||
       (a.practiceTime || "").localeCompare(b.practiceTime || "")
     );
-  const sortedTotal = sortedEvents.length + sortedMatches.length + sortedPractices.length;
+  const sortedPersonal = personalEvents
+    .filter((p) => p.event_date >= today)
+    .sort((a, b) =>
+      a.event_date.localeCompare(b.event_date) ||
+      (a.event_time || "").localeCompare(b.event_time || "")
+    );
+  const sortedTotal =
+    sortedEvents.length + sortedMatches.length + sortedPractices.length + sortedPersonal.length;
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
@@ -471,19 +502,31 @@ export default function CalendarPage() {
           <h1 className="font-display text-2xl font-bold text-court-green">
             My Calendar
           </h1>
-          <div className="flex items-center gap-1 bg-white rounded-xl p-1 shadow-sm border border-court-green-pale/20">
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setView("calendar")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${view === "calendar" ? "bg-court-green text-white" : "text-gray-500 hover:text-gray-700"}`}
+              onClick={() => setEventModal({ event: null })}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-court-green text-white text-xs font-semibold shadow-sm hover:bg-court-green-light transition-colors"
             >
-              Calendar
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              Add
             </button>
-            <button
-              onClick={() => setView("list")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${view === "list" ? "bg-court-green text-white" : "text-gray-500 hover:text-gray-700"}`}
-            >
-              List
-            </button>
+            <div className="flex items-center gap-1 bg-white rounded-xl p-1 shadow-sm border border-court-green-pale/20">
+              <button
+                onClick={() => setView("calendar")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${view === "calendar" ? "bg-court-green text-white" : "text-gray-500 hover:text-gray-700"}`}
+              >
+                Calendar
+              </button>
+              <button
+                onClick={() => setView("list")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${view === "list" ? "bg-court-green text-white" : "text-gray-500 hover:text-gray-700"}`}
+              >
+                List
+              </button>
+            </div>
           </div>
         </div>
         <p className="text-gray-500 text-sm mb-6">Your upcoming games and matches</p>
@@ -542,12 +585,14 @@ export default function CalendarPage() {
                 const dayEvents = eventsByDate.get(key) || [];
                 const dayMatches = matchesByDate.get(key) || [];
                 const dayPractices = practicesByDate.get(key) || [];
+                const dayPersonal = personalByDate.get(key) || [];
                 const isToday = key === today;
                 const isSelected = key === selectedDate;
                 const hasComplete = dayEvents.some((e) => e.isComplete);
                 const hasOpen = dayEvents.some((e) => !e.isComplete);
                 const hasMatch = dayMatches.length > 0;
                 const hasPractice = dayPractices.length > 0;
+                const hasPersonal = dayPersonal.length > 0;
 
                 return (
                   <button
@@ -562,12 +607,13 @@ export default function CalendarPage() {
                     }`}>
                       {day}
                     </span>
-                    {(dayEvents.length > 0 || hasMatch || hasPractice) && (
+                    {(dayEvents.length > 0 || hasMatch || hasPractice || hasPersonal) && (
                       <div className="flex items-center gap-0.5 mt-1">
                         {hasOpen && <div className="w-1.5 h-1.5 rounded-full bg-ball-yellow" />}
                         {hasComplete && <div className="w-1.5 h-1.5 rounded-full bg-green-500" />}
                         {hasMatch && <div className="w-1.5 h-1.5 rounded-full bg-court-green" />}
                         {hasPractice && <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />}
+                        {hasPersonal && <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />}
                       </div>
                     )}
                   </button>
@@ -589,6 +635,9 @@ export default function CalendarPage() {
               <span className="flex items-center gap-1.5 text-xs text-gray-500">
                 <div className="w-2 h-2 rounded-full bg-blue-500" /> Team Practice
               </span>
+              <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                <div className="w-2 h-2 rounded-full bg-purple-500" /> Personal
+              </span>
             </div>
           </div>
 
@@ -604,6 +653,9 @@ export default function CalendarPage() {
                 <>
                   {selectedMatches.map((m) => <TeamMatchCard key={`m-${m.id}`} match={m} />)}
                   {selectedPractices.map((p) => <TeamPracticeCard key={`p-${p.id}`} practice={p} />)}
+                  {selectedPersonal.map((p) => (
+                    <PersonalEventCard key={`pe-${p.id}`} event={p} onEdit={() => setEventModal({ event: p })} />
+                  ))}
                   {selectedEvents.map((ev) => <EventCard key={ev.id} event={ev} />)}
                 </>
               )}
@@ -621,16 +673,28 @@ export default function CalendarPage() {
                 </svg>
               </div>
               <h3 className="font-display text-lg font-bold text-gray-800 mb-2">Nothing scheduled yet</h3>
-              <p className="text-gray-500 text-sm">Create a &quot;Find Players&quot; post or join a team to see events here.</p>
+              <p className="text-gray-500 text-sm">Tap <span className="font-semibold text-court-green">Add</span> to put your own event on the calendar — or create a &quot;Find Players&quot; post or join a team.</p>
             </div>
           ) : (
             <>
               {sortedMatches.map((m) => <TeamMatchCard key={`m-${m.id}`} match={m} />)}
               {sortedPractices.map((p) => <TeamPracticeCard key={`p-${p.id}`} practice={p} />)}
+              {sortedPersonal.map((p) => (
+                <PersonalEventCard key={`pe-${p.id}`} event={p} onEdit={() => setEventModal({ event: p })} />
+              ))}
               {sortedEvents.map((ev) => <EventCard key={ev.id} event={ev} />)}
             </>
           )}
         </div>
+      )}
+
+      {eventModal && (
+        <PersonalEventModal
+          existing={eventModal.event}
+          defaultDate={selectedDate}
+          onClose={() => setEventModal(null)}
+          onSaved={() => bundle.refetch()}
+        />
       )}
     </div>
   );
@@ -798,6 +862,59 @@ function TeamMatchCard({ match }: { match: TeamMatchEvent }) {
         </div>
       </div>
     </Link>
+  );
+}
+
+function PersonalEventCard({
+  event,
+  onEdit,
+}: {
+  event: PersonalEvent;
+  onEdit: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onEdit}
+      className="w-full text-left block bg-white rounded-xl shadow-sm border border-purple-200 p-4 card-hover"
+    >
+      <div className="flex items-start gap-3">
+        <div className="w-14 shrink-0 rounded-xl text-center py-2 bg-purple-50">
+          <p className="text-[10px] font-bold text-gray-400 uppercase">
+            {parseDateLocal(event.event_date)?.toLocaleDateString("en-US", { month: "short" })}
+          </p>
+          <p className="text-xl font-bold text-gray-800">
+            {parseDateLocal(event.event_date)?.getDate()}
+          </p>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-xs font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-purple-500 text-white">
+              Personal
+            </span>
+            <span className="text-sm font-semibold text-gray-800 truncate">{event.title}</span>
+          </div>
+          <div className="flex items-center gap-3 text-xs text-gray-500 mb-1">
+            {event.event_time && (
+              <span className="flex items-center gap-1">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" /></svg>
+                {event.event_time}{event.duration_minutes ? ` · ${event.duration_minutes} min` : ""}
+              </span>
+            )}
+            {event.location && (
+              <span className="flex items-center gap-1 truncate">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg>
+                {event.location}
+              </span>
+            )}
+          </div>
+          {event.notes && (
+            <p className="text-[11px] text-gray-400 italic truncate">{event.notes}</p>
+          )}
+          <p className="text-[10px] text-purple-400 font-medium mt-1">Tap to edit</p>
+        </div>
+      </div>
+    </button>
   );
 }
 
