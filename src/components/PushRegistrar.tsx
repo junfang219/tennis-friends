@@ -89,6 +89,8 @@ export default function PushRegistrar() {
           } else if (kind === "club_invite") {
             // Accept/Decline lives on the requests page.
             router.push("/friends/requests");
+          } else if (kind === "court_available" && data.courtId) {
+            router.push(`/courts/${encodeURIComponent(data.courtId as string)}`);
           }
         });
 
