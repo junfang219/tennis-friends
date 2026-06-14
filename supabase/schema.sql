@@ -8982,6 +8982,9 @@ create table if not exists public.personal_events (
   event_time       text not null default '',               -- 'HH:MM' or '' (all-day)
   duration_minutes integer,                                 -- optional
   location         text not null default '',
+  -- Optional catalog court link ("tf-N") when the location was picked from the
+  -- court typeahead; null for free-text. Mirrors posts.court_facility_id.
+  court_facility_id text,
   notes            text not null default '',
   timezone         text not null default 'America/Los_Angeles',
   created_at       timestamptz not null default now(),

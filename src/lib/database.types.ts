@@ -2586,6 +2586,7 @@ export type Database = {
       }
       personal_events: {
         Row: {
+          court_facility_id: string | null
           created_at: string
           duration_minutes: number | null
           event_date: string
@@ -2599,6 +2600,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          court_facility_id?: string | null
           created_at?: string
           duration_minutes?: number | null
           event_date: string
@@ -2612,6 +2614,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          court_facility_id?: string | null
           created_at?: string
           duration_minutes?: number | null
           event_date?: string

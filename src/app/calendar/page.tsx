@@ -8,6 +8,8 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 import { listMyPersonalEvents, type PersonalEvent } from "@/lib/supabase/queries";
 import { PersonalEventModal } from "@/components/calendar/PersonalEventModal";
+import { DirectionsButton } from "@/components/courts/DirectionsButton";
+import { getFacilityByCourtId } from "@/lib/facilities";
 
 type CalendarEvent = {
   id: string;
@@ -872,11 +874,24 @@ function PersonalEventCard({
   event: PersonalEvent;
   onEdit: () => void;
 }) {
+  // A picked court gives exact coords; free-text routes by the place string.
+  const facility = event.court_facility_id ? getFacilityByCourtId(event.court_facility_id) : null;
+  const hasCoords = facility?.latitude != null && facility?.longitude != null;
+
   return (
-    <button
-      type="button"
+    // Not a <button>: the location is itself a directions button, so the card
+    // is a clickable div (edit on tap) with the location stopping propagation.
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onEdit}
-      className="w-full text-left block bg-white rounded-xl shadow-sm border border-purple-200 p-4 card-hover"
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onEdit();
+        }
+      }}
+      className="w-full text-left block bg-white rounded-xl shadow-sm border border-purple-200 p-4 card-hover cursor-pointer"
     >
       <div className="flex items-start gap-3">
         <div className="w-14 shrink-0 rounded-xl text-center py-2 bg-purple-50">
@@ -902,19 +917,30 @@ function PersonalEventCard({
               </span>
             )}
             {event.location && (
-              <span className="flex items-center gap-1 truncate">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg>
-                {event.location}
+              // stopPropagation so tapping the location opens directions
+              // instead of the edit modal.
+              <span onClick={(e) => e.stopPropagation()} className="min-w-0">
+                <DirectionsButton
+                  lat={hasCoords ? facility!.latitude! : undefined}
+                  lng={hasCoords ? facility!.longitude! : undefined}
+                  query={hasCoords ? undefined : event.location}
+                  destinationLabel={event.location}
+                  ariaLabel={`Directions to ${event.location}`}
+                  className="flex items-center gap-1 text-court-green font-medium hover:underline truncate max-w-[12rem]"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg>
+                  <span className="truncate">{event.location}</span>
+                </DirectionsButton>
               </span>
             )}
           </div>
           {event.notes && (
             <p className="text-[11px] text-gray-400 italic truncate">{event.notes}</p>
           )}
-          <p className="text-[10px] text-purple-400 font-medium mt-1">Tap to edit</p>
+          <p className="text-[10px] text-purple-400 font-medium mt-1">Tap to edit · tap location for directions</p>
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 

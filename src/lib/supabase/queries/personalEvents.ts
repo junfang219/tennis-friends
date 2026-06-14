@@ -13,6 +13,7 @@ export interface PersonalEvent {
   event_time: string; // 'HH:MM' or ''
   duration_minutes: number | null;
   location: string;
+  court_facility_id: string | null;
   notes: string;
   timezone: string;
   created_at: string;
@@ -20,7 +21,7 @@ export interface PersonalEvent {
 }
 
 const EVENT_COLUMNS =
-  "id, user_id, title, event_date, event_time, duration_minutes, location, notes, timezone, created_at, updated_at";
+  "id, user_id, title, event_date, event_time, duration_minutes, location, court_facility_id, notes, timezone, created_at, updated_at";
 
 export async function listMyPersonalEvents(
   supabase: SupabaseClient<Database>
@@ -40,6 +41,7 @@ export type PersonalEventInput = {
   eventTime?: string; // 'HH:MM' or ''
   durationMinutes?: number | null;
   location?: string;
+  courtFacilityId?: string | null; // catalog "tf-N" or null
   notes?: string;
   timezone?: string;
 };
@@ -62,6 +64,7 @@ export async function createPersonalEvent(
       event_time: input.eventTime ?? "",
       duration_minutes: input.durationMinutes ?? null,
       location: input.location?.trim() ?? "",
+      court_facility_id: input.courtFacilityId ?? null,
       notes: input.notes?.trim() ?? "",
       timezone: input.timezone ?? "America/Los_Angeles",
     })
@@ -87,6 +90,7 @@ export async function updatePersonalEvent(
       event_time: input.eventTime ?? "",
       duration_minutes: input.durationMinutes ?? null,
       location: input.location?.trim() ?? "",
+      court_facility_id: input.courtFacilityId ?? null,
       notes: input.notes?.trim() ?? "",
       updated_at: new Date().toISOString(),
     })

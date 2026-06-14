@@ -9,6 +9,8 @@ import {
   deletePersonalEvent,
   type PersonalEvent,
 } from "@/lib/supabase/queries";
+import { computeCourtFacilityId } from "@/lib/facilities";
+import CourtLocationPicker from "@/components/CourtLocationPicker";
 import { errorMessage } from "@/lib/errorMessage";
 
 type Props = {
@@ -41,6 +43,11 @@ export function PersonalEventModal({ existing, defaultDate, onClose, onSaved }: 
     existing?.duration_minutes != null ? String(existing.duration_minutes) : ""
   );
   const [location, setLocation] = useState(existing?.location ?? "");
+  // Catalog court id when the location was picked from the typeahead; null for
+  // free text. Resolved one last time on save (matches PostComposer).
+  const [locationFacilityId, setLocationFacilityId] = useState<string | null>(
+    existing?.court_facility_id ?? null
+  );
   const [notes, setNotes] = useState(existing?.notes ?? "");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -76,6 +83,8 @@ export function PersonalEventModal({ existing, defaultDate, onClose, onSaved }: 
           ? durationMinutes
           : null,
       location,
+      // Free text that still matches a known court reattaches its id here.
+      courtFacilityId: computeCourtFacilityId(location, locationFacilityId),
       notes,
       timezone: browserTimezone(),
     };
@@ -173,11 +182,14 @@ export function PersonalEventModal({ existing, defaultDate, onClose, onSaved }: 
           </div>
 
           <Field label="Location">
-            <input
-              type="text"
+            <CourtLocationPicker
               value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="Where?"
+              facilityId={locationFacilityId}
+              onChange={(text, id) => {
+                setLocation(text);
+                setLocationFacilityId(id);
+              }}
+              placeholder="Search courts or type a place"
               className={inputCls}
             />
           </Field>
