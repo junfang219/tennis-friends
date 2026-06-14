@@ -19,6 +19,7 @@ import {
   unreadNotificationCount,
 } from "@/lib/supabase/queries";
 import { toNotificationCamel } from "@/lib/supabase/adapters";
+import { getFacilityByCourtId } from "@/lib/facilities";
 import { errorMessage } from "@/lib/errorMessage";
 
 type Notification = {
@@ -34,11 +35,17 @@ type Notification = {
   eventId: string;
   matchId: string;
   pollId: string;
+  courtId: string;
   emoji: string;
   read: boolean;
   createdAt: string;
   actor: { id: string; name: string; profileImageUrl: string };
 };
+
+/** Venue name for a court_available alert ("tf-N" → display name). */
+function courtAlertVenue(courtId: string): string {
+  return getFacilityByCourtId(courtId)?.name ?? "A court";
+}
 
 function timeAgo(date: string) {
   const seconds = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
@@ -75,6 +82,7 @@ function notificationText(n: { type: string; emoji?: string }) {
     case "club_invite": return "invited you to join a club";
     case "club_invite_accepted": return "accepted your club invitation";
     case "availability_poll": return "started an availability poll — mark your free times";
+    case "court_available": return "has an open court — tap to book";
     default: return "interacted with your post";
   }
 }
@@ -221,6 +229,15 @@ function notificationIcon(type: string) {
           </svg>
         </div>
       );
+    case "court_available":
+      return (
+        <div className="w-6 h-6 rounded-full bg-ball-yellow flex items-center justify-center">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="text-court-green" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
+            <path d="M13.73 21a2 2 0 01-3.46 0" />
+          </svg>
+        </div>
+      );
     default:
       return null;
   }
@@ -293,6 +310,11 @@ export default function NotificationBell() {
     if (n.type === "club_invite_accepted") {
       setOpen(false);
       router.push("/friends");
+      return;
+    }
+    if (n.type === "court_available" && n.courtId) {
+      setOpen(false);
+      router.push(`/courts/${encodeURIComponent(n.courtId)}`);
       return;
     }
     if (n.type === "message_reaction") {
@@ -712,14 +734,24 @@ export default function NotificationBell() {
                         }`}
                       >
                         <div className="relative shrink-0">
-                          <Avatar name={n.actor.name} image={n.actor.profileImageUrl} size="md" />
+                          {n.type === "court_available" ? (
+                            <div className="w-10 h-10 rounded-full bg-court-green-soft/15 flex items-center justify-center text-base">
+                              🎾
+                            </div>
+                          ) : (
+                            <Avatar name={n.actor.name} image={n.actor.profileImageUrl} size="md" />
+                          )}
                           <div className="absolute -bottom-1 -right-1">
                             {notificationIcon(n.type)}
                           </div>
                         </div>
                         <div className="flex-1 min-w-0 pr-6">
                           <p className="text-sm text-gray-700">
-                            <span className="font-semibold text-gray-900">{n.actor.name}</span>{" "}
+                            <span className="font-semibold text-gray-900">
+                              {n.type === "court_available"
+                                ? courtAlertVenue(n.courtId)
+                                : n.actor.name}
+                            </span>{" "}
                             {notificationText(n)}
                           </p>
                           <p className="text-xs text-gray-400 mt-0.5">{timeAgo(n.createdAt)}</p>

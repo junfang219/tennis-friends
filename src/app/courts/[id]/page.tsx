@@ -9,6 +9,7 @@ import { CourtPhotoGrid } from "@/components/courts/CourtPhotoGrid";
 import { ReviewList, type Review } from "@/components/courts/ReviewList";
 import { ReviewComposer } from "@/components/courts/ReviewComposer";
 import { ReportIssueModal } from "@/components/courts/ReportIssueModal";
+import { CourtAlertModal } from "@/components/courts/CourtAlertModal";
 import { CourtStatusReporter } from "@/components/courts/CourtStatusReporter";
 import { isReportEligibleCategory } from "@/lib/courtPrompt";
 import { DirectionsButton } from "@/components/courts/DirectionsButton";
@@ -147,6 +148,7 @@ export default function CourtDetailPage() {
   const [reviewsLoading, setReviewsLoading] = useState(true);
   const [composerOpen, setComposerOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [alertOpen, setAlertOpen] = useState(false);
   const [recentReports, setRecentReports] = useState<{
     count: number;
     emptyCount: number;
@@ -645,6 +647,17 @@ export default function CourtDetailPage() {
                 highlightStart={searchParams.get("start")}
                 highlightEnd={searchParams.get("end")}
               />
+              {/* Booked solid? Get pinged when a court frees up. */}
+              <button
+                onClick={() => setAlertOpen(true)}
+                className="mt-3 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-court-green/30 bg-court-green-soft/5 text-court-green font-semibold text-sm hover:bg-court-green-soft/10"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 01-3.46 0" />
+                </svg>
+                Alert me when open
+              </button>
             </Section>
           )}
 
@@ -879,6 +892,14 @@ export default function CourtDetailPage() {
           courtName={court.name}
           courtAddress={court.address ?? null}
           onClose={() => setReportOpen(false)}
+        />
+      )}
+
+      {alertOpen && (
+        <CourtAlertModal
+          courtId={court.courtId}
+          courtName={court.name}
+          onClose={() => setAlertOpen(false)}
         />
       )}
 
