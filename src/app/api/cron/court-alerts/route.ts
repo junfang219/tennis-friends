@@ -132,6 +132,24 @@ function formatSpan(startMin: number, endMin: number): string {
     : `${clock(startMin)}${ampm(startMin)}–${clock(endMin)}${ampm(endMin)}`;
 }
 
+/**
+ * Trim a trailing "Tennis Court(s)/Center" (plus an abbreviation parenthetical
+ * when it sits at the very end, e.g. "Tennis Center (AYTC)") so the push title
+ * "<venue> has an open court" doesn't read redundantly. Only used for the push
+ * banner — the in-app row and email keep the full catalog name. Falls back to
+ * the full name if trimming would empty it.
+ *   "Amy Yee Tennis Center (AYTC)"                  → "Amy Yee"
+ *   "Lower Woodland Playfield Tennis Courts"        → "Lower Woodland Playfield"
+ *   "...Athletic Complex (SWAC) Tennis Courts"      → "...Athletic Complex (SWAC)"
+ *   "Volunteer Park"                                → "Volunteer Park"
+ */
+function shortVenueName(name: string): string {
+  const trimmed = name
+    .replace(/\s+Tennis\s+(?:Courts?|Center)\s*(?:\([^)]*\))?\s*$/i, "")
+    .trim();
+  return trimmed || name;
+}
+
 function dateLabel(ymd: string): string {
   const [y, m, d] = ymd.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", {
@@ -262,7 +280,7 @@ export async function GET(request: Request) {
       // count as delivered.
       if (a.notify_push) {
         const res = await postPushFanout([a.user_id], {
-          title: `${venueName} has an open court`,
+          title: `${shortVenueName(venueName)} has an open court`,
           body: `${whenLabel} · ${spanLabel} — tap to book`,
           threadId: `court-alert:${a.id}`,
           data: { kind: "court_available", courtId: a.court_id, date },
