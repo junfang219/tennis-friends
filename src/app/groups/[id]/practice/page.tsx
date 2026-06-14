@@ -6,6 +6,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
+import HScrollFrame from "@/components/HScrollFrame";
 import RsvpPicker, { pickerOptionMeta } from "@/components/attendance/RsvpPicker";
 import AttendanceTally from "@/components/attendance/AttendanceTally";
 import { normalizePracticeStatus } from "@/lib/rsvpStatus";
@@ -71,7 +72,7 @@ export default function TeamPracticePage() {
   const groupId = params.id as string;
   const myId = session?.user?.id || "";
 
-  const practiceHeaderRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const practiceHeaderRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
   const [highlightPracticeId, setHighlightPracticeId] = useState<string | null>(null);
 
   const [team, setTeam] = useState<Team | null>(null);
@@ -653,50 +654,6 @@ export default function TeamPracticePage() {
     );
   };
 
-  // A full practice-date card: meta/actions header + the roster (each member's
-  // Avail control). Shared by the desktop card grid and the narrow-screen
-  // single-date view so both render from one source of truth.
-  const renderPracticeCardInner = (series: Series, practice: Practice) => (
-    <>
-      <div className="flex items-start justify-between gap-2 p-3 bg-gray-50 border-b border-gray-100">
-        {renderPracticeMeta(practice)}
-        {renderPracticeActions(series, practice)}
-      </div>
-      <div className="divide-y divide-gray-100">
-        {sortedMembers.map((m) => {
-          const isMe = m.user.id === myId;
-          const isCapRow = m.user.id === team.ownerId;
-          const a = getAvail(practice, m.user.id);
-          return (
-            <div key={m.id} className="flex items-center gap-2 p-3">
-              <div className="relative shrink-0">
-                <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
-                {isCapRow && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-ball-yellow flex items-center justify-center ring-2 ring-white shadow-sm">
-                    <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className="text-court-green">
-                      <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
-                    </svg>
-                  </span>
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-gray-900 truncate">
-                  {m.user.name}{isMe ? " (you)" : ""}
-                </p>
-                {isCapRow && (
-                  <p className="text-[9px] font-bold tracking-wider text-court-green">CAPTAIN</p>
-                )}
-              </div>
-              <div className="w-32 shrink-0">
-                {renderPracticeAvailControl(practice, m, a)}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </>
-  );
-
   return (
     <div className="max-w-5xl mx-auto px-4 py-6">
       {/* Header */}
@@ -989,26 +946,78 @@ export default function TeamPracticePage() {
                   </div>
                 ) : (
                   <>
-                  {/* Wide screens (md+): responsive grid of date cards — no
-                      horizontal scrolling; cards wrap to fill the viewport. */}
-                  <div className="hidden md:grid md:grid-cols-2 xl:grid-cols-3 gap-4 items-start p-4">
-                    {series.practices.map((practice) => {
-                      const isHighlighted = highlightPracticeId === practice.id;
-                      return (
-                        <div
-                          key={practice.id}
-                          ref={(el) => {
-                            practiceHeaderRefs.current[practice.id] = el;
-                          }}
-                          className={`rounded-xl border border-gray-100 overflow-hidden transition-colors ${
-                            isHighlighted ? "ring-2 ring-court-green ring-inset bg-court-green-pale/30" : ""
-                          }`}
-                        >
-                          {renderPracticeCardInner(series, practice)}
-                        </div>
-                      );
-                    })}
-                  </div>
+                  {/* Wide screens (md+): full members × dates matrix */}
+                  <HScrollFrame frameClassName="hidden md:block" className="overflow-x-auto" hint={`Scroll to see all ${series.practices.length} dates`}>
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200">
+                          <th className="sticky left-0 z-20 bg-gray-50 p-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 border-r border-gray-200 min-w-[160px]">
+                            Member
+                          </th>
+                          {series.practices.map((practice) => {
+                            const isHighlighted = highlightPracticeId === practice.id;
+                            return (
+                              <th
+                                key={practice.id}
+                                ref={(el) => {
+                                  practiceHeaderRefs.current[practice.id] = el;
+                                }}
+                                className={`p-3 text-left min-w-[180px] border-r border-gray-200 transition-colors ${
+                                  isHighlighted ? "bg-court-green-pale/30 ring-2 ring-court-green ring-inset" : ""
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  {renderPracticeMeta(practice)}
+                                  {renderPracticeActions(series, practice)}
+                                </div>
+                              </th>
+                            );
+                          })}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedMembers.map((m) => {
+                          const isMe = m.user.id === myId;
+                          const isCapRow = m.user.id === team.ownerId;
+                          return (
+                            <tr key={m.id} className="border-b border-gray-100 last:border-b-0">
+                              <td className="sticky left-0 z-10 bg-white p-3 border-r border-gray-200">
+                                <div className="flex items-center gap-2">
+                                  <div className="relative shrink-0">
+                                    <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
+                                    {isCapRow && (
+                                      <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-ball-yellow flex items-center justify-center ring-2 ring-white shadow-sm">
+                                        <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className="text-court-green">
+                                          <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                                        </svg>
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-semibold text-gray-900 truncate">
+                                      {m.user.name}{isMe ? " (you)" : ""}
+                                    </p>
+                                    {isCapRow && (
+                                      <p className="text-[9px] font-bold tracking-wider text-court-green">CAPTAIN</p>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                              {series.practices.map((practice) => {
+                                const a = getAvail(practice, m.user.id);
+                                const cellKey = `${practice.id}-${m.user.id}`;
+                                return (
+                                  <td key={cellKey} className="p-3 border-r border-gray-200 align-top min-w-[180px]">
+                                    {renderPracticeAvailControl(practice, m, a)}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </HScrollFrame>
 
                   {/* Narrow screens: one date at a time (date chips + member list) */}
                   {(() => {
@@ -1039,7 +1048,42 @@ export default function TeamPracticePage() {
 
                         {activePractice && (
                           <div className="mt-3 rounded-xl border border-gray-100 overflow-hidden">
-                            {renderPracticeCardInner(series, activePractice)}
+                            <div className="flex items-start justify-between gap-2 p-3 bg-gray-50 border-b border-gray-100">
+                              {renderPracticeMeta(activePractice)}
+                              {renderPracticeActions(series, activePractice)}
+                            </div>
+                            <div className="divide-y divide-gray-100">
+                              {sortedMembers.map((m) => {
+                                const isMe = m.user.id === myId;
+                                const isCapRow = m.user.id === team.ownerId;
+                                const a = getAvail(activePractice, m.user.id);
+                                return (
+                                  <div key={m.id} className="flex items-center gap-2 p-3">
+                                    <div className="relative shrink-0">
+                                      <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
+                                      {isCapRow && (
+                                        <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-ball-yellow flex items-center justify-center ring-2 ring-white shadow-sm">
+                                          <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className="text-court-green">
+                                            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                                          </svg>
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-sm font-semibold text-gray-900 truncate">
+                                        {m.user.name}{isMe ? " (you)" : ""}
+                                      </p>
+                                      {isCapRow && (
+                                        <p className="text-[9px] font-bold tracking-wider text-court-green">CAPTAIN</p>
+                                      )}
+                                    </div>
+                                    <div className="w-32 shrink-0">
+                                      {renderPracticeAvailControl(activePractice, m, a)}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
                       </div>
