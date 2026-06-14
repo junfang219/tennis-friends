@@ -72,7 +72,15 @@ async function mapPool<T>(
 
 /** Reservable resource IDs for a catalog court (respects split-venue filters). */
 function resourcesForCourt(courtId: string): number[] {
-  const target = resolveAvailabilityTarget({ courtId });
+  // resolveAvailabilityTarget keys split venues off courtId, but resolves
+  // normal venues via the facility's booking URL / name — pass all three (the
+  // same way the court detail page does) or non-split centers won't resolve.
+  const facility = getFacilityByCourtId(courtId);
+  const target = resolveAvailabilityTarget({
+    courtId,
+    bookingUrl: facility?.bookingUrl,
+    name: facility?.name,
+  });
   if (!target) return [];
   const venue = getSeattleVenueByCenterId(target.centerId);
   if (!venue) return [];
