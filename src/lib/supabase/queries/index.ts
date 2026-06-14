@@ -9,6 +9,7 @@ export * from "./notifications";
 export * from "./groups";
 export * from "./events";
 export * from "./courts";
+export * from "./courtAlerts";
 export * from "./chats";
 export * from "./misc";
 export * from "./clubs";

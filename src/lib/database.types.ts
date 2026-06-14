@@ -723,6 +723,88 @@ export type Database = {
           },
         ]
       }
+      court_alert_sent: {
+        Row: {
+          alert_id: string
+          created_at: string
+          date: string
+          id: string
+        }
+        Insert: {
+          alert_id: string
+          created_at?: string
+          date: string
+          id?: string
+        }
+        Update: {
+          alert_id?: string
+          created_at?: string
+          date?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "court_alert_sent_alert_id_fkey"
+            columns: ["alert_id"]
+            isOneToOne: false
+            referencedRelation: "court_alerts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      court_alerts: {
+        Row: {
+          active: boolean
+          court_id: string
+          created_at: string
+          end_time: string | null
+          id: string
+          mode: string
+          notify_email: boolean
+          notify_push: boolean
+          start_time: string | null
+          target_date: string | null
+          user_id: string
+          weekdays: number[] | null
+        }
+        Insert: {
+          active?: boolean
+          court_id: string
+          created_at?: string
+          end_time?: string | null
+          id?: string
+          mode: string
+          notify_email?: boolean
+          notify_push?: boolean
+          start_time?: string | null
+          target_date?: string | null
+          user_id: string
+          weekdays?: number[] | null
+        }
+        Update: {
+          active?: boolean
+          court_id?: string
+          created_at?: string
+          end_time?: string | null
+          id?: string
+          mode?: string
+          notify_email?: boolean
+          notify_push?: boolean
+          start_time?: string | null
+          target_date?: string | null
+          user_id?: string
+          weekdays?: number[] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "court_alerts_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       court_availability_snapshot: {
         Row: {
           captured_at: string
@@ -2205,6 +2287,7 @@ export type Database = {
           actor_id: string
           chat_message_id: string | null
           comment_id: string | null
+          court_id: string | null
           created_at: string
           emoji: string
           event_id: string | null
@@ -2223,6 +2306,7 @@ export type Database = {
           actor_id: string
           chat_message_id?: string | null
           comment_id?: string | null
+          court_id?: string | null
           created_at?: string
           emoji?: string
           event_id?: string | null
@@ -2241,6 +2325,7 @@ export type Database = {
           actor_id?: string
           chat_message_id?: string | null
           comment_id?: string | null
+          court_id?: string | null
           created_at?: string
           emoji?: string
           event_id?: string | null
@@ -3468,6 +3553,7 @@ export type Database = {
         | "availability_poll"
         | "club_invite"
         | "club_invite_accepted"
+        | "court_available"
       play_request_status:
         | "pending"
         | "approved"
@@ -3649,6 +3735,7 @@ export const Constants = {
         "availability_poll",
         "club_invite",
         "club_invite_accepted",
+        "court_available",
       ],
       play_request_status: [
         "pending",

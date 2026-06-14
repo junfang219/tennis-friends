@@ -501,6 +501,7 @@ export interface NotificationCamel {
   matchId: string;
   pollId: string;
   friendGroupId: string;
+  courtId: string;
   emoji: string;
   read: boolean;
   createdAt: string;
@@ -526,6 +527,7 @@ export function toNotificationCamel(n: Notification): NotificationCamel {
     matchId: n.match_id ?? "",
     pollId: n.poll_id ?? "",
     friendGroupId: n.friend_group_id ?? "",
+    courtId: n.court_id ?? "",
     emoji: n.emoji,
     read: n.read,
     createdAt: pgToIso(n.created_at),

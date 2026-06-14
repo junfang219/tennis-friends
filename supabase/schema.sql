@@ -8883,3 +8883,85 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION public.set_expense_cells_settled(jsonb, boolean) FROM anon, public;
 GRANT  EXECUTE ON FUNCTION public.set_expense_cells_settled(jsonb, boolean) TO authenticated;
+
+-- =========================================================================
+-- Court availability alerts
+--
+-- A user subscribes to a Seattle Parks venue (catalog facility id "tf-N") for
+-- a specific day or repeating weekdays, optionally narrowed to a time-of-day
+-- window, and is notified (push and/or email) when ANY reservable court at that
+-- venue has an open bookable slot. The /api/cron/court-alerts job polls live
+-- ActiveNet every ~15 min for just the venues/dates that have active alerts and
+-- dispatches; court_alert_sent makes each (alert, date) fire at most once.
+-- =========================================================================
+
+-- court_id namespace matches court_reviews / court_availability_reports: the
+-- app-side catalog id "tf-N" (data/tennis_courts.json), not a DB table, so no FK.
+create table if not exists public.court_alerts (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references public.profiles (id) on delete cascade,
+  court_id      text not null,
+  mode          text not null check (mode in ('once', 'repeat')),
+  -- mode='once': the single bookable date to watch.
+  target_date   date,
+  -- mode='repeat': JS getDay() values to watch (0=Sun … 6=Sat).
+  weekdays      smallint[],
+  -- Time-of-day window as "HH:mm" clock strings; null = any time.
+  start_time    text,
+  end_time      text,
+  notify_push   boolean not null default true,
+  notify_email  boolean not null default false,
+  active        boolean not null default true,
+  created_at    timestamptz not null default now(),
+  -- Exactly one of (target_date, weekdays) is set, per mode.
+  constraint court_alerts_mode_shape check (
+    (mode = 'once'   and target_date is not null and weekdays is null) or
+    (mode = 'repeat' and weekdays is not null and array_length(weekdays, 1) > 0 and target_date is null)
+  ),
+  -- At least one delivery channel.
+  constraint court_alerts_has_channel check (notify_push or notify_email)
+);
+create index if not exists court_alerts_active_idx on public.court_alerts (active) where active;
+create index if not exists court_alerts_user_idx   on public.court_alerts (user_id, created_at desc);
+
+alter table public.court_alerts enable row level security;
+
+create policy court_alerts_select_self on public.court_alerts
+  for select to authenticated using (user_id = (select auth.uid()));
+create policy court_alerts_insert_self on public.court_alerts
+  for insert to authenticated with check (user_id = (select auth.uid()));
+create policy court_alerts_update_self on public.court_alerts
+  for update to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+create policy court_alerts_delete_self on public.court_alerts
+  for delete to authenticated using (user_id = (select auth.uid()));
+
+-- Idempotency: one fire per (alert, date). Mirrors reminder_sent — guards
+-- against duplicate sends across the overlapping cron ticks of a single
+-- opening. Only the service-role cron touches it.
+create table if not exists public.court_alert_sent (
+  id          uuid primary key default gen_random_uuid(),
+  alert_id    uuid not null references public.court_alerts (id) on delete cascade,
+  date        date not null,
+  created_at  timestamptz not null default now(),
+  constraint court_alert_sent_unique unique (alert_id, date)
+);
+create index if not exists court_alert_sent_alert_idx on public.court_alert_sent (alert_id);
+-- RLS on with no policies locks the table to clients; service role bypasses RLS.
+alter table public.court_alert_sent enable row level security;
+
+-- In-app bell entry for a fired alert. court_id is the catalog "tf-N" deep-link
+-- target (no FK — same reasoning as court_alerts.court_id).
+alter type public.notification_type add value if not exists 'court_available';
+alter table public.notifications add column if not exists court_id text;
+
+-- pg_cron job (registered out-of-band like the other crons, kept here for
+-- reference). Polls /api/cron/court-alerts every 15 min with the cron_secret
+-- bearer pulled from Vault:
+--   select cron.schedule(
+--     'court-alerts-poll', '*/15 * * * *',
+--     $$ SELECT net.http_get(
+--          url := 'https://mytennisfriends.com/api/cron/court-alerts',
+--          headers := jsonb_build_object('Authorization',
+--            'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets
+--                          WHERE name='cron_secret' LIMIT 1)),
+--          timeout_milliseconds := 60000) $$);
