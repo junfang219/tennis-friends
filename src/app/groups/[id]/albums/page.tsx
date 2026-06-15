@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
-import { canCaptain, type TeamRole } from "@/lib/groupRoles";
+import { type TeamRole } from "@/lib/groupRoles";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { fetchGroupBundle, getCachedGroupBundle } from "@/lib/supabase/queries";
 import { publicStorageThumbUrl } from "@/lib/supabase/storage";
@@ -120,9 +120,10 @@ export default function AlbumsListPage() {
   }, [loadGroup, loadAlbums]);
 
   const myId = session?.user?.id;
-  const myRoles = group?.members.find((m) => m.userId === myId)?.roles ?? [];
-  const isOwner = !!myId && group?.ownerId === myId;
-  const canCreate = canCaptain({ isOwner, roles: myRoles });
+  // Any team member can create albums (and add photos to them); captain status
+  // isn't required.
+  const isMember = !!myId && !!group?.members.find((m) => m.userId === myId);
+  const canCreate = isMember;
 
   const createAlbum = async () => {
     if (!newName.trim()) return;
@@ -232,7 +233,7 @@ export default function AlbumsListPage() {
           </div>
           <p className="text-sm font-semibold text-gray-700">No albums yet</p>
           <p className="text-xs text-gray-400 mt-1">
-            {canCreate ? "Create one to share photos and videos with your team." : "Ask a captain to create one."}
+            Create one to share photos and videos with your team.
           </p>
         </div>
       ) : (

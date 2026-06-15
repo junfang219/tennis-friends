@@ -9003,3 +9003,21 @@ create policy personal_events_update_self on public.personal_events
   for update to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
 create policy personal_events_delete_self on public.personal_events
   for delete to authenticated using (user_id = (select auth.uid()));
+
+-- ============== open albums to all members ==============
+-- Albums are a shared team space: any member may create (already allowed by
+-- albums_insert_member), edit, and add photos. Editing is opened to all members;
+-- deleting an album is limited to its creator or a captain (matches the album
+-- detail page's canDeleteAlbum = isAlbumCreator || isCaptainOrAbove).
+drop policy if exists albums_update_captain on public.albums;
+drop policy if exists albums_update_member  on public.albums;
+create policy albums_update_member on public.albums
+  for update to authenticated
+  using (public.is_group_member(group_id))
+  with check (public.is_group_member(group_id));
+
+drop policy if exists albums_delete_captain          on public.albums;
+drop policy if exists albums_delete_owner_or_captain on public.albums;
+create policy albums_delete_owner_or_captain on public.albums
+  for delete to authenticated
+  using (public.can_run_group(group_id) or created_by_id = (select auth.uid()));
