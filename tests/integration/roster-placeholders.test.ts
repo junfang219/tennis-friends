@@ -285,4 +285,66 @@ describe.skipIf(!integrationEnvReady)("guest roster placeholders (migrations 001
     const { data: avails } = await anon.from("availabilities").select("id").eq("match_id", matchId);
     expect(avails?.length ?? 0).toBe(0);
   });
+
+  it("guest can view + submit an availability poll response via token (IDOR-guarded)", async () => {
+    const ymd = (offsetDays: number) =>
+      new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10);
+    const d1 = ymd(5);
+    const d2 = ymd(6);
+
+    // Captain opens a poll with upcoming candidate dates.
+    const { data: poll, error: pollErr } = await alice.client
+      .from("availability_polls")
+      .insert({
+        group_id: groupId,
+        created_by_id: alice.id,
+        candidate_dates: [d1, d2],
+        min_players: 2,
+        min_block_minutes: 120,
+      })
+      .select("id")
+      .single();
+    expect(pollErr).toBeNull();
+    const pollId = poll!.id;
+
+    // Captain adds a fresh placeholder to respond as a guest.
+    const { data: added } = await alice.client.rpc("add_roster_placeholders", {
+      p_group_id: groupId,
+      p_people: [{ name: "Poll Guest" }],
+    });
+    const guest = ((added ?? []) as unknown as { id: string; token: string }[])[0];
+
+    const anon = anonClient();
+    const { error: setErr } = await anon.rpc("guest_set_poll_response", {
+      p_token: guest.token,
+      p_poll_id: pollId,
+      p_blocks: [{ date: d1, start: "18:00", end: "20:00" }],
+    });
+    expect(setErr).toBeNull();
+
+    // Stored under the placeholder's member_id with no user_id.
+    const admin = adminClient();
+    const { data: row } = await admin
+      .from("availability_poll_responses")
+      .select("user_id, blocks")
+      .eq("poll_id", pollId)
+      .eq("member_id", guest.id)
+      .single();
+    expect(row?.user_id).toBeNull();
+
+    // guest_poll_view echoes the open poll + the guest's own blocks.
+    const { data: view } = await anon.rpc("guest_poll_view", { p_token: guest.token });
+    const polls = (view as unknown as { polls: { id: string; my_blocks: unknown[] }[] }).polls;
+    const mine = polls.find((p) => p.id === pollId)!;
+    expect(mine).toBeTruthy();
+    expect(mine.my_blocks.length).toBe(1);
+
+    // IDOR: an unknown / other-group poll id is rejected.
+    const { error: idorErr } = await anon.rpc("guest_set_poll_response", {
+      p_token: guest.token,
+      p_poll_id: "00000000-0000-0000-0000-000000000000",
+      p_blocks: [],
+    });
+    expect(idorErr).not.toBeNull();
+  });
 });

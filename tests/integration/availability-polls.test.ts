@@ -20,6 +20,8 @@ describe.skipIf(!integrationEnvReady)("availability_polls (live Supabase)", () =
   let carol: TestUser;
   let groupId: string;
   let pollId: string;
+  let aliceMemberId: string;
+  let bobMemberId: string;
 
   beforeAll(async () => {
     [alice, bob, carol] = await Promise.all([
@@ -38,6 +40,14 @@ describe.skipIf(!integrationEnvReady)("availability_polls (live Supabase)", () =
     await admin
       .from("group_members")
       .insert({ group_id: groupId, user_id: bob.id, roles: [] });
+    // member_id is the universal poll-response key now; resolve alice's
+    // (auto-added) and bob's ids for the inserts below.
+    const { data: gms } = await admin
+      .from("group_members")
+      .select("id, user_id")
+      .eq("group_id", groupId);
+    aliceMemberId = (gms ?? []).find((m) => m.user_id === alice.id)!.id;
+    bobMemberId = (gms ?? []).find((m) => m.user_id === bob.id)!.id;
   }, 60_000);
 
   afterAll(async () => {
@@ -105,6 +115,7 @@ describe.skipIf(!integrationEnvReady)("availability_polls (live Supabase)", () =
       .from("availability_poll_responses")
       .insert({
         poll_id: pollId,
+        member_id: bobMemberId,
         user_id: bob.id,
         blocks: [{ date: "2026-08-08", start: "09:00", end: "11:00" }],
       });
@@ -115,13 +126,14 @@ describe.skipIf(!integrationEnvReady)("availability_polls (live Supabase)", () =
       .upsert(
         {
           poll_id: pollId,
+          member_id: bobMemberId,
           user_id: bob.id,
           blocks: [
             { date: "2026-08-08", start: "09:00", end: "12:00" },
             { date: "2026-08-09", start: "14:00", end: "16:00" },
           ],
         },
-        { onConflict: "poll_id,user_id" },
+        { onConflict: "poll_id,member_id" },
       );
     expect(update.error).toBeNull();
 
@@ -142,6 +154,7 @@ describe.skipIf(!integrationEnvReady)("availability_polls (live Supabase)", () =
       .from("availability_poll_responses")
       .insert({
         poll_id: pollId,
+        member_id: aliceMemberId,
         user_id: alice.id,
         blocks: [{ date: "2026-08-08", start: "10:00", end: "12:00" }],
       });
@@ -159,6 +172,7 @@ describe.skipIf(!integrationEnvReady)("availability_polls (live Supabase)", () =
       .from("availability_poll_responses")
       .insert({
         poll_id: pollId,
+        member_id: bobMemberId, // any member id; RLS rejects carol (non-member) regardless
         user_id: carol.id,
         blocks: [],
       });
@@ -202,6 +216,7 @@ describe.skipIf(!integrationEnvReady)("availability_polls (live Supabase)", () =
       .from("availability_poll_responses")
       .insert({
         poll_id: pollId,
+        member_id: aliceMemberId,
         user_id: alice.id,
         blocks: [],
       });
@@ -227,10 +242,17 @@ describe.skipIf(!integrationEnvReady)("availability_polls (live Supabase)", () =
       .select("id")
       .single();
     const localPollId = p!.id;
+    const { data: localMember } = await admin
+      .from("group_members")
+      .select("id")
+      .eq("group_id", localGroupId)
+      .eq("user_id", alice.id)
+      .single();
     await admin
       .from("availability_poll_responses")
       .insert({
         poll_id: localPollId,
+        member_id: localMember!.id,
         user_id: alice.id,
         blocks: [{ date: "2026-08-15", start: "09:00", end: "11:00" }],
       });

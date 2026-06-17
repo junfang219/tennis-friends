@@ -226,28 +226,31 @@ export type Database = {
           blocks: Json
           created_at: string
           id: string
+          member_id: string
           note: string
           poll_id: string
           updated_at: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           blocks?: Json
           created_at?: string
           id?: string
+          member_id: string
           note?: string
           poll_id: string
           updated_at?: string
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           blocks?: Json
           created_at?: string
           id?: string
+          member_id?: string
           note?: string
           poll_id?: string
           updated_at?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -3499,7 +3502,9 @@ export type Database = {
       claim_roster_placeholder: { Args: { p_token: string }; Returns: Json }
       get_roster_placeholder_links: { Args: { p_group_id: string }; Returns: Json }
       guest_create_placeholder: { Args: { p_group_token: string; p_name: string }; Returns: Json }
+      guest_poll_view: { Args: { p_token: string }; Returns: Json }
       guest_roster_view: { Args: { p_token: string }; Returns: Json }
+      guest_set_poll_response: { Args: { p_token: string; p_poll_id: string; p_blocks: Json }; Returns: Json }
       guest_set_availability: {
         Args: {
           p_token: string

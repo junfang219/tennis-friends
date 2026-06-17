@@ -24,8 +24,9 @@ import { RankedWindowList } from "@/components/availability/RankedWindowList";
 import { SharePreferredTimesSheet } from "@/components/availability/SharePreferredTimesSheet";
 
 type Member = {
-  id: string;
+  id: string; // group_members row id — the poll response key (member_id)
   roles: TeamRole[];
+  isPlaceholder: boolean; // captain-created, no account yet
   user: { id: string; name: string; profileImageUrl: string };
 };
 
@@ -57,6 +58,7 @@ export default function PollDetailPage() {
       members: cached.members.map((m) => ({
         id: m.id,
         roles: m.roles,
+        isPlaceholder: m.isPlaceholder,
         user: {
           id: m.user.id,
           name: m.user.name,
@@ -108,6 +110,7 @@ export default function PollDetailPage() {
           members: bundle.members.map((m) => ({
             id: m.id,
             roles: m.roles,
+            isPlaceholder: m.isPlaceholder,
             user: {
               id: m.user.id,
               name: m.user.name,
@@ -124,10 +127,16 @@ export default function PollDetailPage() {
     })();
   }, [groupId, pollId]);
 
-  // Initialise my-blocks from server once we have responses + myId
+  // My roster row (the group_members id is the poll-response key). Resolved
+  // here so the my-blocks init effect below can key on it. Placeholders never
+  // have an account, so they can never be "me".
+  const myMember = team?.members.find((m) => !m.isPlaceholder && m.user.id === myId);
+  const myMemberId = myMember?.id;
+
+  // Initialise my-blocks from server once we have responses + my member id
   useEffect(() => {
-    if (!myId) return;
-    const mine = responses.find((r) => r.user_id === myId);
+    if (!myMemberId) return;
+    const mine = responses.find((r) => r.member_id === myMemberId);
     const byDate = new Map<string, Block[]>();
     for (const b of mine?.blocks ?? []) {
       const arr = byDate.get(b.date) ?? [];
@@ -136,7 +145,7 @@ export default function PollDetailPage() {
     }
     setMyBlocks(byDate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myId, responses.length]);
+  }, [myMemberId, responses.length]);
 
   // Realtime: re-fetch responses on any change for this poll.
   useRealtimeTable(
@@ -170,7 +179,6 @@ export default function PollDetailPage() {
     [pollId],
   );
 
-  const myMember = team?.members.find((m) => m.user.id === myId);
   const isCaptain = !!team && canCaptain({ isOwner: myId === team.ownerId, roles: myMember?.roles ?? [] });
   const isOpen = poll?.status === "open";
 
@@ -178,8 +186,10 @@ export default function PollDetailPage() {
   const memberResponses: MemberResponse[] = useMemo(() => {
     if (!team) return [];
     return responses.map((r) => ({
-      userId: r.user_id,
-      userName: team.members.find((m) => m.user.id === r.user_id)?.user.name ?? r.user_id,
+      // userId here is an opaque identity key for the ranking algorithm. We key
+      // it on member_id so account-less placeholders stay distinct.
+      userId: r.member_id,
+      userName: team.members.find((m) => m.id === r.member_id)?.user.name ?? r.member_id,
       blocks: r.blocks,
     }));
   }, [responses, team]);
@@ -230,7 +240,7 @@ export default function PollDetailPage() {
   };
 
   const saveMyAvailability = async () => {
-    if (!poll || !myId || saving) return;
+    if (!poll || !myId || !myMember || saving) return;
     const flat: Block[] = [];
     for (const arr of myBlocks.values()) flat.push(...arr);
     for (const b of flat) {
@@ -244,7 +254,7 @@ export default function PollDetailPage() {
     setError("");
     try {
       const supabase = createSupabaseBrowserClient();
-      await upsertMyResponse(supabase, { pollId: poll.id, userId: myId, blocks: flat });
+      await upsertMyResponse(supabase, { pollId: poll.id, memberId: myMember.id, userId: myId, blocks: flat });
       setSaved(true);
       setTimeout(() => setSaved(false), 2400);
     } catch {
@@ -318,9 +328,9 @@ export default function PollDetailPage() {
     );
   }
 
-  const responseUserIds = new Set(responses.map((r) => r.user_id));
-  const responded = team.members.filter((m) => responseUserIds.has(m.user.id));
-  const pending = team.members.filter((m) => !responseUserIds.has(m.user.id));
+  const respondedMemberIds = new Set(responses.map((r) => r.member_id));
+  const responded = team.members.filter((m) => respondedMemberIds.has(m.id));
+  const pending = team.members.filter((m) => !respondedMemberIds.has(m.id));
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
@@ -364,11 +374,11 @@ export default function PollDetailPage() {
           candidateDates={poll.candidate_dates}
           responses={responses}
           members={team.members.map((m) => ({
-            id: m.user.id,
+            id: m.id,
             name: m.user.name,
             profileImageUrl: m.user.profileImageUrl,
           }))}
-          myUserId={myId}
+          myUserId={myMember?.id ?? ""}
           myBlocks={myBlocks}
           minBlockMinutes={poll.min_block_minutes}
           disabled={!isOpen}
@@ -459,7 +469,7 @@ export default function PollDetailPage() {
                 <li key={m.id} className="flex items-center gap-2">
                   <Avatar image={m.user.profileImageUrl} name={m.user.name} size="sm" />
                   <span className="text-sm text-gray-700 flex-1">{m.user.name}</span>
-                  {isCaptain && isOpen && m.user.id !== myId && (
+                  {isCaptain && isOpen && !m.isPlaceholder && m.user.id !== myId && (
                     nudgedUserId === m.user.id ? (
                       <span className="text-xs font-semibold text-court-green">Sent ✓</span>
                     ) : nudgeError === m.user.id ? (

@@ -8,9 +8,12 @@ import {
   getGuestRosterView,
   guestSetAvailability,
   guestUpdateName,
+  guestPollView,
   type GuestRosterView,
   type GuestEvent,
+  type GuestPoll,
 } from "@/lib/supabase/queries";
+import GuestPollCard from "@/components/rsvp/GuestPollCard";
 import { errorMessage } from "@/lib/errorMessage";
 import { RSVP, normalizeMatchStatus, normalizePracticeStatus, type RsvpStatus } from "@/lib/rsvpStatus";
 import RsvpPicker from "@/components/attendance/RsvpPicker";
@@ -23,6 +26,7 @@ export default function GuestRsvpPage() {
   const token = params.token as string;
 
   const [view, setView] = useState<GuestRosterView | null>(null);
+  const [polls, setPolls] = useState<GuestPoll[]>([]);
   const [loadError, setLoadError] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [hasRsvped, setHasRsvped] = useState(false);
@@ -37,8 +41,12 @@ export default function GuestRsvpPage() {
     setLoadError("");
     try {
       const supabase = createSupabaseBrowserClient();
-      const data = await getGuestRosterView(supabase, token);
+      const [data, pollData] = await Promise.all([
+        getGuestRosterView(supabase, token),
+        guestPollView(supabase, token).catch(() => [] as GuestPoll[]),
+      ]);
       setView(data);
+      setPolls(pollData);
       setNameDraft(data.member.name);
     } catch (err) {
       setLoadError(
@@ -247,9 +255,16 @@ export default function GuestRsvpPage() {
             ))}
           </Section>
         )}
-        {view.matches.length === 0 && view.practices.length === 0 && (
+        {polls.length > 0 && (
+          <Section title="Availability polls">
+            {polls.map((poll) => (
+              <GuestPollCard key={poll.id} token={token} poll={poll} />
+            ))}
+          </Section>
+        )}
+        {view.matches.length === 0 && view.practices.length === 0 && polls.length === 0 && (
           <p className="text-center text-sm text-gray-500 py-8">
-            No upcoming matches or practices yet.
+            No upcoming matches, practices, or polls yet.
           </p>
         )}
       </div>

@@ -138,6 +138,48 @@ export async function guestCreatePlaceholder(
   return (data as unknown as { token: string }).token;
 }
 
+// ---- Guest-side (anon): availability polls ----
+
+export interface GuestPollBlock {
+  date: string; // YYYY-MM-DD
+  start: string; // HH:MM
+  end: string; // HH:MM
+}
+
+export interface GuestPoll {
+  id: string;
+  title: string;
+  candidate_dates: string[];
+  min_block_minutes: number;
+  min_players: number;
+  timezone: string;
+  status: "open" | "closed";
+  my_blocks: GuestPollBlock[];
+}
+
+/** Anon: open polls for the team + the guest's own blocks per poll. */
+export async function guestPollView(
+  supabase: SupabaseClient<Database>,
+  token: string
+): Promise<GuestPoll[]> {
+  const { data, error } = await supabase.rpc("guest_poll_view", { p_token: token });
+  if (error) throw error;
+  return ((data as unknown as { polls: GuestPoll[] })?.polls ?? []) as GuestPoll[];
+}
+
+/** Anon: replace the guest's availability blocks for one open poll. */
+export async function guestSetPollResponse(
+  supabase: SupabaseClient<Database>,
+  args: { token: string; pollId: string; blocks: GuestPollBlock[] }
+): Promise<void> {
+  const { error } = await supabase.rpc("guest_set_poll_response", {
+    p_token: args.token,
+    p_poll_id: args.pollId,
+    p_blocks: args.blocks as unknown as Database["public"]["Functions"]["guest_set_poll_response"]["Args"]["p_blocks"],
+  });
+  if (error) throw error;
+}
+
 // ---- Authenticated: claim the placeholder into the signed-in account ----
 
 export interface ClaimResult {

@@ -23,7 +23,8 @@ export interface AvailabilityPoll {
 export interface PollResponse {
   id: string;
   poll_id: string;
-  user_id: string;
+  member_id: string; // universal roster key (real or placeholder)
+  user_id: string | null; // null for placeholder responses
   blocks: Block[];
   note: string;
   created_at: string;
@@ -34,7 +35,7 @@ const POLL_COLUMNS =
   "id, group_id, created_by_id, title, candidate_dates, min_players, min_block_minutes, " +
   "timezone, status, closed_at, resulting_match_id, created_at, updated_at";
 
-const RESPONSE_COLUMNS = "id, poll_id, user_id, blocks, note, created_at, updated_at";
+const RESPONSE_COLUMNS = "id, poll_id, member_id, user_id, blocks, note, created_at, updated_at";
 
 export async function listGroupPolls(
   supabase: SupabaseClient<Database>,
@@ -78,34 +79,35 @@ export async function listPollResponses(
 }
 
 // Replace the caller's blocks for a poll in a single upsert. The unique
-// (poll_id, user_id) index turns this into UPDATE when a row already exists.
+// (poll_id, member_id) index turns this into UPDATE when a row already exists.
 export async function upsertMyResponse(
   supabase: SupabaseClient<Database>,
-  args: { pollId: string; userId: string; blocks: Block[]; note?: string },
+  args: { pollId: string; memberId: string; userId: string; blocks: Block[]; note?: string },
 ): Promise<void> {
   const { error } = await supabase
     .from("availability_poll_responses")
     .upsert(
       {
         poll_id: args.pollId,
+        member_id: args.memberId,
         user_id: args.userId,
         blocks: args.blocks as unknown as Database["public"]["Tables"]["availability_poll_responses"]["Insert"]["blocks"],
         note: args.note ?? "",
       },
-      { onConflict: "poll_id,user_id" },
+      { onConflict: "poll_id,member_id" },
     );
   if (error) throw error;
 }
 
 export async function deleteMyResponse(
   supabase: SupabaseClient<Database>,
-  args: { pollId: string; userId: string },
+  args: { pollId: string; memberId: string },
 ): Promise<void> {
   const { error } = await supabase
     .from("availability_poll_responses")
     .delete()
     .eq("poll_id", args.pollId)
-    .eq("user_id", args.userId);
+    .eq("member_id", args.memberId);
   if (error) throw error;
 }
 

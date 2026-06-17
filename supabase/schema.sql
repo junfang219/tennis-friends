@@ -9398,6 +9398,7 @@ BEGIN
           placeholder_phone = NULL, claim_token = NULL, claim_expires_at = NULL
       WHERE id = v_ph.id;
     UPDATE public.availabilities SET user_id = v_caller WHERE member_id = v_ph.id;
+    UPDATE public.availability_poll_responses SET user_id = v_caller WHERE member_id = v_ph.id;
     RETURN jsonb_build_object('ok', true, 'group_id', v_ph.group_id, 'merged_existing', false);
   END IF;
 
@@ -9414,6 +9415,18 @@ BEGIN
       );
   -- Remaining placeholder RSVPs collided with an existing answer → drop them.
   DELETE FROM public.availabilities WHERE member_id = v_ph.id;
+
+  -- Same merge for poll responses: move where the existing account hasn't
+  -- answered this poll (existing wins), then drop the collisions.
+  UPDATE public.availability_poll_responses a
+    SET member_id = v_existing, user_id = v_caller
+    WHERE a.member_id = v_ph.id
+      AND NOT EXISTS (
+        SELECT 1 FROM public.availability_poll_responses b
+        WHERE b.member_id = v_existing AND b.poll_id = a.poll_id
+      );
+  DELETE FROM public.availability_poll_responses WHERE member_id = v_ph.id;
+
   -- Remove the now-empty placeholder slot.
   DELETE FROM public.group_members WHERE id = v_ph.id;
 
@@ -9446,3 +9459,103 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.get_roster_placeholder_links(uuid) FROM public, anon;
 GRANT EXECUTE ON FUNCTION public.get_roster_placeholder_links(uuid) TO authenticated;
+
+-- =====================================================================
+-- 0021_guest_poll_responses
+--
+-- Extend the guest-RSVP feature to availability POLLS: account-less
+-- placeholder members can submit their free-form availability blocks via
+-- their per-person link, same as match/practice RSVPs. Mirrors 0019/0020:
+-- availability_poll_responses gains member_id as the universal roster key,
+-- guest RPCs are anon + token-scoped, and claim_roster_placeholder folds
+-- poll responses into the new account.
+-- =====================================================================
+
+ALTER TABLE public.availability_poll_responses
+  ADD COLUMN member_id uuid REFERENCES public.group_members(id) ON DELETE CASCADE;
+
+UPDATE public.availability_poll_responses r SET member_id = gm.id
+  FROM public.availability_polls p
+  JOIN public.group_members gm ON gm.group_id = p.group_id
+  WHERE r.poll_id = p.id AND gm.user_id = r.user_id;
+
+DELETE FROM public.availability_poll_responses WHERE member_id IS NULL;
+
+ALTER TABLE public.availability_poll_responses ALTER COLUMN member_id SET NOT NULL;
+ALTER TABLE public.availability_poll_responses ALTER COLUMN user_id DROP NOT NULL;
+
+-- Swap the per-poll uniqueness from user_id to member_id (full index so
+-- ON CONFLICT (poll_id, member_id) can infer it).
+ALTER TABLE public.availability_poll_responses DROP CONSTRAINT availability_poll_responses_poll_id_user_id_key;
+CREATE UNIQUE INDEX availability_poll_responses_poll_member_uidx
+  ON public.availability_poll_responses (poll_id, member_id);
+CREATE INDEX availability_poll_responses_member_idx
+  ON public.availability_poll_responses (member_id);
+
+COMMENT ON COLUMN public.availability_poll_responses.member_id IS
+  'Universal roster identity for the poll response — group_members(id) for both real and placeholder members. user_id is denormalized, NULL for placeholders.';
+
+-- Guest read: open polls for the placeholder's team (with at least one
+-- upcoming candidate date) + the guest's own blocks per poll.
+CREATE OR REPLACE FUNCTION public.guest_poll_view(p_token text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_ph    public.group_members%ROWTYPE;
+  v_polls jsonb;
+BEGIN
+  v_ph := public.guest_resolve_placeholder(p_token);
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'id', p.id,
+           'title', p.title,
+           'candidate_dates', p.candidate_dates,
+           'min_block_minutes', p.min_block_minutes,
+           'min_players', p.min_players,
+           'timezone', p.timezone,
+           'status', p.status,
+           'my_blocks', coalesce(
+             (SELECT r.blocks FROM public.availability_poll_responses r
+              WHERE r.poll_id = p.id AND r.member_id = v_ph.id), '[]'::jsonb)
+         ) ORDER BY p.created_at), '[]'::jsonb)
+    INTO v_polls
+    FROM public.availability_polls p
+    WHERE p.group_id = v_ph.group_id
+      AND p.status = 'open'
+      AND EXISTS (
+        SELECT 1 FROM unnest(p.candidate_dates) d
+        WHERE d >= (now() AT TIME ZONE coalesce(nullif(p.timezone, ''), 'America/Los_Angeles'))::date
+      );
+
+  RETURN jsonb_build_object('polls', v_polls);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.guest_poll_view(text) FROM public;
+GRANT EXECUTE ON FUNCTION public.guest_poll_view(text) TO anon, authenticated;
+
+-- Guest write: replace the placeholder's blocks for one open poll. Validates
+-- the poll belongs to the placeholder's group and is still open (anti-IDOR).
+CREATE OR REPLACE FUNCTION public.guest_set_poll_response(p_token text, p_poll_id uuid, p_blocks jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_ph public.group_members%ROWTYPE;
+BEGIN
+  v_ph := public.guest_resolve_placeholder(p_token);
+  IF jsonb_typeof(p_blocks) <> 'array' THEN
+    RAISE EXCEPTION 'blocks must be a JSON array' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.availability_polls p
+    WHERE p.id = p_poll_id AND p.group_id = v_ph.group_id AND p.status = 'open'
+  ) THEN
+    RAISE EXCEPTION 'Poll not found or closed' USING ERRCODE = 'no_data_found';
+  END IF;
+
+  INSERT INTO public.availability_poll_responses (poll_id, member_id, user_id, blocks)
+  VALUES (p_poll_id, v_ph.id, NULL, p_blocks)
+  ON CONFLICT (poll_id, member_id) DO UPDATE
+    SET blocks = excluded.blocks, updated_at = now();
+
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.guest_set_poll_response(text, uuid, jsonb) FROM public;
+GRANT EXECUTE ON FUNCTION public.guest_set_poll_response(text, uuid, jsonb) TO anon, authenticated;

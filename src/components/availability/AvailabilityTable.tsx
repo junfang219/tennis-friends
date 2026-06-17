@@ -82,10 +82,13 @@ export function AvailabilityTable({
     for (const date of candidateDates) {
       const rows: Array<{ member: MemberLite; blocks: Block[] }> = [];
       for (const r of responses) {
-        if (r.user_id === myUserId) continue;
+        // `members` and `myUserId` are now keyed by group_members.id (member_id),
+        // so responses join on member_id — this keeps account-less placeholders
+        // distinct and tolerates a null user_id.
+        if (r.member_id === myUserId) continue;
         const blocks = (r.blocks ?? []).filter((b) => b.date === date);
         if (blocks.length === 0) continue;
-        const member = memberById.get(r.user_id);
+        const member = memberById.get(r.member_id);
         if (!member) continue;
         const sorted = [...blocks].sort((a, b) => a.start.localeCompare(b.start));
         rows.push({ member, blocks: sorted });
