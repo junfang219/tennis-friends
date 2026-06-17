@@ -24,6 +24,7 @@ import { errorMessage } from "@/lib/errorMessage";
 
 type Member = {
   id: string;
+  isPlaceholder: boolean; // account-less roster member — no profile to link to
   user: { id: string; name: string; profileImageUrl: string; skillLevel: string };
 };
 
@@ -72,6 +73,7 @@ export default function GroupPage() {
       const groupCamel = toGroupCamel(g);
       const adaptedMembers = members.map((m) => ({
         id: m.id,
+        isPlaceholder: m.isPlaceholder,
         user: {
           id: m.user.id,
           name: m.user.name,
@@ -187,11 +189,18 @@ export default function GroupPage() {
             {/* Members row */}
             <div className="mt-4 flex items-center gap-3">
               <div className="flex items-center -space-x-2">
-                {group.members.slice(0, 6).map((m) => (
-                  <Link key={m.id} href={`/profile/${m.user.id}`} title={m.user.name}>
-                    <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
-                  </Link>
-                ))}
+                {group.members.slice(0, 6).map((m) =>
+                  m.isPlaceholder ? (
+                    // No account yet — nothing to link to.
+                    <div key={m.id} title={m.user.name}>
+                      <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
+                    </div>
+                  ) : (
+                    <Link key={m.id} href={`/profile/${m.user.id}`} title={m.user.name}>
+                      <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
+                    </Link>
+                  )
+                )}
                 {group.members.length > 6 && (
                   <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-xs font-semibold text-gray-500 ring-2 ring-white">
                     +{group.members.length - 6}
@@ -810,6 +819,7 @@ function MembersButton({
       onUpdate(
         members.map((m) => ({
           id: m.id,
+          isPlaceholder: m.isPlaceholder,
           user: {
             id: m.user.id,
             name: m.user.name,
@@ -906,28 +916,45 @@ function MembersButton({
                       key={m.id}
                       className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors"
                     >
-                      <Link href={`/profile/${m.user.id}`} onClick={() => setShow(false)}>
+                      {m.isPlaceholder ? (
                         <Avatar name={m.user.name} image={m.user.profileImageUrl} size="md" />
-                      </Link>
+                      ) : (
+                        <Link href={`/profile/${m.user.id}`} onClick={() => setShow(false)}>
+                          <Avatar name={m.user.name} image={m.user.profileImageUrl} size="md" />
+                        </Link>
+                      )}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <Link
-                            href={`/profile/${m.user.id}`}
-                            onClick={() => setShow(false)}
-                            className="text-sm font-semibold text-gray-800 truncate"
-                          >
-                            {m.user.name}
-                          </Link>
-                          {m.user.id === ownerId && (
+                          {m.isPlaceholder ? (
+                            <span className="text-sm font-semibold text-gray-800 truncate">{m.user.name}</span>
+                          ) : (
+                            <Link
+                              href={`/profile/${m.user.id}`}
+                              onClick={() => setShow(false)}
+                              className="text-sm font-semibold text-gray-800 truncate"
+                            >
+                              {m.user.name}
+                            </Link>
+                          )}
+                          {!m.isPlaceholder && m.user.id === ownerId && (
                             <span className="text-[9px] font-bold tracking-wider text-court-green bg-court-green-pale/40 px-1.5 py-0.5 rounded uppercase">
                               Creator
                             </span>
                           )}
-                          {m.user.id === currentUserId && (
+                          {!m.isPlaceholder && m.user.id === currentUserId && (
                             <span className="text-[9px] font-medium text-gray-400">(you)</span>
                           )}
+                          {m.isPlaceholder && (
+                            <span className="text-[9px] font-bold tracking-wider text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded uppercase">
+                              No account
+                            </span>
+                          )}
                         </div>
-                        <p className="text-xs text-gray-400">{SKILL_LABELS[m.user.skillLevel] || m.user.skillLevel}</p>
+                        <p className="text-xs text-gray-400">
+                          {m.isPlaceholder
+                            ? "Hasn't joined yet"
+                            : SKILL_LABELS[m.user.skillLevel] || m.user.skillLevel}
+                        </p>
                       </div>
                     </div>
                   ))}
