@@ -8,17 +8,9 @@ import Avatar from "@/components/Avatar";
 import { canAdmin, parseMemberTypes, TEAM_ROLES, type TeamRole } from "@/lib/groupRoles";
 import { parseReminderPrefs, REMINDER_HOUR_CHOICES, type ReminderPrefs } from "@/lib/reminderPrefs";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import {
-  getGroup,
-  listGroupMembers,
-  addRosterPlaceholders,
-  getRosterPlaceholderLinks,
-  mintRosterLink,
-  revokeRosterLink,
-  type PlaceholderLink,
-} from "@/lib/supabase/queries";
+import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
 import { errorMessage } from "@/lib/errorMessage";
-import { nativeShare } from "@/lib/lfpShare";
+import InvitePlayersPanel from "@/components/groups/InvitePlayersPanel";
 
 type Member = {
   id: string;
@@ -438,144 +430,6 @@ function RosterTab({
   const [inviteMsg, setInviteMsg] = useState("");
   const [inviteErr, setInviteErr] = useState("");
 
-  // ── Roster import: add placeholders by name + per-person magic links ──
-  const [bulkNames, setBulkNames] = useState("");
-  const [addingPlaceholders, setAddingPlaceholders] = useState(false);
-  const [placeholderLinks, setPlaceholderLinks] = useState<PlaceholderLink[]>([]);
-  const [rosterErr, setRosterErr] = useState("");
-  const [rosterMsg, setRosterMsg] = useState("");
-  // Shared self-add link token — managed locally since it isn't on the loaded
-  // group object; mint returns the token, revoke clears it.
-  const [rosterLinkToken, setRosterLinkToken] = useState("");
-  const [rosterLinkBusy, setRosterLinkBusy] = useState(false);
-
-  // Parse the textarea: one person per line, "Name, contact" where contact is
-  // an email (has "@") or a phone otherwise. First comma splits name/contact.
-  const parsedPeople = bulkNames
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const comma = line.indexOf(",");
-      if (comma === -1) return { name: line } as { name: string; email?: string; phone?: string };
-      const name = line.slice(0, comma).trim();
-      const contact = line.slice(comma + 1).trim();
-      if (!contact) return { name };
-      return contact.includes("@") ? { name, email: contact } : { name, phone: contact };
-    })
-    .filter((p) => p.name.length > 0);
-
-  const loadPlaceholderLinks = useCallback(async () => {
-    if (!canManage) return;
-    try {
-      const supabase = createSupabaseBrowserClient();
-      const links = await getRosterPlaceholderLinks(supabase, group.id);
-      setPlaceholderLinks(links);
-    } catch {
-      // Non-fatal — Share buttons just won't have a token to share.
-    }
-  }, [canManage, group.id]);
-
-  useEffect(() => {
-    void loadPlaceholderLinks();
-  }, [loadPlaceholderLinks]);
-
-  const tokenByPlaceholderId = new Map(placeholderLinks.map((l) => [l.id, l.token]));
-
-  const addPlaceholders = async () => {
-    setRosterErr("");
-    setRosterMsg("");
-    if (parsedPeople.length === 0) {
-      setRosterErr("Add at least one name.");
-      return;
-    }
-    setAddingPlaceholders(true);
-    try {
-      const supabase = createSupabaseBrowserClient();
-      await addRosterPlaceholders(supabase, group.id, parsedPeople);
-      setRosterMsg(
-        `${parsedPeople.length} ${parsedPeople.length === 1 ? "person" : "people"} added to the roster.`
-      );
-      setBulkNames("");
-      onSaved();
-      await loadPlaceholderLinks();
-    } catch (err) {
-      setRosterErr(errorMessage(err, "Failed to add people."));
-    }
-    setAddingPlaceholders(false);
-  };
-
-  const sharePlaceholderLink = async (name: string, token: string) => {
-    const origin = window.location.origin;
-    await nativeShare(
-      {
-        title: `RSVP for ${group.name}`,
-        text: `You've been added to ${group.name} on TennisFriend — tap to set your availability (no signup needed): `,
-        url: `${origin}/rsvp/${token}`,
-      },
-      "rosterShare"
-    );
-  };
-
-  const copyAllPlaceholderLinks = async () => {
-    setRosterErr("");
-    setRosterMsg("");
-    if (placeholderLinks.length === 0) {
-      setRosterErr("No placeholder links yet.");
-      return;
-    }
-    const origin = window.location.origin;
-    const digest = placeholderLinks
-      .map((l) => `${l.name} — ${origin}/rsvp/${l.token}`)
-      .join("\n");
-    const res = await nativeShare({ title: "", text: digest, url: "" }, "rosterShare");
-    if (res.outcome === "copied") {
-      setRosterMsg("All links copied — paste them into your team chat.");
-    }
-  };
-
-  const mintSharedLink = async () => {
-    setRosterErr("");
-    setRosterMsg("");
-    setRosterLinkBusy(true);
-    try {
-      const supabase = createSupabaseBrowserClient();
-      const token = await mintRosterLink(supabase, group.id);
-      setRosterLinkToken(token);
-      setRosterMsg(rosterLinkToken ? "Self-add link rotated." : "Self-add link created.");
-    } catch (err) {
-      setRosterErr(errorMessage(err, "Failed to create link."));
-    }
-    setRosterLinkBusy(false);
-  };
-
-  const shareSharedLink = async () => {
-    if (!rosterLinkToken) return;
-    const origin = window.location.origin;
-    await nativeShare(
-      {
-        title: `Join ${group.name} on TennisFriend`,
-        text: `Add your name to ${group.name} and set your availability (no signup needed): `,
-        url: `${origin}/rsvp/team/${rosterLinkToken}`,
-      },
-      "rosterShare"
-    );
-  };
-
-  const disableSharedLink = async () => {
-    setRosterErr("");
-    setRosterMsg("");
-    setRosterLinkBusy(true);
-    try {
-      const supabase = createSupabaseBrowserClient();
-      await revokeRosterLink(supabase, group.id);
-      setRosterLinkToken("");
-      setRosterMsg("Self-add link disabled.");
-    } catch (err) {
-      setRosterErr(errorMessage(err, "Failed to disable link."));
-    }
-    setRosterLinkBusy(false);
-  };
 
   const loadInvites = useCallback(async () => {
     const supabase = createSupabaseBrowserClient();
@@ -795,15 +649,6 @@ function RosterTab({
                       No account
                     </span>
                   )}
-                  {m.isPlaceholder && canManage && tokenByPlaceholderId.has(m.id) && (
-                    <button
-                      type="button"
-                      onClick={() => sharePlaceholderLink(m.user.name, tokenByPlaceholderId.get(m.id)!)}
-                      className="text-[11px] font-semibold text-court-green hover:underline"
-                    >
-                      Share link
-                    </button>
-                  )}
                 </div>
 
                 {canManage ? (
@@ -877,103 +722,10 @@ function RosterTab({
 
       {err && <p className="text-xs text-red-600 mt-3">{err}</p>}
 
-      {/* ── Add people by name (account-less placeholders) ── */}
+      {/* ── Invite people who aren't on TennisFriend yet ── */}
       {canManage && (
         <div className="mt-6">
-          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
-            Add people by name
-          </h3>
-          <div className="p-3 rounded-xl border border-gray-200 bg-gray-50 space-y-2">
-            <p className="text-[11px] text-gray-500 leading-snug">
-              Add teammates who aren&apos;t on TennisFriend yet. Each gets a personal
-              link to set their availability — no signup needed.
-            </p>
-            <textarea
-              value={bulkNames}
-              onChange={(e) => setBulkNames(e.target.value)}
-              rows={4}
-              placeholder={'One name per line. Optionally add a phone or email: "Sam Lee, sam@x.com"'}
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-court-green resize-y"
-            />
-            {parsedPeople.length > 0 && (
-              <p className="text-[11px] text-court-green font-semibold">
-                {parsedPeople.length} {parsedPeople.length === 1 ? "person" : "people"} will be added
-              </p>
-            )}
-            <button
-              onClick={addPlaceholders}
-              disabled={addingPlaceholders || parsedPeople.length === 0}
-              className="btn-primary w-full"
-            >
-              {addingPlaceholders ? "Adding..." : "Add to roster"}
-            </button>
-            {rosterMsg && <p className="text-xs text-court-green">{rosterMsg}</p>}
-            {rosterErr && <p className="text-xs text-red-600">{rosterErr}</p>}
-          </div>
-        </div>
-      )}
-
-      {/* ── Per-person link digest ── */}
-      {canManage && placeholderLinks.length > 0 && (
-        <div className="mt-6">
-          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
-            Personal links
-          </h3>
-          <div className="p-3 rounded-xl border border-gray-200 bg-gray-50 space-y-2">
-            <p className="text-[11px] text-gray-500 leading-snug">
-              Each person gets their own link — paste this into your team chat.
-            </p>
-            <button onClick={copyAllPlaceholderLinks} className="btn-secondary w-full">
-              Copy all links
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Shared self-add link ── */}
-      {canManage && (
-        <div className="mt-6">
-          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
-            Shared self-add link
-          </h3>
-          <div className="p-3 rounded-xl border border-gray-200 bg-gray-50 space-y-2">
-            <p className="text-[11px] text-gray-500 leading-snug">
-              Anyone with this link can add their own name to the roster.
-            </p>
-            {!rosterLinkToken ? (
-              <button
-                onClick={mintSharedLink}
-                disabled={rosterLinkBusy}
-                className="btn-primary w-full"
-              >
-                {rosterLinkBusy ? "Working..." : "Create link"}
-              </button>
-            ) : (
-              <div className="flex gap-2">
-                <button
-                  onClick={shareSharedLink}
-                  disabled={rosterLinkBusy}
-                  className="btn-primary flex-1"
-                >
-                  Share
-                </button>
-                <button
-                  onClick={mintSharedLink}
-                  disabled={rosterLinkBusy}
-                  className="btn-secondary flex-1"
-                >
-                  {rosterLinkBusy ? "..." : "Rotate"}
-                </button>
-                <button
-                  onClick={disableSharedLink}
-                  disabled={rosterLinkBusy}
-                  className="text-xs font-semibold text-red-500 hover:text-red-600 px-2"
-                >
-                  Disable
-                </button>
-              </div>
-            )}
-          </div>
+          <InvitePlayersPanel groupId={group.id} groupName={group.name} onChanged={onSaved} />
         </div>
       )}
 
