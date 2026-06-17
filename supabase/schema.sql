@@ -9383,6 +9383,16 @@ BEGIN
 
   IF v_existing IS NULL THEN
     -- CONVERT in place: history is preserved, the row just gains an identity.
+    -- Carry the guest's chosen roster name onto the new account when the
+    -- profile has no real name yet — an email signup derives name from the
+    -- email local part (e.g. "jordan.lee"), which shouldn't replace the name
+    -- the captain/guest already set. OAuth signups that bring a real name are
+    -- left untouched.
+    UPDATE public.profiles p
+      SET name = v_ph.placeholder_name
+      WHERE p.id = v_caller
+        AND v_ph.placeholder_name IS NOT NULL AND btrim(v_ph.placeholder_name) <> ''
+        AND (p.name IS NULL OR btrim(p.name) = '' OR p.name = split_part(p.email::text, '@', 1));
     UPDATE public.group_members
       SET user_id = v_caller, placeholder_name = NULL, placeholder_email = NULL,
           placeholder_phone = NULL, claim_token = NULL, claim_expires_at = NULL

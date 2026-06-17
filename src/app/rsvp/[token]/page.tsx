@@ -185,7 +185,12 @@ export default function GuestRsvpPage() {
   }
 
   const { group } = view;
-  const claimHref = `/register?next=${encodeURIComponent(`/rsvp-claim/${token}`)}`;
+  // Carry the guest's chosen name into signup so the register form is prefilled
+  // (prefer the live draft in case they just edited it).
+  const guestName = (nameDraft.trim() || view.member.name).trim();
+  const claimHref =
+    `/register?next=${encodeURIComponent(`/rsvp-claim/${token}`)}` +
+    (guestName ? `&name=${encodeURIComponent(guestName)}` : "");
 
   return (
     <div className="max-w-md mx-auto px-4 py-8 pb-28">

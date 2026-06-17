@@ -54,7 +54,9 @@ export default function SupabaseRegisterPage() {
   const embeddedBrowser = useIsEmbeddedBrowser();
   const showGoogle = (!isNative || googleNativeConfigured) && !embeddedBrowser;
   const [step, setStep] = useState<Step>("choose");
-  const [name, setName] = useState("");
+  // Prefill the name when arriving from a guest RSVP link (?name=Abby) so a
+  // guest's chosen name carries into their account instead of an email prefix.
+  const [name, setName] = useState(() => searchParams.get("name")?.trim() ?? "");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
