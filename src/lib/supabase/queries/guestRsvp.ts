@@ -17,14 +17,18 @@ export interface PlaceholderLink {
  * per-person claim_token (the magic-link credential). Captain-gated by RLS via
  * the add_roster_placeholders RPC. Returns the new rows' ids/names/tokens.
  */
+export type PlaceholderScope = "all" | "match" | "practice" | "poll";
+
 export async function addRosterPlaceholders(
   supabase: SupabaseClient<Database>,
   groupId: string,
-  people: { name: string; email?: string; phone?: string }[]
+  people: { name: string; email?: string; phone?: string }[],
+  scope: PlaceholderScope = "all"
 ): Promise<PlaceholderLink[]> {
   const { data, error } = await supabase.rpc("add_roster_placeholders", {
     p_group_id: groupId,
     p_people: people as unknown as Database["public"]["Functions"]["add_roster_placeholders"]["Args"]["p_people"],
+    p_scope: scope,
   });
   if (error) throw error;
   return (data ?? []) as unknown as PlaceholderLink[];

@@ -1934,6 +1934,7 @@ export type Database = {
           placeholder_email: string | null
           placeholder_name: string | null
           placeholder_phone: string | null
+          placeholder_scope: string | null
           roles: Database["public"]["Enums"]["group_member_role"][]
           user_id: string | null
         }
@@ -1953,6 +1954,7 @@ export type Database = {
           placeholder_email?: string | null
           placeholder_name?: string | null
           placeholder_phone?: string | null
+          placeholder_scope?: string | null
           roles?: Database["public"]["Enums"]["group_member_role"][]
           user_id?: string | null
         }
@@ -1972,6 +1974,7 @@ export type Database = {
           placeholder_email?: string | null
           placeholder_name?: string | null
           placeholder_phone?: string | null
+          placeholder_scope?: string | null
           roles?: Database["public"]["Enums"]["group_member_role"][]
           user_id?: string | null
         }
@@ -3498,7 +3501,7 @@ export type Database = {
     }
     Functions: {
       _delete_user_owned_rows: { Args: { uid: string }; Returns: undefined }
-      add_roster_placeholders: { Args: { p_group_id: string; p_people: Json }; Returns: Json }
+      add_roster_placeholders: { Args: { p_group_id: string; p_people: Json; p_scope?: string }; Returns: Json }
       claim_roster_placeholder: { Args: { p_token: string }; Returns: Json }
       get_roster_placeholder_links: { Args: { p_group_id: string }; Returns: Json }
       guest_create_placeholder: { Args: { p_group_token: string; p_name: string }; Returns: Json }

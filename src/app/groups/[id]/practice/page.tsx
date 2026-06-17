@@ -14,6 +14,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage } from "@/lib/supabase/queries";
 import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { errorMessage } from "@/lib/errorMessage";
+import InvitePlayersPanel from "@/components/groups/InvitePlayersPanel";
 
 type Member = {
   id: string;
@@ -83,6 +84,7 @@ export default function TeamPracticePage() {
 
   // Add-series form
   const [showAdd, setShowAdd] = useState(false);
+  const [showInvite, setShowInvite] = useState(false);
   const [name, setName] = useState("");
   const [practiceDate, setPracticeDate] = useState("");
   const [practiceTime, setPracticeTime] = useState("");
@@ -673,18 +675,58 @@ export default function TeamPracticePage() {
           <p className="text-xs text-gray-500">Team Practice</p>
         </div>
         {isCaptain && (
-          <button
-            onClick={() => setShowAdd(!showAdd)}
-            className="btn-primary btn-sm inline-flex"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            Add Practice
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => setShowInvite(true)}
+              className="btn-secondary btn-sm inline-flex"
+              title="Invite players who aren't on TennisFriend yet"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <line x1="19" y1="8" x2="19" y2="14" />
+                <line x1="22" y1="11" x2="16" y2="11" />
+              </svg>
+              Invite
+            </button>
+            <button
+              onClick={() => setShowAdd(!showAdd)}
+              className="btn-primary btn-sm inline-flex"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              Add Practice
+            </button>
+          </div>
         )}
       </div>
+
+      {/* Invite-players modal (practice-scoped) */}
+      {showInvite && isCaptain && typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center">
+            <div className="fixed inset-0 bg-black/40" onClick={() => setShowInvite(false)} />
+            <div className="relative w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85vh] overflow-y-auto p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="font-display text-lg font-bold text-gray-900">Invite players</h2>
+                <button
+                  onClick={() => setShowInvite(false)}
+                  className="p-1 text-gray-400 hover:text-gray-600"
+                  aria-label="Close"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+              <InvitePlayersPanel groupId={groupId} groupName={team.name} onChanged={loadAll} scope="practice" />
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* Add practice form (captain only) */}
       {showAdd && isCaptain && (

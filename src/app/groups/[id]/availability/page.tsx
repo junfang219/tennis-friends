@@ -893,7 +893,7 @@ export default function AvailabilityPage() {
                   </svg>
                 </button>
               </div>
-              <InvitePlayersPanel groupId={groupId} groupName={team.name} onChanged={loadAll} />
+              <InvitePlayersPanel groupId={groupId} groupName={team.name} onChanged={loadAll} scope="match" />
             </div>
           </div>,
           document.body

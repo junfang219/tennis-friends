@@ -9559,3 +9559,165 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.guest_set_poll_response(text, uuid, jsonb) FROM public;
 GRANT EXECUTE ON FUNCTION public.guest_set_poll_response(text, uuid, jsonb) TO anon, authenticated;
+
+-- =====================================================================
+-- 0022_placeholder_invite_scope
+--
+-- Scope a placeholder to the surface it was invited from: a guest added
+-- from the match table should only see/RSVP matches, not practices or
+-- polls. placeholder_scope ∈ {all,match,practice,poll}; NULL = all. The
+-- guest_* views gate each section on it. add_roster_placeholders gains a
+-- p_scope arg (per-person invites carry the inviting surface's scope);
+-- the shared self-add link stays 'all' (a general "join the team" link).
+-- =====================================================================
+
+ALTER TABLE public.group_members ADD COLUMN placeholder_scope text;
+COMMENT ON COLUMN public.group_members.placeholder_scope IS
+  'For placeholders: which surface they were invited to RSVP — all | match | practice | poll. NULL = all.';
+
+-- add_roster_placeholders gains p_scope (default all). Drop the 2-arg form
+-- first so the new signature is unambiguous.
+DROP FUNCTION IF EXISTS public.add_roster_placeholders(uuid, jsonb);
+CREATE OR REPLACE FUNCTION public.add_roster_placeholders(p_group_id uuid, p_people jsonb, p_scope text DEFAULT 'all')
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_person jsonb;
+  v_name   text;
+  v_token  text;
+  v_id     uuid;
+  v_scope  text := CASE WHEN coalesce(p_scope,'all') IN ('all','match','practice','poll')
+                        THEN coalesce(p_scope,'all') ELSE 'all' END;
+  v_out    jsonb := '[]'::jsonb;
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+  IF NOT public.can_run_group(p_group_id) THEN
+    RAISE EXCEPTION 'Only team captains can add roster members' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF jsonb_typeof(p_people) <> 'array' THEN
+    RAISE EXCEPTION 'people must be a JSON array' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  FOR v_person IN SELECT * FROM jsonb_array_elements(p_people) LOOP
+    v_name := trim(coalesce(v_person->>'name', ''));
+    CONTINUE WHEN v_name = '';
+    v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+    INSERT INTO public.group_members
+      (group_id, user_id, roles, placeholder_name, placeholder_email, placeholder_phone,
+       placeholder_scope, claim_token, claim_expires_at)
+    VALUES
+      (p_group_id, NULL, '{}'::group_member_role[], v_name,
+       NULLIF(trim(coalesce(v_person->>'email', '')), '')::citext,
+       NULLIF(trim(coalesce(v_person->>'phone', '')), ''),
+       v_scope, v_token, now() + interval '90 days')
+    RETURNING id INTO v_id;
+    v_out := v_out || jsonb_build_object('id', v_id, 'name', v_name, 'token', v_token);
+  END LOOP;
+
+  RETURN v_out;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.add_roster_placeholders(uuid, jsonb, text) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.add_roster_placeholders(uuid, jsonb, text) TO authenticated;
+
+-- guest_roster_view: gate matches/practices on the placeholder's scope.
+CREATE OR REPLACE FUNCTION public.guest_roster_view(p_token text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_ph        public.group_members%ROWTYPE;
+  v_group     public.groups%ROWTYPE;
+  v_scope     text;
+  v_matches   jsonb;
+  v_practices jsonb;
+BEGIN
+  v_ph := public.guest_resolve_placeholder(p_token);
+  v_scope := coalesce(v_ph.placeholder_scope, 'all');
+  SELECT * INTO v_group FROM public.groups WHERE id = v_ph.group_id;
+
+  SELECT coalesce(jsonb_agg(m ORDER BY (m->>'date'), (m->>'time')), '[]'::jsonb) INTO v_matches
+  FROM (
+    SELECT jsonb_build_object(
+      'id', tm.id, 'event_kind', 'match',
+      'date', tm.match_date, 'time', tm.match_time, 'location', tm.location,
+      'opponent', tm.opponent, 'notes', tm.notes,
+      'my_status', (SELECT status FROM public.availabilities WHERE match_id = tm.id AND member_id = v_ph.id),
+      'counts', (SELECT jsonb_build_object(
+          'playing',     count(*) FILTER (WHERE status = 'playing'),
+          'maybe',       count(*) FILTER (WHERE status = 'maybe'),
+          'not_playing', count(*) FILTER (WHERE status = 'not_playing'))
+        FROM public.availabilities WHERE match_id = tm.id)
+    ) AS m
+    FROM public.team_matches tm
+    WHERE tm.group_id = v_ph.group_id
+      AND v_scope IN ('all','match')
+      AND tm.match_date >= (now() AT TIME ZONE coalesce(nullif(tm.timezone, ''), 'America/Los_Angeles'))::date::text
+  ) q;
+
+  SELECT coalesce(jsonb_agg(p ORDER BY (p->>'date'), (p->>'time')), '[]'::jsonb) INTO v_practices
+  FROM (
+    SELECT jsonb_build_object(
+      'id', tp.id, 'event_kind', 'practice',
+      'date', tp.practice_date, 'time', ps.practice_time, 'location', ps.location,
+      'series_name', ps.name,
+      'my_status', (SELECT status FROM public.availabilities WHERE practice_id = tp.id AND member_id = v_ph.id),
+      'counts', (SELECT jsonb_build_object(
+          'playing',     count(*) FILTER (WHERE status = 'playing'),
+          'maybe',       count(*) FILTER (WHERE status = 'maybe'),
+          'not_playing', count(*) FILTER (WHERE status = 'not_playing'))
+        FROM public.availabilities WHERE practice_id = tp.id)
+    ) AS p
+    FROM public.team_practices tp
+    JOIN public.practice_series ps ON ps.id = tp.series_id
+    WHERE ps.group_id = v_ph.group_id
+      AND v_scope IN ('all','practice')
+      AND tp.practice_date >= (now() AT TIME ZONE coalesce(nullif(tp.timezone, ''), 'America/Los_Angeles'))::date::text
+  ) q;
+
+  RETURN jsonb_build_object(
+    'group', jsonb_build_object('id', v_group.id, 'name', v_group.name, 'image_url', v_group.image_url),
+    'member', jsonb_build_object('id', v_ph.id, 'name', v_ph.placeholder_name),
+    'matches', v_matches,
+    'practices', v_practices
+  );
+END;
+$$;
+REVOKE ALL ON FUNCTION public.guest_roster_view(text) FROM public;
+GRANT EXECUTE ON FUNCTION public.guest_roster_view(text) TO anon, authenticated;
+
+-- guest_poll_view: only when the placeholder's scope includes polls.
+CREATE OR REPLACE FUNCTION public.guest_poll_view(p_token text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_ph    public.group_members%ROWTYPE;
+  v_polls jsonb;
+BEGIN
+  v_ph := public.guest_resolve_placeholder(p_token);
+  IF coalesce(v_ph.placeholder_scope, 'all') NOT IN ('all','poll') THEN
+    RETURN jsonb_build_object('polls', '[]'::jsonb);
+  END IF;
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'id', p.id,
+           'title', p.title,
+           'candidate_dates', p.candidate_dates,
+           'min_block_minutes', p.min_block_minutes,
+           'min_players', p.min_players,
+           'timezone', p.timezone,
+           'status', p.status,
+           'my_blocks', coalesce(
+             (SELECT r.blocks FROM public.availability_poll_responses r
+              WHERE r.poll_id = p.id AND r.member_id = v_ph.id), '[]'::jsonb)
+         ) ORDER BY p.created_at), '[]'::jsonb)
+    INTO v_polls
+    FROM public.availability_polls p
+    WHERE p.group_id = v_ph.group_id
+      AND p.status = 'open'
+      AND EXISTS (
+        SELECT 1 FROM unnest(p.candidate_dates) d
+        WHERE d >= (now() AT TIME ZONE coalesce(nullif(p.timezone, ''), 'America/Los_Angeles'))::date
+      );
+
+  RETURN jsonb_build_object('polls', v_polls);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.guest_poll_view(text) FROM public;
+GRANT EXECUTE ON FUNCTION public.guest_poll_view(text) TO anon, authenticated;

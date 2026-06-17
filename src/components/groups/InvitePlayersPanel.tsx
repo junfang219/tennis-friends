@@ -8,6 +8,7 @@ import {
   mintRosterLink,
   revokeRosterLink,
   type PlaceholderLink,
+  type PlaceholderScope,
 } from "@/lib/supabase/queries";
 import { nativeShare } from "@/lib/lfpShare";
 import { errorMessage } from "@/lib/errorMessage";
@@ -23,11 +24,24 @@ export default function InvitePlayersPanel({
   groupId,
   groupName,
   onChanged,
+  scope = "all",
 }: {
   groupId: string;
   groupName: string;
   onChanged?: () => void;
+  // What the invited guests can RSVP to. "all" (the general Settings invite)
+  // shows everything + the shared self-add link; a surface-specific scope
+  // (e.g. "match" from the availability page) limits the guest to that surface.
+  scope?: PlaceholderScope;
 }) {
+  const scopeNote =
+    scope === "match"
+      ? "They'll be able to RSVP to matches."
+      : scope === "practice"
+        ? "They'll be able to RSVP to practices."
+        : scope === "poll"
+          ? "They'll be able to answer availability polls."
+          : "";
   const [bulkNames, setBulkNames] = useState("");
   const [adding, setAdding] = useState(false);
   const [links, setLinks] = useState<PlaceholderLink[]>([]);
@@ -78,7 +92,7 @@ export default function InvitePlayersPanel({
     setAdding(true);
     try {
       const supabase = createSupabaseBrowserClient();
-      await addRosterPlaceholders(supabase, groupId, parsedPeople);
+      await addRosterPlaceholders(supabase, groupId, parsedPeople, scope);
       setMsg(`${parsedPeople.length} ${parsedPeople.length === 1 ? "person" : "people"} added.`);
       setBulkNames("");
       onChanged?.();
@@ -161,6 +175,7 @@ export default function InvitePlayersPanel({
           <p className="text-[11px] text-gray-500 leading-snug">
             Add teammates who aren&apos;t on TennisFriend yet. Each gets a personal link to set their
             availability — no signup needed. They show up on the table right away.
+            {scopeNote && <span className="block mt-1 font-semibold text-gray-600">{scopeNote}</span>}
           </p>
           <textarea
             value={bulkNames}
@@ -209,7 +224,9 @@ export default function InvitePlayersPanel({
         </div>
       )}
 
-      {/* Shared self-add link */}
+      {/* Shared self-add link — a general "join the team" link, so it's only
+          offered for the all-surfaces (Settings) invite, not a scoped one. */}
+      {scope === "all" && (
       <div>
         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Shared self-add link</h3>
         <div className="p-3 rounded-xl border border-gray-200 bg-gray-50 space-y-2">
@@ -239,6 +256,7 @@ export default function InvitePlayersPanel({
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }
