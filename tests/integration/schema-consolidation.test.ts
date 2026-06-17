@@ -40,6 +40,7 @@ describe.skipIf(!integrationEnvReady)("consolidated schemas (migrations 0010 / 0
     let matchId: string;
     let seriesId: string;
     let practiceId: string;
+    let bobMemberId: string;
 
     beforeAll(async () => {
       // Create a group with alice as owner + bob as member.
@@ -51,9 +52,12 @@ describe.skipIf(!integrationEnvReady)("consolidated schemas (migrations 0010 / 0
         .single();
       groupId = g!.id;
       // owner row auto-added by groups_auto_add_owner.
-      await admin.from("group_members").insert([
-        { group_id: groupId, user_id: bob.id, roles: [] },
-      ]);
+      const { data: bm } = await admin
+        .from("group_members")
+        .insert({ group_id: groupId, user_id: bob.id, roles: [] })
+        .select("id")
+        .single();
+      bobMemberId = bm!.id;
 
       // One match + one practice to RSVP against.
       const { data: m } = await alice.client
@@ -94,6 +98,7 @@ describe.skipIf(!integrationEnvReady)("consolidated schemas (migrations 0010 / 0
         .from("availabilities")
         .insert({
           event_kind: "match",
+          member_id: bobMemberId,
           match_id: matchId,
           user_id: bob.id,
           status: "playing",
@@ -111,6 +116,7 @@ describe.skipIf(!integrationEnvReady)("consolidated schemas (migrations 0010 / 0
         .from("availabilities")
         .insert({
           event_kind: "practice",
+          member_id: bobMemberId,
           practice_id: practiceId,
           user_id: bob.id,
           status: "playing",
@@ -128,6 +134,7 @@ describe.skipIf(!integrationEnvReady)("consolidated schemas (migrations 0010 / 0
         .from("availabilities")
         .insert({
           event_kind: "match",
+          member_id: bobMemberId,
           match_id: matchId,
           practice_id: practiceId,
           user_id: bob.id,
@@ -141,6 +148,7 @@ describe.skipIf(!integrationEnvReady)("consolidated schemas (migrations 0010 / 0
         .from("availabilities")
         .insert({
           event_kind: "match",
+          member_id: bobMemberId,
           user_id: bob.id,
           status: "playing",
         });
@@ -160,6 +168,7 @@ describe.skipIf(!integrationEnvReady)("consolidated schemas (migrations 0010 / 0
         .from("availabilities")
         .insert({
           event_kind: "match",
+          member_id: bobMemberId,
           match_id: matchId,
           user_id: bob.id,
           status: "maybe",

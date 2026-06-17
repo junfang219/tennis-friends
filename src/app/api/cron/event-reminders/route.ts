@@ -215,9 +215,11 @@ async function listUnrsvpedMembers(
     .from("group_members")
     .select("user_id")
     .eq("group_id", groupId);
+  // Placeholder roster members have no account (user_id null) and can't be
+  // notified — drop them before computing who still needs a reminder.
   return (members ?? [])
     .map((m) => m.user_id)
-    .filter((id) => !rsvped.has(id));
+    .filter((id): id is string => id !== null && !rsvped.has(id));
 }
 
 type DispatchOpts = {

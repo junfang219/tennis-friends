@@ -421,7 +421,8 @@ export function toGroupCamel(g: Group): GroupCamel {
 export interface GroupMemberCamel {
   id: string;
   groupId: string;
-  userId: string;
+  userId: string | null; // null for placeholder (account-less) members
+  isPlaceholder: boolean;
   roles: ("manager" | "captain")[];
   memberType: string;
   user: { id: string; name: string; profileImageUrl: string; ntrpRating: number | null };
@@ -432,6 +433,7 @@ export function toGroupMemberCamel(m: GroupMember): GroupMemberCamel {
     id: m.id,
     groupId: m.group_id,
     userId: m.user_id,
+    isPlaceholder: m.isPlaceholder,
     roles: m.roles,
     memberType: m.member_type,
     user: {

@@ -128,6 +128,7 @@ export async function closePoll(
 // seedPlayingAvailability so callers can render the seeded "Playing" cells.
 export interface SeededAvailabilityRow {
   id: string;
+  member_id: string;
   user_id: string;
   status: string;
   match_types: string;
@@ -135,8 +136,15 @@ export interface SeededAvailabilityRow {
   user: { id: string; name: string; profile_image_url: string };
 }
 
+// A real roster member to seed: member_id is the universal RSVP key (poll
+// seeding only ever targets real members, who always have a user_id).
+export interface SeedTarget {
+  memberId: string;
+  userId: string;
+}
+
 const SEEDED_AVAILABILITY_COLUMNS =
-  `id, user_id, status, match_types, lineup_slot, ` +
+  `id, member_id, user_id, status, match_types, lineup_slot, ` +
   `user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url )`;
 
 // Pure row builder (unit-testable): mark the window's members "playing" and
@@ -145,39 +153,40 @@ const SEEDED_AVAILABILITY_COLUMNS =
 // stays for members/captain to fill in later.
 export function buildSeededAvailabilityRows(
   matchId: string,
-  groups: { playing: string[]; notPlaying: string[] },
+  groups: { playing: SeedTarget[]; notPlaying: SeedTarget[] },
 ) {
-  const row = (user_id: string, status: "playing" | "not_playing") => ({
+  const row = (t: SeedTarget, status: "playing" | "not_playing") => ({
     event_kind: "match" as const,
     match_id: matchId,
-    user_id,
+    member_id: t.memberId,
+    user_id: t.userId,
     status,
     match_types: "",
   });
   return [
-    ...groups.playing.map((u) => row(u, "playing")),
-    ...groups.notPlaying.map((u) => row(u, "not_playing")),
+    ...groups.playing.map((t) => row(t, "playing")),
+    ...groups.notPlaying.map((t) => row(t, "not_playing")),
   ];
 }
 
 // Seed availability for everyone on the team when the captain converts a poll
 // window into a match: members who could make the window are marked "playing",
 // the rest "not_playing". They already answered the poll, so this saves them
-// re-marking it. Upsert (on match_id,user_id) so it never clobbers a
+// re-marking it. Upsert (on match_id,member_id) so it never clobbers a
 // pre-existing response. Captain-only via RLS
 // (availabilities_insert_self_or_captain).
 export async function seedPollAvailability(
   supabase: SupabaseClient<Database>,
-  args: { matchId: string; playingUserIds: string[]; notPlayingUserIds: string[] },
+  args: { matchId: string; playing: SeedTarget[]; notPlaying: SeedTarget[] },
 ): Promise<SeededAvailabilityRow[]> {
   const rows = buildSeededAvailabilityRows(args.matchId, {
-    playing: args.playingUserIds,
-    notPlaying: args.notPlayingUserIds,
+    playing: args.playing,
+    notPlaying: args.notPlaying,
   });
   if (rows.length === 0) return [];
   const { data, error } = await supabase
     .from("availabilities")
-    .upsert(rows, { onConflict: "match_id,user_id" })
+    .upsert(rows, { onConflict: "match_id,member_id" })
     .select(SEEDED_AVAILABILITY_COLUMNS);
   if (error) throw error;
   return (data ?? []) as unknown as SeededAvailabilityRow[];

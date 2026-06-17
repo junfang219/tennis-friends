@@ -15,3 +15,4 @@ export * from "./chats";
 export * from "./misc";
 export * from "./clubs";
 export * from "./expenses";
+export * from "./guestRsvp";

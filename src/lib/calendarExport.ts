@@ -85,9 +85,10 @@ function resolveLocationField(ev: ExportEvent): string {
   return ev.location ?? "";
 }
 
-export function buildIcs(ev: ExportEvent): string {
+// The VEVENT block for one event, or null if its date can't be parsed.
+function buildVevent(ev: ExportEvent): string[] | null {
   const t = parseTiming(ev);
-  if (!t) return "";
+  if (!t) return null;
   const locationField = resolveLocationField(ev);
   const dtStart = t.allDay
     ? `DTSTART;VALUE=DATE:${t.startYmd}`
@@ -95,12 +96,7 @@ export function buildIcs(ev: ExportEvent): string {
   const dtEnd = t.allDay
     ? `DTEND;VALUE=DATE:${t.endYmd}`
     : `DTEND:${formatFloating(t.end)}`;
-  const lines = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//TennisFriend//EN",
-    "CALSCALE:GREGORIAN",
-    "METHOD:PUBLISH",
+  return [
     "BEGIN:VEVENT",
     `UID:${ev.id}@tennisfriend`,
     `DTSTAMP:${formatUtcStamp(new Date())}`,
@@ -110,9 +106,34 @@ export function buildIcs(ev: ExportEvent): string {
     `LOCATION:${escapeIcsText(locationField)}`,
     `DESCRIPTION:${escapeIcsText(ev.description ?? "")}`,
     "END:VEVENT",
-    "END:VCALENDAR",
   ];
-  return lines.join("\r\n");
+}
+
+function wrapCalendar(vevents: string[][]): string {
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//TennisFriend//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    ...vevents.flat(),
+    "END:VCALENDAR",
+  ].join("\r\n");
+}
+
+export function buildIcs(ev: ExportEvent): string {
+  const vevent = buildVevent(ev);
+  if (!vevent) return "";
+  return wrapCalendar([vevent]);
+}
+
+// One .ics holding many events — used by the post-signup "add all my matches"
+// prompt so a guest who just claimed their roster slot gets every game they
+// said they're playing in a single calendar import.
+export function buildIcsBundle(events: ExportEvent[]): string {
+  const vevents = events.map(buildVevent).filter((v): v is string[] => v !== null);
+  if (vevents.length === 0) return "";
+  return wrapCalendar(vevents);
 }
 
 export function buildGoogleCalendarUrl(ev: ExportEvent): string {
@@ -140,16 +161,26 @@ export function buildGoogleCalendarUrl(ev: ExportEvent): string {
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
-export function downloadIcs(ev: ExportEvent): void {
-  const ics = buildIcs(ev);
-  if (!ics) return;
+function triggerIcsDownload(ics: string, filename: string): void {
   const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `tennis-${ev.id}.ics`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export function downloadIcs(ev: ExportEvent): void {
+  const ics = buildIcs(ev);
+  if (!ics) return;
+  triggerIcsDownload(ics, `tennis-${ev.id}.ics`);
+}
+
+export function downloadIcsBundle(events: ExportEvent[], filename = "tennis-matches.ics"): void {
+  const ics = buildIcsBundle(events);
+  if (!ics) return;
+  triggerIcsDownload(ics, filename);
 }

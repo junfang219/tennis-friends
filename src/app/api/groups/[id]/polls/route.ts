@@ -87,8 +87,8 @@ export async function POST(
     .eq("group_id", groupId);
 
   const recipientIds = (members ?? [])
-    .map((m: { user_id: string }) => m.user_id)
-    .filter((uid: string) => uid && uid !== me);
+    .map((m: { user_id: string | null }) => m.user_id)
+    .filter((uid: string | null): uid is string => !!uid && uid !== me);
 
   if (recipientIds.length > 0) {
     const earliest = [...candidateDates].sort()[0];

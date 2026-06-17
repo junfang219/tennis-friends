@@ -158,10 +158,11 @@ export type Database = {
           lineup_slot: string
           match_id: string | null
           match_types: string
+          member_id: string
           practice_id: string | null
           status: string
           updated_at: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           created_at?: string
@@ -170,10 +171,11 @@ export type Database = {
           lineup_slot?: string
           match_id?: string | null
           match_types?: string
+          member_id: string
           practice_id?: string | null
           status?: string
           updated_at?: string
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           created_at?: string
@@ -182,12 +184,20 @@ export type Database = {
           lineup_slot?: string
           match_id?: string | null
           match_types?: string
+          member_id?: string
           practice_id?: string | null
           status?: string
           updated_at?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "availabilities_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "group_members"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "availabilities_match_id_fkey"
             columns: ["match_id"]
@@ -1907,6 +1917,8 @@ export type Database = {
       group_members: {
         Row: {
           archived_at: string | null
+          claim_expires_at: string | null
+          claim_token: string | null
           cleared_at: string | null
           created_at: string
           group_id: string
@@ -1916,11 +1928,16 @@ export type Database = {
           member_type: string
           muted: boolean
           pinned_at: string | null
+          placeholder_email: string | null
+          placeholder_name: string | null
+          placeholder_phone: string | null
           roles: Database["public"]["Enums"]["group_member_role"][]
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           archived_at?: string | null
+          claim_expires_at?: string | null
+          claim_token?: string | null
           cleared_at?: string | null
           created_at?: string
           group_id: string
@@ -1930,11 +1947,16 @@ export type Database = {
           member_type?: string
           muted?: boolean
           pinned_at?: string | null
+          placeholder_email?: string | null
+          placeholder_name?: string | null
+          placeholder_phone?: string | null
           roles?: Database["public"]["Enums"]["group_member_role"][]
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           archived_at?: string | null
+          claim_expires_at?: string | null
+          claim_token?: string | null
           cleared_at?: string | null
           created_at?: string
           group_id?: string
@@ -1944,8 +1966,11 @@ export type Database = {
           member_type?: string
           muted?: boolean
           pinned_at?: string | null
+          placeholder_email?: string | null
+          placeholder_name?: string | null
+          placeholder_phone?: string | null
           roles?: Database["public"]["Enums"]["group_member_role"][]
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -2050,6 +2075,8 @@ export type Database = {
           name: string
           owner_id: string
           reminder_prefs: Json
+          roster_link_expires_at: string | null
+          roster_link_token: string | null
           updated_at: string
         }
         Insert: {
@@ -2063,6 +2090,8 @@ export type Database = {
           name: string
           owner_id: string
           reminder_prefs?: Json
+          roster_link_expires_at?: string | null
+          roster_link_token?: string | null
           updated_at?: string
         }
         Update: {
@@ -2076,6 +2105,8 @@ export type Database = {
           name?: string
           owner_id?: string
           reminder_prefs?: Json
+          roster_link_expires_at?: string | null
+          roster_link_token?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -3464,6 +3495,24 @@ export type Database = {
     }
     Functions: {
       _delete_user_owned_rows: { Args: { uid: string }; Returns: undefined }
+      add_roster_placeholders: { Args: { p_group_id: string; p_people: Json }; Returns: Json }
+      claim_roster_placeholder: { Args: { p_token: string }; Returns: Json }
+      get_roster_placeholder_links: { Args: { p_group_id: string }; Returns: Json }
+      guest_create_placeholder: { Args: { p_group_token: string; p_name: string }; Returns: Json }
+      guest_roster_view: { Args: { p_token: string }; Returns: Json }
+      guest_set_availability: {
+        Args: {
+          p_token: string
+          p_event_kind: string
+          p_event_id: string
+          p_status: string
+          p_match_types?: string
+        }
+        Returns: Json
+      }
+      guest_update_name: { Args: { p_token: string; p_name: string }; Returns: Json }
+      mint_roster_link: { Args: { p_group_id: string }; Returns: string }
+      revoke_roster_link: { Args: { p_group_id: string }; Returns: undefined }
       accept_club_invite: { Args: { p_invite_id: string }; Returns: Json }
       accept_club_invite_link: { Args: { p_token: string }; Returns: Json }
       accept_group_invite: { Args: { p_token: string }; Returns: Json }

@@ -9021,3 +9021,418 @@ drop policy if exists albums_delete_owner_or_captain on public.albums;
 create policy albums_delete_owner_or_captain on public.albums
   for delete to authenticated
   using (public.can_run_group(group_id) or created_by_id = (select auth.uid()));
+
+-- =====================================================================
+-- 0019_guest_roster_placeholders
+--
+-- Lower the signup barrier for the Team feature: a captain can put a
+-- teammate's NAME on the roster before that person has an account
+-- ("placeholder" member), share a per-person link so they RSVP without
+-- registering, and have that slot + its RSVPs fold into a real account
+-- when they later sign up. Mirrors the proven expense_shares guest
+-- discriminator (migration 0011): a group_members row is now EITHER a
+-- real member (user_id) XOR a placeholder (placeholder_name). The
+-- availabilities table gains member_id as the universal roster join key
+-- so both kinds of member key their RSVP cells the same way.
+-- =====================================================================
+
+-- ---- group_members: allow account-less placeholder rows ----
+ALTER TABLE public.group_members
+  ALTER COLUMN user_id DROP NOT NULL,
+  ADD COLUMN placeholder_name  text,
+  ADD COLUMN placeholder_email citext,        -- captain-only, private, optional
+  ADD COLUMN placeholder_phone text,          -- captain-only, private, optional
+  ADD COLUMN claim_token       text UNIQUE,   -- per-person magic link / claim credential
+  ADD COLUMN claim_expires_at  timestamptz;
+
+-- Real member (user_id) XOR placeholder (placeholder_name) — same shape as
+-- expense_shares_identifier_check.
+ALTER TABLE public.group_members ADD CONSTRAINT group_members_identity_check CHECK (
+  (user_id IS NOT NULL AND placeholder_name IS NULL)
+  OR (user_id IS NULL AND placeholder_name IS NOT NULL)
+);
+
+-- The existing group_members_unique (group_id, user_id) constraint STAYS:
+-- SQL treats NULLs as distinct, so it already permits many placeholder rows
+-- (user_id NULL) per group while still keeping real members unique. Keeping
+-- it also preserves the many ON CONFLICT (group_id, user_id) upserts in the
+-- owner-auto-add trigger, accept_group_invite, etc.
+CREATE INDEX group_members_claim_token_idx
+  ON public.group_members (claim_token) WHERE claim_token IS NOT NULL;
+
+-- ---- groups: optional shared "self-add" roster link ----
+ALTER TABLE public.groups
+  ADD COLUMN roster_link_token      text UNIQUE,
+  ADD COLUMN roster_link_expires_at timestamptz;
+
+-- ---- availabilities: member_id is the universal roster identity ----
+ALTER TABLE public.availabilities
+  ADD COLUMN member_id uuid REFERENCES public.group_members(id) ON DELETE CASCADE;
+
+-- Backfill from existing (group,user) pairs. All current rows are real
+-- members, so user_id resolves a member row in the event's group.
+UPDATE public.availabilities a SET member_id = gm.id
+  FROM public.team_matches tm
+  JOIN public.group_members gm ON gm.group_id = tm.group_id
+  WHERE a.match_id = tm.id AND gm.user_id = a.user_id AND a.event_kind = 'match';
+UPDATE public.availabilities a SET member_id = gm.id
+  FROM public.team_practices tp
+  JOIN public.practice_series ps ON ps.id = tp.series_id
+  JOIN public.group_members gm ON gm.group_id = ps.group_id
+  WHERE a.practice_id = tp.id AND gm.user_id = a.user_id AND a.event_kind = 'practice';
+
+-- Drop any orphan rows that couldn't be matched (pre-launch, disposable data)
+-- so the NOT NULL below can't fail.
+DELETE FROM public.availabilities WHERE member_id IS NULL;
+
+ALTER TABLE public.availabilities ALTER COLUMN member_id SET NOT NULL;
+-- Placeholders have no user_id; keep user_id denormalized for real members so
+-- the existing profiles embed keeps resolving.
+ALTER TABLE public.availabilities ALTER COLUMN user_id DROP NOT NULL;
+
+-- Swap the per-event uniqueness from user_id to member_id. Full unique indexes
+-- (NOT partial) so ON CONFLICT (match_id, member_id) / (practice_id, member_id)
+-- can infer them — and because NULLs are distinct, the inapplicable column
+-- (e.g. match_id on a practice row) never causes a false collision, exactly as
+-- the original UNIQUE(match_id,user_id)/(practice_id,user_id) constraints did.
+ALTER TABLE public.availabilities DROP CONSTRAINT availabilities_match_id_user_id_key;
+ALTER TABLE public.availabilities DROP CONSTRAINT availabilities_practice_id_user_id_key;
+CREATE UNIQUE INDEX availabilities_match_member_uidx
+  ON public.availabilities (match_id, member_id);
+CREATE UNIQUE INDEX availabilities_practice_member_uidx
+  ON public.availabilities (practice_id, member_id);
+CREATE INDEX availabilities_member_idx ON public.availabilities (member_id);
+
+COMMENT ON COLUMN public.group_members.placeholder_name IS
+  'Set for account-less placeholder roster members. Mutually exclusive with user_id (group_members_identity_check). Claimed into a real account via claim_roster_placeholder.';
+COMMENT ON COLUMN public.availabilities.member_id IS
+  'Universal roster identity for the RSVP — references group_members(id) for both real and placeholder members. user_id is a denormalized convenience, NULL for placeholders.';
+
+-- =====================================================================
+-- 0020_guest_roster_rpcs
+--
+-- RPCs for the guest-RSVP flow. Captain-facing ones are gated by
+-- can_run_group; guest-facing ones are SECURITY DEFINER and granted to
+-- anon, with the per-person claim_token (or the group roster_link_token)
+-- acting as the bearer credential — modeled on get_invite_by_token /
+-- accept_group_invite. The token scopes every guest read/write to a
+-- single roster slot, so anon callers never touch the rest of the team.
+-- =====================================================================
+
+-- Captain: bulk-add placeholder members. p_people is a JSON array of
+-- objects {name, email?, phone?}. Returns [{id, name, token}].
+CREATE OR REPLACE FUNCTION public.add_roster_placeholders(p_group_id uuid, p_people jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_person  jsonb;
+  v_name    text;
+  v_token   text;
+  v_id      uuid;
+  v_out     jsonb := '[]'::jsonb;
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+  IF NOT public.can_run_group(p_group_id) THEN
+    RAISE EXCEPTION 'Only team captains can add roster members' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF jsonb_typeof(p_people) <> 'array' THEN
+    RAISE EXCEPTION 'people must be a JSON array' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  FOR v_person IN SELECT * FROM jsonb_array_elements(p_people) LOOP
+    v_name := trim(coalesce(v_person->>'name', ''));
+    CONTINUE WHEN v_name = '';
+    v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+    INSERT INTO public.group_members
+      (group_id, user_id, roles, placeholder_name, placeholder_email, placeholder_phone,
+       claim_token, claim_expires_at)
+    VALUES
+      (p_group_id, NULL, '{}'::group_member_role[], v_name,
+       NULLIF(trim(coalesce(v_person->>'email', '')), '')::citext,
+       NULLIF(trim(coalesce(v_person->>'phone', '')), ''),
+       v_token, now() + interval '90 days')
+    RETURNING id INTO v_id;
+    v_out := v_out || jsonb_build_object('id', v_id, 'name', v_name, 'token', v_token);
+  END LOOP;
+
+  RETURN v_out;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.add_roster_placeholders(uuid, jsonb) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.add_roster_placeholders(uuid, jsonb) TO authenticated;
+
+-- Captain: mint (or rotate) the shared self-add roster link. Returns the token.
+CREATE OR REPLACE FUNCTION public.mint_roster_link(p_group_id uuid)
+RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_token text;
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+  IF NOT public.can_run_group(p_group_id) THEN
+    RAISE EXCEPTION 'Only team captains can manage the roster link' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+  UPDATE public.groups
+    SET roster_link_token = v_token, roster_link_expires_at = now() + interval '90 days'
+    WHERE id = p_group_id;
+  RETURN v_token;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.mint_roster_link(uuid) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.mint_roster_link(uuid) TO authenticated;
+
+-- Captain: revoke the shared self-add link.
+CREATE OR REPLACE FUNCTION public.revoke_roster_link(p_group_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+  IF NOT public.can_run_group(p_group_id) THEN
+    RAISE EXCEPTION 'Only team captains can manage the roster link' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  UPDATE public.groups SET roster_link_token = NULL, roster_link_expires_at = NULL WHERE id = p_group_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.revoke_roster_link(uuid) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.revoke_roster_link(uuid) TO authenticated;
+
+-- Resolve a placeholder group_members row by its claim token, raising on
+-- missing / non-placeholder / expired. SECURITY DEFINER helper shared by the
+-- guest RPCs (not granted to anyone directly).
+CREATE OR REPLACE FUNCTION public.guest_resolve_placeholder(p_token text)
+RETURNS public.group_members LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_ph public.group_members%ROWTYPE;
+BEGIN
+  IF p_token IS NULL OR length(trim(p_token)) = 0 THEN
+    RAISE EXCEPTION 'Missing link' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  SELECT * INTO v_ph FROM public.group_members
+    WHERE claim_token = p_token AND placeholder_name IS NOT NULL;
+  IF v_ph.id IS NULL THEN RAISE EXCEPTION 'This link is no longer valid' USING ERRCODE = 'no_data_found'; END IF;
+  IF v_ph.claim_expires_at IS NOT NULL AND v_ph.claim_expires_at < now() THEN
+    RAISE EXCEPTION 'This link has expired — ask your captain for a new one' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  RETURN v_ph;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.guest_resolve_placeholder(text) FROM public, anon, authenticated;
+
+-- Shared self-add: a guest opens the team roster link and types their name;
+-- we create a placeholder and hand back its per-person claim token.
+CREATE OR REPLACE FUNCTION public.guest_create_placeholder(p_group_token text, p_name text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_group uuid;
+  v_name  text := trim(coalesce(p_name, ''));
+  v_count integer;
+  v_token text;
+BEGIN
+  IF v_name = '' THEN RAISE EXCEPTION 'Please enter your name' USING ERRCODE = 'invalid_parameter_value'; END IF;
+  SELECT id INTO v_group FROM public.groups
+    WHERE roster_link_token = p_group_token
+      AND (roster_link_expires_at IS NULL OR roster_link_expires_at > now());
+  IF v_group IS NULL THEN RAISE EXCEPTION 'This link is no longer valid' USING ERRCODE = 'no_data_found'; END IF;
+
+  -- Cheap anti-abuse: cap placeholders created through the shared link.
+  SELECT count(*) INTO v_count FROM public.group_members
+    WHERE group_id = v_group AND placeholder_name IS NOT NULL;
+  IF v_count >= 200 THEN RAISE EXCEPTION 'This roster is full' USING ERRCODE = 'check_violation'; END IF;
+
+  v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+  INSERT INTO public.group_members (group_id, user_id, roles, placeholder_name, claim_token, claim_expires_at)
+  VALUES (v_group, NULL, '{}'::group_member_role[], v_name, v_token, now() + interval '90 days');
+
+  RETURN jsonb_build_object('token', v_token);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.guest_create_placeholder(text, text) FROM public;
+GRANT EXECUTE ON FUNCTION public.guest_create_placeholder(text, text) TO anon, authenticated;
+
+-- Guest read: returns ONLY what the bearer needs — team name/image, their own
+-- display name, the upcoming schedule with their own RSVP and aggregate counts.
+-- Never returns other members' names or contact info.
+CREATE OR REPLACE FUNCTION public.guest_roster_view(p_token text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_ph        public.group_members%ROWTYPE;
+  v_group     public.groups%ROWTYPE;
+  v_matches   jsonb;
+  v_practices jsonb;
+BEGIN
+  v_ph := public.guest_resolve_placeholder(p_token);
+  SELECT * INTO v_group FROM public.groups WHERE id = v_ph.group_id;
+
+  SELECT coalesce(jsonb_agg(m ORDER BY (m->>'date'), (m->>'time')), '[]'::jsonb) INTO v_matches
+  FROM (
+    SELECT jsonb_build_object(
+      'id', tm.id, 'event_kind', 'match',
+      'date', tm.match_date, 'time', tm.match_time, 'location', tm.location,
+      'opponent', tm.opponent, 'notes', tm.notes,
+      'my_status', (SELECT status FROM public.availabilities WHERE match_id = tm.id AND member_id = v_ph.id),
+      'counts', (SELECT jsonb_build_object(
+          'playing',     count(*) FILTER (WHERE status = 'playing'),
+          'maybe',       count(*) FILTER (WHERE status = 'maybe'),
+          'not_playing', count(*) FILTER (WHERE status = 'not_playing'))
+        FROM public.availabilities WHERE match_id = tm.id)
+    ) AS m
+    FROM public.team_matches tm
+    WHERE tm.group_id = v_ph.group_id
+      -- Keep a match visible through the end of its OWN day: compare against
+      -- "today" in the match's timezone, not the server's (UTC) date.
+      AND tm.match_date >= (now() AT TIME ZONE coalesce(nullif(tm.timezone, ''), 'America/Los_Angeles'))::date::text
+  ) q;
+
+  SELECT coalesce(jsonb_agg(p ORDER BY (p->>'date'), (p->>'time')), '[]'::jsonb) INTO v_practices
+  FROM (
+    SELECT jsonb_build_object(
+      'id', tp.id, 'event_kind', 'practice',
+      'date', tp.practice_date, 'time', ps.practice_time, 'location', ps.location,
+      'series_name', ps.name,
+      'my_status', (SELECT status FROM public.availabilities WHERE practice_id = tp.id AND member_id = v_ph.id),
+      'counts', (SELECT jsonb_build_object(
+          'playing',     count(*) FILTER (WHERE status = 'playing'),
+          'maybe',       count(*) FILTER (WHERE status = 'maybe'),
+          'not_playing', count(*) FILTER (WHERE status = 'not_playing'))
+        FROM public.availabilities WHERE practice_id = tp.id)
+    ) AS p
+    FROM public.team_practices tp
+    JOIN public.practice_series ps ON ps.id = tp.series_id
+    WHERE ps.group_id = v_ph.group_id
+      AND tp.practice_date >= (now() AT TIME ZONE coalesce(nullif(tp.timezone, ''), 'America/Los_Angeles'))::date::text
+  ) q;
+
+  RETURN jsonb_build_object(
+    'group', jsonb_build_object('id', v_group.id, 'name', v_group.name, 'image_url', v_group.image_url),
+    'member', jsonb_build_object('id', v_ph.id, 'name', v_ph.placeholder_name),
+    'matches', v_matches,
+    'practices', v_practices
+  );
+END;
+$$;
+REVOKE ALL ON FUNCTION public.guest_roster_view(text) FROM public;
+GRANT EXECUTE ON FUNCTION public.guest_roster_view(text) TO anon, authenticated;
+
+-- Guest write: set the placeholder's RSVP for one event. Validates the event
+-- belongs to the placeholder's group (anti-IDOR) and upserts on member_id.
+CREATE OR REPLACE FUNCTION public.guest_set_availability(
+  p_token text, p_event_kind text, p_event_id uuid, p_status text, p_match_types text DEFAULT ''
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_ph public.group_members%ROWTYPE;
+BEGIN
+  v_ph := public.guest_resolve_placeholder(p_token);
+
+  IF p_event_kind = 'match' THEN
+    IF NOT EXISTS (SELECT 1 FROM public.team_matches WHERE id = p_event_id AND group_id = v_ph.group_id) THEN
+      RAISE EXCEPTION 'Event not found' USING ERRCODE = 'no_data_found';
+    END IF;
+    INSERT INTO public.availabilities (event_kind, match_id, member_id, user_id, status, match_types)
+    VALUES ('match', p_event_id, v_ph.id, NULL, coalesce(p_status, ''), coalesce(p_match_types, ''))
+    ON CONFLICT (match_id, member_id) DO UPDATE
+      SET status = excluded.status, match_types = excluded.match_types, updated_at = now();
+  ELSIF p_event_kind = 'practice' THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM public.team_practices tp JOIN public.practice_series ps ON ps.id = tp.series_id
+      WHERE tp.id = p_event_id AND ps.group_id = v_ph.group_id
+    ) THEN
+      RAISE EXCEPTION 'Event not found' USING ERRCODE = 'no_data_found';
+    END IF;
+    INSERT INTO public.availabilities (event_kind, practice_id, member_id, user_id, status)
+    VALUES ('practice', p_event_id, v_ph.id, NULL, coalesce(p_status, ''))
+    ON CONFLICT (practice_id, member_id) DO UPDATE
+      SET status = excluded.status, updated_at = now();
+  ELSE
+    RAISE EXCEPTION 'Invalid event kind' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.guest_set_availability(text, text, uuid, text, text) FROM public;
+GRANT EXECUTE ON FUNCTION public.guest_set_availability(text, text, uuid, text, text) TO anon, authenticated;
+
+-- Guest: fix their own display name (the "wrong name" case) without an account.
+CREATE OR REPLACE FUNCTION public.guest_update_name(p_token text, p_name text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_ph   public.group_members%ROWTYPE;
+  v_name text := trim(coalesce(p_name, ''));
+BEGIN
+  v_ph := public.guest_resolve_placeholder(p_token);
+  IF v_name = '' THEN RAISE EXCEPTION 'Please enter a name' USING ERRCODE = 'invalid_parameter_value'; END IF;
+  UPDATE public.group_members SET placeholder_name = v_name WHERE id = v_ph.id;
+  RETURN jsonb_build_object('ok', true, 'name', v_name);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.guest_update_name(text, text) FROM public;
+GRANT EXECUTE ON FUNCTION public.guest_update_name(text, text) TO anon, authenticated;
+
+-- Authenticated: claim a placeholder into the signed-in account. Token is the
+-- bearer credential (ignores any email/phone mismatch). CONVERTS the slot in
+-- place if the caller isn't already a member of the group; otherwise MERGES the
+-- placeholder's RSVPs into the caller's existing membership (existing answer
+-- wins on a same-event collision) and removes the placeholder row.
+CREATE OR REPLACE FUNCTION public.claim_roster_placeholder(p_token text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_caller   uuid := auth.uid();
+  v_ph       public.group_members%ROWTYPE;
+  v_existing uuid;
+BEGIN
+  IF v_caller IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+  v_ph := public.guest_resolve_placeholder(p_token);
+
+  SELECT id INTO v_existing FROM public.group_members
+    WHERE group_id = v_ph.group_id AND user_id = v_caller;
+
+  IF v_existing IS NULL THEN
+    -- CONVERT in place: history is preserved, the row just gains an identity.
+    UPDATE public.group_members
+      SET user_id = v_caller, placeholder_name = NULL, placeholder_email = NULL,
+          placeholder_phone = NULL, claim_token = NULL, claim_expires_at = NULL
+      WHERE id = v_ph.id;
+    UPDATE public.availabilities SET user_id = v_caller WHERE member_id = v_ph.id;
+    RETURN jsonb_build_object('ok', true, 'group_id', v_ph.group_id, 'merged_existing', false);
+  END IF;
+
+  -- MERGE: move placeholder RSVPs onto the existing membership where the
+  -- existing account has NOT already answered that event (existing wins).
+  UPDATE public.availabilities a
+    SET member_id = v_existing, user_id = v_caller
+    WHERE a.member_id = v_ph.id
+      AND NOT EXISTS (
+        SELECT 1 FROM public.availabilities b
+        WHERE b.member_id = v_existing
+          AND b.match_id IS NOT DISTINCT FROM a.match_id
+          AND b.practice_id IS NOT DISTINCT FROM a.practice_id
+      );
+  -- Remaining placeholder RSVPs collided with an existing answer → drop them.
+  DELETE FROM public.availabilities WHERE member_id = v_ph.id;
+  -- Remove the now-empty placeholder slot.
+  DELETE FROM public.group_members WHERE id = v_ph.id;
+
+  RETURN jsonb_build_object('ok', true, 'group_id', v_ph.group_id, 'merged_existing', true);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.claim_roster_placeholder(text) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.claim_roster_placeholder(text) TO authenticated;
+
+-- Captain: fetch the per-person share links for every placeholder on the team.
+-- claim_token is captain-only (it is the bearer credential), so it is exposed
+-- here behind a can_run_group gate rather than in the broadly-readable
+-- group_members payload. Returns [{id, name, token, expires_at}].
+CREATE OR REPLACE FUNCTION public.get_roster_placeholder_links(p_group_id uuid)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_out jsonb;
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+  IF NOT public.can_run_group(p_group_id) THEN
+    RAISE EXCEPTION 'Only team captains can view share links' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'id', id, 'name', placeholder_name, 'token', claim_token, 'expires_at', claim_expires_at
+         ) ORDER BY placeholder_name), '[]'::jsonb)
+    INTO v_out
+    FROM public.group_members
+    WHERE group_id = p_group_id AND placeholder_name IS NOT NULL AND archived_at IS NULL;
+  RETURN v_out;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.get_roster_placeholder_links(uuid) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.get_roster_placeholder_links(uuid) TO authenticated;

@@ -18,6 +18,7 @@ import { errorMessage } from "@/lib/errorMessage";
 type Member = {
   id: string;
   roles: TeamRole[];
+  isPlaceholder: boolean;
   user: { id: string; name: string; profileImageUrl: string; skillLevel: string };
 };
 
@@ -31,9 +32,9 @@ type Team = {
 type Availability = {
   id: string;
   practiceId: string;
-  userId: string;
+  memberId: string; // keys the cell to a roster row (real or placeholder)
+  userId: string | null; // null for placeholder RSVPs
   status: string;
-  user: { id: string; name: string; profileImageUrl: string };
 };
 
 type Practice = {
@@ -98,7 +99,8 @@ export default function TeamPracticePage() {
   // member's row to edit on their behalf.
   const [statusPopover, setStatusPopover] = useState<{
     practiceId: string;
-    userId: string;
+    memberId: string;
+    userId: string | null;
     top: number;
     left: number;
   } | null>(null);
@@ -120,12 +122,17 @@ export default function TeamPracticePage() {
 
   // Captain (OPS) powers: the owner always, plus anyone holding the captain
   // role. Previously this was locked to the owner only.
-  const myMember = team?.members.find((m) => m.user.id === myId);
+  const myMember = team?.members.find((m) => !m.isPlaceholder && m.user.id === myId);
   const isCaptain = !!team && canCaptain({ isOwner: myId === team.ownerId, roles: myMember?.roles ?? [] });
 
   const toTeam = (
     g: { id: string; name: string; owner_id: string },
-    members: { id: string; roles: TeamRole[]; user: { id: string; name: string; profile_image_url: string } }[]
+    members: {
+      id: string;
+      roles: TeamRole[];
+      isPlaceholder: boolean;
+      user: { id: string; name: string; profile_image_url: string };
+    }[]
   ) =>
     ({
       id: g.id,
@@ -134,6 +141,7 @@ export default function TeamPracticePage() {
       members: members.map((m) => ({
         id: m.id,
         roles: m.roles,
+        isPlaceholder: m.isPlaceholder,
         user: {
           id: m.user.id,
           name: m.user.name,
@@ -164,9 +172,7 @@ export default function TeamPracticePage() {
           .select(
             `id, name, location, practice_time, notes,
              team_practices ( id, practice_date,
-               availabilities ( id, user_id, status,
-                 user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url )
-               )
+               availabilities ( id, member_id, user_id, status )
              )`
           )
           .eq("group_id", groupId)
@@ -191,9 +197,9 @@ export default function TeamPracticePage() {
           practice_date: string;
           availabilities: {
             id: string;
-            user_id: string;
+            member_id: string;
+            user_id: string | null;
             status: string;
-            user: { id: string; name: string; profile_image_url: string };
           }[];
         }[];
       };
@@ -210,13 +216,9 @@ export default function TeamPracticePage() {
               practiceDate: p.practice_date,
               availabilities: p.availabilities.map((a) => ({
                 id: a.id,
+                memberId: a.member_id,
                 userId: a.user_id,
                 status: a.status,
-                user: {
-                  id: a.user.id,
-                  name: a.user.name,
-                  profileImageUrl: a.user.profile_image_url,
-                },
               })),
             }))
             .sort((x, y) => x.practiceDate.localeCompare(y.practiceDate)),
@@ -451,7 +453,8 @@ export default function TeamPracticePage() {
   const setAvailability = async (
     seriesId: string,
     practiceId: string,
-    userId: string,
+    memberId: string,
+    userId: string | null,
     status: string
   ) => {
     const supabase = createSupabaseBrowserClient();
@@ -461,15 +464,13 @@ export default function TeamPracticePage() {
         {
           event_kind: "practice",
           practice_id: practiceId,
+          member_id: memberId,
           user_id: userId,
           status,
         },
-        { onConflict: "practice_id,user_id" }
+        { onConflict: "practice_id,member_id" }
       )
-      .select(
-        `id, user_id, status,
-         user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url )`
-      )
+      .select(`id, member_id, user_id, status`)
       .single();
     if (upErr) {
       alert(errorMessage(upErr, "Failed to set availability"));
@@ -478,19 +479,16 @@ export default function TeamPracticePage() {
     if (data) {
       const a = data as unknown as {
         id: string;
-        user_id: string;
+        member_id: string;
+        user_id: string | null;
         status: string;
-        user: { id: string; name: string; profile_image_url: string };
       };
       const upserted = {
         id: a.id,
+        practiceId,
+        memberId: a.member_id,
         userId: a.user_id,
         status: a.status,
-        user: {
-          id: a.user.id,
-          name: a.user.name,
-          profileImageUrl: a.user.profile_image_url,
-        },
       };
       setSeriesList((prev) =>
         prev.map((s) => {
@@ -499,7 +497,7 @@ export default function TeamPracticePage() {
             ...s,
             practices: s.practices.map((p) => {
               if (p.id !== practiceId) return p;
-              const others = p.availabilities.filter((av) => av.userId !== userId);
+              const others = p.availabilities.filter((av) => av.memberId !== memberId);
               return { ...p, availabilities: [...others, upserted] };
             }),
           };
@@ -509,9 +507,12 @@ export default function TeamPracticePage() {
   };
 
   const sendPractice = async (series: Series, practice: Practice) => {
+    const memberName = (memberId: string) =>
+      team?.members.find((m) => m.id === memberId)?.user.name ?? "";
     const inPlayers = practice.availabilities
       .filter((a) => a.status === "playing")
-      .map((a) => a.user.name)
+      .map((a) => memberName(a.memberId))
+      .filter(Boolean)
       .sort((x, y) => x.localeCompare(y));
 
     if (inPlayers.length === 0) {
@@ -536,8 +537,8 @@ export default function TeamPracticePage() {
     }
   };
 
-  const getAvail = (practice: Practice, userId: string) =>
-    practice.availabilities.find((a) => a.userId === userId);
+  const getAvail = (practice: Practice, memberId: string) =>
+    practice.availabilities.find((a) => a.memberId === memberId);
 
   if (error) {
     return (
@@ -566,7 +567,7 @@ export default function TeamPracticePage() {
   // Shared render-helpers so the wide table and the narrow single-date card
   // render identical controls/header from one source of truth.
   const renderPracticeAvailControl = (practice: Practice, m: Member, a: Availability | undefined) => {
-    const isMe = m.user.id === myId;
+    const isMe = !m.isPlaceholder && m.user.id === myId;
     // Members edit only their own availability; captains can edit anyone's.
     const canEdit = isMe || isCaptain;
     const meta = a && a.status ? statusMeta(a.status) : null;
@@ -580,7 +581,8 @@ export default function TeamPracticePage() {
           const maxLeft = window.innerWidth - popW - 8;
           setStatusPopover({
             practiceId: practice.id,
-            userId: m.user.id,
+            memberId: m.id,
+            userId: m.isPlaceholder ? null : m.user.id,
             top: rect.bottom + 4,
             left: Math.max(8, Math.min(rect.left, maxLeft)),
           });
@@ -977,12 +979,12 @@ export default function TeamPracticePage() {
                       </thead>
                       <tbody>
                         {sortedMembers.map((m) => {
-                          const isMe = m.user.id === myId;
-                          const isCapRow = m.user.id === team.ownerId;
+                          const isMe = !m.isPlaceholder && m.user.id === myId;
+                          const isCapRow = !m.isPlaceholder && m.user.id === team.ownerId;
                           return (
                             <tr key={m.id} className="border-b border-gray-100 last:border-b-0">
                               <td className="sticky left-0 z-10 bg-white p-3 border-r border-gray-200">
-                                <div className="flex items-center gap-2">
+                                <div className={`flex items-center gap-2 ${m.isPlaceholder ? "opacity-60" : ""}`}>
                                   <div className="relative shrink-0">
                                     <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
                                     {isCapRow && (
@@ -1000,12 +1002,15 @@ export default function TeamPracticePage() {
                                     {isCapRow && (
                                       <p className="text-[9px] font-bold tracking-wider text-court-green">CAPTAIN</p>
                                     )}
+                                    {m.isPlaceholder && (
+                                      <p className="text-[9px] font-bold tracking-wider text-gray-400" title="Hasn't created an account yet">NOT JOINED</p>
+                                    )}
                                   </div>
                                 </div>
                               </td>
                               {series.practices.map((practice) => {
-                                const a = getAvail(practice, m.user.id);
-                                const cellKey = `${practice.id}-${m.user.id}`;
+                                const a = getAvail(practice, m.id);
+                                const cellKey = `${practice.id}-${m.id}`;
                                 return (
                                   <td key={cellKey} className="p-3 border-r border-gray-200 align-top min-w-[180px]">
                                     {renderPracticeAvailControl(practice, m, a)}
@@ -1054,11 +1059,11 @@ export default function TeamPracticePage() {
                             </div>
                             <div className="divide-y divide-gray-100">
                               {sortedMembers.map((m) => {
-                                const isMe = m.user.id === myId;
-                                const isCapRow = m.user.id === team.ownerId;
-                                const a = getAvail(activePractice, m.user.id);
+                                const isMe = !m.isPlaceholder && m.user.id === myId;
+                                const isCapRow = !m.isPlaceholder && m.user.id === team.ownerId;
+                                const a = getAvail(activePractice, m.id);
                                 return (
-                                  <div key={m.id} className="flex items-center gap-2 p-3">
+                                  <div key={m.id} className={`flex items-center gap-2 p-3 ${m.isPlaceholder ? "opacity-60" : ""}`}>
                                     <div className="relative shrink-0">
                                       <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
                                       {isCapRow && (
@@ -1075,6 +1080,9 @@ export default function TeamPracticePage() {
                                       </p>
                                       {isCapRow && (
                                         <p className="text-[9px] font-bold tracking-wider text-court-green">CAPTAIN</p>
+                                      )}
+                                      {m.isPlaceholder && (
+                                        <p className="text-[9px] font-bold tracking-wider text-gray-400" title="Hasn't created an account yet">NOT JOINED</p>
                                       )}
                                     </div>
                                     <div className="w-32 shrink-0">
@@ -1116,12 +1124,12 @@ export default function TeamPracticePage() {
       {statusPopover && typeof document !== "undefined" && (() => {
         const series = seriesList.find((s) => s.practices.some((p) => p.id === statusPopover.practiceId));
         const practice = series?.practices.find((p) => p.id === statusPopover.practiceId);
-        const a = practice?.availabilities.find((aa) => aa.userId === statusPopover.userId);
+        const a = practice?.availabilities.find((aa) => aa.memberId === statusPopover.memberId);
         if (!series || !practice) return null;
         // When a captain edits someone else's row, label the popover with that
         // member's name so it's clear whose status is being changed.
-        const targetMember = team.members.find((mm) => mm.user.id === statusPopover.userId);
-        const editingOther = statusPopover.userId !== myId;
+        const targetMember = team.members.find((mm) => mm.id === statusPopover.memberId);
+        const editingOther = targetMember?.id !== myMember?.id;
         return createPortal(
           <>
             <div className="fixed inset-0 z-[998]" onClick={() => setStatusPopover(null)} />
@@ -1136,7 +1144,7 @@ export default function TeamPracticePage() {
               <RsvpPicker
                 value={normalizePracticeStatus(a?.status || "")}
                 onSelect={(status) => {
-                  setAvailability(series.id, practice.id, statusPopover.userId, status);
+                  setAvailability(series.id, practice.id, statusPopover.memberId, statusPopover.userId, status);
                   setStatusPopover(null);
                 }}
                 cols={2}

@@ -97,7 +97,9 @@ export default function AlbumsListPage() {
         id: cached.group.id,
         name: cached.group.name,
         ownerId: cached.group.owner_id,
-        members: cached.members.map((m) => ({ userId: m.user_id, roles: m.roles })),
+        members: cached.members
+          .filter((m) => m.user_id !== null)
+          .map((m) => ({ userId: m.user_id as string, roles: m.roles })),
       });
       setLoading(false);
     }
@@ -107,7 +109,9 @@ export default function AlbumsListPage() {
         id: g.id,
         name: g.name,
         ownerId: g.owner_id,
-        members: members.map((m) => ({ userId: m.user_id, roles: m.roles })),
+        members: members
+          .filter((m) => m.user_id !== null)
+          .map((m) => ({ userId: m.user_id as string, roles: m.roles })),
       });
     }
     setLoading(false);

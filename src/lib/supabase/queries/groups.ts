@@ -23,7 +23,8 @@ export interface Group {
 export interface GroupMember {
   id: string;
   group_id: string;
-  user_id: string;
+  // Null for placeholder (account-less) roster members — see isPlaceholder.
+  user_id: string | null;
   // Independent role set. Owner is not represented here (ownership lives on
   // groups.owner_id and always grants both capabilities); an owner's array
   // is empty unless they were also assigned manager/captain.
@@ -36,6 +37,11 @@ export interface GroupMember {
   hidden_at: string | null;
   cleared_at: string | null;
   archived_at: string | null;
+  // True when this is a captain-created placeholder (no account yet). Its
+  // `user` object below is a synthetic stand-in carrying the placeholder name
+  // so existing `m.user.x` consumers keep working; `user.id` is "" since there
+  // is no profile. RSVP cells key on `member.id`, not `user.id`.
+  isPlaceholder: boolean;
   user: {
     id: string;
     name: string;
@@ -145,16 +151,37 @@ export async function listGroupMembers(
   supabase: SupabaseClient<Database>,
   groupId: string
 ): Promise<GroupMember[]> {
+  // claim_token / placeholder_email / placeholder_phone are intentionally NOT
+  // selected here — they are captain-only share credentials and private
+  // contact info. Captains fetch share links via getRosterPlaceholderLinks.
   const { data, error } = await supabase
     .from("group_members")
     .select(
-      `id, group_id, user_id, roles, member_type, created_at, last_read_at, muted, pinned_at, hidden_at, cleared_at, archived_at,
+      `id, group_id, user_id, roles, member_type, created_at, last_read_at, muted, pinned_at, hidden_at, cleared_at, archived_at, placeholder_name,
        user:profiles!group_members_user_id_fkey ( id, name, profile_image_url, ntrp_rating )`
     )
     .eq("group_id", groupId)
     .is("archived_at", null);
   if (error) throw error;
-  const members = (data ?? []) as unknown as GroupMember[];
+  type RawMember = Omit<GroupMember, "isPlaceholder" | "user"> & {
+    placeholder_name: string | null;
+    user: GroupMember["user"] | null;
+  };
+  const members = ((data ?? []) as unknown as RawMember[]).map((raw): GroupMember => {
+    const isPlaceholder = raw.user_id === null;
+    return {
+      ...raw,
+      isPlaceholder,
+      // Synthetic stand-in for placeholders so `m.user.name` / avatar render;
+      // empty id + image_url means the Avatar falls back to initials.
+      user: raw.user ?? {
+        id: "",
+        name: raw.placeholder_name ?? "Guest",
+        profile_image_url: "",
+        ntrp_rating: null,
+      },
+    };
+  });
   setCached(GROUP_MEMBERS_KEY(groupId), members);
   return members;
 }

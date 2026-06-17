@@ -725,6 +725,8 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
     let groupId: string;
     let matchId: string;
     let practiceId: string;
+    let aliceMemberId: string;
+    let bobMemberId: string;
 
     beforeAll(async () => {
       const admin = adminClient();
@@ -736,6 +738,14 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
       groupId = g!.id;
       // alice = owner (captain). bob = plain member, carol = stranger.
       await admin.from("group_members").insert({ group_id: groupId, user_id: bob.id, roles: [] });
+      // member_id is the universal RSVP key. alice's row is auto-added by the
+      // groups_auto_add_owner trigger; resolve both ids for the upserts below.
+      const { data: gms } = await admin
+        .from("group_members")
+        .select("id, user_id")
+        .eq("group_id", groupId);
+      aliceMemberId = (gms ?? []).find((m) => m.user_id === alice.id)!.id;
+      bobMemberId = (gms ?? []).find((m) => m.user_id === bob.id)!.id;
 
       const { data: m } = await admin
         .from("team_matches")
@@ -765,8 +775,8 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
       const { error } = await alice.client
         .from("availabilities")
         .upsert(
-          { event_kind: "match", match_id: matchId, user_id: bob.id, status: "playing", match_types: "singles" },
-          { onConflict: "match_id,user_id" }
+          { event_kind: "match", match_id: matchId, member_id: bobMemberId, user_id: bob.id, status: "playing", match_types: "singles" },
+          { onConflict: "match_id,member_id" }
         );
       expect(error).toBeNull();
       const { data } = await adminClient()
@@ -782,8 +792,8 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
       const { error } = await alice.client
         .from("availabilities")
         .upsert(
-          { event_kind: "match", match_id: matchId, user_id: bob.id, status: "not_playing", match_types: "doubles" },
-          { onConflict: "match_id,user_id" }
+          { event_kind: "match", match_id: matchId, member_id: bobMemberId, user_id: bob.id, status: "not_playing", match_types: "doubles" },
+          { onConflict: "match_id,member_id" }
         );
       expect(error).toBeNull();
       const { data } = await adminClient()
@@ -799,8 +809,8 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
       const { error } = await alice.client
         .from("availabilities")
         .upsert(
-          { event_kind: "practice", practice_id: practiceId, user_id: bob.id, status: "playing" },
-          { onConflict: "practice_id,user_id" }
+          { event_kind: "practice", practice_id: practiceId, member_id: bobMemberId, user_id: bob.id, status: "playing" },
+          { onConflict: "practice_id,member_id" }
         );
       expect(error).toBeNull();
       const { data } = await adminClient()
@@ -818,8 +828,8 @@ describe.skipIf(!integrationEnvReady)("RLS policies (live Supabase)", () => {
       const { error } = await bob.client
         .from("availabilities")
         .upsert(
-          { event_kind: "match", match_id: matchId, user_id: alice.id, status: "not_playing", match_types: "" },
-          { onConflict: "match_id,user_id" }
+          { event_kind: "match", match_id: matchId, member_id: aliceMemberId, user_id: alice.id, status: "not_playing", match_types: "" },
+          { onConflict: "match_id,member_id" }
         );
       expect(error).not.toBeNull();
       const { data } = await adminClient()

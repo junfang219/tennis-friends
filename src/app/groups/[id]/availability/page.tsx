@@ -21,8 +21,9 @@ import { buildLineupText, formatDateHeader } from "@/lib/lineupMessage";
 import { nativeShare } from "@/lib/lfpShare";
 
 type Member = {
-  id: string;
+  id: string; // group_members row id — the universal RSVP key (member_id)
   roles: TeamRole[];
+  isPlaceholder: boolean; // captain-created, no account yet
   user: { id: string; name: string; profileImageUrl: string; skillLevel: string };
 };
 
@@ -36,11 +37,11 @@ type Team = {
 type Availability = {
   id: string;
   matchId: string;
-  userId: string;
+  memberId: string; // keys the cell to a roster row (real or placeholder)
+  userId: string | null; // null for placeholder RSVPs
   status: string;
   matchTypes: string;
   lineupSlot: string;
-  user: { id: string; name: string; profileImageUrl: string };
 };
 
 type Match = {
@@ -122,7 +123,8 @@ export default function AvailabilityPage() {
   // open it on any member's row to edit on their behalf.
   const [statusPopover, setStatusPopover] = useState<{
     matchId: string;
-    userId: string;
+    memberId: string;
+    userId: string | null;
     top: number;
     left: number;
   } | null>(null);
@@ -130,7 +132,8 @@ export default function AvailabilityPage() {
   // Lineup popover (captain only) — opens via portal anchored to clicked cell
   const [lineupPopover, setLineupPopover] = useState<{
     matchId: string;
-    userId: string;
+    memberId: string;
+    userId: string | null;
     top: number;
     left: number;
   } | null>(null);
@@ -145,12 +148,17 @@ export default function AvailabilityPage() {
 
   // Captain (OPS) powers: the owner always, plus anyone holding the captain
   // role. Previously this was locked to the owner only.
-  const myMember = team?.members.find((m) => m.user.id === myId);
+  const myMember = team?.members.find((m) => !m.isPlaceholder && m.user.id === myId);
   const isCaptain = !!team && canCaptain({ isOwner: myId === team.ownerId, roles: myMember?.roles ?? [] });
 
   const toTeam = (
     g: { id: string; name: string; owner_id: string },
-    members: { id: string; roles: TeamRole[]; user: { id: string; name: string; profile_image_url: string } }[]
+    members: {
+      id: string;
+      roles: TeamRole[];
+      isPlaceholder: boolean;
+      user: { id: string; name: string; profile_image_url: string };
+    }[]
   ) =>
     ({
       id: g.id,
@@ -159,6 +167,7 @@ export default function AvailabilityPage() {
       members: members.map((m) => ({
         id: m.id,
         roles: m.roles,
+        isPlaceholder: m.isPlaceholder,
         user: {
           id: m.user.id,
           name: m.user.name,
@@ -189,8 +198,7 @@ export default function AvailabilityPage() {
           .from("team_matches")
           .select(
             `id, match_date, match_time, location, opponent, opponent_team_id, notes,
-             availabilities ( id, user_id, status, match_types, lineup_slot,
-               user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url ) )`
+             availabilities ( id, member_id, user_id, status, match_types, lineup_slot )`
           )
           .eq("group_id", groupId)
           .order("match_date", { ascending: true }),
@@ -205,11 +213,11 @@ export default function AvailabilityPage() {
       const matchRows = matchRes.data;
       type RawAvail = {
         id: string;
-        user_id: string;
+        member_id: string;
+        user_id: string | null;
         status: string;
         match_types: string;
         lineup_slot: string;
-        user: { id: string; name: string; profile_image_url: string };
       };
       type Row = {
         id: string;
@@ -232,15 +240,11 @@ export default function AvailabilityPage() {
           notes: m.notes,
           availabilities: m.availabilities.map((a) => ({
             id: a.id,
+            memberId: a.member_id,
             userId: a.user_id,
             status: a.status,
             matchTypes: a.match_types,
             lineupSlot: a.lineup_slot,
-            user: {
-              id: a.user.id,
-              name: a.user.name,
-              profileImageUrl: a.user.profile_image_url,
-            },
           })),
         })) as unknown as Match[]
       );
@@ -379,28 +383,29 @@ export default function AvailabilityPage() {
       // created if this fails.
       let seededAvailabilities: Availability[] = [];
       if (prefillMembersRef.current) {
-        const playingUserIds = prefillMembersRef.current;
-        const playingSet = new Set(playingUserIds);
-        const notPlayingUserIds = (team?.members ?? [])
-          .map((m) => m.user.id)
-          .filter((id) => !playingSet.has(id));
+        const playingSet = new Set(prefillMembersRef.current);
+        // Poll seeding only targets real members (placeholders never answer
+        // polls). member_id is the RSVP key; each real member has a user_id.
+        const realMembers = (team?.members ?? []).filter((m) => !m.isPlaceholder);
+        const playing = realMembers
+          .filter((m) => playingSet.has(m.user.id))
+          .map((m) => ({ memberId: m.id, userId: m.user.id }));
+        const notPlaying = realMembers
+          .filter((m) => !playingSet.has(m.user.id))
+          .map((m) => ({ memberId: m.id, userId: m.user.id }));
         try {
           const rows = await seedPollAvailability(supabase, {
             matchId: data.id,
-            playingUserIds,
-            notPlayingUserIds,
+            playing,
+            notPlaying,
           });
           seededAvailabilities = rows.map((a) => ({
             id: a.id,
+            memberId: a.member_id,
             userId: a.user_id,
             status: a.status,
             matchTypes: a.match_types,
             lineupSlot: a.lineup_slot,
-            user: {
-              id: a.user.id,
-              name: a.user.name,
-              profileImageUrl: a.user.profile_image_url,
-            },
           })) as unknown as Availability[];
         } catch { /* non-fatal */ }
         prefillMembersRef.current = null;
@@ -452,12 +457,15 @@ export default function AvailabilityPage() {
     }
   };
 
-  // Upsert availability for `userId`. Members may only target their own row;
-  // captains may target anyone's (the RLS policy
-  // availabilities_update_self_or_captain enforces this server-side too).
+  // Upsert availability for a roster member (keyed by member_id, the universal
+  // roster identity). `userId` is the member's profile id, or null for a
+  // placeholder. Members may only target their own row; captains may target
+  // anyone's (the RLS policy availabilities_update_self_or_captain enforces
+  // this server-side too).
   const setAvailability = async (
     matchId: string,
-    userId: string,
+    memberId: string,
+    userId: string | null,
     status: string,
     matchTypes: string
   ) => {
@@ -468,16 +476,14 @@ export default function AvailabilityPage() {
         {
           event_kind: "match",
           match_id: matchId,
+          member_id: memberId,
           user_id: userId,
           status,
           match_types: matchTypes,
         },
-        { onConflict: "match_id,user_id" }
+        { onConflict: "match_id,member_id" }
       )
-      .select(
-        `id, user_id, status, match_types, lineup_slot,
-         user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url )`
-      )
+      .select(`id, member_id, user_id, status, match_types, lineup_slot`)
       .single();
     if (upErr) {
       alert(errorMessage(upErr, "Failed to set availability"));
@@ -486,38 +492,40 @@ export default function AvailabilityPage() {
     if (data) {
       const a = data as unknown as {
         id: string;
-        user_id: string;
+        member_id: string;
+        user_id: string | null;
         status: string;
         match_types: string;
         lineup_slot: string;
-        user: { id: string; name: string; profile_image_url: string };
       };
-      const upserted = {
+      const upserted: Availability = {
         id: a.id,
+        matchId,
+        memberId: a.member_id,
         userId: a.user_id,
         status: a.status,
         matchTypes: a.match_types,
         lineupSlot: a.lineup_slot,
-        user: {
-          id: a.user.id,
-          name: a.user.name,
-          profileImageUrl: a.user.profile_image_url,
-        },
       };
       setMatches((prev) =>
         prev.map((m) => {
           if (m.id !== matchId) return m;
-          const others = m.availabilities.filter((a2) => a2.userId !== userId);
+          const others = m.availabilities.filter((a2) => a2.memberId !== memberId);
           return { ...m, availabilities: [...others, upserted] as Availability[] };
         })
       );
     }
   };
 
-  const getAvail = (match: Match, userId: string) =>
-    match.availabilities.find((a) => a.userId === userId);
+  const getAvail = (match: Match, memberId: string) =>
+    match.availabilities.find((a) => a.memberId === memberId);
 
-  const setLineupSlot = async (matchId: string, userId: string, slot: string) => {
+  const setLineupSlot = async (
+    matchId: string,
+    memberId: string,
+    userId: string | null,
+    slot: string
+  ) => {
     const supabase = createSupabaseBrowserClient();
     const { data, error: upErr } = await supabase
       .from("availabilities")
@@ -525,15 +533,13 @@ export default function AvailabilityPage() {
         {
           event_kind: "match",
           match_id: matchId,
+          member_id: memberId,
           user_id: userId,
           lineup_slot: slot,
         },
-        { onConflict: "match_id,user_id" }
+        { onConflict: "match_id,member_id" }
       )
-      .select(
-        `id, user_id, status, match_types, lineup_slot,
-         user:profiles!availabilities_user_id_fkey ( id, name, profile_image_url )`
-      )
+      .select(`id, member_id, user_id, status, match_types, lineup_slot`)
       .single();
     if (upErr) {
       alert(errorMessage(upErr, "Failed to set lineup slot"));
@@ -542,28 +548,25 @@ export default function AvailabilityPage() {
     if (data) {
       const a = data as unknown as {
         id: string;
-        user_id: string;
+        member_id: string;
+        user_id: string | null;
         status: string;
         match_types: string;
         lineup_slot: string;
-        user: { id: string; name: string; profile_image_url: string };
       };
       const upserted: Availability = {
         id: a.id,
+        matchId,
+        memberId: a.member_id,
         userId: a.user_id,
         status: a.status,
         matchTypes: a.match_types,
         lineupSlot: a.lineup_slot,
-        user: {
-          id: a.user.id,
-          name: a.user.name,
-          profileImageUrl: a.user.profile_image_url,
-        },
-      } as Availability;
+      };
       setMatches((prev) =>
         prev.map((m) => {
           if (m.id !== matchId) return m;
-          const others = m.availabilities.filter((av) => av.userId !== userId);
+          const others = m.availabilities.filter((av) => av.memberId !== memberId);
           return { ...m, availabilities: [...others, upserted] };
         })
       );
@@ -572,9 +575,23 @@ export default function AvailabilityPage() {
 
   const noLineupAssigned = () => alert("Assign at least one player to a lineup slot first.");
 
+  // Build the LineupMatch shape buildLineupText expects: availabilities no
+  // longer carry the player profile, so resolve each name from the roster by
+  // member_id (works for both real and placeholder members).
+  const toLineupMatch = (match: Match) => ({
+    matchDate: match.matchDate,
+    matchTime: match.matchTime,
+    location: match.location,
+    opponent: match.opponent,
+    availabilities: match.availabilities.map((a) => ({
+      lineupSlot: a.lineupSlot,
+      user: { name: team?.members.find((m) => m.id === a.memberId)?.user.name ?? "" },
+    })),
+  });
+
   // Destination 1: post the lineup into the in-app team chat.
   const postLineupToChat = async (match: Match) => {
-    const content = buildLineupText(match);
+    const content = buildLineupText(toLineupMatch(match));
     if (!content) {
       noLineupAssigned();
       return;
@@ -595,7 +612,7 @@ export default function AvailabilityPage() {
   // iMessage). title/url are intentionally empty so nativeShare omits them and
   // Messages sends plain text instead of a link card.
   const shareLineupViaMessages = async (match: Match) => {
-    const content = buildLineupText(match);
+    const content = buildLineupText(toLineupMatch(match));
     if (!content) {
       noLineupAssigned();
       return;
@@ -641,7 +658,7 @@ export default function AvailabilityPage() {
   // Shared render-helpers so the wide table and the narrow single-match card
   // render identical controls/header from one source of truth.
   const renderAvailControl = (match: Match, m: Member, a: Availability | undefined) => {
-    const isMe = m.user.id === myId;
+    const isMe = !m.isPlaceholder && m.user.id === myId;
     // Members edit only their own availability; captains can edit anyone's.
     const canEdit = isMe || isCaptain;
     const meta = a && a.status ? statusMeta(a.status) : null;
@@ -655,7 +672,8 @@ export default function AvailabilityPage() {
           const maxLeft = window.innerWidth - popW - 8;
           setStatusPopover({
             matchId: match.id,
-            userId: m.user.id,
+            memberId: m.id,
+            userId: m.isPlaceholder ? null : m.user.id,
             top: rect.bottom + 4,
             left: Math.max(8, Math.min(rect.left, maxLeft)),
           });
@@ -700,7 +718,8 @@ export default function AvailabilityPage() {
           const maxLeft = window.innerWidth - popW - 8;
           setLineupPopover({
             matchId: match.id,
-            userId: m.user.id,
+            memberId: m.id,
+            userId: m.isPlaceholder ? null : m.user.id,
             top: rect.bottom + 4,
             left: Math.max(8, Math.min(rect.left, maxLeft)),
           });
@@ -972,12 +991,12 @@ export default function AvailabilityPage() {
               </thead>
               <tbody>
                 {sortedMembers.map((m) => {
-                  const isMe = m.user.id === myId;
-                  const isCapRow = m.user.id === team.ownerId;
+                  const isMe = !m.isPlaceholder && m.user.id === myId;
+                  const isCapRow = !m.isPlaceholder && m.user.id === team.ownerId;
                   return (
                     <tr key={m.id} className="border-b border-gray-100 last:border-b-0">
                       <td className="sticky left-0 z-10 bg-white p-3 border-r border-gray-200">
-                        <div className="flex items-center gap-2">
+                        <div className={`flex items-center gap-2 ${m.isPlaceholder ? "opacity-60" : ""}`}>
                           <div className="relative shrink-0">
                             <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
                             {isCapRow && (
@@ -995,12 +1014,15 @@ export default function AvailabilityPage() {
                             {isCapRow && (
                               <p className="text-[9px] font-bold tracking-wider text-court-green">CAPTAIN</p>
                             )}
+                            {m.isPlaceholder && (
+                              <p className="text-[9px] font-bold tracking-wider text-gray-400" title="Hasn't created an account yet">NOT JOINED</p>
+                            )}
                           </div>
                         </div>
                       </td>
                       {matches.map((match) => {
-                        const a = getAvail(match, m.user.id);
-                        const cellKey = `${match.id}-${m.user.id}`;
+                        const a = getAvail(match, m.id);
+                        const cellKey = `${match.id}-${m.id}`;
                         return (
                           <Fragment key={cellKey}>
                           <td className="p-3 border-r border-gray-100 align-top min-w-[130px]">
@@ -1054,12 +1076,12 @@ export default function AvailabilityPage() {
               </div>
               <div className="divide-y divide-gray-100">
                 {sortedMembers.map((m) => {
-                  const isMe = m.user.id === myId;
-                  const isCapRow = m.user.id === team.ownerId;
-                  const a = getAvail(activeMatch, m.user.id);
+                  const isMe = !m.isPlaceholder && m.user.id === myId;
+                  const isCapRow = !m.isPlaceholder && m.user.id === team.ownerId;
+                  const a = getAvail(activeMatch, m.id);
                   return (
                     <div key={m.id} className="p-3">
-                      <div className="flex items-center gap-2 mb-2">
+                      <div className={`flex items-center gap-2 mb-2 ${m.isPlaceholder ? "opacity-60" : ""}`}>
                         <div className="relative shrink-0">
                           <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
                           {isCapRow && (
@@ -1076,6 +1098,9 @@ export default function AvailabilityPage() {
                           </p>
                           {isCapRow && (
                             <p className="text-[9px] font-bold tracking-wider text-court-green">CAPTAIN</p>
+                          )}
+                          {m.isPlaceholder && (
+                            <p className="text-[9px] font-bold tracking-wider text-gray-400" title="Hasn't created an account yet">NOT JOINED</p>
                           )}
                         </div>
                       </div>
@@ -1127,11 +1152,11 @@ export default function AvailabilityPage() {
       {/* Status popover (self or, for captains, any member; portal) — escapes the table's overflow clipping */}
       {statusPopover && typeof document !== "undefined" && (() => {
         const m = matches.find((mm) => mm.id === statusPopover.matchId);
-        const a = m?.availabilities.find((aa) => aa.userId === statusPopover.userId);
+        const a = m?.availabilities.find((aa) => aa.memberId === statusPopover.memberId);
         // When a captain edits someone else's row, label the popover with that
         // member's name so it's clear whose status is being changed.
-        const targetMember = team.members.find((mm) => mm.user.id === statusPopover.userId);
-        const editingOther = statusPopover.userId !== myId;
+        const targetMember = team.members.find((mm) => mm.id === statusPopover.memberId);
+        const editingOther = targetMember?.id !== myMember?.id;
         return createPortal(
           <>
             <div className="fixed inset-0 z-[998]" onClick={() => setStatusPopover(null)} />
@@ -1147,7 +1172,7 @@ export default function AvailabilityPage() {
                 <RsvpPicker
                   value={normalizeMatchStatus(a?.status || "")}
                   onSelect={(status) => {
-                    setAvailability(statusPopover.matchId, statusPopover.userId, status, a?.matchTypes || "");
+                    setAvailability(statusPopover.matchId, statusPopover.memberId, statusPopover.userId, status, a?.matchTypes || "");
                     setStatusPopover(null);
                   }}
                 />
@@ -1161,9 +1186,9 @@ export default function AvailabilityPage() {
                     key={opt.value}
                     onClick={() => {
                       if (!a?.status) {
-                        setAvailability(statusPopover.matchId, statusPopover.userId, RSVP.PLAYING, opt.value);
+                        setAvailability(statusPopover.matchId, statusPopover.memberId, statusPopover.userId, RSVP.PLAYING, opt.value);
                       } else {
-                        setAvailability(statusPopover.matchId, statusPopover.userId, a.status, opt.value);
+                        setAvailability(statusPopover.matchId, statusPopover.memberId, statusPopover.userId, a.status, opt.value);
                       }
                       setStatusPopover(null);
                     }}
@@ -1198,7 +1223,7 @@ export default function AvailabilityPage() {
                 const current = (() => {
                   const m = matches.find((mm) => mm.id === lineupPopover.matchId);
                   if (!m) return "";
-                  const a = m.availabilities.find((aa) => aa.userId === lineupPopover.userId);
+                  const a = m.availabilities.find((aa) => aa.memberId === lineupPopover.memberId);
                   return a?.lineupSlot || "";
                 })();
                 const active = current === opt;
@@ -1206,7 +1231,7 @@ export default function AvailabilityPage() {
                   <button
                     key={opt}
                     onClick={() => {
-                      setLineupSlot(lineupPopover.matchId, lineupPopover.userId, opt);
+                      setLineupSlot(lineupPopover.matchId, lineupPopover.memberId, lineupPopover.userId, opt);
                       setLineupPopover(null);
                     }}
                     className={`text-[11px] font-semibold px-2 py-1.5 rounded ${
@@ -1232,7 +1257,7 @@ export default function AvailabilityPage() {
               <button
                 onClick={() => {
                   if (customSlotInput.trim()) {
-                    setLineupSlot(lineupPopover.matchId, lineupPopover.userId, customSlotInput.trim());
+                    setLineupSlot(lineupPopover.matchId, lineupPopover.memberId, lineupPopover.userId, customSlotInput.trim());
                     setLineupPopover(null);
                   }
                 }}
@@ -1244,7 +1269,7 @@ export default function AvailabilityPage() {
             </div>
             <button
               onClick={() => {
-                setLineupSlot(lineupPopover.matchId, lineupPopover.userId, "");
+                setLineupSlot(lineupPopover.matchId, lineupPopover.memberId, lineupPopover.userId, "");
                 setCustomSlotInput("");
                 setLineupPopover(null);
               }}
