@@ -9,6 +9,8 @@ import { fetchGroupBundle, getCachedGroupBundle } from "@/lib/supabase/queries";
 import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { listGroupPolls, type AvailabilityPoll } from "@/lib/supabase/queries/availabilityPolls";
 import { AvailabilityTabs } from "@/components/availability/AvailabilityTabs";
+import { createPortal } from "react-dom";
+import InvitePlayersPanel from "@/components/groups/InvitePlayersPanel";
 
 function formatDateRange(dates: string[]): string {
   if (dates.length === 0) return "";
@@ -37,10 +39,11 @@ export default function PollsListPage() {
   // Cache hydration in the lazy initializer (not an effect) so the lint rule
   // banning setState-in-effect doesn't fire on a render that has nothing to
   // synchronize — the cache is just a hand-off from the team page.
-  const [team, setTeam] = useState<{ ownerId: string; members: { user: { id: string }; roles: TeamRole[] }[] } | null>(() => {
+  const [team, setTeam] = useState<{ name: string; ownerId: string; members: { user: { id: string }; roles: TeamRole[] }[] } | null>(() => {
     const cached = getCachedGroupBundle(groupId);
     if (!cached) return null;
     return {
+      name: cached.group.name,
       ownerId: cached.group.owner_id,
       members: cached.members.map((m) => ({ user: { id: m.user.id }, roles: m.roles })),
     };
@@ -48,6 +51,7 @@ export default function PollsListPage() {
   const [polls, setPolls] = useState<AvailabilityPoll[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showInvite, setShowInvite] = useState(false);
 
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
@@ -63,6 +67,7 @@ export default function PollsListPage() {
           return;
         }
         setTeam({
+          name: bundle.group.name,
           ownerId: bundle.group.owner_id,
           members: bundle.members.map((m) => ({ user: { id: m.user.id }, roles: m.roles })),
         });
@@ -99,15 +104,55 @@ export default function PollsListPage() {
           <p className="text-xs text-gray-500">Find dates that work for the team</p>
         </div>
         {isCaptain && (
-          <Link href={`/groups/${groupId}/availability/polls/new`} className="btn-primary btn-sm inline-flex">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            New poll
-          </Link>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => setShowInvite(true)}
+              className="btn-secondary btn-sm inline-flex"
+              title="Invite players who aren't on TennisFriend yet"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <line x1="19" y1="8" x2="19" y2="14" />
+                <line x1="22" y1="11" x2="16" y2="11" />
+              </svg>
+              Invite
+            </button>
+            <Link href={`/groups/${groupId}/availability/polls/new`} className="btn-primary btn-sm inline-flex">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              New poll
+            </Link>
+          </div>
         )}
       </div>
+
+      {/* Invite-players modal (poll-scoped) */}
+      {showInvite && isCaptain && team && typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center">
+            <div className="fixed inset-0 bg-black/40" onClick={() => setShowInvite(false)} />
+            <div className="relative w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85vh] overflow-y-auto p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="font-display text-lg font-bold text-gray-900">Invite players</h2>
+                <button
+                  onClick={() => setShowInvite(false)}
+                  className="p-1 text-gray-400 hover:text-gray-600"
+                  aria-label="Close"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+              <InvitePlayersPanel groupId={groupId} groupName={team.name} scope="poll" />
+            </div>
+          </div>,
+          document.body
+        )}
 
       <AvailabilityTabs groupId={groupId} active="polls" />
 
