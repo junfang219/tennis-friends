@@ -11,7 +11,7 @@ import RsvpPicker, { pickerOptionMeta } from "@/components/attendance/RsvpPicker
 import AttendanceTally from "@/components/attendance/AttendanceTally";
 import { normalizeMatchStatus, RSVP } from "@/lib/rsvpStatus";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage } from "@/lib/supabase/queries";
+import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage, placeholderInScope } from "@/lib/supabase/queries";
 import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { errorMessage } from "@/lib/errorMessage";
 import { AvailabilityTabs } from "@/components/availability/AvailabilityTabs";
@@ -25,6 +25,7 @@ type Member = {
   id: string; // group_members row id — the universal RSVP key (member_id)
   roles: TeamRole[];
   isPlaceholder: boolean; // captain-created, no account yet
+  placeholderScope: string | null; // which table(s) an invited guest belongs to
   user: { id: string; name: string; profileImageUrl: string; skillLevel: string };
 };
 
@@ -159,6 +160,7 @@ export default function AvailabilityPage() {
       id: string;
       roles: TeamRole[];
       isPlaceholder: boolean;
+      placeholderScope: string | null;
       user: { id: string; name: string; profile_image_url: string };
     }[]
   ) =>
@@ -170,6 +172,7 @@ export default function AvailabilityPage() {
         id: m.id,
         roles: m.roles,
         isPlaceholder: m.isPlaceholder,
+        placeholderScope: m.placeholderScope,
         user: {
           id: m.user.id,
           name: m.user.name,
@@ -649,11 +652,15 @@ export default function AvailabilityPage() {
     );
   }
 
-  const sortedMembers = [...team.members].sort((a, b) => {
-    if (a.user.id === team.ownerId) return -1;
-    if (b.user.id === team.ownerId) return 1;
-    return a.user.name.localeCompare(b.user.name);
-  });
+  // Placeholders only appear on the table(s) they were invited to. Real
+  // members always show.
+  const sortedMembers = [...team.members]
+    .filter((m) => !m.isPlaceholder || placeholderInScope(m.placeholderScope, "match"))
+    .sort((a, b) => {
+      if (a.user.id === team.ownerId) return -1;
+      if (b.user.id === team.ownerId) return 1;
+      return a.user.name.localeCompare(b.user.name);
+    });
 
   const activeMatch = matches.find((m) => m.id === activeMatchId) ?? matches[0];
 

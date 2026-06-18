@@ -6,7 +6,7 @@ import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage } from "@/lib/supabase/queries";
+import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage, placeholderInScope } from "@/lib/supabase/queries";
 import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { useRealtimeTable } from "@/lib/supabase/realtime";
 import {
@@ -27,6 +27,7 @@ type Member = {
   id: string; // group_members row id — the poll response key (member_id)
   roles: TeamRole[];
   isPlaceholder: boolean; // captain-created, no account yet
+  placeholderScope: string | null;
   user: { id: string; name: string; profileImageUrl: string };
 };
 
@@ -59,6 +60,7 @@ export default function PollDetailPage() {
         id: m.id,
         roles: m.roles,
         isPlaceholder: m.isPlaceholder,
+        placeholderScope: m.placeholderScope,
         user: {
           id: m.user.id,
           name: m.user.name,
@@ -111,6 +113,7 @@ export default function PollDetailPage() {
             id: m.id,
             roles: m.roles,
             isPlaceholder: m.isPlaceholder,
+            placeholderScope: m.placeholderScope,
             user: {
               id: m.user.id,
               name: m.user.name,
@@ -328,9 +331,14 @@ export default function PollDetailPage() {
     );
   }
 
+  // Placeholders only belong here if they were invited to polls; real members
+  // always show.
+  const pollMembers = team.members.filter(
+    (m) => !m.isPlaceholder || placeholderInScope(m.placeholderScope, "poll")
+  );
   const respondedMemberIds = new Set(responses.map((r) => r.member_id));
-  const responded = team.members.filter((m) => respondedMemberIds.has(m.id));
-  const pending = team.members.filter((m) => !respondedMemberIds.has(m.id));
+  const responded = pollMembers.filter((m) => respondedMemberIds.has(m.id));
+  const pending = pollMembers.filter((m) => !respondedMemberIds.has(m.id));
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
@@ -346,7 +354,7 @@ export default function PollDetailPage() {
             {poll.title || "Availability poll"}
           </h1>
           <p className="text-xs text-gray-500">
-            {responded.length} of {team.members.length} responded · need {poll.min_players}+ players
+            {responded.length} of {pollMembers.length} responded · need {poll.min_players}+ players
           </p>
         </div>
         <span
@@ -373,7 +381,7 @@ export default function PollDetailPage() {
         <AvailabilityTable
           candidateDates={poll.candidate_dates}
           responses={responses}
-          members={team.members.map((m) => ({
+          members={pollMembers.map((m) => ({
             id: m.id,
             name: m.user.name,
             profileImageUrl: m.user.profileImageUrl,

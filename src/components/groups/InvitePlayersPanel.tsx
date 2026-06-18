@@ -29,19 +29,18 @@ export default function InvitePlayersPanel({
   groupId: string;
   groupName: string;
   onChanged?: () => void;
-  // What the invited guests can RSVP to. "all" (the general Settings invite)
-  // shows everything + the shared self-add link; a surface-specific scope
-  // (e.g. "match" from the availability page) limits the guest to that surface.
+  // The default table to invite to (pre-selected from the surface the panel is
+  // opened on). The captain can change it with the selector below.
   scope?: PlaceholderScope;
 }) {
-  const scopeNote =
-    scope === "match"
-      ? "They'll be able to RSVP to matches."
-      : scope === "practice"
-        ? "They'll be able to RSVP to practices."
-        : scope === "poll"
-          ? "They'll be able to answer availability polls."
-          : "";
+  // Which table the people being added should RSVP to. Captain-selectable.
+  const [selectedScope, setSelectedScope] = useState<PlaceholderScope>(scope);
+  const SCOPE_OPTIONS: { value: PlaceholderScope; label: string }[] = [
+    { value: "match", label: "Matches" },
+    { value: "practice", label: "Practices" },
+    { value: "poll", label: "Polls" },
+    { value: "all", label: "Everything" },
+  ];
   const [bulkNames, setBulkNames] = useState("");
   const [adding, setAdding] = useState(false);
   const [links, setLinks] = useState<PlaceholderLink[]>([]);
@@ -92,7 +91,7 @@ export default function InvitePlayersPanel({
     setAdding(true);
     try {
       const supabase = createSupabaseBrowserClient();
-      await addRosterPlaceholders(supabase, groupId, parsedPeople, scope);
+      await addRosterPlaceholders(supabase, groupId, parsedPeople, selectedScope);
       setMsg(`${parsedPeople.length} ${parsedPeople.length === 1 ? "person" : "people"} added.`);
       setBulkNames("");
       onChanged?.();
@@ -174,9 +173,34 @@ export default function InvitePlayersPanel({
         <div className="p-3 rounded-xl border border-gray-200 bg-gray-50 space-y-2">
           <p className="text-[11px] text-gray-500 leading-snug">
             Add teammates who aren&apos;t on TennisFriend yet. Each gets a personal link to set their
-            availability — no signup needed. They show up on the table right away.
-            {scopeNote && <span className="block mt-1 font-semibold text-gray-600">{scopeNote}</span>}
+            availability — no signup needed.
           </p>
+
+          {/* Which table the invited people should RSVP to */}
+          <div>
+            <p className="text-[11px] font-semibold text-gray-600 mb-1">They should RSVP to:</p>
+            <div className="flex flex-wrap gap-1.5">
+              {SCOPE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setSelectedScope(opt.value)}
+                  className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors ${
+                    selectedScope === opt.value
+                      ? "bg-court-green text-white border-court-green"
+                      : "bg-white text-gray-600 border-gray-300 hover:border-court-green-pale"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1">
+              {selectedScope === "all"
+                ? "They'll appear on every table and see matches, practices, and polls."
+                : `They'll only appear on the ${SCOPE_OPTIONS.find((o) => o.value === selectedScope)?.label.toLowerCase()} table and see only that.`}
+            </p>
+          </div>
           <textarea
             value={bulkNames}
             onChange={(e) => setBulkNames(e.target.value)}
@@ -225,8 +249,8 @@ export default function InvitePlayersPanel({
       )}
 
       {/* Shared self-add link — a general "join the team" link, so it's only
-          offered for the all-surfaces (Settings) invite, not a scoped one. */}
-      {scope === "all" && (
+          offered when inviting to everything, not a single table. */}
+      {selectedScope === "all" && (
       <div>
         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Shared self-add link</h3>
         <div className="p-3 rounded-xl border border-gray-200 bg-gray-50 space-y-2">

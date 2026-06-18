@@ -42,12 +42,25 @@ export interface GroupMember {
   // so existing `m.user.x` consumers keep working; `user.id` is "" since there
   // is no profile. RSVP cells key on `member.id`, not `user.id`.
   isPlaceholder: boolean;
+  // For placeholders: which surface they were invited to RSVP —
+  // null/"all" = every table, else "match" | "practice" | "poll". Drives both
+  // which captain matrix shows them and what the guest sees.
+  placeholderScope: string | null;
   user: {
     id: string;
     name: string;
     profile_image_url: string;
     ntrp_rating: number | null;
   };
+}
+
+// Does a placeholder scoped to `scope` belong on the given surface's table?
+// null/"all" → everywhere; otherwise only its own surface.
+export function placeholderInScope(
+  scope: string | null,
+  surface: "match" | "practice" | "poll"
+): boolean {
+  return !scope || scope === "all" || scope === surface;
 }
 
 const GROUP_COLUMNS =
@@ -157,14 +170,15 @@ export async function listGroupMembers(
   const { data, error } = await supabase
     .from("group_members")
     .select(
-      `id, group_id, user_id, roles, member_type, created_at, last_read_at, muted, pinned_at, hidden_at, cleared_at, archived_at, placeholder_name,
+      `id, group_id, user_id, roles, member_type, created_at, last_read_at, muted, pinned_at, hidden_at, cleared_at, archived_at, placeholder_name, placeholder_scope,
        user:profiles!group_members_user_id_fkey ( id, name, profile_image_url, ntrp_rating )`
     )
     .eq("group_id", groupId)
     .is("archived_at", null);
   if (error) throw error;
-  type RawMember = Omit<GroupMember, "isPlaceholder" | "user"> & {
+  type RawMember = Omit<GroupMember, "isPlaceholder" | "placeholderScope" | "user"> & {
     placeholder_name: string | null;
+    placeholder_scope: string | null;
     user: GroupMember["user"] | null;
   };
   const members = ((data ?? []) as unknown as RawMember[]).map((raw): GroupMember => {
@@ -172,6 +186,7 @@ export async function listGroupMembers(
     return {
       ...raw,
       isPlaceholder,
+      placeholderScope: raw.placeholder_scope,
       // Synthetic stand-in for placeholders so `m.user.name` / avatar render;
       // empty id + image_url means the Avatar falls back to initials.
       user: raw.user ?? {
