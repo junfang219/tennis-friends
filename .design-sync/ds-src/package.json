@@ -1,0 +1,6 @@
+{
+  "name": "tennisfriends-ds",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Staged tokens-only design-system source for /design-sync. The real app (tennisfriend-app) is a Next.js app, not a buildable component library, so the design foundation (color tokens, fonts, brand utility classes) is curated here and synced to claude.ai/design as a tokens-only DS. See ../NOTES.md."
+}

@@ -74,3 +74,11 @@ prisma/dev.db.*
 # macOS finder duplicates
 * 2.ts
 * 2.tsx
+
+# /design-sync — staged converter scripts + regenerated build output + machine state.
+# Durable inputs (.design-sync/config.json, NOTES.md, conventions.md, ds-src/) ARE committed.
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules

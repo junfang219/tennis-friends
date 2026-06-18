@@ -1,0 +1,8 @@
+{
+  "projectId": "9aad0bdd-d6e7-4f69-8312-58848a40dbb8",
+  "shape": "package",
+  "pkg": "tennisfriends-ds",
+  "globalName": "TennisFriends",
+  "cssEntry": "styles.css",
+  "readmeHeader": ".design-sync/conventions.md"
+}
