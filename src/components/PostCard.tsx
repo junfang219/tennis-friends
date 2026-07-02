@@ -28,6 +28,7 @@ import { toCommentCamel } from "@/lib/supabase/adapters";
 import { errorMessage } from "@/lib/errorMessage";
 import { buildLfpShare, shareLfp } from "@/lib/lfpShare";
 import { computeCourtFacilityId } from "@/lib/facilities";
+import { publicStorageThumbUrl } from "@/lib/supabase/storage";
 import CourtLocationPicker from "./CourtLocationPicker";
 
 type PlayRequestInfo = { id: string; status: string; note: string } | null;
@@ -1115,9 +1116,11 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
         {mediaItems.length === 1 && (
           mediaItems[0].kind === "image" ? (
             <img
-              src={mediaItems[0].url}
+              src={publicStorageThumbUrl(mediaItems[0].url, { width: 1080, resize: "contain", quality: 80 })}
               alt="Post image"
-              className="w-full max-h-[500px] object-contain"
+              loading="lazy"
+              decoding="async"
+              className="w-full max-h-[500px] object-contain bg-gray-50"
             />
           ) : (
             <div className="bg-black">
@@ -1148,9 +1151,11 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                 item.kind === "image" ? (
                   <img
                     key={i}
-                    src={item.url}
+                    src={publicStorageThumbUrl(item.url, { width: 1080, resize: "contain", quality: 80 })}
                     alt={`Item ${i + 1}`}
-                    className="snap-center min-w-full max-h-[500px] object-contain"
+                    loading="lazy"
+                    decoding="async"
+                    className="snap-center min-w-full max-h-[500px] object-contain bg-gray-50"
                   />
                 ) : (
                   <div key={i} className="snap-center min-w-full bg-black">

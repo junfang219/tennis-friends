@@ -19,6 +19,7 @@ import {
   sendGroupMessage,
 } from "@/lib/supabase/queries";
 import { buildObjectKey, type StorageBucket } from "@/lib/supabase/storage";
+import { downscaleImage } from "@/lib/imageDownscale";
 import { toPostCamel } from "@/lib/supabase/adapters";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
 import { errorMessage } from "@/lib/errorMessage";
@@ -206,8 +207,16 @@ export function ComposerModal({
   const [uploadError, setUploadError] = useState("");
   const MAX_MEDIA = 9;
   const MAX_VIDEOS = 2;
-  const MAX_PHOTO_BYTES = 10 * 1024 * 1024; // 10 MB — matches /api/storage/sign-upload
-  const MAX_VIDEO_BYTES = 100 * 1024 * 1024; // 100 MB — matches /api/storage/sign-upload
+  // Generous input ceiling: images are downscaled + re-encoded client-side
+  // before upload (see downscaleImage), so this only guards against decoding a
+  // pathologically large file in the WebView — not the stored size. The label
+  // is derived so the user-facing copy can't drift from the constant.
+  const MAX_PHOTO_BYTES = 20 * 1024 * 1024; // 20 MB
+  const MAX_PHOTO_MB = Math.round(MAX_PHOTO_BYTES / (1024 * 1024));
+  const MAX_VIDEO_BYTES = 100 * 1024 * 1024; // 100 MB — matches posts bucket ceiling
+  // Cap concurrent image decodes so picking many large photos at once doesn't
+  // spike WebView memory (each decode allocates a full-resolution bitmap).
+  const MAX_CONCURRENT_UPLOADS = 3;
   const videoCount = media.filter((m) => m.kind === "video").length;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -380,14 +389,18 @@ export function ComposerModal({
       // 100MB ceiling; profile/cover live in avatars (handled elsewhere).
       const isVideo = file.type.startsWith("video/");
       const bucket: StorageBucket = "posts";
+      // Downscale + re-encode images before upload so we store a feed-sized
+      // original (~a few hundred KB) instead of the multi-MB camera file.
+      // Videos and any image the browser can't re-encode pass through as-is.
+      const uploadFile = isVideo ? file : await downscaleImage(file);
       const sigRes = await fetch("/api/storage/sign-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           bucket,
-          filename: file.name,
-          mimeType: file.type || (isVideo ? "video/mp4" : "image/jpeg"),
-          sizeBytes: file.size,
+          filename: uploadFile.name,
+          mimeType: uploadFile.type || (isVideo ? "video/mp4" : "image/jpeg"),
+          sizeBytes: uploadFile.size,
         }),
       });
       if (!sigRes.ok) {
@@ -402,8 +415,8 @@ export function ComposerModal({
       // PUT the bytes to the signed URL.
       const put = await fetch(signedUrl, {
         method: "PUT",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
+        headers: { "Content-Type": uploadFile.type || "application/octet-stream" },
+        body: uploadFile,
       });
       if (!put.ok) {
         setUploadError("Upload failed");
@@ -437,13 +450,20 @@ export function ComposerModal({
     setUploadError("");
     if (toUpload.length === 0) {
       if (oversized > 0) {
-        setUploadError(`Photo${oversized === 1 ? "" : "s"} must be under 10 MB.`);
+        setUploadError(`Photo${oversized === 1 ? "" : "s"} must be under ${MAX_PHOTO_MB} MB.`);
       }
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
     setUploading(true);
-    const results = await Promise.all(toUpload.map((f) => uploadOne(f)));
+    // Upload in bounded batches so at most MAX_CONCURRENT_UPLOADS images decode
+    // at once — many large photos decoding in parallel can OOM the iOS WebView.
+    // Order is preserved so media stays in the sequence the user picked.
+    const results: (MediaItem | null)[] = [];
+    for (let i = 0; i < toUpload.length; i += MAX_CONCURRENT_UPLOADS) {
+      const batch = toUpload.slice(i, i + MAX_CONCURRENT_UPLOADS);
+      results.push(...(await Promise.all(batch.map((f) => uploadOne(f)))));
+    }
     const newImages = results.filter(
       (r): r is MediaItem => !!r && r.kind === "image"
     );
@@ -454,7 +474,7 @@ export function ComposerModal({
       setUploadError("Use the video button for videos.");
     } else if (oversized > 0) {
       setUploadError(
-        `Skipped ${oversized} photo${oversized === 1 ? "" : "s"} over 10 MB.`
+        `Skipped ${oversized} photo${oversized === 1 ? "" : "s"} over ${MAX_PHOTO_MB} MB.`
       );
     } else if (ok.length > toUpload.length) {
       setUploadError(
