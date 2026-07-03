@@ -4,6 +4,7 @@ import Link from "next/link";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { publicSiteUrl } from "@/lib/siteUrl";
+import { GuestRsvpForm } from "@/components/GuestRsvpForm";
 
 // Public OG / canonical URL base.
 const SITE_URL = publicSiteUrl();
@@ -310,6 +311,19 @@ export default async function PublicPostPage({
             >
               Already a member? Log in
             </Link>
+
+            <div className="flex items-center gap-3 py-1">
+              <div className="h-px flex-1 bg-gray-200" />
+              <span className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold">or</span>
+              <div className="h-px flex-1 bg-gray-200" />
+            </div>
+
+            <GuestRsvpForm
+              postId={id}
+              hostName={author?.name ?? "the host"}
+              signupHref={signupHref}
+            />
+
             <p className="text-[11px] text-center text-gray-400 pt-1">
               Tennis Friends is the social network for tennis players. Free to join.
             </p>

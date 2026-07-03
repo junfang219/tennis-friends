@@ -2321,7 +2321,8 @@ export type Database = {
       }
       notifications: {
         Row: {
-          actor_id: string
+          actor_guest_name: string | null
+          actor_id: string | null
           chat_message_id: string | null
           comment_id: string | null
           court_id: string | null
@@ -2340,7 +2341,8 @@ export type Database = {
           user_id: string
         }
         Insert: {
-          actor_id: string
+          actor_guest_name?: string | null
+          actor_id?: string | null
           chat_message_id?: string | null
           comment_id?: string | null
           court_id?: string | null
@@ -2359,7 +2361,8 @@ export type Database = {
           user_id: string
         }
         Update: {
-          actor_id?: string
+          actor_guest_name?: string | null
+          actor_id?: string | null
           chat_message_id?: string | null
           comment_id?: string | null
           court_id?: string | null
@@ -2677,30 +2680,39 @@ export type Database = {
       play_requests: {
         Row: {
           created_at: string
+          guest_contact: string | null
+          guest_name: string | null
+          guest_token: string | null
           id: string
           note: string
           post_id: string
           status: Database["public"]["Enums"]["play_request_status"]
           updated_at: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           created_at?: string
+          guest_contact?: string | null
+          guest_name?: string | null
+          guest_token?: string | null
           id?: string
           note?: string
           post_id: string
           status?: Database["public"]["Enums"]["play_request_status"]
           updated_at?: string
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           created_at?: string
+          guest_contact?: string | null
+          guest_name?: string | null
+          guest_token?: string | null
           id?: string
           note?: string
           post_id?: string
           status?: Database["public"]["Enums"]["play_request_status"]
           updated_at?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -3505,6 +3517,7 @@ export type Database = {
       claim_roster_placeholder: { Args: { p_token: string }; Returns: Json }
       get_roster_placeholder_links: { Args: { p_group_id: string }; Returns: Json }
       guest_create_placeholder: { Args: { p_group_token: string; p_name: string }; Returns: Json }
+      guest_join_post: { Args: { p_post_id: string; p_name: string; p_contact?: string; p_note?: string }; Returns: Json }
       guest_poll_view: { Args: { p_token: string }; Returns: Json }
       guest_roster_view: { Args: { p_token: string }; Returns: Json }
       guest_set_poll_response: { Args: { p_token: string; p_poll_id: string; p_blocks: Json }; Returns: Json }

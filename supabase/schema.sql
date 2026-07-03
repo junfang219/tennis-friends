@@ -9749,3 +9749,285 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.guest_poll_view(text) FROM public;
 GRANT EXECUTE ON FUNCTION public.guest_poll_view(text) TO anon, authenticated;
+
+-- =========================================================================
+-- 0021_guest_rsvp_find_players
+-- =========================================================================
+-- Guest RSVP for "Looking for players" (find_players) posts. Non-members
+-- respond via the public /p/[id] link without an account. Mirrors the
+-- team-roster guest pattern: nullable user_id + a guest discriminator,
+-- written through a SECURITY DEFINER RPC granted to anon. Their response
+-- lands in the host's "View Requests" list and the normal approve/decline
+-- flow; an approved guest counts toward players_confirmed like a member.
+
+-- ---- play_requests: allow accountless (guest) responders -----------------
+ALTER TABLE public.play_requests ALTER COLUMN user_id DROP NOT NULL;
+ALTER TABLE public.play_requests ADD COLUMN IF NOT EXISTS guest_name    text;
+ALTER TABLE public.play_requests ADD COLUMN IF NOT EXISTS guest_contact text;
+ALTER TABLE public.play_requests ADD COLUMN IF NOT EXISTS guest_token   text;
+
+-- exactly one identity: member (user_id) XOR guest (guest_name)
+ALTER TABLE public.play_requests
+  ADD CONSTRAINT play_requests_identity_check
+  CHECK (num_nonnulls(user_id, guest_name) = 1);
+
+-- opaque bearer token for a guest row (dedupe / future manage+claim)
+CREATE UNIQUE INDEX IF NOT EXISTS play_requests_guest_token_key
+  ON public.play_requests (guest_token) WHERE guest_token IS NOT NULL;
+
+COMMENT ON COLUMN public.play_requests.guest_name IS
+  'Accountless responder display name. Set (with user_id NULL) for guest RSVPs from the public /p/[id] link. XOR with user_id via play_requests_identity_check.';
+COMMENT ON COLUMN public.play_requests.guest_contact IS
+  'Optional host-visible phone/email a guest leaves so the organizer can reach them.';
+COMMENT ON COLUMN public.play_requests.guest_token IS
+  'Opaque bearer token returned to a guest at RSVP time; enables a later manage/withdraw or claim-to-account flow.';
+
+-- ---- notifications: allow a guest (profile-less) actor -------------------
+ALTER TABLE public.notifications ALTER COLUMN actor_id DROP NOT NULL;
+ALTER TABLE public.notifications ADD COLUMN IF NOT EXISTS actor_guest_name text;
+ALTER TABLE public.notifications
+  ADD CONSTRAINT notifications_actor_identity_check
+  CHECK (actor_id IS NOT NULL OR actor_guest_name IS NOT NULL);
+
+COMMENT ON COLUMN public.notifications.actor_guest_name IS
+  'Display name for an actor with no profile (e.g. a guest RSVP). Read as a fallback when actor_id is NULL.';
+
+-- ---- notify_on_join_request: carry a guest actor ------------------------
+CREATE OR REPLACE FUNCTION public.notify_on_join_request()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $$
+DECLARE v_author_id uuid;
+BEGIN
+  SELECT author_id INTO v_author_id FROM posts WHERE id = NEW.post_id;
+  IF v_author_id IS NULL THEN RETURN NEW; END IF;
+  -- self-join guard only applies to real members
+  IF NEW.user_id IS NOT NULL AND v_author_id = NEW.user_id THEN RETURN NEW; END IF;
+  INSERT INTO notifications (user_id, actor_id, type, post_id, actor_guest_name)
+  VALUES (
+    v_author_id, NEW.user_id, 'join_request', NEW.post_id,
+    CASE WHEN NEW.user_id IS NULL THEN NEW.guest_name ELSE NULL END
+  );
+  RETURN NEW;
+END;
+$$;
+
+-- ---- notify_on_join_request_reapply: same guest handling ----------------
+CREATE OR REPLACE FUNCTION public.notify_on_join_request_reapply()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $$
+DECLARE v_author_id uuid;
+BEGIN
+  IF NEW.status <> 'pending' OR OLD.status = 'pending'
+     OR OLD.status NOT IN ('rejected','withdrawn','removed') THEN
+    RETURN NEW;
+  END IF;
+  SELECT author_id INTO v_author_id FROM posts WHERE id = NEW.post_id;
+  IF v_author_id IS NULL THEN RETURN NEW; END IF;
+  IF NEW.user_id IS NOT NULL AND v_author_id = NEW.user_id THEN RETURN NEW; END IF;
+  INSERT INTO notifications (user_id, actor_id, type, post_id, actor_guest_name)
+  VALUES (
+    v_author_id, NEW.user_id, 'join_request', NEW.post_id,
+    CASE WHEN NEW.user_id IS NULL THEN NEW.guest_name ELSE NULL END
+  );
+  RETURN NEW;
+END;
+$$;
+
+-- ---- notify_on_play_request_response: skip guests (no device) -----------
+CREATE OR REPLACE FUNCTION public.notify_on_play_request_response()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $$
+DECLARE
+  v_author_id uuid;
+  v_notif_type notification_type;
+BEGIN
+  IF OLD.status <> 'pending' THEN RETURN NEW; END IF;
+  IF NEW.status NOT IN ('approved', 'rejected') THEN RETURN NEW; END IF;
+  -- guests have no account/device to receive an approval notification
+  IF NEW.user_id IS NULL THEN RETURN NEW; END IF;
+
+  SELECT author_id INTO v_author_id FROM posts WHERE id = NEW.post_id;
+  IF v_author_id IS NULL OR v_author_id = NEW.user_id THEN RETURN NEW; END IF;
+
+  v_notif_type := CASE NEW.status WHEN 'approved' THEN 'request_approved'::notification_type
+                                  ELSE 'request_rejected'::notification_type END;
+  INSERT INTO notifications (user_id, actor_id, type, post_id)
+  VALUES (NEW.user_id, v_author_id, v_notif_type, NEW.post_id);
+  RETURN NEW;
+END;
+$$;
+
+-- ---- create_session_chat_on_complete: don't add guests as participants,
+--      but still surface their names in the chat + confirmation message ----
+CREATE OR REPLACE FUNCTION public.create_session_chat_on_complete()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $$
+DECLARE
+  v_chat_id      uuid;
+  v_play_dt      timestamptz;
+  v_session_end  timestamptz;
+  v_chat_name    text;
+  v_players      text;
+  v_guests       text;
+  v_message      text;
+  v_duration     integer;
+  v_location     text;
+  v_location_md  text;
+BEGIN
+  IF NEW.is_complete IS NOT TRUE OR NEW.post_type <> 'find_players' THEN
+    RETURN NEW;
+  END IF;
+
+  BEGIN
+    v_play_dt := ((NEW.play_date || ' ' || NEW.play_time || ':00')::timestamp
+                  AT TIME ZONE COALESCE(NULLIF(NEW.play_timezone, ''), 'America/Los_Angeles'));
+  EXCEPTION WHEN OTHERS THEN
+    v_play_dt := now() + interval '24 hours';
+  END;
+  v_duration := COALESCE(NULLIF(NEW.play_duration, 0), 90);
+  v_session_end := v_play_dt + (v_duration || ' minutes')::interval;
+  v_location := COALESCE(NULLIF(NEW.court_location, ''), 'TBD');
+  v_location_md := CASE
+    WHEN NEW.court_facility_id IS NOT NULL AND NULLIF(NEW.court_location, '') IS NOT NULL
+      THEN '[' || NEW.court_location || '](/courts?selected=' || NEW.court_facility_id || ')'
+    ELSE v_location
+  END;
+
+  v_chat_name := trim(to_char(v_play_dt AT TIME ZONE COALESCE(NULLIF(NEW.play_timezone, ''), 'America/Los_Angeles'), 'Mon FMDD')) || ' · '
+              || v_location || ' · '
+              || trim(to_char(v_play_dt AT TIME ZONE COALESCE(NULLIF(NEW.play_timezone, ''), 'America/Los_Angeles'), 'FMHH12:MI AM'));
+
+  -- approved accountless guests (no profile → not chat participants, but
+  -- listed alongside manual players)
+  SELECT string_agg(guest_name, ', ' ORDER BY created_at)
+    INTO v_guests
+    FROM public.play_requests
+    WHERE post_id = NEW.id AND status = 'approved' AND user_id IS NULL;
+
+  INSERT INTO public.chats (name, creator_id, post_id, session_end_at, manual_player_names)
+  VALUES (
+    v_chat_name, NEW.author_id, NEW.id, v_session_end,
+    concat_ws(', ', NULLIF(NEW.manual_players, ''), NULLIF(v_guests, ''))
+  )
+  ON CONFLICT (post_id) WHERE post_id IS NOT NULL DO NOTHING
+  RETURNING id INTO v_chat_id;
+  IF v_chat_id IS NULL THEN RETURN NEW; END IF;
+
+  -- only real (account-backed) approved players become chat participants
+  INSERT INTO public.chat_participants (chat_id, user_id)
+  SELECT v_chat_id, NEW.author_id
+  UNION
+  SELECT v_chat_id, pr.user_id
+  FROM public.play_requests pr
+  WHERE pr.post_id = NEW.id AND pr.status = 'approved' AND pr.user_id IS NOT NULL;
+
+  SELECT string_agg(name, ', ' ORDER BY ord) INTO v_players FROM (
+    SELECT p.name, 0 AS ord
+    FROM public.profiles p WHERE p.id = NEW.author_id
+    UNION ALL
+    SELECT p.name, ROW_NUMBER() OVER (ORDER BY pr.created_at) AS ord
+    FROM public.play_requests pr
+    JOIN public.profiles p ON p.id = pr.user_id
+    WHERE pr.post_id = NEW.id AND pr.status = 'approved'
+  ) s;
+
+  v_players := concat_ws(
+    ', ',
+    NULLIF(v_players, ''),
+    NULLIF(NEW.manual_players, ''),
+    NULLIF(v_guests, '')
+  );
+
+  v_message := E'🎾 Game confirmed!\n'
+            || E'📅 ' || trim(to_char(v_play_dt AT TIME ZONE COALESCE(NULLIF(NEW.play_timezone, ''), 'America/Los_Angeles'), 'Mon FMDD at FMHH12:MI AM'))
+            || ' (' || v_duration || E' min)\n'
+            || E'📍 ' || v_location_md || E'\n'
+            || 'Players: ' || COALESCE(v_players, '') || E'\n\n'
+            || 'See you on court!';
+
+  INSERT INTO public.chat_messages (chat_id, sender_id, content)
+  VALUES (v_chat_id, NEW.author_id, v_message);
+
+  RETURN NEW;
+END;
+$$;
+
+-- ---- push for join_request (guest + member) -----------------------------
+-- join_request previously produced a bell notification but no push. Add a
+-- push on the notifications row so hosts are alerted for both guest and
+-- member RSVPs. Actor name falls back to the stored guest name.
+CREATE OR REPLACE FUNCTION public.push_on_join_request_insert()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $$
+DECLARE v_actor_name text;
+BEGIN
+  IF NEW.actor_id IS NOT NULL THEN
+    SELECT name INTO v_actor_name FROM public.profiles WHERE id = NEW.actor_id;
+  END IF;
+  v_actor_name := COALESCE(NULLIF(trim(v_actor_name), ''), NULLIF(trim(NEW.actor_guest_name), ''), 'Someone');
+  PERFORM public.invoke_edge_function(
+    'push-fanout',
+    jsonb_build_object(
+      'user_ids',  jsonb_build_array(NEW.user_id),
+      'title',     v_actor_name,
+      'body',      'wants to join your game',
+      'thread_id', 'join:' || NEW.post_id::text,
+      'data',      jsonb_build_object(
+                     'kind',    'join_request',
+                     'post_id', NEW.post_id::text
+                   )
+    )
+  );
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS notifications_push_join_request ON public.notifications;
+CREATE TRIGGER notifications_push_join_request
+  AFTER INSERT ON public.notifications
+  FOR EACH ROW WHEN (NEW.type = 'join_request')
+  EXECUTE FUNCTION public.push_on_join_request_insert();
+
+-- ---- RPC: guest_join_post (anon) ----------------------------------------
+CREATE OR REPLACE FUNCTION public.guest_join_post(
+  p_post_id uuid,
+  p_name    text,
+  p_contact text DEFAULT NULL,
+  p_note    text DEFAULT NULL
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $$
+DECLARE
+  v_post    public.posts%ROWTYPE;
+  v_name    text := trim(COALESCE(p_name, ''));
+  v_contact text := NULLIF(trim(COALESCE(p_contact, '')), '');
+  v_note    text := COALESCE(NULLIF(trim(COALESCE(p_note, '')), ''), '');
+  v_count   integer;
+  v_token   text;
+BEGIN
+  IF v_name = '' THEN
+    RAISE EXCEPTION 'Please enter your name' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  -- The unguessable post UUID is the capability (same trust model the
+  -- public page relies on). Only find_players posts are shareable/publicly
+  -- viewable, so scope guest RSVPs to that type.
+  SELECT * INTO v_post FROM public.posts WHERE id = p_post_id;
+  IF v_post.id IS NULL OR v_post.post_type <> 'find_players' THEN
+    RAISE EXCEPTION 'This game is no longer available' USING ERRCODE = 'no_data_found';
+  END IF;
+
+  -- bound abuse through the public link
+  SELECT count(*) INTO v_count FROM public.play_requests
+    WHERE post_id = p_post_id AND user_id IS NULL;
+  IF v_count >= 50 THEN
+    RAISE EXCEPTION 'This game is not accepting more guest responses' USING ERRCODE = 'check_violation';
+  END IF;
+
+  v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+  INSERT INTO public.play_requests (post_id, user_id, guest_name, guest_contact, guest_token, status, note)
+  VALUES (p_post_id, NULL, v_name, v_contact, v_token, 'pending', v_note);
+
+  RETURN jsonb_build_object('token', v_token);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.guest_join_post(uuid, text, text, text) FROM public;
+GRANT EXECUTE ON FUNCTION public.guest_join_post(uuid, text, text, text) TO anon, authenticated;

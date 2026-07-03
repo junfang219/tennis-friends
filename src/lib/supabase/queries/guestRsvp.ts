@@ -142,6 +142,31 @@ export async function guestCreatePlaceholder(
   return (data as unknown as { token: string }).token;
 }
 
+// ---- Guest-side (anon): RSVP to a "Looking for players" post ----
+
+/**
+ * RSVP to a find_players post as a guest (no account). Runs as the anon role
+ * against the guest_join_post SECURITY DEFINER RPC — the unguessable post id
+ * (from the public /p/[id] link) is the capability. Returns an opaque token
+ * for the created play_requests row. Name required; contact/note optional.
+ */
+export async function guestJoinPost(
+  supabase: SupabaseClient<Database>,
+  postId: string,
+  name: string,
+  contact?: string,
+  note?: string
+): Promise<string> {
+  const { data, error } = await supabase.rpc("guest_join_post", {
+    p_post_id: postId,
+    p_name: name,
+    p_contact: contact ?? undefined,
+    p_note: note ?? undefined,
+  });
+  if (error) throw error;
+  return (data as unknown as { token: string }).token;
+}
+
 // ---- Guest-side (anon): availability polls ----
 
 export interface GuestPollBlock {

@@ -514,7 +514,7 @@ export function toNotificationCamel(n: Notification): NotificationCamel {
   return {
     id: n.id,
     userId: n.user_id,
-    actorId: n.actor_id,
+    actorId: n.actor_id ?? "",
     type: n.type,
     postId: n.post_id ?? "",
     commentId: n.comment_id ?? "",
@@ -533,10 +533,13 @@ export function toNotificationCamel(n: Notification): NotificationCamel {
     emoji: n.emoji,
     read: n.read,
     createdAt: pgToIso(n.created_at),
+    // A guest (accountless) actor has no profile join — synthesize a display
+    // actor from actor_guest_name so render sites stay null-free. actorId is
+    // "" for guests; routing to /profile/:id is guarded on that empty id.
     actor: {
-      id: n.actor.id,
-      name: n.actor.name,
-      profileImageUrl: n.actor.profile_image_url,
+      id: n.actor?.id ?? "",
+      name: n.actor?.name ?? n.actor_guest_name ?? "Someone",
+      profileImageUrl: n.actor?.profile_image_url ?? "",
     },
   };
 }

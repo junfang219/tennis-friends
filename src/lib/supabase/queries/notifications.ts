@@ -6,7 +6,9 @@ import type { Database } from "../types";
 export interface Notification {
   id: string;
   user_id: string;
-  actor_id: string;
+  // NULL for a guest (accountless) actor — e.g. a guest RSVP to a
+  // find_players post. Read actor_guest_name as the display fallback.
+  actor_id: string | null;
   type:
     | "comment"
     | "like"
@@ -38,18 +40,21 @@ export interface Notification {
   emoji: string;
   read: boolean;
   created_at: string;
+  // Display name for a profile-less (guest) actor; set when actor_id is NULL.
+  actor_guest_name: string | null;
+  // NULL when the actor is a guest (no profile row to join).
   actor: {
     id: string;
     name: string;
     profile_image_url: string;
-  };
+  } | null;
   // Thread ids resolved via the FK joins above, for routing.
   chat_message: { chat_id: string } | null;
   group_message: { group_id: string } | null;
 }
 
 const NOTIF_COLUMNS = `
-  id, user_id, actor_id, type, post_id, comment_id, message_id,
+  id, user_id, actor_id, actor_guest_name, type, post_id, comment_id, message_id,
   chat_message_id, group_message_id, event_id,
   match_id, poll_id, friend_group_id, court_id, emoji, read, created_at,
   actor:profiles!notifications_actor_id_fkey ( id, name, profile_image_url ),

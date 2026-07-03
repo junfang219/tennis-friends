@@ -240,10 +240,12 @@ export default function NotificationsPage() {
         emoji: n.emoji,
         read: n.read,
         createdAt: n.created_at,
+        // Guest (accountless) actors have no profile join — fall back to the
+        // stored guest name. Empty id → not a linkable profile.
         actor: {
-          id: n.actor.id,
-          name: n.actor.name,
-          profileImageUrl: n.actor.profile_image_url,
+          id: n.actor?.id ?? "",
+          name: n.actor?.name ?? n.actor_guest_name ?? "Someone",
+          profileImageUrl: n.actor?.profile_image_url ?? "",
         },
       }));
     },
