@@ -2544,7 +2544,10 @@ function ManageRequestsModal({
         .from("play_requests")
         .select(
           `id, post_id, user_id, status, note, created_at, updated_at,
-           user:profiles!play_requests_user_id_fkey ( id, name, profile_image_url )`
+           user:profiles!play_requests_user_id_fkey (
+             id, name, profile_image_url,
+             gender, rating_system, ntrp_rating, utr_rating, skill_level
+           )`
         )
         .eq("post_id", postId);
       if (error) throw error;
@@ -2556,7 +2559,16 @@ function ManageRequestsModal({
           status: "pending" | "approved" | "rejected" | "withdrawn" | "removed";
           note: string;
           created_at: string;
-          user: { id: string; name: string; profile_image_url: string };
+          user: {
+            id: string;
+            name: string;
+            profile_image_url: string;
+            gender: string | null;
+            rating_system: string | null;
+            ntrp_rating: number | null;
+            utr_rating: number | null;
+            skill_level: string | null;
+          };
         }>).map((r) => ({
           id: r.id,
           userId: r.user_id,
@@ -2567,6 +2579,13 @@ function ManageRequestsModal({
             id: r.user.id,
             name: r.user.name,
             profileImageUrl: r.user.profile_image_url,
+            // Powers the GenderSymbol + formatUserRating already rendered in
+            // the requester row (level + gender symbols in View Requests).
+            gender: r.user.gender ?? undefined,
+            ratingSystem: r.user.rating_system ?? undefined,
+            ntrpRating: r.user.ntrp_rating ?? undefined,
+            utrRating: r.user.utr_rating ?? undefined,
+            skillLevel: r.user.skill_level ?? "",
           },
         })) as unknown as typeof requests
       );
