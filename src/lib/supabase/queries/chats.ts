@@ -3,6 +3,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../types";
 import { getMyIdFast } from "./_authFast";
+import { isGameChatVisible } from "@/lib/gameChatExpiry";
 
 export interface Chat {
   id: string;
@@ -174,9 +175,14 @@ export async function listMyChatThreads(
   }
 
   const threads: ChatThread[] = [];
+  const now = Date.now();
   for (const chat of (chatsRes.data ?? []) as Chat[]) {
     const state = partsByChat.get(chat.id);
     if (!state) continue;
+    // Game chats drop out of the inbox 3 days after the game ends (the caption
+    // in inboxSections promises this). Non-game chats have session_end_at = null
+    // and are always kept. See isGameChatVisible.
+    if (!isGameChatVisible(chat.session_end_at, now)) continue;
     // `cleared_at` (per-user "clear conversation") hides anything older from
     // the inbox preview but doesn't delete the underlying rows.
     const clearedAt = state.cleared_at ?? "1970-01-01T00:00:00Z";

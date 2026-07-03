@@ -751,6 +751,34 @@ create index chat_messages_chat_created_idx on public.chat_messages (chat_id, cr
 create index chat_messages_sender_idx       on public.chat_messages (sender_id);
 create index chat_messages_expense_idx      on public.chat_messages (expense_id) where expense_id is not null;
 
+-- Game-chat expiry. A "Game confirmed" chat carries session_end_at (the game's
+-- end timestamp); DM and friend-group chats have session_end_at = null and are
+-- never touched. Three days after the game ends the chat is purged, cascading to
+-- chat_participants, chat_messages, and expenses. The client also hides these
+-- immediately via isGameChatVisible (src/lib/gameChatExpiry.ts), so the nightly
+-- sweep is purely storage reclamation, not the user-facing guarantee.
+create or replace function public.delete_expired_game_chats()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_deleted integer;
+begin
+  delete from public.chats
+  where session_end_at is not null
+    and session_end_at < now() - interval '3 days';
+  get diagnostics v_deleted = row_count;
+  return v_deleted;
+end;
+$$;
+-- pg_cron job (registered out-of-band like the other crons, kept here for
+-- reference). Runs the purge nightly at 11:20 UTC (~4:20am America/Los_Angeles):
+--   select cron.schedule(
+--     'delete-expired-game-chats-daily', '20 11 * * *',
+--     $$ select public.delete_expired_game_chats() $$);
+
 create table public.group_messages (
   id              uuid primary key default gen_random_uuid(),
   group_id        uuid not null references public.groups (id) on delete cascade,
