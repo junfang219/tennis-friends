@@ -94,7 +94,7 @@ async function leagueScout(
     ownUrlTeamName = result.urlTeamName;
   } catch (err) {
     if (err instanceof TennisRecordFetchError) {
-      const code = err.status ? 502 : 400;
+      const code = err.kind === "validation" ? 400 : 502;
       return NextResponse.json({ error: err.message }, { status: code });
     }
     return NextResponse.json(

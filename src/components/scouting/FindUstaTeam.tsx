@@ -17,6 +17,14 @@ import {
   DEFAULT_YEAR,
 } from "@/lib/tennisrecord/searchOptions";
 import { errorMessage } from "@/lib/errorMessage";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { addRosterPlaceholders } from "@/lib/supabase/queries";
+import {
+  planRosterReconciliation,
+  rankMembersFor,
+  type RosterMember,
+  type Disposition,
+} from "@/lib/rosterMatch";
 
 // "Find your USTA team" — searches tennisrecord by name + filters so a captain
 // picks their exact team (disambiguating same-named teams by level/section and,
@@ -49,6 +57,7 @@ export default function FindUstaTeam({
   groupId,
   defaultSection = DEFAULT_SECTION,
   onImported,
+  teamMembers,
 }: {
   groupId: string;
   defaultSection?: string;
@@ -57,6 +66,10 @@ export default function FindUstaTeam({
     imported: number;
     skipped: number;
   }) => void;
+  // When provided (Availability page), the roster step lets the captain map
+  // each imported player to an existing member or add them as a new row.
+  // Omitted (Scouting page) → roster reconciliation UI is hidden.
+  teamMembers?: RosterMember[];
 }) {
   const [teamName, setTeamName] = useState("");
   const [year, setYear] = useState(DEFAULT_YEAR);
@@ -78,9 +91,18 @@ export default function FindUstaTeam({
   const [progress, setProgress] = useState(0);
   const [importStage, setImportStage] = useState("");
   const trickleRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [done, setDone] = useState<{ imported: number; skipped: number } | null>(
-    null,
-  );
+  const [done, setDone] = useState<{
+    imported: number;
+    skipped: number;
+    added: number;
+  } | null>(null);
+
+  // Roster reconciliation (only active when `teamMembers` is provided). One
+  // disposition per preview.players row; the captain can override each.
+  const reconcileEnabled = !!teamMembers;
+  const [dispositions, setDispositions] = useState<Disposition[]>([]);
+
+  const addCount = dispositions.filter((d) => d.action === "add").length;
 
   const stopTrickle = () => {
     if (trickleRef.current) {
@@ -117,16 +139,36 @@ export default function FindUstaTeam({
   async function handleSelect(r: TeamSearchResult) {
     setSelected(r);
     setPreview(null);
+    setDispositions([]);
     setPreviewing(true);
     setError("");
     setDone(null);
     try {
-      setPreview(await previewTeam(groupId, r.teamUrl));
+      const p = await previewTeam(groupId, r.teamUrl);
+      setPreview(p);
+      // Seed each roster row's default action: exact name match → map to that
+      // member; otherwise → add (the captain can override per row).
+      if (teamMembers) {
+        setDispositions(
+          planRosterReconciliation(
+            p.players.map((pl) => pl.name),
+            teamMembers,
+          ),
+        );
+      }
     } catch (err) {
       setError(errorMessage(err, "Could not load that team."));
       setSelected(null);
     }
     setPreviewing(false);
+  }
+
+  function setRowDisposition(index: number, next: Disposition) {
+    setDispositions((prev) => {
+      const copy = prev.slice();
+      copy[index] = next;
+      return copy;
+    });
   }
 
   async function handleImport() {
@@ -147,9 +189,33 @@ export default function FindUstaTeam({
       setImportStage("Adding matches to your calendar…");
       const sched = league.schedule.length ? league.schedule : preview.schedule;
       const { imported, skipped } = await importSchedule(groupId, sched);
+
+      // Add roster players the captain chose to bring on as new rows. Matched
+      // ("map") and "skip" rows create nothing. Placeholders are match-scoped so
+      // they appear only on the matches matrix. Invite links aren't surfaced here
+      // — the captain may still tweak the roster; they send links later from the
+      // Invite button.
+      let added = 0;
+      if (reconcileEnabled) {
+        const namesToAdd = preview.players
+          .map((p, i) => ({ name: p.name.trim(), d: dispositions[i] }))
+          .filter((x) => x.name && x.d?.action === "add")
+          .map((x) => ({ name: x.name }));
+        if (namesToAdd.length) {
+          setImportStage("Adding players to your roster…");
+          await addRosterPlaceholders(
+            createSupabaseBrowserClient(),
+            groupId,
+            namesToAdd,
+            "match",
+          );
+          added = namesToAdd.length;
+        }
+      }
+
       stopTrickle();
       setProgress(100);
-      setDone({ imported, skipped });
+      setDone({ imported, skipped, added });
       onImported?.({
         teamName: preview.teamName || selected.name,
         imported,
@@ -171,11 +237,19 @@ export default function FindUstaTeam({
         <div className="font-semibold text-court-green">
           Imported {done.imported} match{done.imported === 1 ? "" : "es"}
           {done.skipped > 0 ? ` · ${done.skipped} already on the calendar` : ""}
+          {done.added > 0
+            ? ` · added ${done.added} player${done.added === 1 ? "" : "s"}`
+            : ""}
         </div>
         <p className="text-xs text-gray-500 mt-1">
           Find them on the Availability tab — edit times, locations or home/away
           there as needed.
         </p>
+        {done.added > 0 && (
+          <p className="text-xs text-gray-500 mt-1">
+            Send each added player their RSVP link anytime from the Invite button.
+          </p>
+        )}
       </div>
     );
   }
@@ -212,23 +286,69 @@ export default function FindUstaTeam({
         ) : preview ? (
           <div className="mt-3">
             <div className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold mb-1">
-              Roster — confirm you recognize these players
+              {reconcileEnabled
+                ? "Roster — add each player to your team or map to a member"
+                : "Roster — confirm you recognize these players"}
             </div>
             {preview.players.length === 0 ? (
               <p className="text-sm text-gray-500">No roster found on this team page.</p>
             ) : (
-              <ul className="text-sm divide-y divide-gray-100 max-h-48 overflow-y-auto">
-                {preview.players.map((p) => (
-                  <li
-                    key={`${p.name}-${p.recordRaw}`}
-                    className="py-1.5 flex items-center justify-between gap-2"
-                  >
-                    <span className="text-gray-900 truncate">{p.name}</span>
-                    <span className="text-gray-500 tabular-nums shrink-0">
-                      {p.recordRaw || "—"} · {rating(p)}
-                    </span>
-                  </li>
-                ))}
+              <ul className="text-sm divide-y divide-gray-100 max-h-60 overflow-y-auto">
+                {preview.players.map((p, i) => {
+                  if (!reconcileEnabled || !teamMembers) {
+                    return (
+                      <li
+                        key={`${p.name}-${p.recordRaw}`}
+                        className="py-1.5 flex items-center justify-between gap-2"
+                      >
+                        <span className="text-gray-900 truncate">{p.name}</span>
+                        <span className="text-gray-500 tabular-nums shrink-0">
+                          {p.recordRaw || "—"} · {rating(p)}
+                        </span>
+                      </li>
+                    );
+                  }
+                  const d = dispositions[i];
+                  const value =
+                    d?.action === "map" ? d.memberId : (d?.action ?? "add");
+                  return (
+                    <li
+                      key={`${p.name}-${p.recordRaw}`}
+                      className="py-1.5 flex items-start justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-gray-900 truncate">{p.name}</div>
+                        <div className="text-[11px] text-gray-500 tabular-nums">
+                          {p.recordRaw || "—"} · {rating(p)}
+                        </div>
+                      </div>
+                      <select
+                        aria-label={`What to do with ${p.name}`}
+                        value={value}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setRowDisposition(
+                            i,
+                            v === "add"
+                              ? { action: "add" }
+                              : v === "skip"
+                                ? { action: "skip" }
+                                : { action: "map", memberId: v },
+                          );
+                        }}
+                        className="shrink-0 max-w-[9.5rem] px-2 py-1 border border-gray-300 rounded-lg text-xs bg-white"
+                      >
+                        <option value="add">Add as new player</option>
+                        <option value="skip">Skip</option>
+                        {rankMembersFor(p.name, teamMembers).map((m) => (
+                          <option key={m.memberId} value={m.memberId}>
+                            On team: {m.name}
+                          </option>
+                        ))}
+                      </select>
+                    </li>
+                  );
+                })}
               </ul>
             )}
 
@@ -249,7 +369,9 @@ export default function FindUstaTeam({
               >
                 {importing
                   ? "Importing…"
-                  : `Import ${preview.schedule.length} match${preview.schedule.length === 1 ? "" : "es"}`}
+                  : reconcileEnabled && addCount > 0
+                    ? `Import ${preview.schedule.length} match${preview.schedule.length === 1 ? "" : "es"} & ${addCount} player${addCount === 1 ? "" : "s"}`
+                    : `Import ${preview.schedule.length} match${preview.schedule.length === 1 ? "" : "es"}`}
               </button>
               <a
                 href={selected.teamUrl}

@@ -28,14 +28,82 @@ const BROWSER_HEADERS: Record<string, string> = {
   "Accept-Language": "en-US,en;q=0.9",
 };
 
+// "validation" = bad/empty caller input (retrying won't help → HTTP 400).
+// "network"     = couldn't reach tennisrecord (retryable → 502).
+// "upstream"    = tennisrecord answered with a non-OK status (retryable → 502).
+export type FetchErrorKind = "validation" | "network" | "upstream";
+
 export class TennisRecordFetchError extends Error {
   constructor(
     message: string,
+    readonly kind: FetchErrorKind = "validation",
     readonly status?: number,
   ) {
     super(message);
     this.name = "TennisRecordFetchError";
   }
+}
+
+// Turn an undici/Node fetch rejection into a human reason. Node throws a bare
+// `TypeError: fetch failed` and tucks the real cause (timeout, DNS, reset) on
+// `.cause.code` — surface that instead of leaking "fetch failed" to captains.
+function describeNetworkError(err: unknown): string {
+  const code =
+    err !== null &&
+    typeof err === "object" &&
+    "cause" in err &&
+    (err as { cause?: { code?: unknown } }).cause !== null &&
+    typeof (err as { cause?: { code?: unknown } }).cause === "object"
+      ? (err as { cause?: { code?: string } }).cause?.code
+      : undefined;
+
+  let reason: string;
+  switch (code) {
+    case "UND_ERR_CONNECT_TIMEOUT":
+    case "UND_ERR_HEADERS_TIMEOUT":
+    case "UND_ERR_BODY_TIMEOUT":
+    case "ETIMEDOUT":
+      reason = "TennisRecord took too long to respond (timed out)";
+      break;
+    case "ENOTFOUND":
+    case "EAI_AGAIN":
+      reason = "Couldn't look up TennisRecord (a network/DNS issue)";
+      break;
+    case "ECONNREFUSED":
+    case "ECONNRESET":
+      reason = "The connection to TennisRecord was dropped";
+      break;
+    default:
+      reason = "Couldn't reach TennisRecord";
+  }
+  return `${reason}. It may be temporarily down — please try again.`;
+}
+
+// Map a non-OK HTTP status to a friendly, mostly-retryable message.
+function friendlyHttpMessage(status: number): string {
+  if (status === 403) {
+    return (
+      "TennisRecord blocked this request (403), which usually clears up on " +
+      "a retry. Please try again."
+    );
+  }
+  if (status === 429) {
+    return (
+      "TennisRecord is rate-limiting requests right now (429). " +
+      "Please wait a moment and try again."
+    );
+  }
+  if (status === 404) {
+    // Not really retryable — the page is gone, not flaky.
+    return (
+      "That team page couldn't be found on TennisRecord (404). " +
+      "Double-check the team and search again."
+    );
+  }
+  if (status >= 500) {
+    return `TennisRecord is having trouble right now (status ${status}). Please try again.`;
+  }
+  return `TennisRecord returned an unexpected response (status ${status}). Please try again.`;
 }
 
 export type FetchTeamInput = {
@@ -94,15 +162,14 @@ export async function fetchTennisRecordTeam(
   } catch (err) {
     // ── puppeteer fallback seam: if plain fetch is network-blocked, drive
     //    this URL through headless Chrome here and return its page content.
-    throw new TennisRecordFetchError(
-      err instanceof Error ? err.message : "Could not reach tennisrecord.",
-    );
+    throw new TennisRecordFetchError(describeNetworkError(err), "network");
   }
 
   if (!res.ok) {
     // ── puppeteer fallback seam: a 403 here is the documented bot-block risk.
     throw new TennisRecordFetchError(
-      `tennisrecord returned ${res.status}.`,
+      friendlyHttpMessage(res.status),
+      "upstream",
       res.status,
     );
   }
@@ -151,14 +218,13 @@ export async function searchTennisRecordTeams(
       redirect: "follow",
     });
   } catch (err) {
-    throw new TennisRecordFetchError(
-      err instanceof Error ? err.message : "Could not reach tennisrecord.",
-    );
+    throw new TennisRecordFetchError(describeNetworkError(err), "network");
   }
 
   if (!res.ok) {
     throw new TennisRecordFetchError(
-      `tennisrecord returned ${res.status}.`,
+      friendlyHttpMessage(res.status),
+      "upstream",
       res.status,
     );
   }

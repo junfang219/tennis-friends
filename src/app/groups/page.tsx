@@ -554,10 +554,8 @@ function SwipeTeamRow({
 /* ───────── Create Group Form ───────── */
 
 function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntry[]; onCreated: () => void; onCancel: () => void }) {
-  const router = useRouter();
   const [name, setName] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [isUsta, setIsUsta] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const [search, setSearch] = useState("");
@@ -611,12 +609,6 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
         }
       }
       setCreating(false);
-      if (isUsta) {
-        // Hand off to the new team's scouting view to find & import its USTA
-        // league schedule right after setup.
-        router.push(`/groups/${g.id}/scouting?import=usta`);
-        return;
-      }
       onCreated();
     } catch (err) {
       setCreateError(
@@ -688,27 +680,13 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
           </>
         )}
       </div>
-      <label className="mb-4 flex items-start gap-3 p-3 rounded-xl border border-gray-200 cursor-pointer hover:bg-gray-50">
-        <input
-          type="checkbox"
-          checked={isUsta}
-          onChange={(e) => setIsUsta(e.target.checked)}
-          className="mt-0.5 w-4 h-4 accent-court-green"
-        />
-        <span className="text-sm">
-          <span className="font-semibold text-gray-800">This is a USTA league team</span>
-          <span className="block text-xs text-gray-500 mt-0.5">
-            We&apos;ll help you find your team and import its match schedule next — no USTA login needed.
-          </span>
-        </span>
-      </label>
       {createError && (
         <div className="mb-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
           {createError}
         </div>
       )}
       <div className="flex items-center gap-3">
-        <button onClick={handleCreate} disabled={!name.trim() || creating} className="btn-primary">{creating ? "Creating..." : isUsta ? "Create & import schedule" : "Create Team"}</button>
+        <button onClick={handleCreate} disabled={!name.trim() || creating} className="btn-primary">{creating ? "Creating..." : "Create Team"}</button>
         <button onClick={onCancel} className="btn-secondary">Cancel</button>
       </div>
     </div>

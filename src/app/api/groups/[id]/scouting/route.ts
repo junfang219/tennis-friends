@@ -67,8 +67,8 @@ export async function POST(
     urlTeamName = result.urlTeamName;
   } catch (err) {
     if (err instanceof TennisRecordFetchError) {
-      // No status → bad input (unparseable link). Status → upstream failure.
-      const code = err.status ? 502 : 400;
+      // Validation → bad input (unparseable link). Network/upstream → 502.
+      const code = err.kind === "validation" ? 400 : 502;
       return NextResponse.json({ error: err.message }, { status: code });
     }
     return NextResponse.json(
