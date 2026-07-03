@@ -12,6 +12,7 @@ import {
 } from "@/lib/supabase/queries";
 import { nativeShare } from "@/lib/lfpShare";
 import { errorMessage } from "@/lib/errorMessage";
+import { parsePeopleLines } from "@/lib/parsePeople";
 
 /**
  * Captain-facing panel to invite people who aren't on TennisFriend yet:
@@ -51,21 +52,8 @@ export default function InvitePlayersPanel({
   const [sharedToken, setSharedToken] = useState("");
   const [sharedBusy, setSharedBusy] = useState(false);
 
-  // Parse the textarea: one person per line, "Name, contact" where contact is
-  // an email (has "@") or a phone otherwise. First comma splits name/contact.
-  const parsedPeople = bulkNames
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const comma = line.indexOf(",");
-      if (comma === -1) return { name: line } as { name: string; email?: string; phone?: string };
-      const name = line.slice(0, comma).trim();
-      const contact = line.slice(comma + 1).trim();
-      if (!contact) return { name };
-      return contact.includes("@") ? { name, email: contact } : { name, phone: contact };
-    })
-    .filter((p) => p.name.length > 0);
+  // Parse the textarea: one person per line, optionally "Name, email-or-phone".
+  const parsedPeople = parsePeopleLines(bulkNames);
 
   const loadLinks = useCallback(async () => {
     try {

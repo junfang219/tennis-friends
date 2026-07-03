@@ -15,7 +15,8 @@ import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage, placeholderIn
 import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { errorMessage } from "@/lib/errorMessage";
 import { AvailabilityTabs } from "@/components/availability/AvailabilityTabs";
-import InvitePlayersPanel from "@/components/groups/InvitePlayersPanel";
+import SendRsvpPanel from "@/components/availability/SendRsvpPanel";
+import FindUstaTeam from "@/components/scouting/FindUstaTeam";
 import SendLineupMenu from "@/components/availability/SendLineupMenu";
 import { closePoll, seedPollAvailability } from "@/lib/supabase/queries/availabilityPolls";
 import { buildLineupText, formatDateHeader } from "@/lib/lineupMessage";
@@ -111,7 +112,8 @@ export default function AvailabilityPage() {
 
   // Add/edit-match form — editingMatchId null = creating, set = editing that match
   const [showAdd, setShowAdd] = useState(false);
-  const [showInvite, setShowInvite] = useState(false);
+  const [showSendRsvp, setShowSendRsvp] = useState(false);
+  const [showUstaImport, setShowUstaImport] = useState(false);
   const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
   const [matchDate, setMatchDate] = useState("");
   const [matchTime, setMatchTime] = useState("");
@@ -839,19 +841,32 @@ export default function AvailabilityPage() {
           <p className="text-xs text-gray-500">Match Availability</p>
         </div>
         {isCaptain && (
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
             <button
-              onClick={() => setShowInvite(true)}
+              onClick={() => setShowSendRsvp(true)}
               className="btn-secondary btn-sm inline-flex"
-              title="Invite players who aren't on TennisFriend yet"
+              title="Send an RSVP request for selected matches to your team"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <line x1="19" y1="8" x2="19" y2="14" />
-                <line x1="22" y1="11" x2="16" y2="11" />
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
               </svg>
-              Invite
+              Send RSVP
+            </button>
+            <button
+              onClick={() => setShowUstaImport(true)}
+              className="btn-secondary btn-sm inline-flex"
+              title="Import your USTA league match schedule from TennisRecord"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+                <path d="M12 14v4" />
+                <path d="M10 16l2 2 2-2" />
+              </svg>
+              Import USTA
             </button>
             <button
               onClick={() => {
@@ -880,17 +895,17 @@ export default function AvailabilityPage() {
         )}
       </div>
 
-      {/* Invite-players modal — reuses the roster invite flow right where the
-          captain adds matches. Placeholders appear on the matrix immediately. */}
-      {showInvite && isCaptain && typeof document !== "undefined" &&
+      {/* Send-RSVP modal — captain picks matches and shares an RSVP request with
+          the whole team (one in-app link) and/or each guest (personal link). */}
+      {showSendRsvp && isCaptain && typeof document !== "undefined" &&
         createPortal(
           <div className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center">
-            <div className="fixed inset-0 bg-black/40" onClick={() => setShowInvite(false)} />
+            <div className="fixed inset-0 bg-black/40" onClick={() => setShowSendRsvp(false)} />
             <div className="relative w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85vh] overflow-y-auto p-5">
               <div className="flex items-center justify-between mb-3">
-                <h2 className="font-display text-lg font-bold text-gray-900">Invite players</h2>
+                <h2 className="font-display text-lg font-bold text-gray-900">Send RSVP</h2>
                 <button
-                  onClick={() => setShowInvite(false)}
+                  onClick={() => setShowSendRsvp(false)}
                   className="p-1 text-gray-400 hover:text-gray-600"
                   aria-label="Close"
                 >
@@ -900,7 +915,41 @@ export default function AvailabilityPage() {
                   </svg>
                 </button>
               </div>
-              <InvitePlayersPanel groupId={groupId} groupName={team.name} onChanged={loadAll} scope="match" />
+              <SendRsvpPanel groupId={groupId} groupName={team.name} matches={matches} onChanged={loadAll} />
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* Import USTA schedule modal — reuses FindUstaTeam (search → preview →
+          import) right where the captain manages matches. Imported league
+          matches land on the matrix; loadAll() refreshes it on success. */}
+      {showUstaImport && isCaptain && typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center">
+            <div className="fixed inset-0 bg-black/40" onClick={() => setShowUstaImport(false)} />
+            <div className="relative w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85vh] overflow-y-auto p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="font-display text-lg font-bold text-gray-900">Import USTA match schedule</h2>
+                <button
+                  onClick={() => setShowUstaImport(false)}
+                  className="p-1 text-gray-400 hover:text-gray-600"
+                  aria-label="Close"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+              <FindUstaTeam
+                groupId={groupId}
+                onImported={loadAll}
+                teamMembers={team.members.map((m) => ({
+                  memberId: m.id,
+                  name: m.user.name,
+                }))}
+              />
             </div>
           </div>,
           document.body
