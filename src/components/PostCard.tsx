@@ -101,6 +101,10 @@ type PlayRequest = {
   id: string;
   status: string;
   note: string;
+  // Guest (accountless) responders have no profile; user is synthesized from
+  // guest_name and isGuest is true. guestContact is host-visible only.
+  isGuest?: boolean;
+  guestContact?: string;
   user: {
     id: string;
     name: string;
@@ -1993,8 +1997,9 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                     updates.play_time = `${editSkillSystem}:${editSkillMin}-${editSkillMax}`;
                     updates.players_needed = editPlayersNeeded; // members needed
                     // Numeric skill columns kept in sync with the encoded
-                    // play_time so RLS / filter queries that read skill_min/max
-                    // see the right values. "6.0+" → 6.0.
+                    // play_time so the level is displayed consistently. These
+                    // are display-only metadata — nothing filters or gates on
+                    // them. "6.0+" → 6.0.
                     const minNum = parseFloat(editSkillMin);
                     const maxNum = parseFloat(String(editSkillMax).replace("+", ""));
                     updates.skill_min = Number.isFinite(minNum) ? minNum : null;
@@ -2544,6 +2549,7 @@ function ManageRequestsModal({
         .from("play_requests")
         .select(
           `id, post_id, user_id, status, note, created_at, updated_at,
+           guest_name, guest_contact,
            user:profiles!play_requests_user_id_fkey (
              id, name, profile_image_url,
              gender, rating_system, ntrp_rating, utr_rating, skill_level
@@ -2555,10 +2561,12 @@ function ManageRequestsModal({
       setRequests(
         ((data ?? []) as unknown as Array<{
           id: string;
-          user_id: string;
+          user_id: string | null;
           status: "pending" | "approved" | "rejected" | "withdrawn" | "removed";
           note: string;
           created_at: string;
+          guest_name: string | null;
+          guest_contact: string | null;
           user: {
             id: string;
             name: string;
@@ -2568,26 +2576,33 @@ function ManageRequestsModal({
             ntrp_rating: number | null;
             utr_rating: number | null;
             skill_level: string | null;
+          } | null;
+        }>).map((r) => {
+          // Guest (accountless) responders have no profile join — synthesize a
+          // display user from guest_name so the row renders uniformly.
+          const isGuest = r.user_id === null;
+          return {
+            id: r.id,
+            userId: r.user_id,
+            status: r.status.toUpperCase(),
+            note: r.note,
+            createdAt: r.created_at,
+            isGuest,
+            guestContact: r.guest_contact ?? undefined,
+            user: {
+              id: r.user?.id ?? "",
+              name: r.user?.name ?? r.guest_name ?? "Guest",
+              profileImageUrl: r.user?.profile_image_url ?? "",
+              // Powers the GenderSymbol + formatUserRating already rendered in
+              // the requester row (level + gender symbols in View Requests).
+              gender: r.user?.gender ?? undefined,
+              ratingSystem: r.user?.rating_system ?? undefined,
+              ntrpRating: r.user?.ntrp_rating ?? undefined,
+              utrRating: r.user?.utr_rating ?? undefined,
+              skillLevel: r.user?.skill_level ?? "",
+            },
           };
-        }>).map((r) => ({
-          id: r.id,
-          userId: r.user_id,
-          status: r.status.toUpperCase(),
-          note: r.note,
-          createdAt: r.created_at,
-          user: {
-            id: r.user.id,
-            name: r.user.name,
-            profileImageUrl: r.user.profile_image_url,
-            // Powers the GenderSymbol + formatUserRating already rendered in
-            // the requester row (level + gender symbols in View Requests).
-            gender: r.user.gender ?? undefined,
-            ratingSystem: r.user.rating_system ?? undefined,
-            ntrpRating: r.user.ntrp_rating ?? undefined,
-            utrRating: r.user.utr_rating ?? undefined,
-            skillLevel: r.user.skill_level ?? "",
-          },
-        })) as unknown as typeof requests
+        }) as unknown as typeof requests
       );
     } catch {
       // ignore
@@ -2915,13 +2930,26 @@ function ManageRequestsModal({
             requests.map((req) => (
               <div key={req.id} className={`rounded-xl border p-4 ${req.status === "APPROVED" ? "bg-green-50 border-green-200" : req.status === "REJECTED" || req.status === "WITHDRAWN" || req.status === "REMOVED" ? "bg-gray-50 border-gray-200 opacity-60" : "bg-white border-gray-200"}`}>
                 <div className="flex items-center gap-3">
-                  <Link href={`/profile/${req.user.id}`}><Avatar name={req.user.name} image={req.user.profileImageUrl} size="md" /></Link>
+                  {req.isGuest ? (
+                    // Guests have no profile to link to.
+                    <Avatar name={req.user.name} image={req.user.profileImageUrl} size="md" />
+                  ) : (
+                    <Link href={`/profile/${req.user.id}`}><Avatar name={req.user.name} image={req.user.profileImageUrl} size="md" /></Link>
+                  )}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
                       <span className="truncate">{req.user.name}</span>
-                      <GenderSymbol gender={req.user.gender} />
+                      {req.isGuest ? (
+                        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">Guest</span>
+                      ) : (
+                        <GenderSymbol gender={req.user.gender} />
+                      )}
                     </p>
-                    <p className="text-xs text-gray-400">{formatUserRating(req.user)}</p>
+                    {req.isGuest ? (
+                      req.guestContact && <p className="text-xs text-gray-400 truncate">{req.guestContact}</p>
+                    ) : (
+                      <p className="text-xs text-gray-400">{formatUserRating(req.user)}</p>
+                    )}
                   </div>
                   {req.status === "PENDING" && (
                     <div className="flex items-center gap-2">

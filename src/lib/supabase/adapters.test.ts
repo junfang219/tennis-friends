@@ -450,7 +450,7 @@ describe("snake_case → camelCase adapters", () => {
     expect(gm.kind).toBe("chat");
 
     const n = toNotificationCamel({
-      id: "n", user_id: "u", actor_id: "a", type: "like",
+      id: "n", user_id: "u", actor_id: "a", actor_guest_name: null, type: "like",
       post_id: null, comment_id: null, message_id: null,
       chat_message_id: null, group_message_id: null,
       event_id: null, match_id: null, poll_id: null, friend_group_id: null,
@@ -465,7 +465,7 @@ describe("snake_case → camelCase adapters", () => {
 
     // message_reaction in a session chat resolves the thread id for routing.
     const nChat = toNotificationCamel({
-      id: "n2", user_id: "u", actor_id: "a", type: "message_reaction",
+      id: "n2", user_id: "u", actor_id: "a", actor_guest_name: null, type: "message_reaction",
       post_id: null, comment_id: null, message_id: null,
       chat_message_id: "cm1", group_message_id: null,
       event_id: null, match_id: null, poll_id: null, friend_group_id: null,
@@ -477,6 +477,25 @@ describe("snake_case → camelCase adapters", () => {
     });
     expect(nChat.chatId).toBe("chat-9");
     expect(nChat.groupId).toBe("");
+
+    // A guest (accountless) actor has no profile join — the adapter
+    // synthesizes a display actor from actor_guest_name, empty id/avatar.
+    const nGuest = toNotificationCamel({
+      id: "n3", user_id: "u", actor_id: null, actor_guest_name: "Casey Guest",
+      type: "join_request",
+      post_id: "p1", comment_id: null, message_id: null,
+      chat_message_id: null, group_message_id: null,
+      event_id: null, match_id: null, poll_id: null, friend_group_id: null,
+      court_id: null,
+      emoji: "", read: false,
+      created_at: "t",
+      actor: null,
+      chat_message: null, group_message: null,
+    });
+    expect(nGuest.actorId).toBe("");
+    expect(nGuest.actor.id).toBe("");
+    expect(nGuest.actor.name).toBe("Casey Guest");
+    expect(nGuest.actor.profileImageUrl).toBe("");
 
     const dm = toDirectMessageCamel({
       id: "dm", sender_id: "s", receiver_id: "r", content: "hi",
