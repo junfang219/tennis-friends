@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>TennisFriends — Beta QR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,800;1,700&family=DM+Sans:opsz,wght@9..40,500;9..40,700&display=swap" rel="stylesheet">
+<style>
+  :root{--green:#1B4332; --green-3:#40916C; --yellow:#C9E265; --yellow-glow:#D4ED6B; --net:#FAFDF6;}
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{width:1080px; height:1080px;}
+  body{font-family:'DM Sans',system-ui,sans-serif; color:var(--green);
+    background:var(--net); -webkit-font-smoothing:antialiased;}
+  .serif{font-family:'Playfair Display',Georgia,serif;}
+  .card{height:100%; display:flex; flex-direction:column; align-items:center; text-align:center;
+    padding:64px 70px 58px;}
+  .brand{display:flex; align-items:center; gap:13px;}
+  .ball{width:40px; height:40px; border-radius:50%;
+    background:radial-gradient(circle at 32% 30%,var(--yellow-glow),var(--yellow) 60%,#aacb46);
+    position:relative; box-shadow:0 6px 16px rgba(201,226,101,.4);}
+  .ball::before,.ball::after{content:""; position:absolute; inset:0; border-radius:50%; border:2.4px solid rgba(20,50,41,.55);}
+  .ball::before{clip-path:inset(0 50% 0 0); transform:scaleX(.55) translateX(-6px);}
+  .ball::after{clip-path:inset(0 0 0 50%); transform:scaleX(.55) translateX(6px);}
+  .wm{font-size:38px; font-weight:800; letter-spacing:-.01em;}
+  .wm .f{color:var(--green-3); font-style:italic;}
+  .tag{display:inline-flex; align-items:center; gap:8px; margin-top:22px; font-size:16px; font-weight:700;
+    letter-spacing:.16em; text-transform:uppercase; color:var(--green); background:var(--yellow);
+    padding:9px 18px; border-radius:999px;}
+  .qbox{width:720px; height:720px; margin:30px 0 4px;}
+  .qbox img{width:100%; height:100%; display:block;}
+  .scan{font-size:38px; font-weight:800; letter-spacing:-.01em; margin-top:18px;}
+  .scan .serif{font-style:italic;}
+  .meta{margin-top:auto; display:flex; flex-direction:column; gap:6px;}
+  .tf{display:inline-flex; align-items:center; justify-content:center; gap:10px; font-size:20px; font-weight:600; color:#5d7468;}
+  .tf .apple{width:26px; height:26px; border-radius:8px; background:var(--green); color:var(--yellow);
+    display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:800;}
+  .u{font-size:21px; font-weight:700; color:var(--green); text-decoration:none;}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand"><span class="ball"></span><span class="wm serif">Tennis<span class="f">Friends</span></span></div>
+    <span class="tag">🎾 Now in beta</span>
+    <a class="qbox" href="https://testflight.apple.com/join/SrKx7g7W"><img src="screenshots/testflight-qr.svg" alt="TestFlight beta QR code" /></a>
+    <div class="scan serif">Scan to join the beta</div>
+    <div class="meta">
+      <div class="tf"><span class="apple"></span> Free via Apple TestFlight</div>
+      <a class="u" href="https://testflight.apple.com/join/SrKx7g7W">testflight.apple.com/join/SrKx7g7W</a>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>TennisFriends — Intro Poster</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;0,800;0,900;1,600&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --green:#1B4332; --green-2:#2D6A4F; --green-3:#40916C; --green-pale:#74C69D;
+    --yellow:#C9E265; --yellow-glow:#D4ED6B; --clay:#C17A56; --clay-2:#E8A87C;
+    --surface:#F1F5EC; --net:#FAFDF6; --ink:#16271F;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{width:1080px;}
+  body{
+    font-family:'DM Sans', system-ui, sans-serif;
+    color:var(--ink); background:var(--surface);
+    -webkit-font-smoothing:antialiased;
+  }
+  .serif{font-family:'Playfair Display', Georgia, serif;}
+
+  /* ---------- HERO ---------- */
+  .hero{
+    position:relative; overflow:hidden;
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(201,226,101,.18), transparent 60%),
+      radial-gradient(900px 500px at -10% 30%, rgba(116,198,157,.16), transparent 60%),
+      linear-gradient(160deg, #143229 0%, #1B4332 45%, #20503c 100%);
+    color:var(--net);
+    padding:96px 80px 104px;
+  }
+  .court-lines{position:absolute; inset:0; opacity:.10; pointer-events:none;
+    background-image:
+      linear-gradient(var(--net) 2px, transparent 2px),
+      linear-gradient(90deg, var(--net) 2px, transparent 2px);
+    background-size:120px 120px; mask-image:linear-gradient(180deg,#000,transparent 85%);}
+  .hero .badge{display:inline-flex; align-items:center; gap:10px; font-weight:700;
+    font-size:18px; letter-spacing:.16em; text-transform:uppercase; color:var(--yellow);
+    background:rgba(201,226,101,.10); border:1px solid rgba(201,226,101,.35);
+    padding:10px 18px; border-radius:999px;}
+  .ball{width:46px; height:46px; border-radius:50%;
+    background:radial-gradient(circle at 32% 30%, var(--yellow-glow), var(--yellow) 60%, #aacb46);
+    position:relative; box-shadow:0 8px 24px rgba(201,226,101,.35); flex:0 0 auto;}
+  .ball::before,.ball::after{content:""; position:absolute; inset:0; border-radius:50%;
+    border:2.5px solid rgba(20,50,41,.55);}
+  .ball::before{clip-path:inset(0 50% 0 0); transform:scaleX(.55) translateX(-7px);}
+  .ball::after{clip-path:inset(0 0 0 50%); transform:scaleX(.55) translateX(7px);}
+  .wordmark{font-size:118px; line-height:.98; font-weight:800; margin:34px 0 0; letter-spacing:-.02em;}
+  .wordmark .t{color:var(--net);}
+  .wordmark .f{color:var(--yellow); font-style:italic;}
+  .tagline{font-size:40px; font-weight:500; margin-top:26px; max-width:760px; color:#EAF3E2;}
+  .tagline b{color:var(--yellow); font-weight:700;}
+  .subhead{font-size:24px; line-height:1.5; margin-top:22px; max-width:680px; color:#C9D9CC;}
+  .hero-stats{display:flex; gap:14px; margin-top:46px; flex-wrap:wrap;}
+  .chip{display:inline-flex; align-items:center; gap:10px; font-size:19px; font-weight:600;
+    color:var(--net); background:rgba(250,253,246,.08); border:1px solid rgba(250,253,246,.18);
+    padding:12px 20px; border-radius:14px;}
+  .chip .dot{width:10px; height:10px; border-radius:50%; background:var(--yellow);}
+
+  /* ---------- FEATURE SECTIONS ---------- */
+  .feat{display:flex; align-items:center; gap:64px; padding:84px 80px;}
+  /* Alternation is automatic by position so sections can be reordered freely */
+  .feat:nth-child(even of .feat){flex-direction:row-reverse; background:var(--net);}
+  .feat .copy{flex:1;}
+  .eyebrow{display:inline-flex; align-items:center; gap:9px; font-size:16px; font-weight:700;
+    letter-spacing:.14em; text-transform:uppercase; color:var(--green-3);
+    background:rgba(64,145,108,.10); padding:8px 15px; border-radius:999px;}
+  .feat h2{font-size:58px; line-height:1.04; font-weight:800; color:var(--green);
+    margin:22px 0 0; letter-spacing:-.02em;}
+  .feat p{font-size:24px; line-height:1.55; color:#33473D; margin-top:20px; max-width:430px;}
+  .feat ul{margin-top:24px; display:flex; flex-direction:column; gap:13px; max-width:440px;}
+  .feat li{display:flex; gap:13px; align-items:flex-start; font-size:20px; color:#2c4238; font-weight:500;}
+  .tick{flex:0 0 auto; width:26px; height:26px; border-radius:50%; background:var(--yellow);
+    display:flex; align-items:center; justify-content:center; margin-top:1px;}
+  .tick svg{width:15px; height:15px;}
+
+  /* ---------- PHONE FRAME ---------- */
+  .phone{flex:0 0 auto; width:336px;}
+  .phone .device{position:relative; border-radius:46px; padding:13px;
+    background:linear-gradient(150deg,#20392f,#0f201a);
+    box-shadow:0 36px 80px -30px rgba(16,39,29,.65), 0 6px 18px rgba(16,39,29,.25);}
+  .phone .device::after{content:""; position:absolute; top:24px; left:50%; transform:translateX(-50%);
+    width:118px; height:26px; background:#0f201a; border-radius:0 0 18px 18px; z-index:3;}
+  .screen{position:relative; border-radius:34px; overflow:hidden; aspect-ratio:1080/2240;
+    background:var(--surface);}
+  .screen img{position:absolute; inset:0; z-index:2; width:100%; height:100%; object-fit:cover; object-position:top center; display:block;}
+  .ph-placeholder{position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:14px; text-align:center;
+    background:repeating-linear-gradient(135deg,#eef4e6,#eef4e6 14px,#e7efdd 14px,#e7efdd 28px);
+    color:var(--green-3); font-weight:700; font-size:19px; padding:24px;}
+  .ph-placeholder .pin{width:54px; height:54px; border-radius:16px; background:var(--green);
+    color:var(--yellow); display:flex; align-items:center; justify-content:center; font-size:26px;}
+  .ph-placeholder small{font-weight:500; color:#7d9384; font-size:15px; max-width:200px;}
+  img.hide{display:none;}
+
+  /* ---------- TEAM MANAGEMENT (captain spotlight) ---------- */
+  .mgmt{background:linear-gradient(180deg,#E7F0DC 0%,#F1F5EC 70%); padding:92px 80px 98px; text-align:center;}
+  .mgmt .eyebrow{display:inline-flex; align-items:center; gap:9px; font-size:16px; font-weight:700;
+    letter-spacing:.14em; text-transform:uppercase; color:var(--green); background:var(--yellow);
+    padding:9px 17px; border-radius:999px;}
+  .mgmt h2{font-size:62px; line-height:1.04; font-weight:800; color:var(--green); letter-spacing:-.02em; margin:24px 0 0;}
+  .mgmt h2 em{color:var(--green-3); font-style:italic;}
+  .mgmt .lede{font-size:24px; line-height:1.55; color:#33473D; margin:20px auto 0; max-width:740px;}
+  .mgmt .phones{display:flex; justify-content:center; align-items:flex-start; gap:54px; margin-top:56px;}
+  .mgmt .pcol{display:flex; flex-direction:column; align-items:center; gap:20px;}
+  .mgmt .phone{width:316px;}
+  .mgmt .pcap{font-size:22px; font-weight:800; color:var(--green); letter-spacing:-.01em;}
+  .mgmt .pcap span{display:block; font-weight:500; font-size:18px; color:#5d7468; margin-top:4px; max-width:300px;}
+  .mgmt .feats{display:flex; justify-content:center; gap:14px; flex-wrap:wrap; margin:58px auto 0; max-width:900px;}
+  .mgmt .fp{display:inline-flex; align-items:center; gap:11px; background:var(--net); border:1px solid #DCE7D2;
+    border-radius:14px; padding:14px 22px; font-size:19px; font-weight:600; color:#2c4238;}
+  .mgmt .fp .d{width:26px; height:26px; border-radius:8px; background:var(--green); color:var(--yellow);
+    display:flex; align-items:center; justify-content:center; font-size:14px;}
+
+  /* ---------- DIFFERENT STRIP ---------- */
+  .diff{background:linear-gradient(160deg,#143229,#1B4332); color:var(--net); padding:92px 80px;}
+  .diff .lead{text-align:center; max-width:760px; margin:0 auto;}
+  .diff h2{font-size:60px; font-weight:800; letter-spacing:-.02em;}
+  .diff h2 em{color:var(--yellow); font-style:italic;}
+  .diff .lead p{font-size:23px; color:#C9D9CC; margin-top:18px; line-height:1.55;}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:22px; margin-top:54px;}
+  .card{background:rgba(250,253,246,.06); border:1px solid rgba(250,253,246,.14);
+    border-radius:22px; padding:30px 32px;}
+  .card .ic{width:56px; height:56px; border-radius:16px; background:var(--yellow);
+    color:var(--green); display:flex; align-items:center; justify-content:center; font-size:28px;}
+  .card h3{font-size:27px; font-weight:700; margin-top:20px;}
+  .card p{font-size:19px; color:#C2D3C6; margin-top:10px; line-height:1.5;}
+
+  /* ---------- BETA INVITE ---------- */
+  .beta{display:flex; align-items:center; gap:58px; color:var(--net); padding:96px 80px;
+    background:
+      radial-gradient(900px 500px at 110% 10%, rgba(201,226,101,.16), transparent 60%),
+      linear-gradient(155deg,#143229,#1B4332 58%,#20503c);}
+  .beta .copy{flex:1;}
+  .beta .tag{display:inline-flex; align-items:center; gap:10px; font-size:16px; font-weight:700;
+    letter-spacing:.14em; text-transform:uppercase; color:var(--green);
+    background:var(--yellow); padding:9px 17px; border-radius:999px;}
+  .beta h2{font-size:66px; line-height:1.03; font-weight:800; letter-spacing:-.02em; margin:24px 0 0;}
+  .beta h2 em{color:var(--yellow); font-style:italic;}
+  .beta .lede{font-size:24px; line-height:1.5; color:#D2E0D4; margin-top:20px; max-width:470px;}
+  .beta .steps{margin-top:30px; display:flex; flex-direction:column; gap:15px; max-width:480px;}
+  .beta .steps li{display:flex; gap:15px; align-items:center; font-size:20px; font-weight:500; color:#EAF3E2;}
+  .beta .num{flex:0 0 auto; width:34px; height:34px; border-radius:50%; background:rgba(201,226,101,.16);
+    border:1px solid rgba(201,226,101,.5); color:var(--yellow); font-weight:800; font-size:18px;
+    display:flex; align-items:center; justify-content:center;}
+  .beta .link{display:inline-flex; align-items:center; gap:11px; margin-top:32px; text-decoration:none;
+    background:var(--yellow); color:var(--green); font-size:21px; font-weight:700;
+    padding:16px 28px; border-radius:14px; box-shadow:0 16px 40px -18px rgba(201,226,101,.6);}
+  .qrcard{flex:0 0 auto; width:392px; background:var(--net); border-radius:30px; padding:34px 34px 30px;
+    text-align:center; text-decoration:none; display:block; box-shadow:0 40px 90px -30px rgba(0,0,0,.5);}
+  .qrcard .ey{font-size:15px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--green-3);}
+  .qrcard .qbox{width:100%; aspect-ratio:1; margin:18px 0 16px; border-radius:18px; overflow:hidden;
+    border:1px solid #E3ECDB;}
+  .qrcard .qbox img{width:100%; height:100%; display:block;}
+  .qrcard h4{font-size:27px; font-weight:800; color:var(--green); letter-spacing:-.01em;}
+  .qrcard .tf{display:inline-flex; align-items:center; gap:9px; margin-top:12px; font-size:17px;
+    font-weight:600; color:#5d7468;}
+  .qrcard .tf .apple{width:24px; height:24px; border-radius:7px; background:var(--green);
+    color:var(--yellow); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:800;}
+  .qrcard .u{margin-top:14px; font-size:15px; font-weight:600; color:var(--green-2);
+    word-break:break-all; line-height:1.4;}
+
+  /* ---------- FOOTER CTA ---------- */
+  .cta{background:var(--surface); text-align:center; padding:96px 80px 110px;}
+  .cta .ball{width:64px; height:64px; margin:0 auto;}
+  .cta h2{font-size:72px; font-weight:800; color:var(--green); margin-top:30px; letter-spacing:-.02em;}
+  .cta p{font-size:26px; color:#3a5044; margin-top:18px;}
+  .cta .pill{display:inline-flex; align-items:center; gap:12px; margin-top:36px;
+    background:var(--green); color:var(--net); font-size:26px; font-weight:700;
+    padding:20px 40px; border-radius:999px; box-shadow:0 16px 40px -16px rgba(27,67,50,.7);}
+  .cta .url{margin-top:30px; font-size:22px; font-weight:700; color:var(--green-2); letter-spacing:.01em;}
+  .cta .wm{margin-top:8px; font-size:20px; color:#7d9384;}
+  .cta .wm b{color:var(--green);} .cta .wm i{color:var(--clay); font-style:normal;}
+</style>
+</head>
+<body>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="court-lines"></div>
+    <span class="badge"><span class="ball"></span> The social court for tennis</span>
+    <h1 class="wordmark serif"><span class="t">Tennis</span><span class="f">Friends</span></h1>
+    <p class="tagline serif">Find your <b>court companions</b> — and never play alone again.</p>
+    <p class="subhead">Players, courts, schedules and your tennis story — all in one friendly app built for the people you actually play with.</p>
+    <div class="hero-stats">
+      <span class="chip"><span class="dot"></span> Meet players near you</span>
+      <span class="chip"><span class="dot"></span> Find your courts</span>
+      <span class="chip"><span class="dot"></span> Share every match</span>
+    </div>
+  </section>
+
+<!-- 1. FEED -->
+  <section class="feat">
+    <div class="copy">
+      <span class="eyebrow">Your home court</span>
+      <h2 class="serif">A feed that<br>actually plays.</h2>
+      <p>See what your tennis circle is up to — match clips, court conditions, and games looking for one more.</p>
+      <ul>
+        <li><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#1B4332" stroke-width="3.5"><path d="M5 12l5 5L20 6"/></svg></span> Post photos, videos & court chatter</li>
+        <li><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#1B4332" stroke-width="3.5"><path d="M5 12l5 5L20 6"/></svg></span> One tap to find players or propose a team</li>
+      </ul>
+    </div>
+    <div class="phone"><div class="device"><div class="screen" data-shot="feed.png" data-label="Home feed">
+      <img src="screenshots/feed.png" onerror="this.classList.add('hide')" />
+      <div class="ph-placeholder"><div class="pin">🎾</div>Home feed<small>Drop feed.png in marketing/screenshots/</small></div>
+    </div></div></div>
+  </section>
+
+<!-- 2. LOOKING FOR PLAYERS (broadcast) -->
+  <section class="feat alt">
+    <div class="copy">
+      <span class="eyebrow">Looking for players</span>
+      <h2 class="serif">Looking for a game?<br>Put out the call.</h2>
+      <p>Post that you're looking to play and choose exactly who sees it — your team, a group, or every player nearby.</p>
+      <ul>
+        <li><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#1B4332" stroke-width="3.5"><path d="M5 12l5 5L20 6"/></svg></span> Send it to your teams or any group</li>
+        <li><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#1B4332" stroke-width="3.5"><path d="M5 12l5 5L20 6"/></svg></span> Broadcast within your mileage — even to players you haven't met</li>
+        <li><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#1B4332" stroke-width="3.5"><path d="M5 12l5 5L20 6"/></svg></span> It lands right in the feed; replies come to your chat</li>
+      </ul>
+    </div>
+    <div class="phone"><div class="device"><div class="screen" data-shot="looking.png" data-label="Looking for players">
+      <img src="screenshots/looking.png" onerror="this.classList.add('hide')" />
+      <div class="ph-placeholder"><div class="pin">📣</div>Looking for players<small>Drop looking.png in marketing/screenshots/</small></div>
+    </div></div></div>
+  </section>
+
+<!-- 3. COURTS -->
+  <section class="feat">
+    <div class="copy">
+      <span class="eyebrow">Court finder</span>
+      <h2 class="serif">Every court,<br>one map.</h2>
+      <p>Public parks, private clubs and school courts — all pinned on a map, with real-time booking built in.</p>
+      <ul>
+        <li><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#1B4332" stroke-width="3.5"><path d="M5 12l5 5L20 6"/></svg></span> Color-coded pins for parks, clubs & schools</li>
+        <li><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#1B4332" stroke-width="3.5"><path d="M5 12l5 5L20 6"/></svg></span> Check availability & book without leaving the app</li>
+      </ul>
+    </div>
+    <div class="phone"><div class="device"><div class="screen" data-shot="courts.png" data-label="Court map">
+      <img src="screenshots/courts.png" onerror="this.classList.add('hide')" />
+      <div class="ph-placeholder"><div class="pin">📍</div>Court map<small>Drop courts.png in marketing/screenshots/</small></div>
+    </div></div></div>
+  </section>
+
+<!-- 5. CALENDAR -->
+  <section class="feat">
+    <div class="copy">
+      <span class="eyebrow">Calendar</span>
+      <h2 class="serif">Never miss<br>a match.</h2>
+      <p>Games, practices and team matches in one view — with a tap to add them to your own calendar.</p>
+      <ul>
+        <li><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#1B4332" stroke-width="3.5"><path d="M5 12l5 5L20 6"/></svg></span> Month & list views, filtered by team</li>
+        <li><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#1B4332" stroke-width="3.5"><path d="M5 12l5 5L20 6"/></svg></span> Export to Google or Apple Calendar</li>
+      </ul>
+    </div>
+    <div class="phone"><div class="device"><div class="screen" data-shot="calendar.png" data-label="Calendar">
+      <img src="screenshots/calendar.png" onerror="this.classList.add('hide')" />
+      <div class="ph-placeholder"><div class="pin">📅</div>Calendar<small>Drop calendar.png in marketing/screenshots/</small></div>
+    </div></div></div>
+  </section>
+
+<!-- 6. PROFILE -->
+  <section class="feat alt">
+    <div class="copy">
+      <span class="eyebrow">Your profile</span>
+      <h2 class="serif">Your tennis<br>identity.</h2>
+      <p>Ratings, highlights and a personal playbook — a home page that shows off how you play.</p>
+      <ul>
+        <li><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#1B4332" stroke-width="3.5"><path d="M5 12l5 5L20 6"/></svg></span> NTRP / UTR, custom tags & story highlights</li>
+        <li><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#1B4332" stroke-width="3.5"><path d="M5 12l5 5L20 6"/></svg></span> Keep serve cues & match notes in your playbook</li>
+      </ul>
+    </div>
+    <div class="phone"><div class="device"><div class="screen" data-shot="profile.png" data-label="Profile">
+      <img src="screenshots/profile.png" onerror="this.classList.add('hide')" />
+      <div class="ph-placeholder"><div class="pin">🙂</div>Profile<small>Drop profile.png in marketing/screenshots/</small></div>
+    </div></div></div>
+  </section>
+
+<!-- 4. TEAMS -->
+  <section class="feat alt">
+    <div class="copy">
+      <span class="eyebrow">Teams & clubs</span>
+      <h2 class="serif">All your teams,<br>one tap away.</h2>
+      <p>From your USTA squad to weekend hitting crews — rosters, chat and clubs together in one place.</p>
+      <ul>
+        <li><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#1B4332" stroke-width="3.5"><path d="M5 12l5 5L20 6"/></svg></span> Every team you're on, at a glance</li>
+        <li><span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="#1B4332" stroke-width="3.5"><path d="M5 12l5 5L20 6"/></svg></span> Group chat, announcements & shared albums</li>
+      </ul>
+    </div>
+    <div class="phone"><div class="device"><div class="screen" data-shot="teams.png" data-label="Teams">
+      <img src="screenshots/teams.png" onerror="this.classList.add('hide')" />
+      <div class="ph-placeholder"><div class="pin">👥</div>Teams<small>Drop teams.png in marketing/screenshots/</small></div>
+    </div></div></div>
+  </section>
+
+<!-- 4b. TEAM MANAGEMENT — captain spotlight -->
+  <section class="mgmt">
+    <span class="eyebrow">🎾 Team management · for captains</span>
+    <h2 class="serif">Captain the whole season,<br>not just the <em>match.</em></h2>
+    <p class="lede">Import your USTA match schedule, gather everyone's availability and lock in the lineup — TennisFriends handles the busywork so captains can focus on tennis.</p>
+    <div class="phones">
+      <div class="pcol">
+        <div class="phone"><div class="device"><div class="screen" data-shot="usta-import.png" data-label="USTA import">
+          <img src="screenshots/usta-import.png" onerror="this.classList.add('hide')" />
+          <div class="ph-placeholder"><div class="pin">🏆</div>USTA import<small>Drop usta-import.png in marketing/screenshots/</small></div>
+        </div></div></div>
+        <div class="pcap">Import from USTA<span>Pull your league matches & schedule automatically — no spreadsheets.</span></div>
+      </div>
+      <div class="pcol">
+        <div class="phone"><div class="device"><div class="screen" data-shot="availability.png" data-label="Availability">
+          <img src="screenshots/availability.png" onerror="this.classList.add('hide')" />
+          <div class="ph-placeholder"><div class="pin">🗓️</div>Availability<small>Drop availability.png in marketing/screenshots/</small></div>
+        </div></div></div>
+        <div class="pcap">Gather availability<span>See who's in for each match, then build the lineup in a tap.</span></div>
+      </div>
+    </div>
+    <div class="feats">
+      <span class="fp"><span class="d">🏆</span> Import USTA matches</span>
+      <span class="fp"><span class="d">🗓️</span> Collect player availability</span>
+      <span class="fp"><span class="d">🎾</span> Set & share lineups</span>
+      <span class="fp"><span class="d">🔔</span> RSVPs & reminders</span>
+      <span class="fp"><span class="d">💸</span> Split court costs</span>
+    </div>
+  </section>
+
+<!-- WHAT MAKES IT DIFFERENT -->
+  <section class="diff">
+    <div class="lead">
+      <h2 class="serif">Built <em>by</em> players,<br>for the people you play with.</h2>
+      <p>TennisFriends isn't another scoreboard. It's the little things that make tennis life easier.</p>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="ic">🏆</div><h3>USTA, imported</h3><p>Pull your league schedule and roster automatically — no logins, no spreadsheets.</p></div>
+      <div class="card"><div class="ic">💸</div><h3>Fair & square</h3><p>Split court fees and team costs per person, with settle-up that just works.</p></div>
+      <div class="card"><div class="ic">✨</div><h3>Story highlights</h3><p>Show your best points with photo & video highlights right on your profile.</p></div>
+      <div class="card"><div class="ic">📡</div><h3>Nearby broadcasts</h3><p>Ping players around you when you've got an open court and need one more.</p></div>
+    </div>
+  </section>
+
+<!-- FOOTER CTA -->
+  <section class="cta">
+    <div class="ball"></div>
+    <h2 class="serif">Join the club.</h2>
+    <p>Your next hit, your next teammate, your next court — all a tap away.</p>
+    <a class="url" href="https://mytennisfriends.com" style="text-decoration:none">mytennisfriends.com</a>
+    <div class="wm serif"><b>Tennis</b><i>Friends</i></div>
+  </section>
+
+</body>
+</html>

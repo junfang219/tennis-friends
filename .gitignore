@@ -82,3 +82,8 @@ ds-bundle/
 .design-sync/.cache/
 .design-sync/learnings/
 .design-sync/node_modules
+
+# Generated marketing artifacts (large binaries). The HTML templates, render
+# scripts, and the QR SVG are tracked; the rendered PNG/PDF outputs are not.
+marketing/**/*.png
+marketing/**/*.pdf
