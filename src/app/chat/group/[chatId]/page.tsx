@@ -101,6 +101,9 @@ export default function GroupChatThreadPage() {
   const [showMembers, setShowMembers] = useState(false);
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
   const [showSplit, setShowSplit] = useState(false);
+  // Which tab the split-cost sheet opens on: "add" from the menu, "balances"
+  // when the user taps an expense announcement to go pay.
+  const [splitInitialTab, setSplitInitialTab] = useState<"add" | "balances">("add");
   const [showMenu, setShowMenu] = useState(false);
   const [showQr, setShowQr] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -394,6 +397,7 @@ export default function GroupChatThreadPage() {
             media_type: string | null;
             shared_post_id: string | null;
             created_at: string;
+            expense_id: string | null;
           };
           // If a message arrives from someone else while the thread is open,
           // bump last_read_at so the badge clears immediately instead of
@@ -427,6 +431,7 @@ export default function GroupChatThreadPage() {
               mediaType: row.media_type || "",
               sharedPostId: row.shared_post_id ?? null,
               createdAt: new Date(row.created_at).toISOString(),
+              expenseId: row.expense_id ?? null,
               sender: sender
                 ? {
                     id: sender.id,
@@ -972,6 +977,27 @@ export default function GroupChatThreadPage() {
                         }`}
                       >
                         <p className="whitespace-pre-wrap break-words">{renderChatMessage(msg.content)}</p>
+                        {msg.expenseId && showChatUtilities && (
+                          // Expense announcements are tappable: jump straight to
+                          // the Balances tab so the debtor can pay.
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSplitInitialTab("balances");
+                              setShowSplit(true);
+                            }}
+                            className={`mt-2 inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+                              isMe
+                                ? "bg-white/20 text-white hover:bg-white/30"
+                                : "bg-court-green/10 text-court-green hover:bg-court-green/20"
+                            }`}
+                          >
+                            <span>View balance &amp; pay</span>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M5 12h14M13 6l6 6-6 6" />
+                            </svg>
+                          </button>
+                        )}
                         <p className={`text-[10px] mt-1 ${isMe ? "text-white/60" : "text-gray-400"}`}>
                           {formatTime(msg.createdAt)}
                         </p>
@@ -1277,6 +1303,7 @@ export default function GroupChatThreadPage() {
                 <button
                   onClick={() => {
                     setShowMenu(false);
+                    setSplitInitialTab("add");
                     setShowSplit(true);
                   }}
                   className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left text-sm text-gray-700"
@@ -1339,6 +1366,7 @@ export default function GroupChatThreadPage() {
           guestNames={chatInfo.guestNames}
           myId={myId}
           keyboardHeight={keyboardHeight}
+          initialTab={splitInitialTab}
           onClose={() => setShowSplit(false)}
           // The expense flow inserts a chat_messages row server-side;
           // the realtime subscription above will pick it up — no need

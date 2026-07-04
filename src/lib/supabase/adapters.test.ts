@@ -506,11 +506,22 @@ describe("snake_case → camelCase adapters", () => {
     const cm = toChatMessageCamel({
       id: "cm", chat_id: "c", sender_id: "s", content: "hey",
       media_url: "", media_type: "", shared_post_id: "p1", created_at: "t",
+      expense_id: "exp1",
       sender: { id: "s", name: "Sender", profile_image_url: "x.png" },
     });
     expect(cm.chatId).toBe("c");
     expect(cm.sharedPostId).toBe("p1");
     expect(cm.sender.profileImageUrl).toBe("x.png");
+    // Expense announcements carry the FK through for the tap-to-pay chip.
+    expect(cm.expenseId).toBe("exp1");
+
+    const plainCm = toChatMessageCamel({
+      id: "cm2", chat_id: "c", sender_id: "s", content: "hey",
+      media_url: "", media_type: "", shared_post_id: null, created_at: "t",
+      expense_id: null,
+      sender: { id: "s", name: "Sender", profile_image_url: "" },
+    });
+    expect(plainCm.expenseId).toBeNull();
   });
 
   // Regression: all chat surfaces feed createdAt into new Date(...) for
@@ -543,6 +554,7 @@ describe("snake_case → camelCase adapters", () => {
     const cm = toChatMessageCamel({
       id: "cm", chat_id: "c", sender_id: "s", content: "hey",
       media_url: "", media_type: "", shared_post_id: null, created_at: pgStamp,
+      expense_id: null,
       sender: { id: "s", name: "Sender", profile_image_url: "" },
     });
     expect(cm.createdAt).toBe(expected);

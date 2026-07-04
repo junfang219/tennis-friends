@@ -26,6 +26,9 @@ export interface ChatMessage {
   media_type: string;
   shared_post_id: string | null;
   created_at: string;
+  // Set when this message is a "Split a cost" expense announcement — the FK
+  // links it to the expenses row, and powers the tap-to-open-balances chip.
+  expense_id: string | null;
   sender: { id: string; name: string; profile_image_url: string };
 }
 
@@ -301,7 +304,7 @@ export async function getChatBundle(
          user:profiles!chat_participants_user_id_fkey ( id, name, profile_image_url )
        ),
        messages:chat_messages!chat_messages_chat_id_fkey (
-         id, chat_id, sender_id, content, media_url, media_type, shared_post_id, created_at,
+         id, chat_id, sender_id, content, media_url, media_type, shared_post_id, created_at, expense_id,
          sender:profiles!chat_messages_sender_id_fkey ( id, name, profile_image_url )
        )`
     )
@@ -350,7 +353,7 @@ export async function listChatMessages(
   let query = supabase
     .from("chat_messages")
     .select(
-      `id, chat_id, sender_id, content, media_url, media_type, shared_post_id, created_at,
+      `id, chat_id, sender_id, content, media_url, media_type, shared_post_id, created_at, expense_id,
        sender:profiles!chat_messages_sender_id_fkey ( id, name, profile_image_url )`
     )
     .eq("chat_id", chatId)
