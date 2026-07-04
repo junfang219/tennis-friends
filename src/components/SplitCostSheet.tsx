@@ -117,11 +117,15 @@ export default function SplitCostSheet({
   keyboardHeight,
   onClose,
   onExpenseCreated,
+  initialTab = "add",
 }: {
   chatId: string;
   participants: Participant[];
   guestNames: string[];
   myId: string;
+  // Which tab to open on. Opening from a tapped expense message jumps
+  // straight to "balances" so the user can pay; the menu opens "add".
+  initialTab?: "add" | "balances";
   // Passed in from the parent (chat page) instead of read via useKeyboardHeight
   // here. The parent's hook is already subscribed to Capacitor's keyboard
   // events by the time the user opens this sheet, so the very first
@@ -132,7 +136,7 @@ export default function SplitCostSheet({
   onClose: () => void;
   onExpenseCreated: () => void;
 }) {
-  const [tab, setTab] = useState<"add" | "balances">("add");
+  const [tab, setTab] = useState<"add" | "balances">(initialTab);
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);

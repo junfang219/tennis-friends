@@ -577,6 +577,8 @@ export interface ChatMessageCamel {
   mediaType: string;
   sharedPostId: string | null;
   createdAt: string;
+  // Non-null when this message is a "Split a cost" expense announcement.
+  expenseId: string | null;
   sender: { id: string; name: string; profileImageUrl: string };
 }
 
@@ -590,6 +592,7 @@ export function toChatMessageCamel(m: ChatMessage): ChatMessageCamel {
     mediaType: m.media_type,
     sharedPostId: m.shared_post_id,
     createdAt: pgToIso(m.created_at),
+    expenseId: m.expense_id ?? null,
     sender: {
       id: m.sender.id,
       name: m.sender.name,
