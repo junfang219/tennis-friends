@@ -95,6 +95,33 @@ type CalendarBundle = {
   userGroups: GroupOption[];
 };
 
+// Shown only on the genuinely-cold first load (no persisted snapshot). A
+// pulsing month-grid + a couple of event placeholders read as "loading"
+// instead of the old empty grid that looked like "you have nothing."
+function CalendarLoadingSkeleton() {
+  return (
+    <div className="animate-fade-in-up stagger-2 space-y-5" aria-busy="true" aria-label="Loading your calendar">
+      <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div className="w-8 h-8 rounded-lg bg-gray-100 animate-pulse" />
+          <div className="w-32 h-5 rounded bg-gray-100 animate-pulse" />
+          <div className="w-8 h-8 rounded-lg bg-gray-100 animate-pulse" />
+        </div>
+        <div className="grid grid-cols-7">
+          {Array.from({ length: 42 }).map((_, i) => (
+            <div key={i} className="h-16 border-b border-r border-gray-50 flex flex-col items-center justify-start pt-1.5">
+              <div className="w-7 h-7 rounded-full bg-gray-100 animate-pulse" />
+            </div>
+          ))}
+        </div>
+      </div>
+      {[0, 1].map((i) => (
+        <div key={i} className="h-20 rounded-2xl bg-white border border-court-green-pale/20 shadow-sm animate-pulse" />
+      ))}
+    </div>
+  );
+}
+
 export default function CalendarPage() {
   const [selectedGroup, setSelectedGroup] = useState<string>("all");
   const [currentMonth, setCurrentMonth] = useState(() => {
@@ -116,39 +143,22 @@ export default function CalendarPage() {
       return { events: [], matches: [], practices: [], personalEvents: [], userGroups: [] };
     }
 
-    // 1) Non-archived group memberships — drives the filter dropdown and
-    // is the eligible set for matches/practices.
-    const groupsRes = await supabase
-      .from("group_members")
-      .select(
-        `group_id, archived_at,
-         group:groups!group_members_group_id_fkey ( id, name )`
-      )
-      .eq("user_id", me)
-      .is("archived_at", null);
-    if (groupsRes.error) throw groupsRes.error;
-    type GroupRow = {
-      group_id: string;
-      group: { id: string; name: string } | null;
-    };
-    const userGroupRows = (groupsRes.data ?? []) as unknown as GroupRow[];
-    const userGroupIds = userGroupRows.map((r) => r.group_id);
-    const userGroups: GroupOption[] = userGroupRows
-      .filter((r): r is GroupRow & { group: { id: string; name: string } } => r.group !== null)
-      .map((r) => ({ id: r.group.id, name: r.group.name }));
-
-    // Honor the dropdown only if the chosen group is in the user's
-    // non-archived list — otherwise treat as no filter.
-    const groupFilterId =
-      selectedGroup !== "all" && userGroupIds.includes(selectedGroup)
-        ? selectedGroup
-        : null;
-    const teamGroupFilter = groupFilterId ? [groupFilterId] : userGroupIds;
-
-    // 2) Find-players posts I'm involved in: posts I authored + posts I
-    // have an approved play_request for. PostgREST doesn't support
-    // OR-across-subqueries cleanly, so fan out and merge.
-    const [authoredRes, approvedRes] = await Promise.all([
+    // First wave — three independent queries run together: non-archived
+    // group memberships (drives the filter dropdown + team scope) and the two
+    // find-players post sources I'm involved in (posts I authored + posts I
+    // have an approved play_request for). PostgREST can't OR across subqueries
+    // cleanly, so we fan the posts out and merge. None depend on each other,
+    // so running them in one round-trip instead of a waterfall cuts the
+    // calendar's cold-load latency.
+    const [groupsRes, authoredRes, approvedRes] = await Promise.all([
+      supabase
+        .from("group_members")
+        .select(
+          `group_id, archived_at,
+           group:groups!group_members_group_id_fkey ( id, name )`
+        )
+        .eq("user_id", me)
+        .is("archived_at", null),
       supabase
         .from("posts")
         .select(
@@ -175,8 +185,28 @@ export default function CalendarPage() {
         .eq("user_id", me)
         .eq("status", "approved"),
     ]);
+    if (groupsRes.error) throw groupsRes.error;
     if (authoredRes.error) throw authoredRes.error;
     if (approvedRes.error) throw approvedRes.error;
+
+    // Memberships → filter options + eligible team scope for matches/practices.
+    type GroupRow = {
+      group_id: string;
+      group: { id: string; name: string } | null;
+    };
+    const userGroupRows = (groupsRes.data ?? []) as unknown as GroupRow[];
+    const userGroupIds = userGroupRows.map((r) => r.group_id);
+    const userGroups: GroupOption[] = userGroupRows
+      .filter((r): r is GroupRow & { group: { id: string; name: string } } => r.group !== null)
+      .map((r) => ({ id: r.group.id, name: r.group.name }));
+
+    // Honor the dropdown only if the chosen group is in the user's
+    // non-archived list — otherwise treat as no filter.
+    const groupFilterId =
+      selectedGroup !== "all" && userGroupIds.includes(selectedGroup)
+        ? selectedGroup
+        : null;
+    const teamGroupFilter = groupFilterId ? [groupFilterId] : userGroupIds;
 
     type PostRow = {
       id: string;
@@ -249,30 +279,74 @@ export default function CalendarPage() {
       ? events.filter((e) => e.groups.some((g) => g.id === groupFilterId))
       : events;
 
-    // Approved-player roster for the events we'll return. Calendar export
-    // shows "Players (filled/total): Creator, Approved" — adaptPost seeded
-    // the creator; this query adds approved play_request users. De-dupe by
-    // user_id so a creator who somehow shows up in their own play_requests
-    // isn't listed twice.
+    // Second wave — everything that depends on the first wave runs together
+    // instead of in series (this was the bulk of the cold-load latency).
+    // Mutually independent: the approved-player roster (needs the event ids),
+    // team matches + practices (need the team scope), and personal events.
     const eventIds = filteredEvents.map((e) => e.id);
-    if (eventIds.length > 0) {
-      const approvedRes = await supabase
-        .from("play_requests")
-        .select(
-          `post_id, user_id,
-           user:profiles!play_requests_user_id_fkey ( id, name )`
-        )
-        .in("post_id", eventIds)
-        .eq("status", "approved");
-      if (approvedRes.error) throw approvedRes.error;
+    const rosterPromise =
+      eventIds.length > 0
+        ? supabase
+            .from("play_requests")
+            .select(
+              `post_id, user_id,
+               user:profiles!play_requests_user_id_fkey ( id, name )`
+            )
+            .in("post_id", eventIds)
+            .eq("status", "approved")
+        : Promise.resolve({ data: [] as unknown, error: null });
+    // Team matches — embed availabilities so we can surface my own lineupSlot.
+    // (The embed alias `availabilities` resolves via the match_availabilities
+    // → team_matches FK, same as src/app/groups/[id]/calendar/page.tsx.)
+    const matchesPromise = teamGroupFilter.length
+      ? supabase
+          .from("team_matches")
+          .select(
+            `id, group_id, match_date, match_time, location, notes,
+             group:groups!team_matches_group_id_fkey ( id, name ),
+             availabilities ( user_id, lineup_slot )`
+          )
+          .in("group_id", teamGroupFilter)
+          .order("match_date", { ascending: true })
+          .order("match_time", { ascending: true })
+      : Promise.resolve({ data: [] as unknown, error: null });
+    // Practices I'm "playing" — start from team_practices (typed) and embed
+    // my own availability row, plus the series→group chain for naming/scope.
+    const practicesPromise = teamGroupFilter.length
+      ? supabase
+          .from("team_practices")
+          .select(
+            `id, practice_date,
+             series:practice_series!team_practices_series_id_fkey (
+               id, name, location, practice_time, notes, group_id,
+               group:groups!practice_series_group_id_fkey ( id, name )
+             ),
+             availabilities!inner ( user_id, status )`
+          )
+          .eq("availabilities.user_id", me)
+          .eq("availabilities.status", "playing")
+      : Promise.resolve({ data: [] as unknown, error: null });
+    // Personal events — the user's own manual calendar entries. Not tied to
+    // any group, always the user's own, so they show in every view.
+    const [rosterRes, matchesRes, practicesRes, personalEvents] = await Promise.all([
+      rosterPromise,
+      matchesPromise,
+      practicesPromise,
+      listMyPersonalEvents(supabase),
+    ]);
 
+    // Approved-player roster → playerNames. Calendar export shows
+    // "Players (filled/total): Creator, Approved" — adaptPost seeded the
+    // creator; this adds approved play_request users, de-duped by user_id.
+    if (rosterRes.error) throw rosterRes.error;
+    if (eventIds.length > 0) {
       type ApprovedRow = {
         post_id: string;
         user_id: string;
         user: { id: string; name: string } | null;
       };
       const approvedByPost = new Map<string, Array<{ id: string; name: string }>>();
-      for (const r of (approvedRes.data ?? []) as unknown as ApprovedRow[]) {
+      for (const r of (rosterRes.data ?? []) as unknown as ApprovedRow[]) {
         if (!r.user || !r.user.name) continue;
         const list = approvedByPost.get(r.post_id) ?? [];
         list.push({ id: r.user.id, name: r.user.name });
@@ -290,22 +364,6 @@ export default function CalendarPage() {
       }
     }
 
-    // 3) Team matches — for the eligible team set. Embed availabilities
-    // so we can surface my own lineupSlot. (The embed alias is
-    // `availabilities`, same as src/app/groups/[id]/calendar/page.tsx —
-    // PostgREST resolves it via the match_availabilities → team_matches FK.)
-    const matchesRes = teamGroupFilter.length
-      ? await supabase
-          .from("team_matches")
-          .select(
-            `id, group_id, match_date, match_time, location, notes,
-             group:groups!team_matches_group_id_fkey ( id, name ),
-             availabilities ( user_id, lineup_slot )`
-          )
-          .in("group_id", teamGroupFilter)
-          .order("match_date", { ascending: true })
-          .order("match_time", { ascending: true })
-      : { data: [], error: null };
     if (matchesRes.error) throw matchesRes.error;
 
     type MatchRow = {
@@ -336,23 +394,6 @@ export default function CalendarPage() {
       }
     );
 
-    // 4) Practices I'm "playing" — start from team_practices (typed) and
-    // embed availabilities filtered to my own row, plus the series→group
-    // chain we need for naming + filter scope.
-    const practicesRes = teamGroupFilter.length
-      ? await supabase
-          .from("team_practices")
-          .select(
-            `id, practice_date,
-             series:practice_series!team_practices_series_id_fkey (
-               id, name, location, practice_time, notes, group_id,
-               group:groups!practice_series_group_id_fkey ( id, name )
-             ),
-             availabilities!inner ( user_id, status )`
-          )
-          .eq("availabilities.user_id", me)
-          .eq("availabilities.status", "playing")
-      : { data: [], error: null };
     if (practicesRes.error) throw practicesRes.error;
 
     type PracticeRow = {
@@ -390,19 +431,19 @@ export default function CalendarPage() {
         (a.practiceDate + a.practiceTime).localeCompare(b.practiceDate + b.practiceTime)
       );
 
-    // 5) Personal events — the user's own manual calendar entries. Not tied to
-    // any group, and always the user's own, so they show in every view
-    // (including a team filter) rather than vanishing when one is applied.
-    const personalEvents = await listMyPersonalEvents(supabase);
-
     return { events: filteredEvents, matches, practices, personalEvents, userGroups };
-  });
+  }, { persist: true });
 
   const events = bundle.data?.events ?? [];
   const matches = bundle.data?.matches ?? [];
   const practices = bundle.data?.practices ?? [];
   const personalEvents = bundle.data?.personalEvents ?? [];
   const groups = bundle.data?.userGroups ?? [];
+
+  // Only the genuinely-cold first load (no persisted snapshot yet) has no
+  // data. Returning users get the persisted bundle synchronously, so this
+  // stays false and they never see the skeleton — they see their events.
+  const showSkeleton = bundle.isLoading && !bundle.data;
 
   // Modal state: { } for a fresh event, { event } to edit an existing one.
   const [eventModal, setEventModal] = useState<
@@ -553,7 +594,9 @@ export default function CalendarPage() {
         </div>
       )}
 
-      {view === "calendar" ? (
+      {showSkeleton ? (
+        <CalendarLoadingSkeleton />
+      ) : view === "calendar" ? (
         <>
           {/* Calendar */}
           <div className="animate-fade-in-up stagger-2 bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden">
