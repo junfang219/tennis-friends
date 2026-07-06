@@ -43,10 +43,19 @@ const noopSubscribe = () => () => {};
 export function useCachedQuery<T>(
   key: string | null,
   fetcher: () => Promise<T>,
+  options?: {
+    /**
+     * Mirror the cached value to localStorage so it paints on the first
+     * render after a cold app relaunch, instead of flashing empty while the
+     * fetcher runs. Use for expensive, first-screen queries (e.g. calendar).
+     */
+    persist?: boolean;
+  },
 ): UseCachedQueryResult<T> {
+  const persist = options?.persist ?? false;
   const data = useSyncExternalStore<T | undefined>(
     key ? (cb) => subscribeCached(key, cb) : noopSubscribe,
-    () => (key ? getCached<T>(key) : undefined),
+    () => (key ? getCached<T>(key, persist) : undefined),
     () => undefined,
   );
 
@@ -67,7 +76,7 @@ export function useCachedQuery<T>(
     fetcherRef.current()
       .then((result) => {
         if (cancelled) return;
-        setCached(key, result);
+        setCached(key, result, persist);
         setError(null);
       })
       .catch((err) => {
@@ -77,30 +86,30 @@ export function useCachedQuery<T>(
     return () => {
       cancelled = true;
     };
-  }, [key]);
+  }, [key, persist]);
 
   const refetch = useCallback(async () => {
     if (!key) return;
     try {
       const result = await fetcherRef.current();
-      setCached(key, result);
+      setCached(key, result, persist);
       setError(null);
     } catch (err) {
       setError(toError(err));
     }
-  }, [key]);
+  }, [key, persist]);
 
   const mutate = useCallback(
     (next: T | ((prev: T | undefined) => T)) => {
       if (!key) return;
-      const current = getCached<T>(key);
+      const current = getCached<T>(key, persist);
       const value =
         typeof next === "function"
           ? (next as (prev: T | undefined) => T)(current)
           : next;
-      setCached(key, value);
+      setCached(key, value, persist);
     },
-    [key],
+    [key, persist],
   );
 
   // While key is null we have no real "loading" — caller deliberately opted
