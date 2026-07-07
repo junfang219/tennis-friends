@@ -1373,7 +1373,7 @@ export default function AvailabilityPage() {
           <>
             <div className="fixed inset-0 z-[998]" onClick={() => setMemberMenu(null)} />
             <div
-              className="fixed z-[999] w-52 bg-white rounded-xl shadow-2xl border border-gray-200 p-1.5"
+              className="fixed z-[999] w-64 bg-white rounded-xl shadow-2xl border border-gray-200 p-1.5"
               style={{ top: memberMenu.top, left: memberMenu.left }}
             >
               <button
@@ -1383,13 +1383,16 @@ export default function AvailabilityPage() {
                   setMemberMenu(null);
                   setLinkTarget({ id: mm.memberId, name: mm.name });
                 }}
-                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left text-sm text-gray-800 hover:bg-gray-50"
+                className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-lg text-left hover:bg-gray-50"
               >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-court-green shrink-0">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-court-green shrink-0 mt-0.5">
                   <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
                   <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
                 </svg>
-                Link to account
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-gray-800">Link to a friend</span>
+                  <span className="block text-[11px] text-gray-500">Attach to a friend who&apos;s already on the app</span>
+                </span>
               </button>
               <button
                 type="button"
@@ -1398,13 +1401,16 @@ export default function AvailabilityPage() {
                   setMemberMenu(null);
                   if (mm) void inviteToRsvp(mm.memberId, mm.name);
                 }}
-                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left text-sm text-gray-800 hover:bg-gray-50"
+                className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-lg text-left hover:bg-gray-50"
               >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-court-green shrink-0">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-court-green shrink-0 mt-0.5">
                   <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
                   <polyline points="22,6 12,13 2,6" />
                 </svg>
-                Invite to RSVP
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-gray-800">Send RSVP / join link</span>
+                  <span className="block text-[11px] text-gray-500">They RSVP now — and can sign in to join the team</span>
+                </span>
               </button>
             </div>
           </>,
