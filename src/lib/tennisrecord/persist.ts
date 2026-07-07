@@ -31,7 +31,14 @@ export type UpsertTeamParams = {
 };
 
 export type UpsertTeamResult =
-  | { teamId: string }
+  | {
+      teamId: string;
+      // True only when this was an OWN-team import that took over the group's
+      // own-team slot from a *different* previously-imported team (the "I
+      // imported the wrong team, re-import the right one" case). Lets the
+      // caller clear the stale imported schedule so the newest import wins.
+      ownReplaced?: boolean;
+    }
   | { error: string; status: number };
 
 export async function upsertOpponentTeam(
@@ -49,6 +56,36 @@ export async function upsertOpponentTeam(
     fetchError,
     players,
   } = params;
+
+  // Only one own team is allowed per group (opponent_teams_one_own_per_group,
+  // a partial unique index on group_id WHERE is_own). When importing the OWN
+  // team, if a *different* team currently holds that slot — e.g. the captain
+  // imported the wrong team first — remove it so the newest import always
+  // takes over instead of hitting the unique index. Re-importing the SAME
+  // team (matching source_team_key) is left to the update path below, which
+  // preserves its cached data.
+  let ownReplaced = false;
+  if (isOwn) {
+    const { data: currentOwn } = await supabase
+      .from("opponent_teams")
+      .select("id, source_team_key")
+      .eq("group_id", groupId)
+      .eq("is_own", true)
+      .maybeSingle();
+    if (currentOwn && currentOwn.source_team_key !== teamKey) {
+      const { error: delErr } = await supabase
+        .from("opponent_teams")
+        .delete()
+        .eq("id", currentOwn.id);
+      if (delErr) {
+        return {
+          error: delErr.message,
+          status: delErr.code === "42501" ? 403 : 400,
+        };
+      }
+      ownReplaced = true;
+    }
+  }
 
   // The partial unique index (group_id, source_team_key) can't be an
   // onConflict target, so look the row up explicitly.
@@ -139,7 +176,7 @@ export async function upsertOpponentTeam(
     }
   }
 
-  return { teamId: opponentTeamId };
+  return { teamId: opponentTeamId, ownReplaced };
 }
 
 // Fetch a saved team + roster in the shape the scouting UI consumes.

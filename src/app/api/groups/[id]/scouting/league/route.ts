@@ -131,6 +131,26 @@ async function leagueScout(
     );
   }
 
+  // 2b. If this import replaced a *different* own team (captain imported the
+  // wrong team first, now re-importing the right one), clear the previously
+  // imported league schedule so the fresh import covers it instead of piling
+  // onto the wrong team's matches. Only scouting-linked rows (opponent_team_id
+  // set) are removed — manually-entered matches are left untouched. The
+  // schedule then re-imports via …/import-schedule.
+  if (ownResult.ownReplaced) {
+    const { error: clearErr } = await supabase
+      .from("team_matches")
+      .delete()
+      .eq("group_id", groupId)
+      .not("opponent_team_id", "is", null);
+    if (clearErr) {
+      return NextResponse.json(
+        { error: clearErr.message },
+        { status: clearErr.code === "42501" ? 403 : 400 },
+      );
+    }
+  }
+
   // 3. Discover opponents from the schedule; never scout ourselves.
   let links = discoverOpponentLinks(schedule).filter(
     (l) => l.teamKey !== ownTeamKey,
