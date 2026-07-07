@@ -630,10 +630,10 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
         <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm" placeholder="e.g. Saturday Doubles Crew" autoFocus />
       </div>
       <div className="mb-4">
-        <label className="block text-sm font-semibold text-gray-700 mb-1">Select Friends ({selectedIds.size} selected)</label>
-        <p className="text-xs text-gray-500 mb-2">Optional — you can invite or remove members anytime later from the team roster.</p>
+        <label className="block text-sm font-semibold text-gray-700 mb-1">Add friends to your team ({selectedIds.size} selected)</label>
+        <p className="text-xs text-gray-500 mb-2">Tap friends to add them as team members now. After creating, you can invite others — including people not on the app — and edit members anytime from the team Roster.</p>
         {friends.length === 0 ? (
-          <p className="text-sm text-gray-400 py-4 text-center">No friends to add yet. You can still create the team and add members later.</p>
+          <p className="text-sm text-gray-400 py-4 text-center">No friends to add yet — create the team, then invite people and manage members from the team Roster.</p>
         ) : (
           <>
             <div className="relative mb-2">
