@@ -11,11 +11,11 @@ import RsvpPicker, { pickerOptionMeta } from "@/components/attendance/RsvpPicker
 import AttendanceTally from "@/components/attendance/AttendanceTally";
 import { normalizeMatchStatus, RSVP } from "@/lib/rsvpStatus";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage, placeholderInScope, addRosterPlaceholders } from "@/lib/supabase/queries";
+import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage, placeholderInScope, addRosterPlaceholders, getRosterPlaceholderLinks, type PlaceholderLink } from "@/lib/supabase/queries";
+import LinkMemberModal from "@/components/groups/LinkMemberModal";
 import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { errorMessage } from "@/lib/errorMessage";
 import { AvailabilityTabs } from "@/components/availability/AvailabilityTabs";
-import SendRsvpPanel from "@/components/availability/SendRsvpPanel";
 import FindUstaTeam from "@/components/scouting/FindUstaTeam";
 import SendLineupMenu from "@/components/availability/SendLineupMenu";
 import { closePoll, seedPollAvailability } from "@/lib/supabase/queries/availabilityPolls";
@@ -112,12 +112,24 @@ export default function AvailabilityPage() {
 
   // Add/edit-match form — editingMatchId null = creating, set = editing that match
   const [showAdd, setShowAdd] = useState(false);
-  const [showSendRsvp, setShowSendRsvp] = useState(false);
   const [showUstaImport, setShowUstaImport] = useState(false);
   // Captain-entered name for a new roster row on the availability table.
   const [addRowName, setAddRowName] = useState("");
   const [addingRow, setAddingRow] = useState(false);
   const [addRowError, setAddRowError] = useState("");
+
+  // Placeholder a captain is linking to a friend's account, if any.
+  const [linkTarget, setLinkTarget] = useState<{ id: string; name: string } | null>(null);
+  // Per-placeholder action menu (Link / Invite), anchored to the corner badge.
+  const [memberMenu, setMemberMenu] = useState<{
+    memberId: string;
+    name: string;
+    top: number;
+    left: number;
+  } | null>(null);
+  // Personal RSVP links for every placeholder (captain-only), preloaded so the
+  // Invite action can share synchronously within the tap (Web Share gesture).
+  const [placeholderLinks, setPlaceholderLinks] = useState<PlaceholderLink[]>([]);
   const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
   const [matchDate, setMatchDate] = useState("");
   const [matchTime, setMatchTime] = useState("");
@@ -265,6 +277,17 @@ export default function AvailabilityPage() {
     setLoading(false);
   };
 
+  // Personal RSVP links for each placeholder (captain-gated RPC). Preloaded so
+  // "Invite to RSVP" can call nativeShare synchronously within the tap.
+  const loadPlaceholderLinks = async () => {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      setPlaceholderLinks(await getRosterPlaceholderLinks(supabase, groupId));
+    } catch {
+      setPlaceholderLinks([]);
+    }
+  };
+
   // Captain adds a roster row by name straight from the availability table.
   // Match-scoped so it shows on the matches matrix; the captain can link them
   // to an account or share their RSVP link later.
@@ -278,16 +301,48 @@ export default function AvailabilityPage() {
       await addRosterPlaceholders(supabase, groupId, [{ name }], "match");
       setAddRowName("");
       await loadAll();
+      await loadPlaceholderLinks();
     } catch (e) {
       setAddRowError(errorMessage(e, "Could not add player."));
     }
     setAddingRow(false);
   };
 
+  // Share a placeholder's personal RSVP link (covers all their upcoming matches).
+  const inviteToRsvp = async (memberId: string, name: string) => {
+    let token = placeholderLinks.find((l) => l.id === memberId)?.token;
+    if (!token) {
+      // Cold cache (e.g. just-added row) — fetch then share.
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const links = await getRosterPlaceholderLinks(supabase, groupId);
+        setPlaceholderLinks(links);
+        token = links.find((l) => l.id === memberId)?.token;
+      } catch {
+        // fall through
+      }
+    }
+    if (!token) return;
+    await nativeShare(
+      {
+        title: `RSVP for ${team?.name ?? "your team"}`,
+        text: `${name}, you've been added to ${team?.name ?? "our team"} on TennisFriend — tap to set your availability (no signup needed): `,
+        url: `${window.location.origin}/rsvp/${token}`,
+      },
+      "rosterShare"
+    );
+  };
+
   useEffect(() => {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId]);
+
+  // Preload placeholder RSVP links once we know the caller is a captain.
+  useEffect(() => {
+    if (isCaptain) void loadPlaceholderLinks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCaptain, groupId]);
 
   // Seed the Add Match form from a poll → match handoff (?prefillDate=&prefillTime=).
   // Runs once on mount; clears the params from the URL so a refresh won't re-open the form.
@@ -866,17 +921,6 @@ export default function AvailabilityPage() {
         {isCaptain && (
           <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
             <button
-              onClick={() => setShowSendRsvp(true)}
-              className="btn-secondary btn-sm inline-flex"
-              title="Send an RSVP request for selected matches to your team"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="22" y1="2" x2="11" y2="13" />
-                <polygon points="22 2 15 22 11 13 2 9 22 2" />
-              </svg>
-              Send RSVP
-            </button>
-            <button
               onClick={() => setShowUstaImport(true)}
               className="btn-secondary btn-sm inline-flex"
               title="Import your USTA league match schedule from TennisRecord"
@@ -917,32 +961,6 @@ export default function AvailabilityPage() {
           </div>
         )}
       </div>
-
-      {/* Send-RSVP modal — captain picks matches and shares an RSVP request with
-          the whole team (one in-app link) and/or each guest (personal link). */}
-      {showSendRsvp && isCaptain && typeof document !== "undefined" &&
-        createPortal(
-          <div className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center">
-            <div className="fixed inset-0 bg-black/40" onClick={() => setShowSendRsvp(false)} />
-            <div className="relative w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85vh] overflow-y-auto p-5">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="font-display text-lg font-bold text-gray-900">Send RSVP</h2>
-                <button
-                  onClick={() => setShowSendRsvp(false)}
-                  className="p-1 text-gray-400 hover:text-gray-600"
-                  aria-label="Close"
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              </div>
-              <SendRsvpPanel groupId={groupId} groupName={team.name} matches={matches} onChanged={loadAll} />
-            </div>
-          </div>,
-          document.body
-        )}
 
       {/* Import USTA schedule modal — reuses FindUstaTeam (search → preview →
           import) right where the captain manages matches. Imported league
@@ -1118,9 +1136,11 @@ export default function AvailabilityPage() {
                   return (
                     <tr key={m.id} className="border-b border-gray-100 last:border-b-0">
                       <td className="sticky left-0 z-10 bg-white p-3 border-r border-gray-200">
-                        <div className={`flex items-center gap-2 ${m.isPlaceholder ? "opacity-60" : ""}`}>
+                        <div className="flex items-center gap-2">
                           <div className="relative shrink-0">
-                            <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
+                            <span className={`block ${m.isPlaceholder ? "opacity-60" : ""}`}>
+                              <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
+                            </span>
                             {isCapRow && (
                               <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-ball-yellow flex items-center justify-center ring-2 ring-white shadow-sm">
                                 <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className="text-court-green">
@@ -1128,8 +1148,27 @@ export default function AvailabilityPage() {
                                 </svg>
                               </span>
                             )}
+                            {isCaptain && m.isPlaceholder && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  setMemberMenu({ memberId: m.id, name: m.user.name, top: rect.bottom + 6, left: rect.left });
+                                }}
+                                className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-court-green text-white flex items-center justify-center ring-2 ring-white shadow-sm hover:bg-court-green-dark"
+                                aria-label={`Manage ${m.user.name}`}
+                                title="Link to an account or invite by link"
+                              >
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                                  <circle cx="9" cy="7" r="4" />
+                                  <line x1="19" y1="8" x2="19" y2="14" />
+                                  <line x1="22" y1="11" x2="16" y2="11" />
+                                </svg>
+                              </button>
+                            )}
                           </div>
-                          <div className="min-w-0">
+                          <div className={`min-w-0 ${m.isPlaceholder ? "opacity-60" : ""}`}>
                             <p className="text-xs font-semibold text-gray-900 truncate">
                               {m.user.name}{isMe ? " (you)" : ""}
                             </p>
@@ -1203,9 +1242,11 @@ export default function AvailabilityPage() {
                   const a = getAvail(activeMatch, m.id);
                   return (
                     <div key={m.id} className="p-3">
-                      <div className={`flex items-center gap-2 mb-2 ${m.isPlaceholder ? "opacity-60" : ""}`}>
+                      <div className="flex items-center gap-2 mb-2">
                         <div className="relative shrink-0">
-                          <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
+                          <span className={`block ${m.isPlaceholder ? "opacity-60" : ""}`}>
+                            <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
+                          </span>
                           {isCapRow && (
                             <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-ball-yellow flex items-center justify-center ring-2 ring-white shadow-sm">
                               <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className="text-court-green">
@@ -1213,8 +1254,27 @@ export default function AvailabilityPage() {
                               </svg>
                             </span>
                           )}
+                          {isCaptain && m.isPlaceholder && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                setMemberMenu({ memberId: m.id, name: m.user.name, top: rect.bottom + 6, left: rect.left });
+                              }}
+                              className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-court-green text-white flex items-center justify-center ring-2 ring-white shadow-sm hover:bg-court-green-dark"
+                              aria-label={`Manage ${m.user.name}`}
+                              title="Link to an account or invite by link"
+                            >
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                                <circle cx="9" cy="7" r="4" />
+                                <line x1="19" y1="8" x2="19" y2="14" />
+                                <line x1="22" y1="11" x2="16" y2="11" />
+                              </svg>
+                            </button>
+                          )}
                         </div>
-                        <div className="min-w-0">
+                        <div className={`min-w-0 ${m.isPlaceholder ? "opacity-60" : ""}`}>
                           <p className="text-sm font-semibold text-gray-900 truncate">
                             {m.user.name}{isMe ? " (you)" : ""}
                           </p>
@@ -1301,6 +1361,67 @@ export default function AvailabilityPage() {
             <span className="text-gray-400 italic">· As captain, tap any Avail or Lineup cell to edit it for any member.</span>
           )}
         </div>
+      )}
+
+      {/* Placeholder action menu (captain): link to a friend's account, or
+          share the player's personal RSVP link. Anchored to the corner badge. */}
+      {memberMenu && typeof document !== "undefined" &&
+        createPortal(
+          <>
+            <div className="fixed inset-0 z-[998]" onClick={() => setMemberMenu(null)} />
+            <div
+              className="fixed z-[999] w-52 bg-white rounded-xl shadow-2xl border border-gray-200 p-1.5"
+              style={{ top: memberMenu.top, left: memberMenu.left }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  const mm = memberMenu;
+                  setMemberMenu(null);
+                  setLinkTarget({ id: mm.memberId, name: mm.name });
+                }}
+                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left text-sm text-gray-800 hover:bg-gray-50"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-court-green shrink-0">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                </svg>
+                Link to account
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const mm = memberMenu;
+                  setMemberMenu(null);
+                  if (mm) void inviteToRsvp(mm.memberId, mm.name);
+                }}
+                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left text-sm text-gray-800 hover:bg-gray-50"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-court-green shrink-0">
+                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                  <polyline points="22,6 12,13 2,6" />
+                </svg>
+                Invite to RSVP
+              </button>
+            </div>
+          </>,
+          document.body
+        )}
+
+      {/* Link a placeholder to an existing friend's account (reused from Settings). */}
+      {linkTarget && (
+        <LinkMemberModal
+          member={linkTarget}
+          existingMemberUserIds={team.members
+            .filter((mm) => !mm.isPlaceholder && mm.user.id)
+            .map((mm) => mm.user.id)}
+          onClose={() => setLinkTarget(null)}
+          onLinked={() => {
+            setLinkTarget(null);
+            loadAll();
+            void loadPlaceholderLinks();
+          }}
+        />
       )}
 
       {/* Status popover (self or, for captains, any member; portal) — escapes the table's overflow clipping */}
