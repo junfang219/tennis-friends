@@ -222,6 +222,9 @@ export default function GuestRsvpPage() {
   // Where the account CTAs point: a signed-in viewer goes straight to claim;
   // an anonymous viewer registers first (both end at the claim → team flow).
   const accountHref = viewer ? `/rsvp-claim/${token}` : claimHref;
+  const firstName = guestName.split(" ")[0] || "";
+  // Nothing to RSVP to yet — show reassurance instead of a dead "submit" button.
+  const noEvents = view.matches.length === 0 && view.practices.length === 0 && polls.length === 0;
 
   return (
     <div className="max-w-md mx-auto px-4 py-8 pb-28">
@@ -310,10 +313,20 @@ export default function GuestRsvpPage() {
             ))}
           </Section>
         )}
-        {view.matches.length === 0 && view.practices.length === 0 && polls.length === 0 && (
-          <p className="text-center text-sm text-gray-500 py-8">
-            No upcoming matches, practices, or polls yet.
-          </p>
+        {noEvents && (
+          <div className="rounded-2xl border border-court-green-pale/40 bg-court-green/5 p-5 text-center">
+            <p className="font-display text-lg font-bold text-gray-900">
+              You&apos;re on the list{firstName ? `, ${firstName}` : ""}! 🎾
+            </p>
+            <p className="text-sm text-gray-600 mt-1">
+              {group.name} doesn&apos;t have any matches to RSVP to yet. As soon as your
+              captain posts one, you&apos;ll set your availability right here — nothing more
+              to do for now.
+            </p>
+            <Link href={accountHref} className="btn-primary mt-4 inline-block w-full">
+              {viewer ? "Join the team →" : "Create a free account to get notified →"}
+            </Link>
+          </div>
         )}
       </div>
 
@@ -332,7 +345,9 @@ export default function GuestRsvpPage() {
         </div>
       )}
 
-      {/* Sticky bottom: Submit (primary affordance) → clear confirmation */}
+      {/* Sticky bottom: Submit (primary affordance) → clear confirmation.
+          Hidden when there's nothing to RSVP to (no dead "submit" button). */}
+      {!noEvents && (
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 backdrop-blur px-4 py-3">
         <div className="max-w-md mx-auto">
           {submitted ? (
@@ -364,6 +379,7 @@ export default function GuestRsvpPage() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }
