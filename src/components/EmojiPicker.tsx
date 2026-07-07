@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useIsNative } from "@/hooks/useIsNative";
 
 const EMOJI_CATEGORIES = [
   {
@@ -134,6 +135,11 @@ export default function EmojiPicker({
 
   const active = EMOJI_CATEGORIES.find((c) => c.id === activeCategory) || EMOJI_CATEGORIES[0];
 
+  // iOS/Android keyboards ship their own emoji key, so the in-app picker is
+  // redundant inside the Capacitor shell. Hide it there; keep it on the web.
+  const isNative = useIsNative();
+  if (isNative) return null;
+
   return (
     <div className="relative shrink-0" ref={containerRef}>
       <button
@@ -192,7 +198,7 @@ export default function EmojiPicker({
               <button
                 key={`${active.id}-${i}`}
                 type="button"
-                onClick={() => onSelect(emoji)}
+                onClick={() => { onSelect(emoji); onOpenChange(false); }}
                 className="aspect-square text-2xl rounded-lg hover:bg-court-green-pale/30 hover:scale-125 transition-all flex items-center justify-center"
               >
                 {emoji}
