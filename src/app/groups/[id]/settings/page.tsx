@@ -618,6 +618,9 @@ function RosterTab({
           memberTypes={types}
           callerIsOwner={callerIsOwner}
           currentUserName={currentUserName}
+          existingMemberUserIds={group.members
+            .filter((mm) => !mm.isPlaceholder && mm.userId)
+            .map((mm) => mm.userId)}
           onClose={() => setShowAddPeople(false)}
           onChanged={onSaved}
         />
