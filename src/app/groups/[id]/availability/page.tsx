@@ -11,7 +11,7 @@ import RsvpPicker, { pickerOptionMeta } from "@/components/attendance/RsvpPicker
 import AttendanceTally from "@/components/attendance/AttendanceTally";
 import { normalizeMatchStatus, RSVP } from "@/lib/rsvpStatus";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage, placeholderInScope } from "@/lib/supabase/queries";
+import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage, placeholderInScope, addRosterPlaceholders } from "@/lib/supabase/queries";
 import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { errorMessage } from "@/lib/errorMessage";
 import { AvailabilityTabs } from "@/components/availability/AvailabilityTabs";
@@ -114,6 +114,10 @@ export default function AvailabilityPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [showSendRsvp, setShowSendRsvp] = useState(false);
   const [showUstaImport, setShowUstaImport] = useState(false);
+  // Captain-entered name for a new roster row on the availability table.
+  const [addRowName, setAddRowName] = useState("");
+  const [addingRow, setAddingRow] = useState(false);
+  const [addRowError, setAddRowError] = useState("");
   const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
   const [matchDate, setMatchDate] = useState("");
   const [matchTime, setMatchTime] = useState("");
@@ -259,6 +263,25 @@ export default function AvailabilityPage() {
       setError("Something went wrong.");
     }
     setLoading(false);
+  };
+
+  // Captain adds a roster row by name straight from the availability table.
+  // Match-scoped so it shows on the matches matrix; the captain can link them
+  // to an account or share their RSVP link later.
+  const addRosterRow = async () => {
+    const name = addRowName.trim();
+    if (!name || addingRow) return;
+    setAddingRow(true);
+    setAddRowError("");
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await addRosterPlaceholders(supabase, groupId, [{ name }], "match");
+      setAddRowName("");
+      await loadAll();
+    } catch (e) {
+      setAddRowError(errorMessage(e, "Could not add player."));
+    }
+    setAddingRow(false);
   };
 
   useEffect(() => {
@@ -1220,6 +1243,38 @@ export default function AvailabilityPage() {
             </div>
           )}
         </div>
+
+        {/* Captain: add a roster row by name, right on the table. */}
+        {isCaptain && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              addRosterRow();
+            }}
+            className="mt-3"
+          >
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={addRowName}
+                onChange={(e) => setAddRowName(e.target.value)}
+                placeholder="Add a player by name…"
+                className="flex-1 min-w-0 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-court-green"
+              />
+              <button
+                type="submit"
+                disabled={!addRowName.trim() || addingRow}
+                className="btn-secondary btn-sm shrink-0 disabled:opacity-50"
+              >
+                {addingRow ? "Adding…" : "Add player"}
+              </button>
+            </div>
+            {addRowError && <p className="text-xs text-red-600 mt-1">{addRowError}</p>}
+            <p className="text-[11px] text-gray-400 mt-1">
+              Adds a roster row to your matches. Link them to an account or share their RSVP link later.
+            </p>
+          </form>
+        )}
         </>
       )}
 
