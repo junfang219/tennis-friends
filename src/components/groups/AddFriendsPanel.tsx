@@ -107,7 +107,7 @@ export default function AddFriendsPanel({
             />
           </div>
 
-          <div className="max-h-64 overflow-y-auto rounded-xl border border-gray-100 p-2 space-y-1">
+          <div className="rounded-xl border border-gray-100 p-2 space-y-1">
             {addable.length === 0 ? (
               <p className="text-sm text-gray-400 text-center py-4">
                 {friends.length === 0
