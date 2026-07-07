@@ -27,6 +27,9 @@ export default function GuestRsvpPage() {
 
   const [view, setView] = useState<GuestRosterView | null>(null);
   const [polls, setPolls] = useState<GuestPoll[]>([]);
+  // Who (if anyone) is signed in on this device — so a real account can claim the
+  // placeholder instead of only RSVPing anonymously. null = anonymous viewer.
+  const [viewer, setViewer] = useState<{ name: string } | null>(null);
   const [loadError, setLoadError] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [hasRsvped, setHasRsvped] = useState(false);
@@ -61,6 +64,20 @@ export default function GuestRsvpPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Detect an existing session (public page — read Supabase auth directly).
+  useEffect(() => {
+    const supabase = createSupabaseBrowserClient();
+    supabase.auth.getUser().then(({ data }) => {
+      const u = data.user;
+      if (!u) return;
+      const name =
+        (u.user_metadata?.name as string | undefined)?.trim() ||
+        u.email?.split("@")[0] ||
+        "your account";
+      setViewer({ name });
+    });
+  }, []);
 
   const saveName = useCallback(async () => {
     const next = nameDraft.trim();
@@ -199,6 +216,12 @@ export default function GuestRsvpPage() {
   const claimHref =
     `/register?next=${encodeURIComponent(`/rsvp-claim/${token}`)}` +
     (guestName ? `&name=${encodeURIComponent(guestName)}` : "");
+  // Log in and return to the claim page, which attaches this placeholder to the
+  // account and lands them on the team's availability.
+  const loginHref = `/login?next=${encodeURIComponent(`/rsvp-claim/${token}`)}`;
+  // Where the account CTAs point: a signed-in viewer goes straight to claim;
+  // an anonymous viewer registers first (both end at the claim → team flow).
+  const accountHref = viewer ? `/rsvp-claim/${token}` : claimHref;
 
   return (
     <div className="max-w-md mx-auto px-4 py-8 pb-28">
@@ -227,6 +250,27 @@ export default function GuestRsvpPage() {
         </div>
       </div>
 
+      {/* Log in / claim: attach this to a real account so they become a team
+          member (works even if they aren't the captain's friend). */}
+      {viewer ? (
+        <Link
+          href={`/rsvp-claim/${token}`}
+          className="mt-3 flex items-center justify-between gap-3 rounded-2xl border border-court-green-pale/40 bg-court-green/5 px-4 py-3"
+        >
+          <span className="text-sm text-gray-700 min-w-0">
+            Signed in as <span className="font-semibold">{viewer.name}</span> — add yourself to {group.name} and set your availability.
+          </span>
+          <span className="font-semibold text-court-green shrink-0">Join →</span>
+        </Link>
+      ) : (
+        <p className="mt-3 text-center text-sm text-gray-500">
+          Already on TennisFriend?{" "}
+          <Link href={loginHref} className="font-semibold text-court-green hover:underline">
+            Log in to RSVP as yourself
+          </Link>
+        </p>
+      )}
+
       {/* Schedule */}
       <div className="mt-6 space-y-6">
         {view.matches.length > 0 && (
@@ -236,6 +280,8 @@ export default function GuestRsvpPage() {
                 key={`m-${ev.id}`}
                 ev={ev}
                 groupName={group.name}
+                accountHref={accountHref}
+                signedIn={!!viewer}
                 save={saveState[evKey(ev)]}
                 onSelect={(s) => void setStatus(ev, s)}
               />
@@ -249,6 +295,8 @@ export default function GuestRsvpPage() {
                 key={`p-${ev.id}`}
                 ev={ev}
                 groupName={group.name}
+                accountHref={accountHref}
+                signedIn={!!viewer}
                 save={saveState[evKey(ev)]}
                 onSelect={(s) => void setStatus(ev, s)}
               />
@@ -274,10 +322,12 @@ export default function GuestRsvpPage() {
         <div className="mt-6 rounded-2xl border border-court-green-pale/40 bg-court-green/5 p-5 text-center">
           <p className="font-display text-lg font-bold text-gray-900">Nice — you&apos;re in! 🎾</p>
           <p className="text-sm text-gray-600 mt-1">
-            Create an account to get reminders and see who&apos;s coming.
+            {viewer
+              ? "Add yourself to the team to get reminders and see who's coming."
+              : "Create an account to get reminders and see who's coming."}
           </p>
-          <Link href={claimHref} className="btn-primary mt-4 inline-block w-full">
-            Create your free account →
+          <Link href={accountHref} className="btn-primary mt-4 inline-block w-full">
+            {viewer ? "Add yourself to the team →" : "Create your free account →"}
           </Link>
         </div>
       )}
@@ -290,8 +340,8 @@ export default function GuestRsvpPage() {
               <div className="flex items-center justify-center gap-2 rounded-xl bg-court-green/10 py-2.5 text-court-green font-semibold">
                 <CheckIcon /> Availability submitted — your captain can see it.
               </div>
-              <Link href={claimHref} className="btn-primary block w-full text-center">
-                Create your free account →
+              <Link href={accountHref} className="btn-primary block w-full text-center">
+                {viewer ? "Add yourself to the team →" : "Create your free account →"}
               </Link>
             </div>
           ) : (
@@ -362,11 +412,15 @@ function formatDate(date: string): string {
 function EventCard({
   ev,
   groupName,
+  accountHref,
+  signedIn,
   save,
   onSelect,
 }: {
   ev: GuestEvent;
   groupName: string;
+  accountHref: string;
+  signedIn: boolean;
   save?: "saving" | "saved" | "error";
   onSelect: (status: Exclude<RsvpStatus, "no_response">) => void;
 }) {
@@ -415,17 +469,20 @@ function EventCard({
         {ev.counts.maybe} maybe · {ev.counts.not_playing} out
       </p>
 
-      {/* Locked who's-coming teaser */}
-      <div className="relative mt-2 overflow-hidden rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-2">
+      {/* Locked who's-coming teaser — tap to claim/sign up and reveal it. */}
+      <Link
+        href={accountHref}
+        className="relative mt-2 block overflow-hidden rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-2 transition-colors hover:border-court-green-pale hover:bg-court-green/5"
+      >
         <p className="text-xs font-medium text-gray-500 blur-[1px] select-none" aria-hidden>
           Alex · Jordan · Sam · Taylor …
         </p>
         <div className="absolute inset-0 flex items-center justify-center bg-white/40">
-          <p className="text-[11px] font-semibold text-gray-600">
-            🔒 Create a free account to see who&apos;s coming
+          <p className="text-[11px] font-semibold text-court-green">
+            🔒 {signedIn ? `Join ${groupName} to see who's coming` : "Create a free account to see who's coming"}
           </p>
         </div>
-      </div>
+      </Link>
 
       <CalendarExportButtons event={eventToExport(ev, groupName)} />
     </div>
