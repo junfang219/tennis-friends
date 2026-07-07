@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
@@ -410,6 +411,8 @@ function RosterTab({
   const [err, setErr] = useState("");
   // Placeholder row whose "Link to account" picker is open, if any.
   const [linkTarget, setLinkTarget] = useState<{ id: string; name: string } | null>(null);
+  // Per-row "⋯" actions menu (Link / Make owner / Remove), anchored to the button.
+  const [rowMenu, setRowMenu] = useState<{ memberId: string; top: number; left: number } | null>(null);
 
   // "Add people" chooser (forks invite-to-team vs availability-only).
   const [showAddPeople, setShowAddPeople] = useState(false);
@@ -464,6 +467,30 @@ function RosterTab({
     setBusyId("");
   };
 
+  // Remove a member (or placeholder) from the roster. Hard-deletes the
+  // group_members row — RLS (can_admin_group) lets an owner/manager do this;
+  // the row's availabilities/poll responses cascade away.
+  const removeMember = async (m: Member) => {
+    if (
+      !window.confirm(
+        m.isPlaceholder
+          ? `Remove ${m.user.name} from the roster? Their availability entries will be cleared.`
+          : `Remove ${m.user.name} from the team? They'll lose access to team chat and matches, and their availability will be cleared.`
+      )
+    )
+      return;
+    setBusyId(m.id);
+    setErr("");
+    const supabase = createSupabaseBrowserClient();
+    const { error: delErr } = await supabase.from("group_members").delete().eq("id", m.id);
+    if (delErr) {
+      setErr(delErr.message || "Failed to remove.");
+    } else {
+      onSaved();
+    }
+    setBusyId("");
+  };
+
   return (
     <div>
       {canManage && (
@@ -486,6 +513,10 @@ function RosterTab({
       <div className="divide-y divide-gray-100">
         {group.members.map((m) => {
           const isOwnerRow = m.userId === group.ownerId;
+          // Row actions collapsed into the "⋯" menu (owner/manager only).
+          const canRemoveRow = !isOwnerRow && m.userId !== currentUserId;
+          const canMakeOwnerRow = callerIsOwner && !isOwnerRow && !m.isPlaceholder;
+          const showRowMenu = canManage && (m.isPlaceholder || canMakeOwnerRow || canRemoveRow);
 
           return (
             <div key={m.id} className="flex items-start gap-3 py-3">
@@ -554,34 +585,6 @@ function RosterTab({
                         )}
                       </select>
                     </div>
-                    {/* Connect an imported/placeholder name to a friend's real
-                        account so they can RSVP in-app (vs. a shared link). */}
-                    {m.isPlaceholder && (
-                      <button
-                        type="button"
-                        onClick={() => setLinkTarget({ id: m.id, name: m.user.name })}
-                        disabled={busyId === m.id}
-                        className="flex w-fit items-center gap-1 text-[11px] font-semibold text-court-green hover:underline mt-1.5 disabled:opacity-50"
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                        </svg>
-                        Link to account
-                      </button>
-                    )}
-                    {/* Ownership transfer — only the current owner, on other
-                        real-account rows (a placeholder has no user to own it). */}
-                    {callerIsOwner && !isOwnerRow && !m.isPlaceholder && (
-                      <button
-                        type="button"
-                        onClick={() => transferOwnership(m)}
-                        disabled={busyId === m.id}
-                        className="block w-fit text-[11px] font-semibold text-court-green hover:underline mt-1.5 disabled:opacity-50"
-                      >
-                        Make owner
-                      </button>
-                    )}
                   </>
                 ) : (
                   <p className="text-[11px] text-gray-500 mt-0.5">
@@ -590,10 +593,84 @@ function RosterTab({
                   </p>
                 )}
               </div>
+              {showRowMenu && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setRowMenu({ memberId: m.id, top: r.bottom + 6, left: Math.max(8, r.right - 180) });
+                  }}
+                  disabled={busyId === m.id}
+                  className="shrink-0 -mr-1 p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                  aria-label={`Manage ${m.user.name}`}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="12" cy="5" r="1.6" />
+                    <circle cx="12" cy="12" r="1.6" />
+                    <circle cx="12" cy="19" r="1.6" />
+                  </svg>
+                </button>
+              )}
             </div>
           );
         })}
       </div>
+
+      {/* Per-row actions menu (portal so it escapes the list clipping). */}
+      {rowMenu && typeof document !== "undefined" && (() => {
+        const mm = group.members.find((x) => x.id === rowMenu.memberId);
+        if (!mm) return null;
+        const rowIsOwner = mm.userId === group.ownerId;
+        const showMakeOwner = callerIsOwner && !rowIsOwner && !mm.isPlaceholder;
+        const showRemove = !rowIsOwner && mm.userId !== currentUserId;
+        return createPortal(
+          <>
+            <div className="fixed inset-0 z-[998]" onClick={() => setRowMenu(null)} />
+            <div
+              className="fixed z-[999] w-44 bg-white rounded-xl shadow-2xl border border-gray-200 p-1.5"
+              style={{ top: rowMenu.top, left: rowMenu.left }}
+            >
+              {mm.isPlaceholder && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRowMenu(null);
+                    setLinkTarget({ id: mm.id, name: mm.user.name });
+                  }}
+                  className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-gray-800 hover:bg-gray-50"
+                >
+                  Link to account
+                </button>
+              )}
+              {showMakeOwner && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRowMenu(null);
+                    void transferOwnership(mm);
+                  }}
+                  className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-gray-800 hover:bg-gray-50"
+                >
+                  Make owner
+                </button>
+              )}
+              {showRemove && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRowMenu(null);
+                    void removeMember(mm);
+                  }}
+                  className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-red-600 hover:bg-red-50"
+                >
+                  Remove from team
+                </button>
+              )}
+            </div>
+          </>,
+          document.body
+        );
+      })()}
 
       {err && <p className="text-xs text-red-600 mt-3">{err}</p>}
 
