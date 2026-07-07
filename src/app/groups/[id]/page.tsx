@@ -14,7 +14,6 @@ import {
   getGroup,
   listGroupMembers,
   listGroupFeed,
-  listFriends,
   createPost,
 } from "@/lib/supabase/queries";
 import { toGroupCamel, toGroupMemberCamel } from "@/lib/supabase/adapters";
@@ -212,7 +211,6 @@ export default function GroupPage() {
                 ownerId={group.ownerId}
                 members={group.members}
                 currentUserId={session?.user?.id || ""}
-                onUpdate={(updated) => setGroup({ ...group, members: updated, _count: { members: updated.length } })}
               />
             </div>
 
@@ -722,120 +720,20 @@ function TeamAvatarEditor({
 
 /* ────── Members button + modal ────── */
 
-type FriendOption = { user: { id: string; name: string; profileImageUrl: string } };
-
 function MembersButton({
   groupId,
   ownerId,
   members,
   currentUserId,
-  onUpdate,
 }: {
   groupId: string;
   ownerId: string;
   members: Member[];
   currentUserId: string;
-  onUpdate: (members: Member[]) => void;
 }) {
   const [show, setShow] = useState(false);
-  const [mode, setMode] = useState<"view" | "edit">("view");
-  const [friends, setFriends] = useState<FriendOption[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [removed, setRemoved] = useState<Set<string>>(new Set());
-  const [search, setSearch] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
 
   const isOwner = currentUserId === ownerId;
-  const memberIds = new Set(members.map((m) => m.user.id));
-
-  const openModal = () => {
-    setShow(true);
-    setMode("view");
-    setSelected(new Set());
-    setRemoved(new Set());
-    setSearch("");
-    setErrorMsg("");
-  };
-
-  const startEdit = async () => {
-    setMode("edit");
-    setErrorMsg("");
-    if (friends.length === 0) {
-      const supabase = createSupabaseBrowserClient();
-      const rows = await listFriends(supabase);
-      setFriends(
-        rows.map((u) => ({
-          friendshipId: u.id,
-          user: {
-            id: u.id,
-            name: u.name,
-            profileImageUrl: u.profile_image_url,
-            skillLevel: u.skill_level,
-          },
-        }))
-      );
-    }
-  };
-
-  const toggleAdd = (userId: string) => {
-    if (memberIds.has(userId)) return; // already in team — handled by remove side
-    const next = new Set(selected);
-    if (next.has(userId)) next.delete(userId);
-    else next.add(userId);
-    setSelected(next);
-  };
-
-  const toggleRemove = (userId: string) => {
-    if (userId === ownerId) return; // can't remove owner
-    const next = new Set(removed);
-    if (next.has(userId)) next.delete(userId);
-    else next.add(userId);
-    setRemoved(next);
-  };
-
-  const saveChanges = async () => {
-    setSaving(true);
-    setErrorMsg("");
-    try {
-      const supabase = createSupabaseBrowserClient();
-      if (selected.size > 0) {
-        const rows = Array.from(selected).map((uid) => ({
-          group_id: groupId,
-          user_id: uid,
-          roles: [] as ("manager" | "captain")[],
-        }));
-        await supabase.from("group_members").insert(rows);
-      }
-      if (isOwner && removed.size > 0) {
-        await supabase
-          .from("group_members")
-          .delete()
-          .eq("group_id", groupId)
-          .in("user_id", Array.from(removed));
-      }
-      // Reload members.
-      const members = await listGroupMembers(supabase, groupId);
-      onUpdate(
-        members.map((m) => ({
-          id: m.id,
-          isPlaceholder: m.isPlaceholder,
-          user: {
-            id: m.user.id,
-            name: m.user.name,
-            profileImageUrl: m.user.profile_image_url,
-            skillLevel: "",
-          },
-        }))
-      );
-      setMode("view");
-      setSelected(new Set());
-      setRemoved(new Set());
-    } catch (err) {
-      setErrorMsg(errorMessage(err, "Failed to save changes"));
-    }
-    setSaving(false);
-  };
 
   const leaveTeam = async () => {
     if (!confirm("Leave this team? You'll lose access to the team chat and feed.")) return;
@@ -866,22 +764,13 @@ function MembersButton({
     }
   };
 
-  // Friends not yet in the team — for non-owners these are the only ones they can add
-  const addableFriends = friends.filter(
-    (f) =>
-      !memberIds.has(f.user.id) &&
-      f.user.name.toLowerCase().includes(search.trim().toLowerCase())
-  );
-
-  const hasChanges = selected.size > 0 || (isOwner && removed.size > 0);
-
   return (
     <>
       <button
-        onClick={openModal}
+        onClick={() => setShow(true)}
         className="text-xs font-medium text-court-green-soft hover:text-court-green transition-colors"
       >
-        Manage
+        Members
       </button>
 
       {show && createPortal(
@@ -895,7 +784,7 @@ function MembersButton({
           >
             <div className="p-4 border-b border-gray-100 flex items-center justify-between shrink-0">
               <h3 className="font-display text-lg font-bold text-gray-800">
-                {mode === "view" ? `Members (${members.length})` : isOwner ? "Edit Members" : "Add Members"}
+                Members ({members.length})
               </h3>
               <button
                 onClick={() => setShow(false)}
@@ -908,8 +797,7 @@ function MembersButton({
               </button>
             </div>
 
-            {mode === "view" ? (
-              <>
+            <>
                 <div className="flex-1 overflow-y-auto">
                   {members.map((m) => (
                     <div
@@ -960,133 +848,17 @@ function MembersButton({
                   ))}
                 </div>
                 <div className="p-4 border-t border-gray-100 flex gap-2 shrink-0">
-                  <button onClick={startEdit} className="btn-primary flex-1">
-                    {isOwner ? "Edit Members" : "Add Friends"}
-                  </button>
                   {isOwner ? (
-                    <button onClick={deleteTeam} className="btn-danger">
-                      Delete
+                    <button onClick={deleteTeam} className="btn-danger flex-1">
+                      Delete team
                     </button>
                   ) : (
-                    <button onClick={leaveTeam} className="btn-danger">
-                      Leave
+                    <button onClick={leaveTeam} className="btn-danger flex-1">
+                      Leave team
                     </button>
                   )}
                 </div>
               </>
-            ) : (
-              <>
-                <div className="p-4 border-b border-gray-100 shrink-0">
-                  <div className="relative">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
-                      <circle cx="11" cy="11" r="8" />
-                      <path d="M21 21l-4.35-4.35" />
-                    </svg>
-                    <input
-                      type="text"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Search friends..."
-                      className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-court-green"
-                    />
-                  </div>
-                  <p className="text-[11px] text-gray-400 mt-2">
-                    {isOwner
-                      ? "As the creator, you can add new members or remove existing ones."
-                      : "You can add friends to the team. Only the creator can remove members."}
-                  </p>
-                </div>
-
-                <div className="flex-1 overflow-y-auto">
-                  {/* Existing members section (owner-only with remove checkboxes) */}
-                  {isOwner && (
-                    <>
-                      <div className="px-5 pt-3 pb-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                        Current members
-                      </div>
-                      {members
-                        .filter((m) => m.user.name.toLowerCase().includes(search.trim().toLowerCase()))
-                        .map((m) => {
-                          const isOwnerRow = m.user.id === ownerId;
-                          const willRemove = removed.has(m.user.id);
-                          return (
-                            <label
-                              key={m.id}
-                              className={`flex items-center gap-3 px-5 py-2.5 ${isOwnerRow ? "opacity-60" : "hover:bg-gray-50 cursor-pointer"}`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={!willRemove}
-                                disabled={isOwnerRow}
-                                onChange={() => toggleRemove(m.user.id)}
-                                className="w-4 h-4 accent-court-green"
-                              />
-                              <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
-                              <span className={`text-sm font-medium flex-1 ${willRemove ? "line-through text-gray-400" : "text-gray-800"}`}>
-                                {m.user.name}
-                              </span>
-                              {isOwnerRow && (
-                                <span className="text-[9px] font-bold tracking-wider text-court-green">CREATOR</span>
-                              )}
-                            </label>
-                          );
-                        })}
-                    </>
-                  )}
-
-                  {/* Friends to add */}
-                  <div className="px-5 pt-3 pb-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                    Add from your friends
-                  </div>
-                  {addableFriends.length === 0 ? (
-                    <p className="text-sm text-gray-400 text-center py-4">
-                      {friends.length === 0
-                        ? "Loading friends..."
-                        : "All your friends are already in this team"}
-                    </p>
-                  ) : (
-                    addableFriends.map((f) => (
-                      <label
-                        key={f.user.id}
-                        className="flex items-center gap-3 px-5 py-2.5 hover:bg-gray-50 cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selected.has(f.user.id)}
-                          onChange={() => toggleAdd(f.user.id)}
-                          className="w-4 h-4 accent-court-green"
-                        />
-                        <Avatar name={f.user.name} image={f.user.profileImageUrl} size="sm" />
-                        <span className="text-sm font-medium text-gray-800">{f.user.name}</span>
-                      </label>
-                    ))
-                  )}
-                </div>
-
-                {errorMsg && <p className="px-4 py-2 text-xs text-red-500 shrink-0">{errorMsg}</p>}
-
-                <div className="p-4 border-t border-gray-100 flex gap-2 shrink-0">
-                  <button
-                    onClick={() => {
-                      setMode("view");
-                      setSelected(new Set());
-                      setRemoved(new Set());
-                      setErrorMsg("");
-                    }}
-                    className="btn-secondary flex-1"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={saveChanges}
-                    disabled={!hasChanges || saving}
-                    className="btn-primary flex-1"
-                  >
-                    {saving ? "Saving..." : "Save"}
-                  </button>
-                </div>
-              </>
-            )}
           </div>
         </div>,
         document.body

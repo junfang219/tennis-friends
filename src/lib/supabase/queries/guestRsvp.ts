@@ -12,26 +12,34 @@ export interface PlaceholderLink {
   expires_at: string | null;
 }
 
-/**
- * Bulk-add account-less placeholder roster members by name. Server generates a
- * per-person claim_token (the magic-link credential). Captain-gated by RLS via
- * the add_roster_placeholders RPC. Returns the new rows' ids/names/tokens.
- */
 export type PlaceholderScope = "all" | "match" | "practice" | "poll";
 
+/** Result of add_roster_placeholders: rows created + names skipped as duplicates. */
+export interface AddPlaceholdersResult {
+  created: PlaceholderLink[];
+  skipped: string[];
+}
+
+/**
+ * Bulk-add account-less placeholder roster members by name. Server generates a
+ * per-person claim_token (the magic-link credential) and skips names already on
+ * the roster (as a placeholder or a real member). Captain-gated via the RPC.
+ * Returns the created rows and the names skipped as duplicates.
+ */
 export async function addRosterPlaceholders(
   supabase: SupabaseClient<Database>,
   groupId: string,
   people: { name: string; email?: string; phone?: string }[],
   scope: PlaceholderScope = "all"
-): Promise<PlaceholderLink[]> {
+): Promise<AddPlaceholdersResult> {
   const { data, error } = await supabase.rpc("add_roster_placeholders", {
     p_group_id: groupId,
     p_people: people as unknown as Database["public"]["Functions"]["add_roster_placeholders"]["Args"]["p_people"],
     p_scope: scope,
   });
   if (error) throw error;
-  return (data ?? []) as unknown as PlaceholderLink[];
+  const r = (data ?? {}) as unknown as Partial<AddPlaceholdersResult>;
+  return { created: r.created ?? [], skipped: r.skipped ?? [] };
 }
 
 /** Per-person share links for every placeholder on the team (captain-only). */
