@@ -1331,7 +1331,7 @@ export default function AvailabilityPage() {
             </div>
             {addRowError && <p className="text-xs text-red-600 mt-1">{addRowError}</p>}
             <p className="text-[11px] text-gray-400 mt-1">
-              Adds a roster row to your matches. Link them to an account or share their RSVP link later.
+              Adds them to your availability list (no account, not a member). Tap the badge on their row to link an account or share their RSVP link.
             </p>
           </form>
         )}

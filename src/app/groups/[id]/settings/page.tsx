@@ -10,7 +10,6 @@ import { parseReminderPrefs, REMINDER_HOUR_CHOICES, type ReminderPrefs } from "@
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
 import { errorMessage } from "@/lib/errorMessage";
-import InvitePlayersPanel from "@/components/groups/InvitePlayersPanel";
 import LinkMemberModal from "@/components/groups/LinkMemberModal";
 
 type Member = {
@@ -756,13 +755,6 @@ function RosterTab({
         />
       )}
 
-      {/* ── Invite people who aren't on TennisFriend yet ── */}
-      {canManage && (
-        <div className="mt-6">
-          <InvitePlayersPanel groupId={group.id} groupName={group.name} onChanged={onSaved} />
-        </div>
-      )}
-
       {/* ── Pending invites ── */}
       {invites.length > 0 && (
         <div className="mt-6">
@@ -827,9 +819,13 @@ function RosterTab({
       {canManage && (
         <div className="mt-6">
           <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
-            Invite someone
+            Invite players to the team
           </h3>
           <div className="p-3 rounded-xl border border-gray-200 bg-gray-50 space-y-2">
+            <p className="text-[11px] text-gray-500 leading-snug">
+              They&apos;ll create an account and join as members. To get availability from
+              someone who won&apos;t use the app, use the Availability tab.
+            </p>
             <div className="grid grid-cols-2 gap-1 p-0.5 bg-white rounded-lg border border-gray-200">
               {(["email", "phone"] as const).map((c) => (
                 <button
