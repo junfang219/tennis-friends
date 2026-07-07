@@ -501,6 +501,8 @@ export interface NotificationCamel {
   groupMessageId: string;
   eventId: string;
   matchId: string;
+  // Team a team_linked notification deep-links to (captain added you to it).
+  teamId: string;
   pollId: string;
   friendGroupId: string;
   courtId: string;
@@ -529,6 +531,7 @@ export function toNotificationCamel(n: Notification): NotificationCamel {
     matchId: n.match_id ?? "",
     pollId: n.poll_id ?? "",
     friendGroupId: n.friend_group_id ?? "",
+    teamId: n.group_id ?? "",
     courtId: n.court_id ?? "",
     emoji: n.emoji,
     read: n.read,

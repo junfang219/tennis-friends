@@ -22,7 +22,8 @@ export interface Notification {
     | "availability_poll"
     | "club_invite"
     | "club_invite_accepted"
-    | "court_available";
+    | "court_available"
+    | "team_linked";
   post_id: string | null;
   comment_id: string | null;
   message_id: string | null;
@@ -37,6 +38,8 @@ export interface Notification {
   match_id: string | null;
   poll_id: string | null;
   friend_group_id: string | null;
+  // Team a team_linked notification deep-links to (a captain added you to it).
+  group_id: string | null;
   emoji: string;
   read: boolean;
   created_at: string;
@@ -56,7 +59,7 @@ export interface Notification {
 const NOTIF_COLUMNS = `
   id, user_id, actor_id, actor_guest_name, type, post_id, comment_id, message_id,
   chat_message_id, group_message_id, event_id,
-  match_id, poll_id, friend_group_id, court_id, emoji, read, created_at,
+  match_id, poll_id, friend_group_id, group_id, court_id, emoji, read, created_at,
   actor:profiles!notifications_actor_id_fkey ( id, name, profile_image_url ),
   chat_message:chat_messages!notifications_chat_message_id_fkey ( chat_id ),
   group_message:group_messages!notifications_group_message_id_fkey ( group_id )

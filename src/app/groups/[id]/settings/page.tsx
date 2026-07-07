@@ -10,7 +10,7 @@ import { parseReminderPrefs, REMINDER_HOUR_CHOICES, type ReminderPrefs } from "@
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
 import { errorMessage } from "@/lib/errorMessage";
-import InvitePlayersPanel from "@/components/groups/InvitePlayersPanel";
+import LinkMemberModal from "@/components/groups/LinkMemberModal";
 
 type Member = {
   id: string;
@@ -419,6 +419,8 @@ function RosterTab({
   const callerIsOwner = currentUserId === group.ownerId;
   const [busyId, setBusyId] = useState("");
   const [err, setErr] = useState("");
+  // Placeholder row whose "Link to account" picker is open, if any.
+  const [linkTarget, setLinkTarget] = useState<{ id: string; name: string } | null>(null);
 
   // Invites — fetched once and refreshed after send/cancel.
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -696,13 +698,30 @@ function RosterTab({
                         )}
                       </select>
                     </div>
-                    {/* Ownership transfer — only the current owner, on other rows. */}
-                    {callerIsOwner && !isOwnerRow && (
+                    {/* Connect an imported/placeholder name to a friend's real
+                        account so they can RSVP in-app (vs. a shared link). */}
+                    {m.isPlaceholder && (
+                      <button
+                        type="button"
+                        onClick={() => setLinkTarget({ id: m.id, name: m.user.name })}
+                        disabled={busyId === m.id}
+                        className="flex w-fit items-center gap-1 text-[11px] font-semibold text-court-green hover:underline mt-1.5 disabled:opacity-50"
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                        </svg>
+                        Link to account
+                      </button>
+                    )}
+                    {/* Ownership transfer — only the current owner, on other
+                        real-account rows (a placeholder has no user to own it). */}
+                    {callerIsOwner && !isOwnerRow && !m.isPlaceholder && (
                       <button
                         type="button"
                         onClick={() => transferOwnership(m)}
                         disabled={busyId === m.id}
-                        className="text-[11px] font-semibold text-court-green hover:underline mt-1.5 disabled:opacity-50"
+                        className="block w-fit text-[11px] font-semibold text-court-green hover:underline mt-1.5 disabled:opacity-50"
                       >
                         Make owner
                       </button>
@@ -722,11 +741,18 @@ function RosterTab({
 
       {err && <p className="text-xs text-red-600 mt-3">{err}</p>}
 
-      {/* ── Invite people who aren't on TennisFriend yet ── */}
-      {canManage && (
-        <div className="mt-6">
-          <InvitePlayersPanel groupId={group.id} groupName={group.name} onChanged={onSaved} />
-        </div>
+      {linkTarget && (
+        <LinkMemberModal
+          member={linkTarget}
+          existingMemberUserIds={group.members
+            .filter((mm) => !mm.isPlaceholder && mm.userId)
+            .map((mm) => mm.userId)}
+          onClose={() => setLinkTarget(null)}
+          onLinked={() => {
+            setLinkTarget(null);
+            onSaved();
+          }}
+        />
       )}
 
       {/* ── Pending invites ── */}
@@ -793,9 +819,13 @@ function RosterTab({
       {canManage && (
         <div className="mt-6">
           <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
-            Invite someone
+            Invite players to the team
           </h3>
           <div className="p-3 rounded-xl border border-gray-200 bg-gray-50 space-y-2">
+            <p className="text-[11px] text-gray-500 leading-snug">
+              They&apos;ll create an account and join as members. To get availability from
+              someone who won&apos;t use the app, use the Availability tab.
+            </p>
             <div className="grid grid-cols-2 gap-1 p-0.5 bg-white rounded-lg border border-gray-200">
               {(["email", "phone"] as const).map((c) => (
                 <button

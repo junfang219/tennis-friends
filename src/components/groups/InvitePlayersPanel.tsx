@@ -15,11 +15,12 @@ import { errorMessage } from "@/lib/errorMessage";
 import { parsePeopleLines } from "@/lib/parsePeople";
 
 /**
- * Captain-facing panel to invite people who aren't on TennisFriend yet:
- * add account-less placeholder roster members by name, share each person's
- * personal RSVP link, and manage one shared "self-add" link. Used from the
- * team Settings roster tab and from the availability page (where captains
- * actually add matches). `onChanged` lets the host refresh its roster/matrix.
+ * Captain-facing panel to collect availability from players who AREN'T on the
+ * app — it does NOT invite anyone to TennisFriend. It adds account-less names to
+ * the availability tables, shares each person's personal RSVP link, and manages
+ * one shared "self-add" link. These people RSVP without an account and never
+ * become team members (that's what the email/phone invite is for). Mounted on
+ * the availability page; `onChanged` lets the host refresh its roster/matrix.
  */
 export default function InvitePlayersPanel({
   groupId,
@@ -93,8 +94,8 @@ export default function InvitePlayersPanel({
   const shareLink = async (name: string, token: string) => {
     await nativeShare(
       {
-        title: `RSVP for ${groupName}`,
-        text: `You've been added to ${groupName} on TennisFriend — tap to set your availability (no signup needed): `,
+        title: `Set your availability for ${groupName}`,
+        text: `Set your availability for ${groupName} — mark which matches you can play (no account needed): `,
         url: `${window.location.origin}/rsvp/${token}`,
       },
       "rosterShare"
@@ -118,7 +119,7 @@ export default function InvitePlayersPanel({
     try {
       const supabase = createSupabaseBrowserClient();
       const token = await mintRosterLink(supabase, groupId);
-      setMsg(sharedToken ? "Self-add link rotated." : "Self-add link created.");
+      setMsg(sharedToken ? "Shared availability link rotated." : "Shared availability link created.");
       setSharedToken(token);
     } catch (e) {
       setErr(errorMessage(e, "Failed to create link."));
@@ -130,8 +131,8 @@ export default function InvitePlayersPanel({
     if (!sharedToken) return;
     await nativeShare(
       {
-        title: `Join ${groupName} on TennisFriend`,
-        text: `Add your name to ${groupName} and set your availability (no signup needed): `,
+        title: `Set your availability for ${groupName}`,
+        text: `Add your name and mark which matches you can play for ${groupName} — no account needed: `,
         url: `${window.location.origin}/rsvp/team/${sharedToken}`,
       },
       "rosterShare"
@@ -146,7 +147,7 @@ export default function InvitePlayersPanel({
       const supabase = createSupabaseBrowserClient();
       await revokeRosterLink(supabase, groupId);
       setSharedToken("");
-      setMsg("Self-add link disabled.");
+      setMsg("Shared availability link disabled.");
     } catch (e) {
       setErr(errorMessage(e, "Failed to disable link."));
     }
@@ -155,13 +156,20 @@ export default function InvitePlayersPanel({
 
   return (
     <div className="space-y-5">
+      {/* Intro — this whole panel is RSVP collection, NOT an app invite. */}
+      <p className="text-[11px] text-gray-500 leading-snug">
+        Get availability from players who aren&apos;t on the app. They RSVP through a link —
+        no account needed, and they won&apos;t appear as team members. (To bring someone into
+        the app, use <span className="font-semibold">Invite players</span> in team settings.)
+      </p>
+
       {/* Add people by name */}
       <div>
         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Add people by name</h3>
         <div className="p-3 rounded-xl border border-gray-200 bg-gray-50 space-y-2">
           <p className="text-[11px] text-gray-500 leading-snug">
-            Add teammates who aren&apos;t on TennisFriend yet. Each gets a personal link to set their
-            availability — no signup needed.
+            They&apos;ll show on your availability tables so their availability can be tracked.
+            No account, not a member.
           </p>
 
           {/* Which table the invited people should RSVP to */}
@@ -202,7 +210,7 @@ export default function InvitePlayersPanel({
             </p>
           )}
           <button onClick={addPeople} disabled={adding || parsedPeople.length === 0} className="btn-primary w-full">
-            {adding ? "Adding..." : "Add to roster"}
+            {adding ? "Adding..." : "Add to availability list"}
           </button>
           {msg && <p className="text-xs text-court-green">{msg}</p>}
           {err && <p className="text-xs text-red-600">{err}</p>}
@@ -236,14 +244,15 @@ export default function InvitePlayersPanel({
         </div>
       )}
 
-      {/* Shared self-add link — a general "join the team" link, so it's only
-          offered when inviting to everything, not a single table. */}
+      {/* Shared availability link — one link anyone can use to add their own
+          name and RSVP; only offered when tracking everything, not one table. */}
       {selectedScope === "all" && (
       <div>
-        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Shared self-add link</h3>
+        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Shared availability link</h3>
         <div className="p-3 rounded-xl border border-gray-200 bg-gray-50 space-y-2">
           <p className="text-[11px] text-gray-500 leading-snug">
-            Anyone with this link can add their own name to the roster.
+            Anyone with this link can add their own name and mark their availability — no
+            account needed. They won&apos;t become team members.
           </p>
           {!sharedToken ? (
             <button onClick={mintShared} disabled={sharedBusy} className="btn-primary w-full">

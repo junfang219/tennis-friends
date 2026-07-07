@@ -2330,6 +2330,7 @@ export type Database = {
           emoji: string
           event_id: string | null
           friend_group_id: string | null
+          group_id: string | null
           group_message_id: string | null
           id: string
           match_id: string | null
@@ -2350,6 +2351,7 @@ export type Database = {
           emoji?: string
           event_id?: string | null
           friend_group_id?: string | null
+          group_id?: string | null
           group_message_id?: string | null
           id?: string
           match_id?: string | null
@@ -2370,6 +2372,7 @@ export type Database = {
           emoji?: string
           event_id?: string | null
           friend_group_id?: string | null
+          group_id?: string | null
           group_message_id?: string | null
           id?: string
           match_id?: string | null
@@ -2414,6 +2417,13 @@ export type Database = {
             columns: ["friend_group_id"]
             isOneToOne: false
             referencedRelation: "friend_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
             referencedColumns: ["id"]
           },
           {
@@ -3516,6 +3526,7 @@ export type Database = {
       add_roster_placeholders: { Args: { p_group_id: string; p_people: Json; p_scope?: string }; Returns: Json }
       claim_roster_placeholder: { Args: { p_token: string }; Returns: Json }
       get_roster_placeholder_links: { Args: { p_group_id: string }; Returns: Json }
+      link_roster_placeholder: { Args: { p_member_id: string; p_user_id: string }; Returns: Json }
       guest_create_placeholder: { Args: { p_group_token: string; p_name: string }; Returns: Json }
       guest_join_post: { Args: { p_post_id: string; p_name: string; p_contact?: string; p_note?: string }; Returns: Json }
       guest_poll_view: { Args: { p_token: string }; Returns: Json }
@@ -3677,6 +3688,7 @@ export type Database = {
         | "club_invite"
         | "club_invite_accepted"
         | "court_available"
+        | "team_linked"
       play_request_status:
         | "pending"
         | "approved"
@@ -3859,6 +3871,7 @@ export const Constants = {
         "club_invite",
         "club_invite_accepted",
         "court_available",
+        "team_linked",
       ],
       play_request_status: [
         "pending",

@@ -1,6 +1,6 @@
 // Parse a captain's free-text roster input: one person per line, optionally
 // "Name, contact" where contact is an email (has "@") or a phone otherwise.
-// Shared by InvitePlayersPanel and SendRsvpPanel so the two stay in sync.
+// Used by InvitePlayersPanel to bulk-add account-less roster members.
 
 export interface ParsedPerson {
   name: string;
