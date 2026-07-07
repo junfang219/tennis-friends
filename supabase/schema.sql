@@ -10202,3 +10202,124 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.link_roster_placeholder(uuid, uuid) FROM public, anon;
 GRANT EXECUTE ON FUNCTION public.link_roster_placeholder(uuid, uuid) TO authenticated;
+
+-- =====================================================================
+-- 0023_roster_placeholder_dedup
+--
+-- Stop stacking duplicate account-less placeholders (the Love Hurts 1 bug):
+-- the shared self-add link reuses an existing same-name placeholder's link,
+-- and captain add-by-name / USTA import skip names already on the roster.
+-- =====================================================================
+
+-- Shared name normalizer (mirrors client normalizeName in src/lib/rosterMatch.ts):
+-- trim, collapse internal whitespace, lowercase.
+CREATE OR REPLACE FUNCTION public._norm_name(p text)
+RETURNS text LANGUAGE sql IMMUTABLE SET search_path = public AS $$
+  SELECT lower(btrim(regexp_replace(coalesce(p, ''), '\s+', ' ', 'g')))
+$$;
+
+-- Shared self-add link: reuse an existing same-name placeholder instead of
+-- stacking a duplicate. Refreshes the reused link's expiry so it stays valid.
+CREATE OR REPLACE FUNCTION public.guest_create_placeholder(p_group_token text, p_name text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_group          uuid;
+  v_name           text := trim(coalesce(p_name, ''));
+  v_count          integer;
+  v_token          text;
+  v_existing_id    uuid;
+  v_existing_token text;
+BEGIN
+  IF v_name = '' THEN RAISE EXCEPTION 'Please enter your name' USING ERRCODE = 'invalid_parameter_value'; END IF;
+  SELECT id INTO v_group FROM public.groups
+    WHERE roster_link_token = p_group_token
+      AND (roster_link_expires_at IS NULL OR roster_link_expires_at > now());
+  IF v_group IS NULL THEN RAISE EXCEPTION 'This link is no longer valid' USING ERRCODE = 'no_data_found'; END IF;
+
+  -- Dedup: if this name is already on the roster as a placeholder, return that
+  -- person's existing link rather than creating another slot.
+  SELECT id, claim_token INTO v_existing_id, v_existing_token
+    FROM public.group_members
+    WHERE group_id = v_group AND archived_at IS NULL AND placeholder_name IS NOT NULL
+      AND public._norm_name(placeholder_name) = public._norm_name(v_name)
+    ORDER BY created_at LIMIT 1;
+  IF v_existing_id IS NOT NULL THEN
+    UPDATE public.group_members
+      SET claim_expires_at = now() + interval '90 days'
+      WHERE id = v_existing_id;
+    RETURN jsonb_build_object('token', v_existing_token);
+  END IF;
+
+  -- Cheap anti-abuse: cap placeholders created through the shared link.
+  SELECT count(*) INTO v_count FROM public.group_members
+    WHERE group_id = v_group AND placeholder_name IS NOT NULL;
+  IF v_count >= 200 THEN RAISE EXCEPTION 'This roster is full' USING ERRCODE = 'check_violation'; END IF;
+
+  v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+  INSERT INTO public.group_members (group_id, user_id, roles, placeholder_name, claim_token, claim_expires_at)
+  VALUES (v_group, NULL, '{}'::group_member_role[], v_name, v_token, now() + interval '90 days');
+
+  RETURN jsonb_build_object('token', v_token);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.guest_create_placeholder(text, text) FROM public;
+GRANT EXECUTE ON FUNCTION public.guest_create_placeholder(text, text) TO anon, authenticated;
+
+-- Captain add-by-name / USTA import: skip names already on the roster (as a
+-- placeholder or a real member) instead of duplicating. Returns
+-- { created: [{id,name,token}...], skipped: [name...] }.
+CREATE OR REPLACE FUNCTION public.add_roster_placeholders(p_group_id uuid, p_people jsonb, p_scope text DEFAULT 'all')
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_person  jsonb;
+  v_name    text;
+  v_norm    text;
+  v_token   text;
+  v_id      uuid;
+  v_scope   text := CASE WHEN coalesce(p_scope,'all') IN ('all','match','practice','poll')
+                         THEN coalesce(p_scope,'all') ELSE 'all' END;
+  v_created jsonb := '[]'::jsonb;
+  v_skipped jsonb := '[]'::jsonb;
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+  IF NOT public.can_run_group(p_group_id) THEN
+    RAISE EXCEPTION 'Only team captains can add roster members' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF jsonb_typeof(p_people) <> 'array' THEN
+    RAISE EXCEPTION 'people must be a JSON array' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  FOR v_person IN SELECT * FROM jsonb_array_elements(p_people) LOOP
+    v_name := trim(coalesce(v_person->>'name', ''));
+    CONTINUE WHEN v_name = '';
+    v_norm := public._norm_name(v_name);
+
+    -- Skip if this name already matches a placeholder or real member on the roster.
+    IF EXISTS (
+      SELECT 1 FROM public.group_members gm
+      LEFT JOIN public.profiles p ON p.id = gm.user_id
+      WHERE gm.group_id = p_group_id AND gm.archived_at IS NULL
+        AND public._norm_name(coalesce(gm.placeholder_name, p.name)) = v_norm
+    ) THEN
+      v_skipped := v_skipped || to_jsonb(v_name);
+      CONTINUE;
+    END IF;
+
+    v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+    INSERT INTO public.group_members
+      (group_id, user_id, roles, placeholder_name, placeholder_email, placeholder_phone,
+       placeholder_scope, claim_token, claim_expires_at)
+    VALUES
+      (p_group_id, NULL, '{}'::group_member_role[], v_name,
+       NULLIF(trim(coalesce(v_person->>'email', '')), '')::citext,
+       NULLIF(trim(coalesce(v_person->>'phone', '')), ''),
+       v_scope, v_token, now() + interval '90 days')
+    RETURNING id INTO v_id;
+    v_created := v_created || jsonb_build_object('id', v_id, 'name', v_name, 'token', v_token);
+  END LOOP;
+
+  RETURN jsonb_build_object('created', v_created, 'skipped', v_skipped);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.add_roster_placeholders(uuid, jsonb, text) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.add_roster_placeholders(uuid, jsonb, text) TO authenticated;

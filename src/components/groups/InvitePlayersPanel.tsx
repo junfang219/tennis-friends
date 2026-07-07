@@ -80,8 +80,13 @@ export default function InvitePlayersPanel({
     setAdding(true);
     try {
       const supabase = createSupabaseBrowserClient();
-      await addRosterPlaceholders(supabase, groupId, parsedPeople, selectedScope);
-      setMsg(`${parsedPeople.length} ${parsedPeople.length === 1 ? "person" : "people"} added.`);
+      const { created, skipped } = await addRosterPlaceholders(supabase, groupId, parsedPeople, selectedScope);
+      const addedMsg = `${created.length} ${created.length === 1 ? "person" : "people"} added.`;
+      setMsg(
+        skipped.length
+          ? `${addedMsg} ${skipped.length} already on the roster (${skipped.join(", ")}).`
+          : addedMsg
+      );
       setBulkNames("");
       onChanged?.();
       await loadLinks();

@@ -298,8 +298,11 @@ export default function AvailabilityPage() {
     setAddRowError("");
     try {
       const supabase = createSupabaseBrowserClient();
-      await addRosterPlaceholders(supabase, groupId, [{ name }], "match");
+      const { created, skipped } = await addRosterPlaceholders(supabase, groupId, [{ name }], "match");
       setAddRowName("");
+      if (created.length === 0 && skipped.length > 0) {
+        setAddRowError(`${skipped[0]} is already on the roster.`);
+      }
       await loadAll();
       await loadPlaceholderLinks();
     } catch (e) {

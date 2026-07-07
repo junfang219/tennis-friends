@@ -281,13 +281,16 @@ export default function FindUstaTeam({
           .map((x) => ({ name: x.name }));
         if (namesToAdd.length) {
           setImportStage("Adding players to your roster…");
-          createdPlaceholders = await addRosterPlaceholders(
+          // Server skips names already on the roster, so a re-import won't
+          // duplicate — count only the rows actually created.
+          const res = await addRosterPlaceholders(
             createSupabaseBrowserClient(),
             groupId,
             namesToAdd,
             "match",
           );
-          added = namesToAdd.length;
+          createdPlaceholders = res.created;
+          added = res.created.length;
         }
       }
 
