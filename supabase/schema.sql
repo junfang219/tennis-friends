@@ -10031,3 +10031,174 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.guest_join_post(uuid, text, text, text) FROM public;
 GRANT EXECUTE ON FUNCTION public.guest_join_post(uuid, text, text, text) TO anon, authenticated;
+
+-- =====================================================================
+-- 0022_link_roster_placeholder_to_friend
+--
+-- Let a captain attach an account-less roster placeholder (created by a
+-- USTA import or manual add) to an existing app user who is one of their
+-- friends — instead of only being able to share a per-person claim link.
+-- Reuses the exact convert/merge logic that claim_roster_placeholder used
+-- inline, now extracted into a shared helper so both paths stay in sync.
+-- The linked friend gets a bell notification + push.
+-- =====================================================================
+
+-- New notification kind + a team FK so the bell item can deep-link to the
+-- team. (ADD VALUE must be committed before the RPC below references it;
+-- apply this block as its own migration step ahead of the functions.)
+ALTER TYPE public.notification_type ADD VALUE IF NOT EXISTS 'team_linked';
+ALTER TABLE public.notifications
+  ADD COLUMN IF NOT EXISTS group_id uuid REFERENCES public.groups(id) ON DELETE CASCADE;
+
+-- Shared core: move a placeholder roster slot onto p_target.
+-- CONVERTS the slot in place when the target isn't already a member (history
+-- preserved, the row just gains an identity); otherwise MERGES the placeholder's
+-- RSVPs/poll responses into the target's existing membership (existing answer
+-- wins on collision) and deletes the empty placeholder. Returns whether it
+-- merged into an existing membership. NOT client-callable — only the two
+-- SECURITY DEFINER wrappers (claim_roster_placeholder / link_roster_placeholder)
+-- invoke it, each enforcing its own authorization first.
+CREATE OR REPLACE FUNCTION public._merge_placeholder_into_user(p_member_id uuid, p_target uuid)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_ph       public.group_members%ROWTYPE;
+  v_existing uuid;
+BEGIN
+  SELECT * INTO v_ph FROM public.group_members WHERE id = p_member_id;
+  IF v_ph.id IS NULL THEN
+    RAISE EXCEPTION 'Roster spot not found' USING ERRCODE = 'no_data_found';
+  END IF;
+  IF v_ph.user_id IS NOT NULL THEN
+    RAISE EXCEPTION 'This roster spot already has an account' USING ERRCODE = 'check_violation';
+  END IF;
+
+  SELECT id INTO v_existing FROM public.group_members
+    WHERE group_id = v_ph.group_id AND user_id = p_target;
+
+  IF v_existing IS NULL THEN
+    -- CONVERT in place. Carry the roster name onto the account only when the
+    -- profile has no real name yet (email signups derive name from the email
+    -- local part) — never overwrite a real name a linked friend already has.
+    UPDATE public.profiles p
+      SET name = v_ph.placeholder_name
+      WHERE p.id = p_target
+        AND v_ph.placeholder_name IS NOT NULL AND btrim(v_ph.placeholder_name) <> ''
+        AND (p.name IS NULL OR btrim(p.name) = '' OR p.name = split_part(p.email::text, '@', 1));
+    UPDATE public.group_members
+      SET user_id = p_target, placeholder_name = NULL, placeholder_email = NULL,
+          placeholder_phone = NULL, claim_token = NULL, claim_expires_at = NULL
+      WHERE id = v_ph.id;
+    UPDATE public.availabilities SET user_id = p_target WHERE member_id = v_ph.id;
+    UPDATE public.availability_poll_responses SET user_id = p_target WHERE member_id = v_ph.id;
+    RETURN false;
+  END IF;
+
+  -- MERGE: move placeholder RSVPs onto the existing membership where the
+  -- existing account has NOT already answered that event (existing wins).
+  UPDATE public.availabilities a
+    SET member_id = v_existing, user_id = p_target
+    WHERE a.member_id = v_ph.id
+      AND NOT EXISTS (
+        SELECT 1 FROM public.availabilities b
+        WHERE b.member_id = v_existing
+          AND b.match_id IS NOT DISTINCT FROM a.match_id
+          AND b.practice_id IS NOT DISTINCT FROM a.practice_id
+      );
+  DELETE FROM public.availabilities WHERE member_id = v_ph.id;
+
+  UPDATE public.availability_poll_responses a
+    SET member_id = v_existing, user_id = p_target
+    WHERE a.member_id = v_ph.id
+      AND NOT EXISTS (
+        SELECT 1 FROM public.availability_poll_responses b
+        WHERE b.member_id = v_existing AND b.poll_id = a.poll_id
+      );
+  DELETE FROM public.availability_poll_responses WHERE member_id = v_ph.id;
+
+  DELETE FROM public.group_members WHERE id = v_ph.id;
+  RETURN true;
+END;
+$$;
+REVOKE ALL ON FUNCTION public._merge_placeholder_into_user(uuid, uuid) FROM public, anon, authenticated;
+
+-- Reworked to delegate the convert/merge to the shared helper (behavior
+-- unchanged: token is the bearer credential, folds RSVPs into the caller).
+CREATE OR REPLACE FUNCTION public.claim_roster_placeholder(p_token text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_caller uuid := auth.uid();
+  v_ph     public.group_members%ROWTYPE;
+  v_merged boolean;
+BEGIN
+  IF v_caller IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+  v_ph := public.guest_resolve_placeholder(p_token);
+  v_merged := public._merge_placeholder_into_user(v_ph.id, v_caller);
+  RETURN jsonb_build_object('ok', true, 'group_id', v_ph.group_id, 'merged_existing', v_merged);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.claim_roster_placeholder(text) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.claim_roster_placeholder(text) TO authenticated;
+
+-- Captain: link a placeholder slot to an existing FRIEND's account. Captain-
+-- gated (can_run_group) and friends-only (an accepted friendship between the
+-- caller and the target is required — enforced here, not just in the UI). On a
+-- fresh convert (target wasn't already a member) the friend gets a team_linked
+-- notification + push; a merge into an existing membership stays silent.
+CREATE OR REPLACE FUNCTION public.link_roster_placeholder(p_member_id uuid, p_user_id uuid)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_caller     uuid := auth.uid();
+  v_group      uuid;
+  v_is_ph      boolean;
+  v_merged     boolean;
+  v_team_name  text;
+  v_actor_name text;
+BEGIN
+  IF v_caller IS NULL THEN RAISE EXCEPTION 'Not signed in' USING ERRCODE = 'insufficient_privilege'; END IF;
+
+  SELECT group_id, (user_id IS NULL) INTO v_group, v_is_ph
+    FROM public.group_members WHERE id = p_member_id;
+  IF v_group IS NULL THEN
+    RAISE EXCEPTION 'Roster spot not found' USING ERRCODE = 'no_data_found';
+  END IF;
+  IF NOT public.can_run_group(v_group) THEN
+    RAISE EXCEPTION 'Only team captains can link roster members' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF NOT v_is_ph THEN
+    RAISE EXCEPTION 'This roster spot already has an account' USING ERRCODE = 'check_violation';
+  END IF;
+
+  -- Friends-only gate: accepted friendship in either direction.
+  IF NOT EXISTS (
+    SELECT 1 FROM public.friendships f
+    WHERE f.status = 'accepted'
+      AND ( (f.requester_id = v_caller AND f.addressee_id = p_user_id)
+         OR (f.requester_id = p_user_id AND f.addressee_id = v_caller) )
+  ) THEN
+    RAISE EXCEPTION 'You can only link teammates you are friends with' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  v_merged := public._merge_placeholder_into_user(p_member_id, p_user_id);
+
+  IF NOT v_merged THEN
+    SELECT name INTO v_team_name FROM public.groups   WHERE id = v_group;
+    SELECT name INTO v_actor_name FROM public.profiles WHERE id = v_caller;
+    INSERT INTO public.notifications (user_id, actor_id, type, group_id)
+    VALUES (p_user_id, v_caller, 'team_linked'::notification_type, v_group);
+    PERFORM public.invoke_edge_function(
+      'push-fanout',
+      jsonb_build_object(
+        'user_ids',  jsonb_build_array(p_user_id),
+        'title',     COALESCE(NULLIF(btrim(v_actor_name), ''), 'A teammate'),
+        'body',      'added you to ' || COALESCE(v_team_name, 'a team'),
+        'thread_id', 'team_linked:' || v_group::text,
+        'data',      jsonb_build_object('kind', 'team_linked', 'group_id', v_group::text)
+      )
+    );
+  END IF;
+
+  RETURN jsonb_build_object('ok', true, 'group_id', v_group, 'merged_existing', v_merged);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.link_roster_placeholder(uuid, uuid) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.link_roster_placeholder(uuid, uuid) TO authenticated;

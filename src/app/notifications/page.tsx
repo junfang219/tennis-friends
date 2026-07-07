@@ -29,6 +29,8 @@ type Notification = {
   matchId: string;
   pollId: string;
   friendGroupId: string;
+  // Team a team_linked notification deep-links to (captain added you to it).
+  teamId: string;
   courtId: string;
   emoji: string;
   read: boolean;
@@ -77,6 +79,7 @@ function notificationText(n: { type: string; emoji?: string }) {
     case "club_invite_accepted": return "accepted your club invitation";
     case "availability_poll": return "started an availability poll — mark your free times";
     case "court_available": return "has an open court — tap to book";
+    case "team_linked": return "added you to their team — tap to RSVP";
     default: return "interacted with your post";
   }
 }
@@ -194,6 +197,17 @@ function notificationIcon(type: string) {
           </svg>
         </div>
       );
+    case "team_linked":
+      return (
+        <div className="w-8 h-8 rounded-full bg-court-green-pale/30 flex items-center justify-center">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="text-court-green-dark" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+        </div>
+      );
     default:
       return (
         <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
@@ -236,6 +250,7 @@ export default function NotificationsPage() {
         matchId: n.match_id ?? "",
         pollId: n.poll_id ?? "",
         friendGroupId: n.friend_group_id ?? "",
+        teamId: n.group_id ?? "",
         courtId: n.court_id ?? "",
         emoji: n.emoji,
         read: n.read,
@@ -324,6 +339,10 @@ export default function NotificationsPage() {
     }
     if (n.type === "court_available" && n.courtId) {
       router.push(`/courts/${encodeURIComponent(n.courtId)}`);
+      return;
+    }
+    if (n.type === "team_linked" && n.teamId) {
+      router.push(`/groups/${n.teamId}/availability`);
       return;
     }
     if (n.type === "message_reaction") {

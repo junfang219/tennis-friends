@@ -454,6 +454,7 @@ describe("snake_case → camelCase adapters", () => {
       post_id: null, comment_id: null, message_id: null,
       chat_message_id: null, group_message_id: null,
       event_id: null, match_id: null, poll_id: null, friend_group_id: null,
+      group_id: null,
       court_id: null,
       emoji: "", read: false,
       created_at: "t",
@@ -461,6 +462,7 @@ describe("snake_case → camelCase adapters", () => {
       chat_message: null, group_message: null,
     });
     expect(n.postId).toBe("");
+    expect(n.teamId).toBe("");
     expect(n.actor.profileImageUrl).toBe("x.png");
 
     // message_reaction in a session chat resolves the thread id for routing.
@@ -469,6 +471,7 @@ describe("snake_case → camelCase adapters", () => {
       post_id: null, comment_id: null, message_id: null,
       chat_message_id: "cm1", group_message_id: null,
       event_id: null, match_id: null, poll_id: null, friend_group_id: null,
+      group_id: null,
       court_id: null,
       emoji: "love", read: false,
       created_at: "t",
@@ -486,6 +489,7 @@ describe("snake_case → camelCase adapters", () => {
       post_id: "p1", comment_id: null, message_id: null,
       chat_message_id: null, group_message_id: null,
       event_id: null, match_id: null, poll_id: null, friend_group_id: null,
+      group_id: null,
       court_id: null,
       emoji: "", read: false,
       created_at: "t",

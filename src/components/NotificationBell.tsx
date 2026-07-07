@@ -35,6 +35,8 @@ type Notification = {
   eventId: string;
   matchId: string;
   pollId: string;
+  // Team a team_linked notification deep-links to (captain added you to it).
+  teamId: string;
   courtId: string;
   emoji: string;
   read: boolean;
@@ -83,6 +85,7 @@ function notificationText(n: { type: string; emoji?: string }) {
     case "club_invite_accepted": return "accepted your club invitation";
     case "availability_poll": return "started an availability poll — mark your free times";
     case "court_available": return "has an open court — tap to book";
+    case "team_linked": return "added you to their team — tap to RSVP";
     default: return "interacted with your post";
   }
 }
@@ -238,6 +241,17 @@ function notificationIcon(type: string) {
           </svg>
         </div>
       );
+    case "team_linked":
+      return (
+        <div className="w-6 h-6 rounded-full bg-court-green-pale/30 flex items-center justify-center">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="text-court-green-dark" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+        </div>
+      );
     default:
       return null;
   }
@@ -315,6 +329,11 @@ export default function NotificationBell() {
     if (n.type === "court_available" && n.courtId) {
       setOpen(false);
       router.push(`/courts/${encodeURIComponent(n.courtId)}`);
+      return;
+    }
+    if (n.type === "team_linked" && n.teamId) {
+      setOpen(false);
+      router.push(`/groups/${n.teamId}/availability`);
       return;
     }
     if (n.type === "message_reaction") {

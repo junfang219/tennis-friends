@@ -226,3 +226,22 @@ export async function claimRosterPlaceholder(
   if (error) throw error;
   return data as unknown as ClaimResult;
 }
+
+/**
+ * Captain: link a placeholder roster slot to an existing FRIEND's account.
+ * Captain-gated and friends-only (both enforced by the RPC). Converts the slot
+ * in place, or merges into the friend's existing membership; notifies the
+ * friend on a fresh convert. `merged_existing` distinguishes the two.
+ */
+export async function linkRosterPlaceholder(
+  supabase: SupabaseClient<Database>,
+  memberId: string,
+  userId: string
+): Promise<ClaimResult> {
+  const { data, error } = await supabase.rpc("link_roster_placeholder", {
+    p_member_id: memberId,
+    p_user_id: userId,
+  });
+  if (error) throw error;
+  return data as unknown as ClaimResult;
+}

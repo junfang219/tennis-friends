@@ -19,12 +19,20 @@ import {
 import { errorMessage } from "@/lib/errorMessage";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { addRosterPlaceholders } from "@/lib/supabase/queries";
+import { linkRosterPlaceholder, type PlaceholderLink } from "@/lib/supabase/queries/guestRsvp";
+import { listFriends, type FriendProfile } from "@/lib/supabase/queries/friends";
 import {
   planRosterReconciliation,
   rankMembersFor,
+  normalizeName,
+  levenshtein,
   type RosterMember,
   type Disposition,
 } from "@/lib/rosterMatch";
+
+// Pre-select a friend for an imported name only when the closest friend name is
+// this near (edit distance) — tight enough to avoid false auto-links.
+const LINK_SUGGEST_MAX_DISTANCE = 2;
 
 // "Find your USTA team" — searches tennisrecord by name + filters so a captain
 // picks their exact team (disambiguating same-named teams by level/section and,
@@ -101,6 +109,75 @@ export default function FindUstaTeam({
   // disposition per preview.players row; the captain can override each.
   const reconcileEnabled = !!teamMembers;
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
+
+  // Post-import "link teammates to friends" step. After placeholders are
+  // created we look up the captain's friends, pre-match by name, and let them
+  // confirm which imported names map to a real account (so those teammates can
+  // RSVP in-app instead of via a shared link).
+  const [created, setCreated] = useState<PlaceholderLink[]>([]);
+  const [linkFriends, setLinkFriends] = useState<FriendProfile[] | null>(null);
+  // placeholder id → chosen friend id ("" = don't link). Only holds rows that
+  // had a close-enough suggestion; other created placeholders stay as-is.
+  const [linkChoices, setLinkChoices] = useState<Record<string, string>>({});
+  const [linkStepOpen, setLinkStepOpen] = useState(false);
+  const [linking, setLinking] = useState(false);
+  const [linkedCount, setLinkedCount] = useState<number | null>(null);
+  const [linkError, setLinkError] = useState("");
+
+  // Friends ranked by name similarity to `name` (closest first).
+  const rankedFriends = (name: string, pool: FriendProfile[]): FriendProfile[] => {
+    const byId = new Map(pool.map((f) => [f.id, f]));
+    return rankMembersFor(name, pool.map((f) => ({ memberId: f.id, name: f.name })))
+      .map((r) => byId.get(r.memberId)!)
+      .filter(Boolean);
+  };
+
+  // Load friends and pre-select close name matches for the created placeholders.
+  const loadFriendSuggestions = async (placeholders: PlaceholderLink[]) => {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const all = await listFriends(supabase);
+      // Skip friends already on the team (matched by name — no user id here).
+      const memberNames = new Set((teamMembers ?? []).map((m) => normalizeName(m.name)));
+      const eligible = all.filter((f) => !memberNames.has(normalizeName(f.name)));
+      setLinkFriends(eligible);
+      if (!eligible.length) return;
+      const choices: Record<string, string> = {};
+      for (const ph of placeholders) {
+        const top = rankedFriends(ph.name, eligible)[0];
+        if (top && levenshtein(normalizeName(ph.name), normalizeName(top.name)) <= LINK_SUGGEST_MAX_DISTANCE) {
+          choices[ph.id] = top.id;
+        }
+      }
+      if (Object.keys(choices).length) {
+        setLinkChoices(choices);
+        setLinkStepOpen(true);
+      }
+    } catch {
+      // Non-fatal: the import already succeeded — just skip the link step.
+    }
+  };
+
+  const doLinks = async () => {
+    if (linking) return;
+    setLinking(true);
+    setLinkError("");
+    const supabase = createSupabaseBrowserClient();
+    let n = 0;
+    try {
+      for (const [memberId, friendId] of Object.entries(linkChoices)) {
+        if (!friendId) continue;
+        await linkRosterPlaceholder(supabase, memberId, friendId);
+        n += 1;
+      }
+      setLinkedCount(n);
+      setLinkStepOpen(false);
+      onImported?.({ teamName: "", imported: 0, skipped: 0 });
+    } catch (e) {
+      setLinkError(errorMessage(e, "Could not link some teammates."));
+    }
+    setLinking(false);
+  };
 
   const addCount = dispositions.filter((d) => d.action === "add").length;
 
@@ -196,6 +273,7 @@ export default function FindUstaTeam({
       // — the captain may still tweak the roster; they send links later from the
       // Invite button.
       let added = 0;
+      let createdPlaceholders: PlaceholderLink[] = [];
       if (reconcileEnabled) {
         const namesToAdd = preview.players
           .map((p, i) => ({ name: p.name.trim(), d: dispositions[i] }))
@@ -203,7 +281,7 @@ export default function FindUstaTeam({
           .map((x) => ({ name: x.name }));
         if (namesToAdd.length) {
           setImportStage("Adding players to your roster…");
-          await addRosterPlaceholders(
+          createdPlaceholders = await addRosterPlaceholders(
             createSupabaseBrowserClient(),
             groupId,
             namesToAdd,
@@ -221,6 +299,11 @@ export default function FindUstaTeam({
         imported,
         skipped,
       });
+      // Offer to link the newly-added names to existing friends' accounts.
+      if (createdPlaceholders.length) {
+        setCreated(createdPlaceholders);
+        void loadFriendSuggestions(createdPlaceholders);
+      }
     } catch (err) {
       setError(errorMessage(err, "Could not import the schedule."));
       setProgress(0);
@@ -228,6 +311,63 @@ export default function FindUstaTeam({
     }
     stopTrickle();
     setImporting(false);
+  }
+
+  // ── Link teammates to friends (post-import) ─────────────────────────────────
+  if (done && linkStepOpen) {
+    const rows = created.filter((ph) => ph.id in linkChoices);
+    const pool = linkFriends ?? [];
+    const chosenCount = Object.values(linkChoices).filter(Boolean).length;
+    return (
+      <div className="rounded-xl border border-court-green-pale/40 bg-court-green-pale/10 p-4">
+        <div className="font-semibold text-court-green">Link teammates to their accounts</div>
+        <p className="text-xs text-gray-500 mt-1">
+          These imported names match your friends. Link them so they can RSVP in
+          the app — the rest keep their share links.
+        </p>
+        <ul className="mt-3 divide-y divide-court-green-pale/30">
+          {rows.map((ph) => (
+            <li key={ph.id} className="py-2 flex items-center justify-between gap-2">
+              <span className="text-sm text-gray-900 truncate">{ph.name}</span>
+              <select
+                aria-label={`Link ${ph.name} to a friend`}
+                value={linkChoices[ph.id] ?? ""}
+                onChange={(e) =>
+                  setLinkChoices((prev) => ({ ...prev, [ph.id]: e.target.value }))
+                }
+                className="shrink-0 max-w-[11rem] px-2 py-1 border border-gray-300 rounded-lg text-xs bg-white"
+              >
+                <option value="">Don&apos;t link</option>
+                {rankedFriends(ph.name, pool).map((f) => (
+                  <option key={f.id} value={f.id}>
+                    Link: {f.name}
+                  </option>
+                ))}
+              </select>
+            </li>
+          ))}
+        </ul>
+        {linkError && <p className="text-sm text-red-600 mt-2">{linkError}</p>}
+        <div className="flex items-center gap-2 mt-3">
+          <button
+            type="button"
+            onClick={doLinks}
+            disabled={linking || chosenCount === 0}
+            className="btn-primary btn-sm"
+          >
+            {linking ? "Linking…" : `Link ${chosenCount} teammate${chosenCount === 1 ? "" : "s"}`}
+          </button>
+          <button
+            type="button"
+            onClick={() => setLinkStepOpen(false)}
+            disabled={linking}
+            className="btn-ghost btn-sm"
+          >
+            Skip
+          </button>
+        </div>
+      </div>
+    );
   }
 
   // ── Success ────────────────────────────────────────────────────────────────
@@ -239,6 +379,9 @@ export default function FindUstaTeam({
           {done.skipped > 0 ? ` · ${done.skipped} already on the calendar` : ""}
           {done.added > 0
             ? ` · added ${done.added} player${done.added === 1 ? "" : "s"}`
+            : ""}
+          {linkedCount != null && linkedCount > 0
+            ? ` · linked ${linkedCount} to accounts`
             : ""}
         </div>
         <p className="text-xs text-gray-500 mt-1">
