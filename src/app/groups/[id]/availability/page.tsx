@@ -15,6 +15,7 @@ import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage, placeholderIn
 import LinkMemberModal from "@/components/groups/LinkMemberModal";
 import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import {
+  minCourtsRequired,
   parseLineupFormat,
   validateLineup,
   type LeagueDivision,
@@ -1069,11 +1070,16 @@ export default function AvailabilityPage() {
         if (!fmt) return null;
         const byCode = new Map(lineupAssignments(match).map((a) => [a.slotCode, a.players.length]));
         const filled = fmt.filter((d) => (byCode.get(d.code) ?? 0) >= (d.type === "doubles" ? 2 : 1)).length;
-        const warns = lineupWarnings(match);
+        // The whole-lineup min-courts warning (slotCode null) just restates
+        // the n/m count shown here — drop it and surface its threshold as
+        // "need N" instead. Player-eligibility warnings stay.
+        const required = minCourtsRequired(fmt.length);
+        const countLabel = `Lineup ${filled}/${fmt.length} courts${filled < required ? ` · need ${required}` : ""}`;
+        const warns = lineupWarnings(match).filter((w) => w.slotCode !== null);
         if (warns.length === 0) {
           return (
             <p className={`text-[10px] font-semibold ${filled === fmt.length ? "text-court-green" : "text-gray-500"}`}>
-              Lineup {filled}/{fmt.length} courts
+              {countLabel}
             </p>
           );
         }
@@ -1088,7 +1094,7 @@ export default function AvailabilityPage() {
               aria-expanded={open}
               className="text-[10px] font-semibold text-amber-600 hover:text-amber-700 inline-flex items-center gap-0.5"
             >
-              Lineup {filled}/{fmt.length} courts · ⚠ {warns.length} warning{warns.length > 1 ? "s" : ""}
+              {countLabel} · ⚠ {warns.length} warning{warns.length > 1 ? "s" : ""}
               <svg
                 width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"
