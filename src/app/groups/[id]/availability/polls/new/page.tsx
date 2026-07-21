@@ -1,20 +1,25 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { fetchGroupBundle, getCachedGroupBundle } from "@/lib/supabase/queries";
 import { canCaptain, type TeamRole } from "@/lib/groupRoles";
 import { MonthMultiPicker } from "@/components/availability/MonthMultiPicker";
+import { matchWindowDates, parseSchedulingStatus } from "@/lib/matchWindow";
+import { formatDateHeader } from "@/lib/lineupMessage";
 
 export default function NewPollPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session } = useSession();
   const groupId = params.id as string;
   const myId = session?.user?.id || "";
+  // "Find a time" entry point: the poll is FOR an existing window/tbd match.
+  const forMatchId = searchParams.get("forMatch");
 
   const [team, setTeam] = useState<{ ownerId: string; members: { user: { id: string }; roles: TeamRole[] }[] } | null>(() => {
     const cached = getCachedGroupBundle(groupId);
@@ -32,6 +37,8 @@ export default function NewPollPage() {
   const [minPlayers, setMinPlayers] = useState(4);
   const [minBlockMinutes, setMinBlockMinutes] = useState(120);
   const [submitting, setSubmitting] = useState(false);
+  // The match being scheduled, when opened via "Find a time".
+  const [forMatch, setForMatch] = useState<{ id: string; opponent: string; label: string } | null>(null);
 
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
@@ -47,12 +54,33 @@ export default function NewPollPage() {
           ownerId: bundle.group.owner_id,
           members: bundle.members.map((m) => ({ user: { id: m.user.id }, roles: m.roles })),
         });
+        // Prefill from the target match: candidate dates = its play-week
+        // (window) or the two weeks from its anchor (tbd), title = opponent.
+        if (forMatchId) {
+          const { data: m } = await supabase
+            .from("team_matches")
+            .select("id, opponent, match_date, window_end, scheduling_status")
+            .eq("id", forMatchId)
+            .eq("group_id", groupId)
+            .maybeSingle();
+          if (m) {
+            const status = parseSchedulingStatus(m.scheduling_status);
+            const label =
+              status === "window"
+                ? `week of ${formatDateHeader(m.match_date)}`
+                : `play by ${formatDateHeader(m.match_date)}`;
+            setForMatch({ id: m.id, opponent: m.opponent, label });
+            setDates(matchWindowDates(m.match_date, m.window_end));
+            setTitle(m.opponent ? `vs ${m.opponent} — ${label}` : `Match ${label}`);
+          }
+        }
       } catch {
         setError("Something went wrong.");
       }
       setLoading(false);
     })();
-  }, [groupId]);
+     
+  }, [groupId, forMatchId]);
 
   const myMember = team?.members.find((m) => m.user.id === myId);
   const isCaptain = !!team && canCaptain({ isOwner: myId === team.ownerId, roles: myMember?.roles ?? [] });
@@ -78,6 +106,7 @@ export default function NewPollPage() {
           timezone:
             (typeof Intl !== "undefined" && Intl.DateTimeFormat().resolvedOptions().timeZone) ||
             "America/Los_Angeles",
+          for_match_id: forMatch?.id ?? undefined,
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -125,6 +154,13 @@ export default function NewPollPage() {
       </div>
 
       <div className="space-y-5">
+        {forMatch && (
+          <div className="p-3 rounded-xl border border-court-green-pale/60 bg-court-green-pale/20 text-xs text-gray-600">
+            Finding a time for <strong>{forMatch.opponent ? `vs ${forMatch.opponent}` : "this match"}</strong> ({forMatch.label}).
+            Once your team answers, pick the winning window — it schedules this match directly, and you
+            confirm the slot with the opposing captain.
+          </div>
+        )}
         <div>
           <label className="block text-xs font-semibold text-gray-600 mb-1">Title (optional)</label>
           <input

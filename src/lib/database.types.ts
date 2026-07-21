@@ -275,6 +275,7 @@ export type Database = {
           closed_at: string | null
           created_at: string
           created_by_id: string
+          for_match_id: string | null
           group_id: string
           id: string
           min_block_minutes: number
@@ -290,6 +291,7 @@ export type Database = {
           closed_at?: string | null
           created_at?: string
           created_by_id: string
+          for_match_id?: string | null
           group_id: string
           id?: string
           min_block_minutes?: number
@@ -305,6 +307,7 @@ export type Database = {
           closed_at?: string | null
           created_at?: string
           created_by_id?: string
+          for_match_id?: string | null
           group_id?: string
           id?: string
           min_block_minutes?: number
@@ -3359,24 +3362,28 @@ export type Database = {
           notes: string
           opponent: string
           opponent_team_id: string | null
+          scheduling_status: string
           season_id: string | null
           shirt_color: string
           timezone: string
+          window_end: string | null
         }
         Insert: {
           created_at?: string
           group_id: string
           home_away?: string
           id?: string
-          location: string
+          location?: string
           match_date: string
           match_time?: string
           notes?: string
           opponent?: string
           opponent_team_id?: string | null
+          scheduling_status?: string
           season_id?: string | null
           shirt_color?: string
           timezone?: string
+          window_end?: string | null
         }
         Update: {
           created_at?: string
@@ -3389,9 +3396,11 @@ export type Database = {
           notes?: string
           opponent?: string
           opponent_team_id?: string | null
+          scheduling_status?: string
           season_id?: string | null
           shirt_color?: string
           timezone?: string
+          window_end?: string | null
         }
         Relationships: [
           {
