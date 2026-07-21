@@ -29,6 +29,7 @@ import DismissibleTip from "@/components/DismissibleTip";
 import { AVAIL_MATRIX_GUIDE_KEY } from "@/lib/seenFlags";
 import FindUstaTeam from "@/components/scouting/FindUstaTeam";
 import SendLineupMenu from "@/components/availability/SendLineupMenu";
+import ActionMenu from "@/components/ActionMenu";
 import { closePoll, seedPollAvailability } from "@/lib/supabase/queries/availabilityPolls";
 import { buildLineupText, formatDateHeader } from "@/lib/lineupMessage";
 import { nativeShare } from "@/lib/lfpShare";
@@ -1064,7 +1065,7 @@ export default function AvailabilityPage() {
     const justSent = lineupSentId === match.id;
     if (!isCaptain) return null;
     return (
-      <div className="flex items-center gap-1 shrink-0">
+      <div className="flex items-center gap-1.5 shrink-0">
         <SendLineupMenu
           hasLineup={hasLineup}
           sending={sending}
@@ -1072,27 +1073,54 @@ export default function AvailabilityPage() {
           onPostToChat={() => postLineupToChat(match)}
           onSendViaMessages={() => shareLineupViaMessages(match)}
         />
-        <button
-          onClick={() => startEditMatch(match)}
-          className="text-gray-300 hover:text-court-green"
-          title="Edit match"
-          aria-label="Edit match"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-          </svg>
-        </button>
-        <button
-          onClick={() => deleteMatch(match.id)}
-          className="text-gray-300 hover:text-red-500"
-          title="Delete match"
-          aria-label="Delete match"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
+        <ActionMenu
+          items={[
+            {
+              icon: (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                </svg>
+              ),
+              title: "Edit match",
+              subtitle: "Date, time, location, timing",
+              onSelect: () => startEditMatch(match),
+            },
+            {
+              icon: (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+              ),
+              title: "Delete match",
+              subtitle: "Removes member RSVPs too",
+              tone: "danger",
+              onSelect: () => deleteMatch(match.id),
+            },
+          ]}
+          trigger={({ ref, open, toggle }) => (
+            <button
+              ref={ref}
+              type="button"
+              onClick={toggle}
+              className={`w-6 h-6 rounded-full border flex items-center justify-center transition-colors ${
+                open
+                  ? "border-gray-300 text-gray-600 bg-gray-50"
+                  : "border-gray-200 text-gray-400 hover:text-gray-600 hover:border-gray-300"
+              }`}
+              title="Match options"
+              aria-label="Match options"
+              aria-haspopup="menu"
+              aria-expanded={open}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="5" cy="12" r="1.7" />
+                <circle cx="12" cy="12" r="1.7" />
+                <circle cx="19" cy="12" r="1.7" />
+              </svg>
+            </button>
+          )}
+        />
       </div>
     );
   };
