@@ -208,6 +208,9 @@ export default function AvailabilityPage() {
   const [sendingLineupId, setSendingLineupId] = useState<string | null>(null);
   const [lineupSentId, setLineupSentId] = useState<string | null>(null);
 
+  // Which match's lineup warnings are expanded inline (one at a time).
+  const [openWarningsMatchId, setOpenWarningsMatchId] = useState<string | null>(null);
+
   // Narrow-screen view shows one match at a time; this is the selected match.
   const [activeMatchId, setActiveMatchId] = useState<string | null>(null);
 
@@ -1067,14 +1070,41 @@ export default function AvailabilityPage() {
         const byCode = new Map(lineupAssignments(match).map((a) => [a.slotCode, a.players.length]));
         const filled = fmt.filter((d) => (byCode.get(d.code) ?? 0) >= (d.type === "doubles" ? 2 : 1)).length;
         const warns = lineupWarnings(match);
+        if (warns.length === 0) {
+          return (
+            <p className={`text-[10px] font-semibold ${filled === fmt.length ? "text-court-green" : "text-gray-500"}`}>
+              Lineup {filled}/{fmt.length} courts
+            </p>
+          );
+        }
+        // Warnings are tap-to-expand (tooltips don't exist on touch): the
+        // status line becomes a disclosure toggling the message list inline.
+        const open = openWarningsMatchId === match.id;
         return (
-          <p
-            className={`text-[10px] font-semibold ${warns.length > 0 ? "text-amber-600" : filled === fmt.length ? "text-court-green" : "text-gray-500"}`}
-            title={warns.map((w) => w.message).join("\n") || undefined}
-          >
-            Lineup {filled}/{fmt.length} courts
-            {warns.length > 0 ? ` · ⚠ ${warns.length} warning${warns.length > 1 ? "s" : ""}` : ""}
-          </p>
+          <>
+            <button
+              type="button"
+              onClick={() => setOpenWarningsMatchId(open ? null : match.id)}
+              aria-expanded={open}
+              className="text-[10px] font-semibold text-amber-600 hover:text-amber-700 inline-flex items-center gap-0.5"
+            >
+              Lineup {filled}/{fmt.length} courts · ⚠ {warns.length} warning{warns.length > 1 ? "s" : ""}
+              <svg
+                width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"
+                className={`transition-transform ${open ? "rotate-180" : ""}`}
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            {open && (
+              <div className="mt-0.5 mb-0.5 p-1.5 rounded-lg bg-amber-50 border border-amber-100 space-y-0.5">
+                {warns.map((w, i) => (
+                  <p key={i} className="text-[10px] text-amber-700 leading-snug">⚠ {w.message}</p>
+                ))}
+              </div>
+            )}
+          </>
         );
       })()}
       <AttendanceTally availabilities={match.availabilities} />
