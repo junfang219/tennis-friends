@@ -14,6 +14,9 @@ import { planScheduleImport } from "@/lib/tennisrecord/importPlan";
 // 200:  { imported, skipped }
 
 const Body = z.object({
+  // "fixed": listed date/time are real slots. "window": each row is a
+  // play-week — time is dropped and window_end is set (captains negotiate).
+  scheduling: z.enum(["fixed", "window"]).optional().default("fixed"),
   matches: z
     .array(
       z.object({
@@ -79,6 +82,7 @@ export async function POST(
     parsed.matches,
     existing ?? [],
     teamIdByKey,
+    parsed.scheduling,
   );
 
   if (rows.length > 0) {

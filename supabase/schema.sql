@@ -10408,3 +10408,30 @@ DROP TRIGGER IF EXISTS group_members_notify_added ON public.group_members;
 CREATE TRIGGER group_members_notify_added
   AFTER INSERT ON public.group_members
   FOR EACH ROW EXECUTE FUNCTION public.notify_on_group_member_added();
+
+-- =========================================================================
+-- Match scheduling states (fixed / window / tbd)
+--
+-- USTA schedules sit on a spectrum (research: docs/community-teams-usta-design.md):
+-- fixed slots (coordinator-published date+time+venue), week windows (opponent +
+-- play-week known, captains negotiate the exact time — Flex/PNW style), and
+-- floating/TBD matches (playable any time before a deadline — CATA style).
+--   fixed  : match_date (+ optional match_time) are real. Today's behavior.
+--   window : match_date = window START (sort/calendar anchor), window_end bounds
+--            the play-week, match_time stays '' until scheduled.
+--   tbd    : floating; match_date = play-by deadline.
+-- =========================================================================
+alter table public.team_matches
+  add column scheduling_status text not null default 'fixed'
+    check (scheduling_status in ('fixed', 'window', 'tbd')),
+  add column window_end date;
+
+-- Unscheduled matches have no venue yet; the client sends '' for them.
+alter table public.team_matches alter column location set default '';
+
+-- "Find a time" polls opened FOR an existing window/tbd match: for_match_id
+-- is the match being scheduled (set at creation), distinct from
+-- resulting_match_id (set at close when a slot is chosen — also drives the
+-- "Scheduled" badge, which must not light up for a merely-created poll).
+alter table public.availability_polls
+  add column for_match_id uuid references public.team_matches (id) on delete set null;

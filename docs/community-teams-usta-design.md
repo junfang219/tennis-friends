@@ -56,6 +56,53 @@ Not verified by primary sources (kept out of scope / free-form): per-line
 scoring format and team-point award mechanics, home-court reservation
 responsibility, PNW registration fees.
 
+## How match schedules actually form
+
+Second research pass (verified against current regulations: PNW Apr 2026, NYC
+Metro 2026, USTA Atlanta 2025, Lake Norman 2025, Austin/CATA 2024, USTA Flex
+rules for Mid-Atlantic/NorCal/Colorado):
+
+1. **The Local League Coordinator publishes the schedule in TennisLink** —
+   teams/captains don't build it. Traditional entries carry date + time +
+   venue + home designation; those slots originate from club-level pre-season
+   court commitments (court booking is a captain/club responsibility, never
+   the league's).
+2. **Firmness is a spectrum, per league**: Metro NYC — firm, full reschedules
+   prohibited; Atlanta/Lake Norman — mutual-agreement moves with a
+   deterministic fallback (no agreement → original slot, or a pre-published
+   makeup date); Austin/CATA — captains may convert any match into a
+   "floating match" (TennisLink shows an irregular-date placeholder; playable
+   any time before season end, even line-by-line); USTA Flex — schedule
+   assigns only opponent + suggested week, players negotiate date/time/court.
+3. **PNW (Seattle) leans negotiated**: regulations direct captains to "work
+   together" to reschedule; the coordinator records agreements and enforces
+   the ~3-week reschedule window.
+4. **Every negotiation is bounded**: who proposes, a deadline, and a
+   deterministic default on silence (original time stands / coordinator sets
+   / season-end double default). Even fully fixed leagues expect
+   captain-to-captain confirmation 48h–5d before each match.
+5. Unconfirmed: how tennisrecord's feed marks unscheduled flex matches — so
+   the import cannot auto-detect league style; the captain chooses it.
+
+### The scheduling model (shipped)
+
+`team_matches.scheduling_status`:
+- **fixed** — date (+ optional time) are real; default; only these get cron
+  reminders.
+- **window** — opponent + play-week known; `match_date` = window start
+  (sort/calendar anchor), `window_end` bounds the week, time empty until the
+  captains agree. Import toggle "Captains arrange each match" produces these.
+- **tbd** — floating; `match_date` = play-by deadline.
+
+**Poll-first "Find a time"**: window/tbd matches offer a captain action that
+creates an availability poll prefilled with the play-week's dates
+(`availability_polls.for_match_id` links poll → match). The team answers,
+the captain picks the winning window, and it resolves into *that* match
+(edit-form handoff → fixed status + agreed date/time + seeded availabilities
++ poll closed with `resulting_match_id`). The captain then confirms the slot
+with the opposing captain off-app — matching how the regulations describe
+bounded captain-to-captain negotiation.
+
 ## Phase 1 (shipped with this doc): league identity + format-driven lineups
 
 Schema (`seasons`, all nullable — casual teams unaffected):
@@ -95,7 +142,9 @@ Code:
   alongside tennisrecord scouting.
 - **Phase 3 — playoff eligibility**: per-player played-line counts per season
   vs the 2/3/4 thresholds; roster-minimum indicator on the roster tab.
-- **Phase 4 — logistics**: reschedule proposal flow (3-week window),
-  join-by-code deep link, typed NTRP `{value, type, date}` on profiles.
+- **Phase 4 — logistics**: reschedule flow (= a fixed → window transition
+  reusing the scheduling states + Find-a-time poll), captain-confirmation
+  nudges 48h–5d before fixed matches, join-by-code deep link, typed NTRP
+  `{value, type, date}` on profiles.
 - **Non-goals**: TennisLink registration/payments, official score sync,
   dynamic-rating computation, hardcoding any yearly rule values.

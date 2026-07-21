@@ -58,6 +58,8 @@ export async function GET(request: Request) {
   const horizonIso = isoDate(horizon);
 
   // ── Matches ────────────────────────────────────────────────────────────
+  // Only fixed matches remind: window/tbd matches have no real time yet, and
+  // combineDateAndTime's 9:00 fallback would fire phantom reminders for them.
   const { data: matches, error: matchErr } = await admin
     .from("team_matches")
     .select(
@@ -65,6 +67,7 @@ export async function GET(request: Request) {
        group:groups!team_matches_group_id_fkey ( id, name, reminder_prefs ),
        availabilities ( user_id )`
     )
+    .eq("scheduling_status", "fixed")
     .gte("match_date", todayIso)
     .lte("match_date", horizonIso);
   if (matchErr) {

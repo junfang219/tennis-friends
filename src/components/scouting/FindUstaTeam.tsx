@@ -97,6 +97,8 @@ export default function FindUstaTeam({
   const [preview, setPreview] = useState<TeamPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
 
+  // How this league schedules match times — drives fixed vs week-window import.
+  const [scheduling, setScheduling] = useState<"fixed" | "window">("fixed");
   const [importing, setImporting] = useState(false);
   // Import is one long server call (~30s), so we can't read true progress —
   // trickle a bar toward ~95% so it visibly moves, then snap to 100% on finish.
@@ -270,7 +272,7 @@ export default function FindUstaTeam({
       setProgress((p) => Math.max(p, 92));
       setImportStage("Adding matches to your calendar…");
       const sched = league.schedule.length ? league.schedule : preview.schedule;
-      const { imported, skipped } = await importSchedule(groupId, sched);
+      const { imported, skipped } = await importSchedule(groupId, sched, scheduling);
 
       // Add roster players the captain chose to bring on as new rows. Matched
       // ("map") and "skip" rows create nothing. Placeholders are match-scoped so
@@ -393,8 +395,9 @@ export default function FindUstaTeam({
             : ""}
         </div>
         <p className="text-xs text-gray-500 mt-1">
-          Find them on the Availability tab — edit times, locations or home/away
-          there as needed.
+          {scheduling === "window"
+            ? "Imported as play-week windows — use Find a time on each match to poll your team, then confirm the slot with the opposing captain."
+            : "Find them on the Availability tab — edit times, locations or home/away there as needed."}
         </p>
         {done.added > 0 && (
           <p className="text-xs text-gray-500 mt-1">
@@ -508,6 +511,41 @@ export default function FindUstaTeam({
                 ? `${preview.schedule.length} scheduled match${preview.schedule.length === 1 ? "" : "es"} found.`
                 : "No league schedule found on this team's page."}
             </div>
+
+            {/* Some leagues publish real time slots; others list only the
+                play-week and captains negotiate the exact time. The captain
+                knows which league theirs is — the feed can't tell us. */}
+            {preview.schedule.length > 0 && (
+              <div className="mt-3">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">
+                  Match times
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {(
+                    [
+                      { value: "fixed", title: "Fixed by league schedule", hint: "Listed dates & times are real slots" },
+                      { value: "window", title: "Captains arrange each match", hint: "Listed dates are play-weeks; times TBD" },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setScheduling(opt.value)}
+                      className={`text-left px-3 py-2 rounded-xl border transition-all ${
+                        scheduling === opt.value
+                          ? "border-court-green bg-court-green-pale/20 ring-1 ring-court-green/30"
+                          : "border-gray-200 hover:border-gray-300"
+                      }`}
+                    >
+                      <span className={`block text-xs font-semibold ${scheduling === opt.value ? "text-court-green" : "text-gray-800"}`}>
+                        {opt.title}
+                      </span>
+                      <span className="block text-[10px] text-gray-500 mt-0.5">{opt.hint}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
 

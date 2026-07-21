@@ -273,9 +273,12 @@ export default function PollDetailPage() {
       `?prefillDate=${encodeURIComponent(w.date)}` +
       `&prefillTime=${encodeURIComponent(w.start)}` +
       `&fromPollId=${encodeURIComponent(poll.id)}` +
-      // Carry the window's members so the new match can pre-fill their
+      // Carry the window's members so the match can pre-fill their
       // availability as "Playing" — they already acknowledged this slot here.
-      `&prefillMembers=${encodeURIComponent(w.memberIds.join(","))}`;
+      `&prefillMembers=${encodeURIComponent(w.memberIds.join(","))}` +
+      // "Find a time" polls schedule an EXISTING window/tbd match instead of
+      // creating a new one — the availability page opens its edit form.
+      (poll.for_match_id ? `&scheduleMatch=${encodeURIComponent(poll.for_match_id)}` : "");
     router.push(url);
   };
 

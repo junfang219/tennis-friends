@@ -1,4 +1,5 @@
 import { parseTeamUrl } from "./parse";
+import { windowEndFor } from "@/lib/matchWindow";
 
 // Pure planning step for the schedule-import route: decide which scouted
 // schedule rows become new team_matches and which are skipped because the
@@ -19,12 +20,20 @@ export type ExistingMatch = {
   opponent_team_id: string | null;
 };
 
+// How the league schedules matches (see docs/community-teams-usta-design.md):
+// "fixed" = the listed date/time are real slots; "window" = the listed date is
+// only the suggested play-week — captains negotiate the exact time, so rows
+// import as week windows with the time dropped.
+export type ImportScheduling = "fixed" | "window";
+
 export type PlannedRow = {
   match_date: string;
   match_time: string;
   opponent: string;
   opponent_team_id: string | null;
   location: string;
+  scheduling_status: "fixed" | "window";
+  window_end: string | null;
 };
 
 const normalizeName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
@@ -49,6 +58,7 @@ export function planScheduleImport(
   candidates: ImportCandidate[],
   existing: ExistingMatch[],
   teamIdByKey: Map<string, string>,
+  scheduling: ImportScheduling = "fixed",
 ): { rows: PlannedRow[]; skipped: number } {
   // A match "exists" when the same date already has the same opponent —
   // matched by linked scouting id or by normalized free-text name.
@@ -86,10 +96,14 @@ export function planScheduleImport(
 
     rows.push({
       match_date: candidate.dateISO,
-      match_time: candidate.time ?? "",
+      // Window leagues: the feed's time (if any) is not a real slot — drop it
+      // so the match reads "time TBD" until the captains agree on one.
+      match_time: scheduling === "window" ? "" : (candidate.time ?? ""),
       opponent: candidate.opponentName,
       opponent_team_id: opponentTeamId,
       location: cleanSite(candidate.matchSite),
+      scheduling_status: scheduling,
+      window_end: scheduling === "window" ? windowEndFor(candidate.dateISO) : null,
     });
   }
 

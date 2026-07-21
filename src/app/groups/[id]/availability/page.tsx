@@ -22,6 +22,7 @@ import {
   type RatingScheme,
   type SeasonLeague,
 } from "@/lib/leagueFormats";
+import { parseSchedulingStatus, windowEndFor, type SchedulingStatus } from "@/lib/matchWindow";
 import { errorMessage } from "@/lib/errorMessage";
 import { AvailabilityTabs } from "@/components/availability/AvailabilityTabs";
 import DismissibleTip from "@/components/DismissibleTip";
@@ -66,6 +67,10 @@ type Match = {
   opponentTeamId: string | null;
   seasonId: string | null;
   notes: string;
+  // fixed: date/time are real. window: match_date = play-week start, time TBD
+  // until captains agree. tbd: floating, match_date = play-by deadline.
+  schedulingStatus: SchedulingStatus;
+  windowEnd: string | null;
   availabilities: Availability[];
 };
 
@@ -152,8 +157,21 @@ export default function AvailabilityPage() {
   const [location, setLocation] = useState("");
   const [opponent, setOpponent] = useState("");
   const [notes, setNotes] = useState("");
+  // fixed = scheduled slot; window = play-week, time TBD; tbd = floating.
+  const [timing, setTiming] = useState<SchedulingStatus>("fixed");
   const [adding, setAdding] = useState(false);
   const matchFormRef = useRef<HTMLDivElement | null>(null);
+
+  // Poll → schedule-existing-match handoff: the poll page sends
+  // ?scheduleMatch=<id>&prefillDate=&prefillTime=&fromPollId=&prefillMembers=
+  // when a poll was opened FOR a window/tbd match. We wait for matches to
+  // load, then open the edit form prefilled with the winning slot. Params are
+  // captured in refs at mount because the URL gets cleaned up.
+  const scheduleMatchRef = useRef<string | null>(searchParams.get("scheduleMatch"));
+  const schedulePrefillRef = useRef<{ date: string | null; time: string | null }>({
+    date: searchParams.get("prefillDate"),
+    time: searchParams.get("prefillTime"),
+  });
 
   // Inline editor for availability — portal-anchored to avoid clipping by
   // overflow-x table. userId is normally the current user, but a captain can
@@ -237,7 +255,7 @@ export default function AvailabilityPage() {
         supabase
           .from("team_matches")
           .select(
-            `id, match_date, match_time, location, opponent, opponent_team_id, season_id, notes,
+            `id, match_date, match_time, location, opponent, opponent_team_id, season_id, notes, scheduling_status, window_end,
              availabilities ( id, member_id, user_id, status, match_types, lineup_slot )`
           )
           .eq("group_id", groupId)
@@ -283,6 +301,8 @@ export default function AvailabilityPage() {
         opponent_team_id: string | null;
         season_id: string | null;
         notes: string;
+        scheduling_status: string;
+        window_end: string | null;
         availabilities: RawAvail[];
       };
       setMatches(
@@ -295,6 +315,8 @@ export default function AvailabilityPage() {
           opponentTeamId: m.opponent_team_id,
           seasonId: m.season_id,
           notes: m.notes,
+          schedulingStatus: parseSchedulingStatus(m.scheduling_status),
+          windowEnd: m.window_end,
           availabilities: m.availabilities.map((a) => ({
             id: a.id,
             memberId: a.member_id,
@@ -383,8 +405,10 @@ export default function AvailabilityPage() {
 
   // Seed the Add Match form from a poll → match handoff (?prefillDate=&prefillTime=).
   // Runs once on mount; clears the params from the URL so a refresh won't re-open the form.
+  // When the poll targets an EXISTING match (?scheduleMatch=), the edit-form
+  // effect below handles it instead — it needs the matches to load first.
   useEffect(() => {
-    if (prefillDate || prefillTime) {
+    if ((prefillDate || prefillTime) && !scheduleMatchRef.current) {
       setShowAdd(true);
       if (prefillDate) setMatchDate(prefillDate);
       if (prefillTime) setMatchTime(prefillTime);
@@ -395,6 +419,24 @@ export default function AvailabilityPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Poll → schedule-existing-match: once matches are loaded, open the edit
+  // form for the target match prefilled with the poll's winning slot and flip
+  // it to a fixed scheduled time. Saving runs the poll seeding + close.
+  useEffect(() => {
+    const id = scheduleMatchRef.current;
+    if (!id || loading || matches.length === 0) return;
+    const match = matches.find((m) => m.id === id);
+    scheduleMatchRef.current = null;
+    if (!match) return;
+    startEditMatch(match);
+    const prefill = schedulePrefillRef.current;
+    if (prefill.date) setMatchDate(prefill.date);
+    if (prefill.time) setMatchTime(prefill.time);
+    setTiming("fixed");
+    router.replace(`/groups/${groupId}/availability?focus=${id}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, matches]);
 
   // Keep the narrow-screen single-match selector pointed at a match that exists.
   useEffect(() => {
@@ -426,6 +468,7 @@ export default function AvailabilityPage() {
     setLocation("");
     setOpponent("");
     setNotes("");
+    setTiming("fixed");
   };
 
   // Open the form prefilled with an existing match (captain only).
@@ -437,6 +480,7 @@ export default function AvailabilityPage() {
     setLocation(match.location);
     setOpponent(match.opponent);
     setNotes(match.notes);
+    setTiming(match.schedulingStatus);
     setShowAdd(true);
     // The form renders above the table; bring it into view since the
     // edited column may be scrolled far right/down.
@@ -445,16 +489,53 @@ export default function AvailabilityPage() {
     });
   };
 
+  // Seed availabilities from a poll's winning window (both the create and the
+  // schedule-existing-match handoffs). Non-fatal — the match already saved.
+  const seedFromPoll = async (
+    supabase: ReturnType<typeof createSupabaseBrowserClient>,
+    matchId: string
+  ): Promise<Availability[]> => {
+    if (!prefillMembersRef.current) return [];
+    // The poll's window members are MEMBER ids (group_members rows — the
+    // universal roster key the poll responses use), not user ids.
+    const playingSet = new Set(prefillMembersRef.current);
+    const realMembers = (team?.members ?? []).filter((m) => !m.isPlaceholder);
+    const playing = realMembers
+      .filter((m) => playingSet.has(m.id))
+      .map((m) => ({ memberId: m.id, userId: m.user.id }));
+    const notPlaying = realMembers
+      .filter((m) => !playingSet.has(m.id))
+      .map((m) => ({ memberId: m.id, userId: m.user.id }));
+    prefillMembersRef.current = null;
+    try {
+      const rows = await seedPollAvailability(supabase, { matchId, playing, notPlaying });
+      return rows.map((a) => ({
+        id: a.id,
+        memberId: a.member_id,
+        userId: a.user_id,
+        status: a.status,
+        matchTypes: a.match_types,
+        lineupSlot: a.lineup_slot,
+      })) as unknown as Availability[];
+    } catch {
+      return [];
+    }
+  };
+
   const saveMatch = async () => {
-    if (!matchDate || !location.trim() || adding) return;
+    // Unscheduled (window/tbd) matches don't have a venue yet, so location is
+    // only required for fixed slots.
+    if (!matchDate || (timing === "fixed" && !location.trim()) || adding) return;
     setAdding(true);
     const supabase = createSupabaseBrowserClient();
     const fields = {
       match_date: matchDate,
-      match_time: matchTime,
+      match_time: timing === "fixed" ? matchTime : "",
       location: location.trim(),
       opponent: opponent.trim(),
       notes: notes.trim(),
+      scheduling_status: timing,
+      window_end: timing === "window" ? windowEndFor(matchDate) : null,
       // Tag the row with the user's local IANA zone so the
       // event-reminders cron can compute the reminder window in
       // their local time instead of Vercel-UTC.
@@ -468,25 +549,39 @@ export default function AvailabilityPage() {
         .from("team_matches")
         .update(fields)
         .eq("id", editingMatchId)
-        .select("id, match_date, match_time, location, opponent, notes")
+        .select("id, match_date, match_time, location, opponent, notes, scheduling_status, window_end")
         .single();
       if (!updErr && data) {
-        setMatches((prev) =>
-          prev
-            .map((m) =>
-              m.id === data.id
-                ? {
-                    ...m,
-                    matchDate: data.match_date,
-                    matchTime: data.match_time,
-                    location: data.location,
-                    opponent: data.opponent,
-                    notes: data.notes,
-                  }
-                : m
-            )
-            .sort((a, b) => (a.matchDate + a.matchTime).localeCompare(b.matchDate + b.matchTime))
-        );
+        // Poll → schedule handoff on an existing match: seed the poll's
+        // availabilities and close the poll against this match, then refetch
+        // (simplest way to merge seeded rows).
+        if (fromPollIdRef.current) {
+          await seedFromPoll(supabase, data.id);
+          try {
+            await closePoll(supabase, { pollId: fromPollIdRef.current, resultingMatchId: data.id });
+          } catch { /* non-fatal */ }
+          fromPollIdRef.current = null;
+          await loadAll();
+        } else {
+          setMatches((prev) =>
+            prev
+              .map((m) =>
+                m.id === data.id
+                  ? {
+                      ...m,
+                      matchDate: data.match_date,
+                      matchTime: data.match_time,
+                      location: data.location,
+                      opponent: data.opponent,
+                      notes: data.notes,
+                      schedulingStatus: parseSchedulingStatus(data.scheduling_status),
+                      windowEnd: data.window_end,
+                    }
+                  : m
+              )
+              .sort((a, b) => (a.matchDate + a.matchTime).localeCompare(b.matchDate + b.matchTime))
+          );
+        }
         resetMatchForm();
       }
       setAdding(false);
@@ -501,7 +596,7 @@ export default function AvailabilityPage() {
         // config (lineup format, level) applies without a manual step.
         season_id: seasonLeagues.find((s) => s.isActive)?.id ?? null,
       })
-      .select("id, match_date, match_time, location, opponent, season_id, notes")
+      .select("id, match_date, match_time, location, opponent, season_id, notes, scheduling_status, window_end")
       .single();
     if (!insErr && data) {
       // When the match came from a poll window, pre-fill every member's
@@ -509,35 +604,7 @@ export default function AvailabilityPage() {
       // everyone else "Not playing" — the poll already captured both answers, so
       // re-marking them would be redundant. Non-fatal: the match is already
       // created if this fails.
-      let seededAvailabilities: Availability[] = [];
-      if (prefillMembersRef.current) {
-        const playingSet = new Set(prefillMembersRef.current);
-        // Poll seeding only targets real members (placeholders never answer
-        // polls). member_id is the RSVP key; each real member has a user_id.
-        const realMembers = (team?.members ?? []).filter((m) => !m.isPlaceholder);
-        const playing = realMembers
-          .filter((m) => playingSet.has(m.user.id))
-          .map((m) => ({ memberId: m.id, userId: m.user.id }));
-        const notPlaying = realMembers
-          .filter((m) => !playingSet.has(m.user.id))
-          .map((m) => ({ memberId: m.id, userId: m.user.id }));
-        try {
-          const rows = await seedPollAvailability(supabase, {
-            matchId: data.id,
-            playing,
-            notPlaying,
-          });
-          seededAvailabilities = rows.map((a) => ({
-            id: a.id,
-            memberId: a.member_id,
-            userId: a.user_id,
-            status: a.status,
-            matchTypes: a.match_types,
-            lineupSlot: a.lineup_slot,
-          })) as unknown as Availability[];
-        } catch { /* non-fatal */ }
-        prefillMembersRef.current = null;
-      }
+      const seededAvailabilities = await seedFromPoll(supabase, data.id);
       const newMatch: Match = {
         id: data.id,
         matchDate: data.match_date,
@@ -547,6 +614,8 @@ export default function AvailabilityPage() {
         opponentTeamId: null,
         seasonId: data.season_id,
         notes: data.notes,
+        schedulingStatus: parseSchedulingStatus(data.scheduling_status),
+        windowEnd: data.window_end,
         availabilities: seededAvailabilities,
       } as unknown as Match;
       setMatches((prev) => [...prev, newMatch].sort((a, b) => (a.matchDate + a.matchTime).localeCompare(b.matchDate + b.matchTime)));
@@ -920,7 +989,29 @@ export default function AvailabilityPage() {
 
   const renderMatchMeta = (match: Match) => (
     <div className="min-w-0">
-      <p className="text-xs font-bold text-court-green">{formatDateHeader(match.matchDate)}</p>
+      <p className="text-xs font-bold text-court-green">
+        {match.schedulingStatus === "window"
+          ? `Week of ${formatDateHeader(match.matchDate)}`
+          : match.schedulingStatus === "tbd"
+            ? `Play by ${formatDateHeader(match.matchDate)}`
+            : formatDateHeader(match.matchDate)}
+      </p>
+      {match.schedulingStatus !== "fixed" && (
+        <p className="text-[10px] font-semibold text-amber-600">
+          {match.schedulingStatus === "window" ? "Time TBD — captains arranging" : "Floating match — date TBD"}
+          {isCaptain && (
+            <>
+              {" · "}
+              <Link
+                href={`/groups/${groupId}/availability/polls/new?forMatch=${match.id}`}
+                className="text-court-green hover:underline"
+              >
+                Find a time
+              </Link>
+            </>
+          )}
+        </p>
+      )}
       {match.matchTime && (
         <p className="text-[10px] text-gray-500">{match.matchTime}</p>
       )}
@@ -1131,9 +1222,45 @@ export default function AvailabilityPage() {
       {showAdd && isCaptain && (
         <div ref={matchFormRef} className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 mb-5 animate-fade-in-up">
           <h3 className="font-display text-base font-bold text-gray-800 mb-4">{editingMatchId ? "Edit Match" : "New Match"}</h3>
+          {/* Some leagues publish real time slots; others assign a play-week
+              (captains negotiate the time) or leave matches floating. */}
+          <div className="mb-3">
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Timing</label>
+            <div className="grid grid-cols-3 gap-1.5">
+              {(
+                [
+                  { value: "fixed", label: "Scheduled" },
+                  { value: "window", label: "Week window" },
+                  { value: "tbd", label: "Date TBD" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setTiming(opt.value)}
+                  className={`px-2 py-1.5 rounded-lg border text-xs font-semibold ${
+                    timing === opt.value
+                      ? "border-court-green text-court-green bg-court-green-pale/20"
+                      : "border-gray-200 text-gray-600 hover:border-gray-300"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {timing !== "fixed" && (
+              <p className="text-[11px] text-gray-400 mt-1">
+                {timing === "window"
+                  ? "Opponent assigned to a play-week — use Find a time to poll your team, then set the agreed slot."
+                  : "Floating match — playable any time before the play-by date."}
+              </p>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">
+                {timing === "window" ? "Week starting" : timing === "tbd" ? "Play by" : "Date"}
+              </label>
               <input
                 type="date"
                 value={matchDate}
@@ -1141,19 +1268,27 @@ export default function AvailabilityPage() {
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
               />
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1">Time (optional)</label>
-              <input
-                type="time"
-                lang="en-GB"
-                value={matchTime}
-                onChange={(e) => setMatchTime(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
-              />
-            </div>
+            {timing === "fixed" ? (
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Time (optional)</label>
+                <input
+                  type="time"
+                  lang="en-GB"
+                  value={matchTime}
+                  onChange={(e) => setMatchTime(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                />
+              </div>
+            ) : (
+              <div className="flex items-end pb-2">
+                <span className="text-xs text-gray-400">Time set once captains agree</span>
+              </div>
+            )}
           </div>
           <div className="mb-3">
-            <label className="block text-xs font-semibold text-gray-600 mb-1">Location</label>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">
+              Location{timing !== "fixed" ? " (optional)" : ""}
+            </label>
             <input
               type="text"
               value={location}
@@ -1185,7 +1320,7 @@ export default function AvailabilityPage() {
           <div className="flex gap-2">
             <button
               onClick={saveMatch}
-              disabled={!matchDate || !location.trim() || adding}
+              disabled={!matchDate || (timing === "fixed" && !location.trim()) || adding}
               className="btn-primary flex-1"
             >
               {editingMatchId ? (adding ? "Saving..." : "Save") : adding ? "Adding..." : "Add Match"}

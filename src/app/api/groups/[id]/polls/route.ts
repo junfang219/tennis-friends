@@ -32,6 +32,7 @@ export async function POST(
     min_players?: number;
     min_block_minutes?: number;
     timezone?: string;
+    for_match_id?: string;
   };
   try {
     body = await req.json();
@@ -56,6 +57,22 @@ export async function POST(
   const title = (body.title ?? "").toString().trim().slice(0, 120);
   const timezone = (body.timezone ?? "America/Los_Angeles").toString().slice(0, 64);
 
+  // "Find a time" polls target an existing match — verify it belongs to this
+  // group so a poll can't be pointed at another team's match.
+  let forMatchId: string | null = null;
+  if (typeof body.for_match_id === "string" && body.for_match_id) {
+    const { data: match } = await supabase
+      .from("team_matches")
+      .select("id")
+      .eq("id", body.for_match_id)
+      .eq("group_id", groupId)
+      .maybeSingle();
+    if (!match) {
+      return NextResponse.json({ error: "Match not found in this team." }, { status: 400 });
+    }
+    forMatchId = match.id;
+  }
+
   // RLS check + insert under the caller's auth. If the user isn't a captain,
   // availability_polls_insert_captain rejects with a 42501 / RLS error.
   const { data: created, error: insErr } = await supabase
@@ -68,6 +85,7 @@ export async function POST(
       min_players: minPlayers,
       min_block_minutes: minBlockMinutes,
       timezone,
+      for_match_id: forMatchId,
     })
     .select("id, group_id, title, candidate_dates, min_players, min_block_minutes, timezone, status, created_at")
     .single();

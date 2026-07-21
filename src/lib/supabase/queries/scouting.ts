@@ -206,14 +206,18 @@ export async function scoutLeague(
 
 // Import league-schedule rows into team_matches (insert-only; existing
 // matches on the same date vs the same opponent are skipped).
+// `scheduling`: "fixed" (default) treats listed date/time as real slots;
+// "window" imports each row as a play-week (time TBD, captains negotiate).
 export async function importSchedule(
   groupId: string,
   matches: LeagueScheduleMatch[],
+  scheduling: "fixed" | "window" = "fixed",
 ): Promise<{ imported: number; skipped: number }> {
   const res = await fetch(`/api/groups/${groupId}/scouting/import-schedule`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      scheduling,
       matches: matches.map((m) => ({
         dateISO: m.dateISO,
         time: m.time,

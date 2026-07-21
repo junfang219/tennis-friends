@@ -15,6 +15,9 @@ export interface AvailabilityPoll {
   timezone: string;
   status: "open" | "closed";
   closed_at: string | null;
+  // Match this poll was opened FOR (a window/tbd match being scheduled) —
+  // set at creation. Distinct from resulting_match_id, which is set at close.
+  for_match_id: string | null;
   resulting_match_id: string | null;
   created_at: string;
   updated_at: string;
@@ -33,7 +36,7 @@ export interface PollResponse {
 
 const POLL_COLUMNS =
   "id, group_id, created_by_id, title, candidate_dates, min_players, min_block_minutes, " +
-  "timezone, status, closed_at, resulting_match_id, created_at, updated_at";
+  "timezone, status, closed_at, for_match_id, resulting_match_id, created_at, updated_at";
 
 const RESPONSE_COLUMNS = "id, poll_id, member_id, user_id, blocks, note, created_at, updated_at";
 

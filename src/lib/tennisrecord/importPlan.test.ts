@@ -26,8 +26,27 @@ describe("planScheduleImport", () => {
     const { rows, skipped } = planScheduleImport(candidates, [], teamIds);
     expect(skipped).toBe(0);
     expect(rows).toEqual([
-      { match_date: "2026-06-01", match_time: "", opponent: "Slice Girls", opponent_team_id: "team-slice", location: "" },
-      { match_date: "2026-06-08", match_time: "18:30", opponent: "Barrios-Woods", opponent_team_id: null, location: "" },
+      { match_date: "2026-06-01", match_time: "", opponent: "Slice Girls", opponent_team_id: "team-slice", location: "", scheduling_status: "fixed", window_end: null },
+      { match_date: "2026-06-08", match_time: "18:30", opponent: "Barrios-Woods", opponent_team_id: null, location: "", scheduling_status: "fixed", window_end: null },
+    ]);
+  });
+
+  it("window scheduling imports play-weeks: time dropped, window_end = date + 6", () => {
+    const { rows } = planScheduleImport(candidates, [], new Map(), "window");
+    expect(rows).toEqual([
+      expect.objectContaining({
+        match_date: "2026-06-01",
+        match_time: "",
+        scheduling_status: "window",
+        window_end: "2026-06-07",
+      }),
+      expect.objectContaining({
+        match_date: "2026-06-08",
+        // Feed listed 18:30, but window leagues negotiate times — dropped.
+        match_time: "",
+        scheduling_status: "window",
+        window_end: "2026-06-14",
+      }),
     ]);
   });
 
