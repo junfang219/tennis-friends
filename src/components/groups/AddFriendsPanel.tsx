@@ -9,7 +9,8 @@ import { errorMessage } from "@/lib/errorMessage";
 /**
  * "Add from your friends" — the instant-member path: pick friends already on
  * TennisFriend and insert them directly as `group_members` (real members, no
- * invite needed). Manager-gated by RLS (group_members_insert_manager →
+ * invite needed — the group_members_notify_added DB trigger sends them a
+ * team_linked notification + push). Manager-gated by RLS (group_members_insert_manager →
  * can_admin_group). Friends already on the team are excluded.
  */
 export default function AddFriendsPanel({

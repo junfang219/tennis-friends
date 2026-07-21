@@ -3224,34 +3224,55 @@ export type Database = {
       }
       seasons: {
         Row: {
+          area: string | null
           created_at: string
           end_date: string | null
+          flight: string | null
           group_id: string
           id: string
           is_active: boolean
+          league_division: string | null
+          league_level: number | null
+          lineup_format: Json | null
           name: string
+          rating_scheme: string | null
           start_date: string | null
           updated_at: string
+          usta_team_number: string | null
         }
         Insert: {
+          area?: string | null
           created_at?: string
           end_date?: string | null
+          flight?: string | null
           group_id: string
           id?: string
           is_active?: boolean
+          league_division?: string | null
+          league_level?: number | null
+          lineup_format?: Json | null
           name: string
+          rating_scheme?: string | null
           start_date?: string | null
           updated_at?: string
+          usta_team_number?: string | null
         }
         Update: {
+          area?: string | null
           created_at?: string
           end_date?: string | null
+          flight?: string | null
           group_id?: string
           id?: string
           is_active?: boolean
+          league_division?: string | null
+          league_level?: number | null
+          lineup_format?: Json | null
           name?: string
+          rating_scheme?: string | null
           start_date?: string | null
           updated_at?: string
+          usta_team_number?: string | null
         }
         Relationships: [
           {

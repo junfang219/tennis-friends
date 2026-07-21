@@ -3,6 +3,8 @@
 // in-app team chat and the native iOS share sheet — emit byte-identical text,
 // and so the formatting is unit-testable. See lineupMessage.test.ts.
 
+import type { LineupSlotDef } from "./leagueFormats";
+
 const SLOT_ORDER: Record<string, number> = {
   S1: 1, S2: 2, S3: 3, S4: 4,
   D1: 5, D2: 6, D3: 7, D4: 8,
@@ -31,6 +33,10 @@ export type LineupMatch = {
   matchTime: string;
   location: string;
   opponent: string;
+  // Season lineup format, when the team set one: the message then lists every
+  // format slot in order (unfilled ones as "TBD") so gaps are visible, with
+  // any extra assigned slots (Reserve, custom) appended after.
+  format?: LineupSlotDef[] | null;
   availabilities: { lineupSlot: string; user: { name: string } }[];
 };
 
@@ -47,8 +53,21 @@ export function buildLineupText(match: LineupMatch): string | null {
     if (!bySlot.has(slot)) bySlot.set(slot, []);
     bySlot.get(slot)!.push(a.user.name);
   }
-  const sortedSlots = Array.from(bySlot.keys()).sort(compareSlots);
-  const lineupLines = sortedSlots.map((slot) => `${slot}: ${bySlot.get(slot)!.join(" & ")}`);
+  let lineupLines: string[];
+  if (match.format && match.format.length > 0) {
+    const formatCodes = new Set(match.format.map((s) => s.code));
+    const formatLines = match.format.map(
+      (s) => `${s.code}: ${bySlot.get(s.code)?.join(" & ") ?? "TBD"}`
+    );
+    const extraLines = Array.from(bySlot.keys())
+      .filter((slot) => !formatCodes.has(slot))
+      .sort(compareSlots)
+      .map((slot) => `${slot}: ${bySlot.get(slot)!.join(" & ")}`);
+    lineupLines = [...formatLines, ...extraLines];
+  } else {
+    const sortedSlots = Array.from(bySlot.keys()).sort(compareSlots);
+    lineupLines = sortedSlots.map((slot) => `${slot}: ${bySlot.get(slot)!.join(" & ")}`);
+  }
 
   const header = `🎾 Lineup for ${formatDateHeader(match.matchDate)}${match.matchTime ? ` at ${match.matchTime}` : ""}\n📍 ${match.location}${match.opponent ? `\n🆚 ${match.opponent}` : ""}\n\n`;
   return header + lineupLines.join("\n");

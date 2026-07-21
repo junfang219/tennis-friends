@@ -6,9 +6,14 @@ import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import CommunitiesTabs from "@/components/CommunitiesTabs";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { listMyGroups, listFriends } from "@/lib/supabase/queries";
+import { listMyGroups, listFriends, listGroupMembers } from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 import { errorMessage } from "@/lib/errorMessage";
+import FindUstaTeam from "@/components/scouting/FindUstaTeam";
+import LeagueFields from "@/components/groups/LeagueFields";
+import { draftToColumns, emptyLeagueDraft, type LeagueDraft } from "@/lib/leagueDraft";
+import { leagueDraftFromSearchResult } from "@/lib/tennisrecord/leagueMeta";
+import type { RosterMember } from "@/lib/rosterMatch";
 
 type FriendEntry = {
   friendshipId: string;
@@ -554,11 +559,26 @@ function SwipeTeamRow({
 /* ───────── Create Group Form ───────── */
 
 function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntry[]; onCreated: () => void; onCancel: () => void }) {
+  const router = useRouter();
   const [name, setName] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const [search, setSearch] = useState("");
+
+  // USTA wizard. "basics" is the classic create card; picking the USTA team
+  // type turns creation into a 3-step flow: create → import schedule from
+  // TennisRecord → confirm league settings (season). The team is created at
+  // the end of step 1 either way, so "Finish later" is always safe.
+  const [step, setStep] = useState<"basics" | "usta-import" | "usta-league">("basics");
+  const [teamType, setTeamType] = useState<"casual" | "usta">("casual");
+  const [createdGroupId, setCreatedGroupId] = useState<string | null>(null);
+  // Roster (owner + added friends) for FindUstaTeam's reconciliation step.
+  const [wizardMembers, setWizardMembers] = useState<RosterMember[]>([]);
+  const [importDone, setImportDone] = useState(false);
+  const [leagueDraft, setLeagueDraft] = useState<LeagueDraft>(emptyLeagueDraft());
+  const [seasonName, setSeasonName] = useState("");
+  const [finishing, setFinishing] = useState(false);
 
   const toggle = (id: string) => {
     const next = new Set(selectedIds);
@@ -608,6 +628,20 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
           return;
         }
       }
+      if (teamType === "usta") {
+        // Enter the wizard: fetch the fresh roster (owner row is written by
+        // the DB trigger, so read it back) for import reconciliation.
+        setCreatedGroupId(g.id);
+        try {
+          const members = await listGroupMembers(supabase, g.id);
+          setWizardMembers(members.map((m) => ({ memberId: m.id, name: m.user.name })));
+        } catch {
+          // Non-fatal — the import step just skips roster mapping.
+        }
+        setStep("usta-import");
+        setCreating(false);
+        return;
+      }
       setCreating(false);
       onCreated();
     } catch (err) {
@@ -618,9 +652,116 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
     }
   };
 
+  // Step 3 → save the league season, attach the imported matches (they were
+  // inserted before the season existed), and land on the availability matrix.
+  const finishUsta = async () => {
+    if (!createdGroupId || finishing) return;
+    setFinishing(true);
+    setCreateError("");
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: season, error: sErr } = await supabase
+        .from("seasons")
+        .insert({
+          group_id: createdGroupId,
+          name: seasonName.trim() || "USTA season",
+          is_active: true,
+          ...draftToColumns(leagueDraft),
+        })
+        .select("id")
+        .single();
+      if (sErr || !season) {
+        setCreateError(sErr?.message || "Couldn't save league settings.");
+        setFinishing(false);
+        return;
+      }
+      const { error: tagErr } = await supabase
+        .from("team_matches")
+        .update({ season_id: season.id })
+        .eq("group_id", createdGroupId)
+        .is("season_id", null);
+      if (tagErr) {
+        // Matches stay unattached; the season itself saved — not worth blocking.
+        console.warn("Could not attach imported matches to season:", tagErr.message);
+      }
+      onCreated();
+      router.push(`/groups/${createdGroupId}/availability`);
+    } catch (err) {
+      setCreateError(errorMessage(err, "Couldn't save league settings."));
+      setFinishing(false);
+    }
+  };
+
   const filteredFriends = friends.filter((f) =>
     f.user.name.toLowerCase().includes(search.trim().toLowerCase())
   );
+
+  if (step === "usta-import" && createdGroupId) {
+    return (
+      <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 animate-fade-in-up">
+        <p className="text-[11px] font-bold tracking-wider text-court-green uppercase mb-1">Step 2 of 3</p>
+        <h3 className="font-display text-lg font-bold text-gray-800 mb-1">Find your USTA team</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          <span className="font-semibold text-gray-700">{name.trim()}</span> is created. Search TennisRecord to
+          import your league schedule, opponents, and roster — or skip and add them later.
+        </p>
+        <FindUstaTeam
+          groupId={createdGroupId}
+          teamMembers={wizardMembers}
+          onTeamSelected={(r, year) => {
+            const { draft, seasonName: sn } = leagueDraftFromSearchResult(r, year);
+            setLeagueDraft(draft);
+            setSeasonName(sn);
+          }}
+          onImported={() => setImportDone(true)}
+        />
+        {createError && (
+          <div className="mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">{createError}</div>
+        )}
+        <div className="flex items-center gap-3 mt-4 pt-4 border-t border-gray-100">
+          <button onClick={() => setStep("usta-league")} className="btn-primary">
+            {importDone ? "Continue" : "Skip import — continue"}
+          </button>
+          <button onClick={onCreated} className="btn-secondary">Finish later</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "usta-league" && createdGroupId) {
+    return (
+      <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 animate-fade-in-up">
+        <p className="text-[11px] font-bold tracking-wider text-court-green uppercase mb-1">Step 3 of 3</p>
+        <h3 className="font-display text-lg font-bold text-gray-800 mb-1">League settings</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          {importDone
+            ? "Prefilled from the team you imported — adjust anything, then finish."
+            : "Set your division, level, and match format. You can change these anytime in Settings → Seasons."}
+        </p>
+        <div className="mb-3">
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Season name</label>
+          <input
+            type="text"
+            value={seasonName}
+            onChange={(e) => setSeasonName(e.target.value)}
+            placeholder="e.g. 2026 Adult 40+"
+            maxLength={64}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-court-green"
+          />
+        </div>
+        <LeagueFields draft={leagueDraft} onChange={setLeagueDraft} />
+        {createError && (
+          <div className="mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">{createError}</div>
+        )}
+        <div className="flex items-center gap-3 mt-4 pt-4 border-t border-gray-100">
+          <button onClick={finishUsta} disabled={finishing} className="btn-primary">
+            {finishing ? "Saving..." : "Save & open schedule"}
+          </button>
+          <button onClick={onCreated} className="btn-secondary" disabled={finishing}>Finish later</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 animate-fade-in-up">
@@ -628,6 +769,38 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
       <div className="mb-4">
         <label className="block text-sm font-semibold text-gray-700 mb-1.5">Team Name</label>
         <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm" placeholder="e.g. Saturday Doubles Crew" autoFocus />
+      </div>
+      <div className="mb-4">
+        <label className="block text-sm font-semibold text-gray-700 mb-1.5">Team type</label>
+        <div className="grid grid-cols-2 gap-2">
+          {(
+            [
+              { value: "casual", title: "Casual", hint: "Friends, practices, social play" },
+              { value: "usta", title: "USTA league", hint: "Import your schedule, set lineups" },
+            ] as const
+          ).map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setTeamType(opt.value)}
+              className={`text-left px-3 py-2.5 rounded-xl border transition-all ${
+                teamType === opt.value
+                  ? "border-court-green bg-court-green-pale/20 ring-1 ring-court-green/30"
+                  : "border-gray-200 hover:border-gray-300"
+              }`}
+            >
+              <span className={`block text-sm font-semibold ${teamType === opt.value ? "text-court-green" : "text-gray-800"}`}>
+                {opt.title}
+              </span>
+              <span className="block text-[11px] text-gray-500 mt-0.5">{opt.hint}</span>
+            </button>
+          ))}
+        </div>
+        {teamType === "usta" && (
+          <p className="text-[11px] text-gray-500 mt-1.5">
+            After creating, we&apos;ll find your team on TennisRecord to import its match schedule and set up your league.
+          </p>
+        )}
       </div>
       <div className="mb-4">
         <label className="block text-sm font-semibold text-gray-700 mb-1">Add friends to your team ({selectedIds.size} selected)</label>
@@ -686,7 +859,9 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
         </div>
       )}
       <div className="flex items-center gap-3">
-        <button onClick={handleCreate} disabled={!name.trim() || creating} className="btn-primary">{creating ? "Creating..." : "Create Team"}</button>
+        <button onClick={handleCreate} disabled={!name.trim() || creating} className="btn-primary">
+          {creating ? "Creating..." : teamType === "usta" ? "Create & set up USTA" : "Create Team"}
+        </button>
         <button onClick={onCancel} className="btn-secondary">Cancel</button>
       </div>
     </div>

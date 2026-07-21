@@ -14,6 +14,14 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage, placeholderInScope, addRosterPlaceholders, getRosterPlaceholderLinks, type PlaceholderLink } from "@/lib/supabase/queries";
 import LinkMemberModal from "@/components/groups/LinkMemberModal";
 import { canCaptain, type TeamRole } from "@/lib/groupRoles";
+import {
+  parseLineupFormat,
+  validateLineup,
+  type LeagueDivision,
+  type LineupWarning,
+  type RatingScheme,
+  type SeasonLeague,
+} from "@/lib/leagueFormats";
 import { errorMessage } from "@/lib/errorMessage";
 import { AvailabilityTabs } from "@/components/availability/AvailabilityTabs";
 import FindUstaTeam from "@/components/scouting/FindUstaTeam";
@@ -27,7 +35,7 @@ type Member = {
   roles: TeamRole[];
   isPlaceholder: boolean; // captain-created, no account yet
   placeholderScope: string | null; // which table(s) an invited guest belongs to
-  user: { id: string; name: string; profileImageUrl: string; skillLevel: string };
+  user: { id: string; name: string; profileImageUrl: string; skillLevel: string; ntrpRating: number | null };
 };
 
 type Team = {
@@ -54,9 +62,14 @@ type Match = {
   location: string;
   opponent: string;
   opponentTeamId: string | null;
+  seasonId: string | null;
   notes: string;
   availabilities: Availability[];
 };
+
+// Season rows with their USTA league config (parsed camel shape). A match
+// resolves its league via season_id, falling back to the active season.
+type SeasonLeagueRow = SeasonLeague & { id: string; isActive: boolean };
 
 const TYPE_OPTIONS: { value: string; label: string; chip: string }[] = [
   { value: "singles", label: "Singles", chip: "S" },
@@ -107,6 +120,7 @@ export default function AvailabilityPage() {
 
   const [team, setTeam] = useState<Team | null>(null);
   const [matches, setMatches] = useState<Match[]>([]);
+  const [seasonLeagues, setSeasonLeagues] = useState<SeasonLeagueRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -179,7 +193,7 @@ export default function AvailabilityPage() {
       roles: TeamRole[];
       isPlaceholder: boolean;
       placeholderScope: string | null;
-      user: { id: string; name: string; profile_image_url: string };
+      user: { id: string; name: string; profile_image_url: string; ntrp_rating: number | null };
     }[]
   ) =>
     ({
@@ -196,6 +210,7 @@ export default function AvailabilityPage() {
           name: m.user.name,
           profileImageUrl: m.user.profile_image_url,
           skillLevel: "",
+          ntrpRating: m.user.ntrp_rating ?? null,
         },
       })),
     }) as unknown as Team;
@@ -213,18 +228,22 @@ export default function AvailabilityPage() {
     }
 
     try {
-      // Team header and matches don't depend on each other — fetch together
-      // so the tab opens in one round-trip instead of two.
-      const [bundle, matchRes] = await Promise.all([
+      // Team header, matches, and season league configs don't depend on each
+      // other — fetch together so the tab opens in one round-trip.
+      const [bundle, matchRes, seasonRes] = await Promise.all([
         fetchGroupBundle(supabase, groupId),
         supabase
           .from("team_matches")
           .select(
-            `id, match_date, match_time, location, opponent, opponent_team_id, notes,
+            `id, match_date, match_time, location, opponent, opponent_team_id, season_id, notes,
              availabilities ( id, member_id, user_id, status, match_types, lineup_slot )`
           )
           .eq("group_id", groupId)
           .order("match_date", { ascending: true }),
+        supabase
+          .from("seasons")
+          .select("id, is_active, league_division, rating_scheme, league_level, lineup_format")
+          .eq("group_id", groupId),
       ]);
       if (!bundle.group) {
         setError("You are not a member of this team.");
@@ -232,6 +251,17 @@ export default function AvailabilityPage() {
         return;
       }
       setTeam(toTeam(bundle.group, bundle.members));
+
+      setSeasonLeagues(
+        (seasonRes.data ?? []).map((s) => ({
+          id: s.id,
+          isActive: s.is_active,
+          division: (s.league_division as LeagueDivision | null) ?? null,
+          ratingScheme: (s.rating_scheme as RatingScheme | null) ?? null,
+          level: s.league_level,
+          lineupFormat: parseLineupFormat(s.lineup_format),
+        }))
+      );
 
       const matchRows = matchRes.data;
       type RawAvail = {
@@ -249,6 +279,7 @@ export default function AvailabilityPage() {
         location: string;
         opponent: string;
         opponent_team_id: string | null;
+        season_id: string | null;
         notes: string;
         availabilities: RawAvail[];
       };
@@ -260,6 +291,7 @@ export default function AvailabilityPage() {
           location: m.location,
           opponent: m.opponent,
           opponentTeamId: m.opponent_team_id,
+          seasonId: m.season_id,
           notes: m.notes,
           availabilities: m.availabilities.map((a) => ({
             id: a.id,
@@ -460,8 +492,14 @@ export default function AvailabilityPage() {
     }
     const { data, error: insErr } = await supabase
       .from("team_matches")
-      .insert({ group_id: groupId, ...fields })
-      .select("id, match_date, match_time, location, opponent, notes")
+      .insert({
+        group_id: groupId,
+        ...fields,
+        // Tag new matches with the active season so the season's league
+        // config (lineup format, level) applies without a manual step.
+        season_id: seasonLeagues.find((s) => s.isActive)?.id ?? null,
+      })
+      .select("id, match_date, match_time, location, opponent, season_id, notes")
       .single();
     if (!insErr && data) {
       // When the match came from a poll window, pre-fill every member's
@@ -505,6 +543,7 @@ export default function AvailabilityPage() {
         location: data.location,
         opponent: data.opponent,
         opponentTeamId: null,
+        seasonId: data.season_id,
         notes: data.notes,
         availabilities: seededAvailabilities,
       } as unknown as Match;
@@ -608,6 +647,38 @@ export default function AvailabilityPage() {
   const getAvail = (match: Match, memberId: string) =>
     match.availabilities.find((a) => a.memberId === memberId);
 
+  // The league config governing a match: its own season if tagged, else the
+  // active season. Null when the season has no league fields set (casual team).
+  const leagueFor = (match: Match): SeasonLeague | null => {
+    const s =
+      (match.seasonId ? seasonLeagues.find((x) => x.id === match.seasonId) : undefined) ??
+      seasonLeagues.find((x) => x.isActive);
+    if (!s) return null;
+    return s.division || s.level != null || s.lineupFormat ? s : null;
+  };
+
+  // Current lineup grouped by slot code, with player NTRP for validation.
+  const lineupAssignments = (match: Match) => {
+    const bySlot = new Map<string, { name: string; ntrp: number | null }[]>();
+    for (const a of match.availabilities) {
+      const slot = a.lineupSlot?.trim();
+      if (!slot) continue;
+      const member = team?.members.find((m) => m.id === a.memberId);
+      if (!bySlot.has(slot)) bySlot.set(slot, []);
+      bySlot.get(slot)!.push({
+        name: member?.user.name ?? "Player",
+        ntrp: member?.user.ntrpRating ?? null,
+      });
+    }
+    return Array.from(bySlot.entries()).map(([slotCode, players]) => ({ slotCode, players }));
+  };
+
+  const lineupWarnings = (match: Match): LineupWarning[] => {
+    const league = leagueFor(match);
+    if (!league?.lineupFormat) return [];
+    return validateLineup(league, lineupAssignments(match));
+  };
+
   const setLineupSlot = async (
     matchId: string,
     memberId: string,
@@ -671,6 +742,9 @@ export default function AvailabilityPage() {
     matchTime: match.matchTime,
     location: match.location,
     opponent: match.opponent,
+    // Season lineup format (when set) makes the message list every court in
+    // order, marking unfilled ones TBD, so gaps are visible to the team.
+    format: leagueFor(match)?.lineupFormat ?? null,
     availabilities: match.availabilities.map((a) => ({
       lineupSlot: a.lineupSlot,
       user: { name: team?.members.find((m) => m.id === a.memberId)?.user.name ?? "" },
@@ -862,6 +936,26 @@ export default function AvailabilityPage() {
       {match.notes && (
         <p className="text-[10px] text-gray-400 truncate" title={match.notes}>{match.notes}</p>
       )}
+      {isCaptain && (() => {
+        // Lineup progress vs the season's format, with USTA eligibility
+        // warnings (over-level player, combined pair over limit, below the
+        // min-court default threshold). Advisory — hover/tap for details.
+        const league = leagueFor(match);
+        const fmt = league?.lineupFormat;
+        if (!fmt) return null;
+        const byCode = new Map(lineupAssignments(match).map((a) => [a.slotCode, a.players.length]));
+        const filled = fmt.filter((d) => (byCode.get(d.code) ?? 0) >= (d.type === "doubles" ? 2 : 1)).length;
+        const warns = lineupWarnings(match);
+        return (
+          <p
+            className={`text-[10px] font-semibold ${warns.length > 0 ? "text-amber-600" : filled === fmt.length ? "text-court-green" : "text-gray-500"}`}
+            title={warns.map((w) => w.message).join("\n") || undefined}
+          >
+            Lineup {filled}/{fmt.length} courts
+            {warns.length > 0 ? ` · ⚠ ${warns.length} warning${warns.length > 1 ? "s" : ""}` : ""}
+          </p>
+        );
+      })()}
       <AttendanceTally availabilities={match.availabilities} />
     </div>
   );
@@ -1493,7 +1587,21 @@ export default function AvailabilityPage() {
       })()}
 
       {/* Lineup popover (captain only, portal) */}
-      {lineupPopover && typeof document !== "undefined" && createPortal(
+      {lineupPopover && typeof document !== "undefined" && (() => {
+        const popMatch = matches.find((mm) => mm.id === lineupPopover.matchId);
+        // Season format drives the slot list when set (plus Reserve); teams
+        // without a league format keep the legacy generic options.
+        const popFormat = popMatch ? leagueFor(popMatch)?.lineupFormat : null;
+        const slotOptions = popFormat ? [...popFormat.map((d) => d.code), "Reserve"] : SLOT_OPTIONS;
+        const popWarnings = popMatch ? lineupWarnings(popMatch) : [];
+        const current =
+          popMatch?.availabilities.find((aa) => aa.memberId === lineupPopover.memberId)?.lineupSlot || "";
+        // How many players already hold each slot — lets the captain see which
+        // courts still need bodies right in the picker (e.g. "D2 ·1/2").
+        const slotCounts = popMatch
+          ? new Map(lineupAssignments(popMatch).map((a) => [a.slotCode, a.players.length]))
+          : new Map<string, number>();
+        return createPortal(
         <>
           <div className="fixed inset-0 z-[998]" onClick={() => setLineupPopover(null)} />
           <div
@@ -1503,14 +1611,11 @@ export default function AvailabilityPage() {
           >
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Slot</p>
             <div className="grid grid-cols-3 gap-1 mb-3">
-              {SLOT_OPTIONS.map((opt) => {
-                const current = (() => {
-                  const m = matches.find((mm) => mm.id === lineupPopover.matchId);
-                  if (!m) return "";
-                  const a = m.availabilities.find((aa) => aa.memberId === lineupPopover.memberId);
-                  return a?.lineupSlot || "";
-                })();
+              {slotOptions.map((opt) => {
                 const active = current === opt;
+                const def = popFormat?.find((d) => d.code === opt);
+                const count = slotCounts.get(opt) ?? 0;
+                const capacity = def ? (def.type === "doubles" ? 2 : 1) : null;
                 return (
                   <button
                     key={opt}
@@ -1525,10 +1630,22 @@ export default function AvailabilityPage() {
                     }`}
                   >
                     {opt}
+                    {capacity != null && !active && count > 0 && (
+                      <span className={`block text-[8px] font-bold ${count >= capacity ? "text-amber-600" : "text-gray-400"}`}>
+                        {count}/{capacity}
+                      </span>
+                    )}
                   </button>
                 );
               })}
             </div>
+            {popWarnings.length > 0 && (
+              <div className="mb-3 p-2 rounded-lg bg-amber-50 border border-amber-100 space-y-1">
+                {popWarnings.map((w, i) => (
+                  <p key={i} className="text-[10px] text-amber-700 leading-snug">⚠ {w.message}</p>
+                ))}
+              </div>
+            )}
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Custom</p>
             <div className="space-y-1.5 mb-3">
               <input
@@ -1564,7 +1681,8 @@ export default function AvailabilityPage() {
           </div>
         </>,
         document.body
-      )}
+        );
+      })()}
     </div>
   );
 }

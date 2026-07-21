@@ -82,9 +82,26 @@ export async function POST(
   );
 
   if (rows.length > 0) {
+    // Tag imported matches with the group's active season (if any) so its
+    // league config — lineup format, level — applies to them immediately.
+    // The create-team wizard imports before the season exists; it backfills
+    // season_id itself after creating the season.
+    const { data: activeSeason } = await supabase
+      .from("seasons")
+      .select("id")
+      .eq("group_id", groupId)
+      .eq("is_active", true)
+      .maybeSingle();
+
     const { error: insErr } = await supabase
       .from("team_matches")
-      .insert(rows.map((r) => ({ ...r, group_id: groupId })));
+      .insert(
+        rows.map((r) => ({
+          ...r,
+          group_id: groupId,
+          season_id: activeSeason?.id ?? null,
+        })),
+      );
     if (insErr) {
       const status = insErr.code === "42501" ? 403 : 400;
       return NextResponse.json({ error: insErr.message }, { status });
