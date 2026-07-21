@@ -24,6 +24,8 @@ import {
 } from "@/lib/leagueFormats";
 import { errorMessage } from "@/lib/errorMessage";
 import { AvailabilityTabs } from "@/components/availability/AvailabilityTabs";
+import DismissibleTip from "@/components/DismissibleTip";
+import { AVAIL_MATRIX_GUIDE_KEY } from "@/lib/seenFlags";
 import FindUstaTeam from "@/components/scouting/FindUstaTeam";
 import SendLineupMenu from "@/components/availability/SendLineupMenu";
 import { closePoll, seedPollAvailability } from "@/lib/supabase/queries/availabilityPolls";
@@ -847,10 +849,15 @@ export default function AvailabilityPage() {
         className={`w-full text-left px-2 py-1.5 rounded-lg border ${
           meta
             ? `${meta.bg} ${meta.text} border-transparent`
-            : "border-dashed border-gray-300 text-gray-400 hover:border-court-green hover:text-court-green"
+            : isMe
+              ? "border-dashed border-court-green/50 text-court-green hover:border-court-green"
+              : "border-dashed border-gray-300 text-gray-400 hover:border-court-green hover:text-court-green"
         } text-xs font-semibold flex items-center justify-between gap-1`}
       >
-        <span className="truncate">{meta?.label || "Set status"}</span>
+        {/* A member's own unanswered cells are the loudest thing in their row —
+            "Your RSVP" in green vs the gray "Set status" captains see on
+            other people's cells. */}
+        <span className="truncate">{meta?.label || (isMe ? "Your RSVP" : "Set status")}</span>
         {a?.matchTypes && (
           <span className="text-[9px] font-bold bg-white/30 px-1 rounded">
             {typeChip(a.matchTypes)}
@@ -1095,6 +1102,31 @@ export default function AvailabilityPage() {
 
       <AvailabilityTabs groupId={groupId} active="matches" />
 
+      {/* One-time role-aware explainer: who fills Avail vs Lineup. New members
+          otherwise miss that Avail is theirs to set, and captains assume they
+          must fill Avail for everyone. */}
+      {matches.length > 0 && (
+        <DismissibleTip
+          storageKey={AVAIL_MATRIX_GUIDE_KEY}
+          title={isCaptain ? "Avail is for players — Lineup is yours" : "RSVP in the Avail column"}
+          className="mb-4"
+        >
+          {isCaptain ? (
+            <>
+              Each player sets their own <strong>Avail</strong> — you can correct anyone&apos;s if
+              needed, but you don&apos;t have to fill it for them. Once you know who&apos;s in, assign
+              courts in <strong>Lineup</strong>. Players without accounts RSVP via their share link.
+            </>
+          ) : (
+            <>
+              Tap the <strong>Avail</strong> cells on your row to tell your captain when you can
+              play. <strong>Lineup</strong> is where your captain assigns courts — nothing for you
+              to fill there.
+            </>
+          )}
+        </DismissibleTip>
+      )}
+
       {/* Add match form */}
       {showAdd && isCaptain && (
         <div ref={matchFormRef} className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 mb-5 animate-fade-in-up">
@@ -1218,9 +1250,15 @@ export default function AvailabilityPage() {
                     <Fragment key={match.id}>
                       <th className="text-[10px] uppercase tracking-wider text-gray-400 font-bold px-3 py-1.5 text-left border-r border-gray-100 min-w-[130px]">
                         Avail
+                        <span className="block text-[8px] normal-case tracking-normal font-semibold text-gray-300">
+                          {isCaptain ? "players set" : "you set"}
+                        </span>
                       </th>
                       <th className="text-[10px] uppercase tracking-wider text-gray-400 font-bold px-3 py-1.5 text-left border-r border-gray-200 min-w-[130px]">
                         Lineup
+                        <span className="block text-[8px] normal-case tracking-normal font-semibold text-gray-300">
+                          captain sets
+                        </span>
                       </th>
                     </Fragment>
                   ))}
@@ -1385,11 +1423,21 @@ export default function AvailabilityPage() {
                       </div>
                       <div className="grid grid-cols-2 gap-2 pl-10">
                         <div>
-                          <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">Avail</p>
+                          <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">
+                            Avail{" "}
+                            <span className="normal-case tracking-normal text-[8px] text-gray-300">
+                              · {isCaptain ? "players set" : "you set"}
+                            </span>
+                          </p>
                           {renderAvailControl(activeMatch, m, a)}
                         </div>
                         <div>
-                          <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">Lineup</p>
+                          <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">
+                            Lineup{" "}
+                            <span className="normal-case tracking-normal text-[8px] text-gray-300">
+                              · captain sets
+                            </span>
+                          </p>
                           {renderLineupControl(activeMatch, m, a)}
                         </div>
                       </div>
@@ -1454,8 +1502,14 @@ export default function AvailabilityPage() {
               {opt.label}
             </span>
           ))}
-          {isCaptain && (
-            <span className="text-gray-400 italic">· As captain, tap any Avail or Lineup cell to edit it for any member.</span>
+          {isCaptain ? (
+            <span className="text-gray-400 italic">
+              · Players set their own Avail — you can fix anyone&apos;s, and only you assign the Lineup.
+            </span>
+          ) : (
+            <span className="text-gray-400 italic">
+              · Tap the Avail cells on your row to RSVP. Your captain sets the Lineup.
+            </span>
           )}
         </div>
       )}
