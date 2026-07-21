@@ -65,6 +65,7 @@ export default function FindUstaTeam({
   groupId,
   defaultSection = DEFAULT_SECTION,
   onImported,
+  onTeamSelected,
   teamMembers,
 }: {
   groupId: string;
@@ -74,6 +75,9 @@ export default function FindUstaTeam({
     imported: number;
     skipped: number;
   }) => void;
+  // Fired when the captain picks a search result (create-team wizard uses the
+  // result's leagueType/ntrp + the search year to prefill league settings).
+  onTeamSelected?: (r: TeamSearchResult, year: string) => void;
   // When provided (Availability page), the roster step lets the captain map
   // each imported player to an existing member or add them as a new row.
   // Omitted (Scouting page) → roster reconciliation UI is hidden.
@@ -215,6 +219,7 @@ export default function FindUstaTeam({
 
   async function handleSelect(r: TeamSearchResult) {
     setSelected(r);
+    onTeamSelected?.(r, year);
     setPreview(null);
     setDispositions([]);
     setPreviewing(true);

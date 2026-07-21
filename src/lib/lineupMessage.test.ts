@@ -51,6 +51,46 @@ describe("buildLineupText", () => {
     expect(buildLineupText(match({ availabilities: [slot("", "John"), slot("  ", "Jane")] }))).toBeNull();
     expect(buildLineupText(match({ availabilities: [] }))).toBeNull();
   });
+
+  it("lists every format slot in order, marking unfilled ones TBD", () => {
+    const out = buildLineupText(
+      match({
+        format: [
+          { code: "S1", type: "singles" },
+          { code: "D1", type: "doubles" },
+          { code: "D2", type: "doubles" },
+        ],
+        availabilities: [slot("D1", "Mike"), slot("D1", "Alex")],
+      }),
+    );
+    expect(out).toContain("S1: TBD\nD1: Mike & Alex\nD2: TBD");
+  });
+
+  it("appends non-format slots (Reserve, custom) after the format slots", () => {
+    const out = buildLineupText(
+      match({
+        format: [{ code: "D1", type: "doubles" }],
+        availabilities: [slot("Reserve", "Sam"), slot("D1", "Mike"), slot("D1", "Alex")],
+      }),
+    );
+    expect(out).toContain("D1: Mike & Alex\nReserve: Sam");
+  });
+
+  it("keeps legacy sorting when no format is set", () => {
+    const out = buildLineupText(
+      match({
+        format: null,
+        availabilities: [slot("D1", "Sarah"), slot("S1", "John")],
+      }),
+    );
+    expect(out).toContain("S1: John\nD1: Sarah");
+  });
+
+  it("still returns null with a format but zero assignments", () => {
+    expect(
+      buildLineupText(match({ format: [{ code: "S1", type: "singles" }], availabilities: [] })),
+    ).toBeNull();
+  });
 });
 
 describe("compareSlots", () => {

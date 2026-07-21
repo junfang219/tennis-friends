@@ -10323,3 +10323,88 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.add_roster_placeholders(uuid, jsonb, text) FROM public, anon;
 GRANT EXECUTE ON FUNCTION public.add_roster_placeholders(uuid, jsonb, text) TO authenticated;
+
+-- =========================================================================
+-- Community teams phase 1: USTA league identity per season
+--
+-- A USTA team is effectively re-registered each season: division, NTRP
+-- level, flight, and even lineup format can all change year to year — so
+-- league identity lives on `seasons`, not `groups`. All columns nullable:
+-- casual/non-USTA teams are unaffected. `lineup_format` is stored as data,
+-- not code, because USTA formats vary by division, level, section, AND
+-- championship year (e.g. PNW 40&O plays 1S+3D locally vs 1S+4D at
+-- national championships).
+-- =========================================================================
+alter table public.seasons
+  add column league_division  text,
+  add column rating_scheme    text,
+  add column league_level     numeric,
+  add column flight           text,
+  add column usta_team_number text,
+  add column area             text,
+  add column lineup_format    jsonb;
+
+alter table public.seasons
+  add constraint seasons_rating_scheme_check
+    check (rating_scheme is null or rating_scheme in ('straight', 'combined')),
+  add constraint seasons_league_division_check
+    check (league_division is null or league_division in
+      ('adult_18', 'adult_40', 'adult_55', 'adult_65', 'mixed_18', 'mixed_40', 'combo', 'tri_level', 'other'));
+
+comment on column public.seasons.league_level is
+  'Team NTRP level. straight scheme = individual rating cap (e.g. 3.5); combined scheme = pair-sum level (e.g. 7.0 for Mixed/55&O).';
+comment on column public.seasons.lineup_format is
+  'Ordered lineup slots for a team match, e.g. [{"code":"S1","type":"singles"},{"code":"D1","type":"doubles"}]. Null = free-form slots (legacy behavior). Stored as data, not code: USTA formats vary by division, level, section, and championship year.';
+
+-- =========================================================================
+-- Direct roster adds were silent: a manager inserting a friend straight into
+-- group_members (create-team form, Settings → Roster → Add friends) gave the
+-- friend no signal at all — they only discovered the team by opening the app.
+-- Mirror the link_roster_placeholder behavior: notify + push the added user.
+-- Trigger-level so every direct-add surface (present and future) is covered.
+-- =========================================================================
+CREATE OR REPLACE FUNCTION public.notify_on_group_member_added()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_actor      uuid := auth.uid();
+  v_team_name  text;
+  v_actor_name text;
+BEGIN
+  -- Notify only real accounts added by SOMEONE ELSE in an authenticated
+  -- session:
+  --   - placeholder rows (user_id NULL) have nobody to notify;
+  --   - self-inserts (owner auto-add trigger, invite acceptance, guest
+  --     claims) are the user's own action;
+  --   - service-role/admin inserts have no auth.uid() — skip rather than
+  --     misattribute.
+  IF NEW.user_id IS NULL OR v_actor IS NULL OR NEW.user_id = v_actor THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT name INTO v_team_name  FROM public.groups   WHERE id = NEW.group_id;
+  SELECT name INTO v_actor_name FROM public.profiles WHERE id = v_actor;
+
+  -- Reuses the existing team_linked type — the notifications UI already
+  -- renders it ("added you to their team — tap to RSVP") and deep-links to
+  -- the team.
+  INSERT INTO public.notifications (user_id, actor_id, type, group_id)
+  VALUES (NEW.user_id, v_actor, 'team_linked'::notification_type, NEW.group_id);
+
+  PERFORM public.invoke_edge_function(
+    'push-fanout',
+    jsonb_build_object(
+      'user_ids',  jsonb_build_array(NEW.user_id),
+      'title',     COALESCE(NULLIF(btrim(v_actor_name), ''), 'A teammate'),
+      'body',      'added you to ' || COALESCE(v_team_name, 'a team'),
+      'thread_id', 'team_linked:' || NEW.group_id::text,
+      'data',      jsonb_build_object('kind', 'team_linked', 'group_id', NEW.group_id::text)
+    )
+  );
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS group_members_notify_added ON public.group_members;
+CREATE TRIGGER group_members_notify_added
+  AFTER INSERT ON public.group_members
+  FOR EACH ROW EXECUTE FUNCTION public.notify_on_group_member_added();

@@ -12,6 +12,20 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
 import LinkMemberModal from "@/components/groups/LinkMemberModal";
 import AddPeopleChooser from "@/components/groups/AddPeopleChooser";
+import {
+  DIVISION_OPTIONS,
+  formatLabel,
+  parseLineupFormat,
+  type LeagueDivision,
+  type LineupSlotDef,
+  type RatingScheme,
+} from "@/lib/leagueFormats";
+import LeagueFields, {
+  draftFromSeason,
+  draftToColumns,
+  emptyLeagueDraft,
+  type LeagueDraft,
+} from "@/components/groups/LeagueFields";
 
 type Member = {
   id: string;
@@ -37,6 +51,13 @@ type Season = {
   startDate: string | null;
   endDate: string | null;
   isActive: boolean;
+  // USTA league identity (all optional — casual teams leave these unset).
+  division: LeagueDivision | null;
+  ratingScheme: RatingScheme | null;
+  level: number | null;
+  flight: string | null;
+  ustaTeamNumber: string | null;
+  lineupFormat: LineupSlotDef[] | null;
 };
 
 type TabKey = "team" | "roster" | "seasons" | "notifications";
@@ -107,7 +128,9 @@ export default function GroupSettingsPage() {
     const supabase = createSupabaseBrowserClient();
     const { data } = await supabase
       .from("seasons")
-      .select("id, name, start_date, end_date, group_id")
+      .select(
+        "id, name, start_date, end_date, is_active, league_division, rating_scheme, league_level, flight, usta_team_number, lineup_format"
+      )
       .eq("group_id", groupId)
       .order("start_date", { ascending: false });
     setSeasons(
@@ -116,8 +139,14 @@ export default function GroupSettingsPage() {
         name: s.name,
         startDate: s.start_date,
         endDate: s.end_date,
-        groupId: s.group_id,
-      })) as unknown as typeof seasons
+        isActive: s.is_active,
+        division: (s.league_division as LeagueDivision | null) ?? null,
+        ratingScheme: (s.rating_scheme as RatingScheme | null) ?? null,
+        level: s.league_level,
+        flight: s.flight,
+        ustaTeamNumber: s.usta_team_number,
+        lineupFormat: parseLineupFormat(s.lineup_format),
+      }))
     );
   }, [groupId]);
 
@@ -724,6 +753,10 @@ function SeasonsTab({
   const [newStart, setNewStart] = useState("");
   const [newEnd, setNewEnd] = useState("");
   const [newActive, setNewActive] = useState(true);
+  const [newLeague, setNewLeague] = useState<LeagueDraft>(emptyLeagueDraft());
+  // Per-season league editor (one open at a time).
+  const [editingLeagueId, setEditingLeagueId] = useState("");
+  const [editLeague, setEditLeague] = useState<LeagueDraft>(emptyLeagueDraft());
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState("");
   const [err, setErr] = useState("");
@@ -746,6 +779,7 @@ function SeasonsTab({
       start_date: newStart || null,
       end_date: newEnd || null,
       is_active: newActive,
+      ...draftToColumns(newLeague),
     });
     if (!insErr) {
       setShowCreate(false);
@@ -753,11 +787,29 @@ function SeasonsTab({
       setNewStart("");
       setNewEnd("");
       setNewActive(true);
+      setNewLeague(emptyLeagueDraft());
       onSaved();
     } else {
       setErr(insErr.message || "Failed to create season.");
     }
     setSaving(false);
+  };
+
+  const saveLeague = async (seasonId: string) => {
+    setBusyId(seasonId);
+    setErr("");
+    const supabase = createSupabaseBrowserClient();
+    const { error: upErr } = await supabase
+      .from("seasons")
+      .update(draftToColumns(editLeague))
+      .eq("id", seasonId);
+    if (upErr) {
+      setErr(upErr.message || "Failed to save league settings.");
+    } else {
+      setEditingLeagueId("");
+      onSaved();
+    }
+    setBusyId("");
   };
 
   const setActive = async (seasonId: string, isActive: boolean) => {
@@ -802,6 +854,17 @@ function SeasonsTab({
     return `${f(s.startDate)} → ${f(s.endDate)}`;
   };
 
+  // "Adult 40 & Over · 3.5 · Flight 2 · 1S+3D" — null when no league fields set.
+  const leagueSummary = (s: Season): string | null => {
+    const parts: string[] = [];
+    const div = DIVISION_OPTIONS.find((d) => d.value === s.division)?.label;
+    if (div) parts.push(div);
+    if (s.level != null) parts.push(s.level.toFixed(1));
+    if (s.flight) parts.push(`Flight ${s.flight}`);
+    if (s.lineupFormat) parts.push(formatLabel(s.lineupFormat));
+    return parts.length > 0 ? parts.join(" · ") : null;
+  };
+
   return (
     <div>
       <p className="text-xs text-gray-500 mb-3">
@@ -815,38 +878,81 @@ function SeasonsTab({
         {seasons.map((s) => (
           <div
             key={s.id}
-            className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:border-gray-200 transition-colors"
+            className="p-3 rounded-xl border border-gray-100 hover:border-gray-200 transition-colors"
           >
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-sm text-gray-800 truncate">{s.name}</span>
-                {s.isActive && (
-                  <span className="text-[9px] font-bold tracking-wider text-court-green bg-court-green-pale/40 px-1.5 py-0.5 rounded uppercase">
-                    Active
-                  </span>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-sm text-gray-800 truncate">{s.name}</span>
+                  {s.isActive && (
+                    <span className="text-[9px] font-bold tracking-wider text-court-green bg-court-green-pale/40 px-1.5 py-0.5 rounded uppercase">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-gray-500 mt-0.5">{formatRange(s)}</p>
+                {leagueSummary(s) && (
+                  <p className="text-[11px] text-gray-600 mt-0.5 truncate">
+                    {leagueSummary(s)}
+                    {s.ustaTeamNumber ? ` · #${s.ustaTeamNumber}` : ""}
+                  </p>
                 )}
               </div>
-              <p className="text-[11px] text-gray-500 mt-0.5">{formatRange(s)}</p>
-            </div>
-            {canManage && (
-              <>
-                {!s.isActive && (
+              {canManage && (
+                <>
                   <button
-                    onClick={() => setActive(s.id, true)}
+                    onClick={() => {
+                      if (editingLeagueId === s.id) {
+                        setEditingLeagueId("");
+                      } else {
+                        setEditingLeagueId(s.id);
+                        setEditLeague(draftFromSeason(s));
+                      }
+                    }}
                     disabled={busyId === s.id}
                     className="text-xs font-semibold text-court-green hover:text-court-green-light"
                   >
-                    Activate
+                    League
                   </button>
-                )}
-                <button
-                  onClick={() => removeSeason(s.id)}
-                  disabled={busyId === s.id}
-                  className="text-xs font-semibold text-red-500 hover:text-red-600"
-                >
-                  Delete
-                </button>
-              </>
+                  {!s.isActive && (
+                    <button
+                      onClick={() => setActive(s.id, true)}
+                      disabled={busyId === s.id}
+                      className="text-xs font-semibold text-court-green hover:text-court-green-light"
+                    >
+                      Activate
+                    </button>
+                  )}
+                  <button
+                    onClick={() => removeSeason(s.id)}
+                    disabled={busyId === s.id}
+                    className="text-xs font-semibold text-red-500 hover:text-red-600"
+                  >
+                    Delete
+                  </button>
+                </>
+              )}
+            </div>
+            {editingLeagueId === s.id && (
+              <div className="mt-3 pt-3 border-t border-gray-100 space-y-3">
+                <LeagueFields draft={editLeague} onChange={setEditLeague} />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setEditingLeagueId("")}
+                    className="btn-secondary flex-1"
+                    disabled={busyId === s.id}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => saveLeague(s.id)}
+                    className="btn-primary flex-1"
+                    disabled={busyId === s.id}
+                  >
+                    {busyId === s.id ? "Saving..." : "Save league"}
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         ))}
@@ -891,6 +997,7 @@ function SeasonsTab({
                 />
                 Set as active season
               </label>
+              <LeagueFields draft={newLeague} onChange={setNewLeague} />
               <div className="flex gap-2">
                 <button onClick={() => setShowCreate(false)} className="btn-secondary flex-1" disabled={saving}>
                   Cancel
