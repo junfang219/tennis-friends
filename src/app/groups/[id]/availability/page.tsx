@@ -1007,27 +1007,25 @@ export default function AvailabilityPage() {
             : formatDateHeader(match.matchDate)}
       </p>
       {match.schedulingStatus !== "fixed" && (
-        <p className="text-[10px] font-semibold text-amber-600">
-          {match.schedulingStatus === "window" ? "Time TBD — captains arranging" : "Floating match — date TBD"}
-          {isCaptain && (
-            <>
-              {" · "}
-              <Link
-                href={`/groups/${groupId}/availability/polls/new?forMatch=${match.id}`}
-                className="text-court-green hover:underline"
-              >
-                Find a time
-              </Link>
-            </>
-          )}
-        </p>
+        <span
+          className="inline-flex items-center gap-1 mt-0.5 mb-0.5 px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[9px] font-bold uppercase tracking-wide"
+          title={
+            match.schedulingStatus === "window"
+              ? "Captains are still arranging this match's time"
+              : "Floating match — no date agreed yet"
+          }
+        >
+          ⏳ {match.schedulingStatus === "window" ? "Time TBD" : "Date TBD"}
+        </span>
       )}
       {match.matchTime && (
         <p className="text-[10px] text-gray-500">{match.matchTime}</p>
       )}
-      <p className="text-[11px] text-gray-700 font-medium truncate" title={match.location}>
-        📍 {match.location}
-      </p>
+      {match.location && (
+        <p className="text-[11px] text-gray-700 font-medium truncate" title={match.location}>
+          📍 {match.location}
+        </p>
+      )}
       {match.opponent && (
         <p className="text-[11px] text-gray-700 font-medium truncate" title={match.opponent}>
           🆚 {match.opponent}
@@ -1043,6 +1041,21 @@ export default function AvailabilityPage() {
       )}
       {match.notes && (
         <p className="text-[10px] text-gray-400 truncate" title={match.notes}>{match.notes}</p>
+      )}
+      {/* Unscheduled matches get a real button (not an inline link) for the
+          poll flow — the primary next step for the captain. */}
+      {isCaptain && match.schedulingStatus !== "fixed" && (
+        <Link
+          href={`/groups/${groupId}/availability/polls/new?forMatch=${match.id}`}
+          className="inline-flex items-center gap-1 mt-1 mb-0.5 px-2 py-1 rounded-lg border border-court-green/40 text-court-green text-[10px] font-semibold hover:bg-court-green-pale/30 hover:border-court-green transition-colors"
+        >
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="6" y1="20" x2="6" y2="14" />
+            <line x1="12" y1="20" x2="12" y2="8" />
+            <line x1="18" y1="20" x2="18" y2="4" />
+          </svg>
+          Find a time
+        </Link>
       )}
       {isCaptain && (() => {
         // Lineup progress vs the season's format, with USTA eligibility
