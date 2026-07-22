@@ -87,6 +87,15 @@ const TYPE_OPTIONS: { value: string; label: string; chip: string }[] = [
 
 const SLOT_OPTIONS = ["S1", "S2", "S3", "S4", "D1", "D2", "D3", "D4", "Reserve"];
 
+// Match-form timing choices, framed in the captain's language. Descriptions
+// stay visible on the cards (not revealed after selection) so the three
+// scheduling modes are distinguishable at a glance.
+const TIMING_OPTIONS: { value: SchedulingStatus; icon: string; title: string; hint: string }[] = [
+  { value: "fixed", icon: "🕒", title: "Exact date & time", hint: "The match time is confirmed" },
+  { value: "window", icon: "📅", title: "Play-week — time TBD", hint: "The league set the week; captains agree the exact time later" },
+  { value: "tbd", icon: "⏳", title: "No date yet — floating", hint: "Play anytime before a play-by deadline" },
+];
+
 function statusMeta(status: string) {
   // Normalize legacy values (available/if_needed/not_sure/not_available) into
   // the unified vocab so historical rows still render correctly until the
@@ -1253,35 +1262,49 @@ export default function AvailabilityPage() {
           {/* Some leagues publish real time slots; others assign a play-week
               (captains negotiate the time) or leave matches floating. */}
           <div className="mb-3">
-            <label className="block text-xs font-semibold text-gray-600 mb-1">Timing</label>
-            <div className="grid grid-cols-3 gap-1.5">
-              {(
-                [
-                  { value: "fixed", label: "Scheduled" },
-                  { value: "window", label: "Week window" },
-                  { value: "tbd", label: "Date TBD" },
-                ] as const
-              ).map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setTiming(opt.value)}
-                  className={`px-2 py-1.5 rounded-lg border text-xs font-semibold ${
-                    timing === opt.value
-                      ? "border-court-green text-court-green bg-court-green-pale/20"
-                      : "border-gray-200 text-gray-600 hover:border-gray-300"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+              When is this match played?
+            </label>
+            <div className="space-y-1.5" role="radiogroup" aria-label="When is this match played?">
+              {TIMING_OPTIONS.map((opt) => {
+                const selected = timing === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => setTiming(opt.value)}
+                    className={`w-full flex items-center gap-2.5 text-left px-3 py-2 rounded-xl border transition-all ${
+                      selected
+                        ? "border-court-green bg-court-green-pale/20 ring-1 ring-court-green/30"
+                        : "border-gray-200 hover:border-gray-300"
+                    }`}
+                  >
+                    <span
+                      className={`shrink-0 w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                        selected ? "border-court-green" : "border-gray-300"
+                      }`}
+                    >
+                      {selected && <span className="w-2 h-2 rounded-full bg-court-green" />}
+                    </span>
+                    <span className="shrink-0 text-base leading-none">{opt.icon}</span>
+                    <span className="min-w-0">
+                      <span className={`block text-sm font-semibold ${selected ? "text-court-green" : "text-gray-800"}`}>
+                        {opt.title}
+                      </span>
+                      <span className="block text-[11px] text-gray-500">{opt.hint}</span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
             {timing !== "fixed" && (
-              <p className="text-[11px] text-gray-400 mt-1">
-                {timing === "window"
-                  ? "Opponent assigned to a play-week — use Find a time to poll your team, then set the agreed slot."
-                  : "Floating match — playable any time before the play-by date."}
-              </p>
+              <div className="mt-2 p-2.5 rounded-lg bg-court-green-pale/20 border border-court-green-pale/60 text-[11px] text-gray-600 leading-relaxed">
+                💡 After saving, tap <strong>Find a time</strong> on the match to poll your team&apos;s
+                availability{timing === "window" ? " for the week" : ""}. Once you and the opposing
+                captain agree on a slot, it fills in this match automatically.
+              </div>
             )}
           </div>
           <div className="grid grid-cols-2 gap-3 mb-3">
