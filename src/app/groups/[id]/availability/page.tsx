@@ -8,7 +8,7 @@ import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import HScrollFrame from "@/components/HScrollFrame";
 import RsvpPicker, { pickerOptionMeta } from "@/components/attendance/RsvpPicker";
-import AttendanceTally from "@/components/attendance/AttendanceTally";
+import AttendanceTally, { RSVP_SYMBOL } from "@/components/attendance/AttendanceTally";
 import { normalizeMatchStatus, RSVP } from "@/lib/rsvpStatus";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { fetchGroupBundle, getCachedGroupBundle, sendGroupMessage, placeholderInScope, addRosterPlaceholders, getRosterPlaceholderLinks, type PlaceholderLink } from "@/lib/supabase/queries";
@@ -1726,7 +1726,7 @@ export default function AvailabilityPage() {
             if (!meta) return null;
             return (
               <span key={s} className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg ${meta.bg} ${meta.text} font-semibold`}>
-                {meta.label}
+                {RSVP_SYMBOL[s]} {meta.label}
               </span>
             );
           })}
