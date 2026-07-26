@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorMessage } from "@/lib/errorMessage";
+import { BOOKING_BRIDGE_SCRIPT } from "./bookingBridgeScript";
 
 /**
  * Catch-all reverse proxy for Seattle Parks ActiveNet.
@@ -250,11 +251,15 @@ document.addEventListener('click',function(e){
   }
 },true);
 })();</script>`;
-      // Inject right after the opening <head> tag so it runs before any SPA script
+      // Inject right after the opening <head> tag so it runs before any SPA
+      // script. The booking bridge goes AFTER the intercept script so its
+      // history.pushState wrapper composes over the intercept's wrapper
+      // (the bridge only observes; the intercept may redirect legacy paths).
+      const injected = `${interceptScript}${BOOKING_BRIDGE_SCRIPT}`;
       if (body.includes("<head>")) {
-        body = body.replace("<head>", `<head>${interceptScript}`);
+        body = body.replace("<head>", `<head>${injected}`);
       } else if (/<head[^>]*>/.test(body)) {
-        body = body.replace(/<head([^>]*)>/, `<head$1>${interceptScript}`);
+        body = body.replace(/<head([^>]*)>/, `<head$1>${injected}`);
       }
     }
 

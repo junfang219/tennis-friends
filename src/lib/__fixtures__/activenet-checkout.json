@@ -1,0 +1,18 @@
+{
+  "_note": "Placeholder shape until the PR2 discovery run captures a real ActiveNet checkout response. Field names (headers.response_code, body.receipt_number) are the best guess from the reverse-engineered platform docs; replace with a sanitized real capture and update the tests if they differ.",
+  "headers": {
+    "response_code": "0000",
+    "response_message": ""
+  },
+  "body": {
+    "receipt_number": "SEA-2026-0007731",
+    "total_amount": 16.0,
+    "reservations": [
+      {
+        "resource_id": 281,
+        "start_time": "2026-07-30T17:00:00",
+        "end_time": "2026-07-30T18:00:00"
+      }
+    ]
+  }
+}
