@@ -33,31 +33,60 @@ export type BookingWindowResult =
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-/** "HH:mm" → minutes from midnight. */
-function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(":").map(Number);
-  return h * 60 + m;
+export interface SnapRangeInput {
+  /** The tapped bar's free-window bounds, in minutes from midnight. */
+  barStartMin: number;
+  barEndMin: number;
+  /** Where the pointer went down (minutes from midnight). */
+  anchorMin: number;
+  /** Where the pointer is now; equals anchorMin for a plain tap. */
+  cursorMin: number;
+  minMinutes?: number; // enforced minimum duration (Seattle Parks = 60)
+  snapMinutes?: number; // grid step
 }
 
-/** minutes from midnight → "HH:mm" (24h). */
-function toClock(min: number): string {
-  return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+function snap(v: number, step: number): number {
+  return Math.round(v / step) * step;
 }
 
 /**
- * The end time to pre-fill for a booking: `start + maxMinutes`, but never past
- * the tapped free window's end. Used to default a booking to one hour (the
- * $16/hr courts' 1-hour minimum) instead of the whole free window the user
- * tapped, which can be several hours.
+ * Resolve a booking sub-range the user is drawing on an availability bar.
+ * A tap (anchor === cursor) places a `minMinutes` block at the tapped mark;
+ * a drag spans anchor→cursor. Times snap to `snapMinutes`, the duration is
+ * floored to `minMinutes`, and the whole range is clamped inside the bar.
+ * Bars shorter than the minimum resolve to the whole bar.
  */
-export function defaultBookingEnd(
-  startHHmm: string,
-  windowEndHHmm: string,
-  maxMinutes = 60
-): string {
-  const start = toMinutes(startHHmm);
-  const windowEnd = toMinutes(windowEndHHmm);
-  return toClock(Math.min(windowEnd, start + maxMinutes));
+export function snapBookingRange({
+  barStartMin,
+  barEndMin,
+  anchorMin,
+  cursorMin,
+  minMinutes = 60,
+  snapMinutes = 30,
+}: SnapRangeInput): { startMin: number; endMin: number } {
+  if (barEndMin - barStartMin <= minMinutes) {
+    return { startMin: barStartMin, endMin: barEndMin };
+  }
+  const clamp = (v: number) => Math.max(barStartMin, Math.min(barEndMin, v));
+  const a = clamp(anchorMin);
+  const c = clamp(cursorMin);
+
+  if (a === c) {
+    let start = clamp(snap(a, snapMinutes));
+    if (start + minMinutes > barEndMin) start = barEndMin - minMinutes;
+    if (start < barStartMin) start = barStartMin;
+    return { startMin: start, endMin: start + minMinutes };
+  }
+
+  let start = clamp(snap(Math.min(a, c), snapMinutes));
+  let end = clamp(snap(Math.max(a, c), snapMinutes));
+  if (end - start < minMinutes) end = start + minMinutes;
+  if (end > barEndMin) {
+    end = barEndMin;
+    start = end - minMinutes;
+  }
+  if (start < barStartMin) start = barStartMin;
+  return { startMin: start, endMin: end };
 }
 
 /** Calendar date in `tz` for the instant `now` (YYYY-MM-DD). */

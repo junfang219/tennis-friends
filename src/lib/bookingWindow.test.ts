@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateBookingWindow, defaultBookingEnd } from "./bookingWindow";
+import { validateBookingWindow, snapBookingRange } from "./bookingWindow";
 
 // Mid-day UTC so the Seattle calendar date is unambiguous: 2026-07-25 in
 // Seattle (PDT, -7).
@@ -71,18 +71,62 @@ describe("validateBookingWindow", () => {
   });
 });
 
-describe("defaultBookingEnd", () => {
-  it("defaults to one hour after the start", () => {
-    expect(defaultBookingEnd("17:00", "21:00")).toBe("18:00");
-    expect(defaultBookingEnd("07:30", "12:00")).toBe("08:30");
+describe("snapBookingRange", () => {
+  // A 4:00–9:00 free window, in minutes from midnight.
+  const bar = { barStartMin: 240, barEndMin: 540 };
+
+  it("tap places a 1-hour block at the snapped tapped mark", () => {
+    // Tap ~8:00 (480) → 8:00–9:00.
+    expect(snapBookingRange({ ...bar, anchorMin: 480, cursorMin: 480 })).toEqual({
+      startMin: 480,
+      endMin: 540,
+    });
+    // Tap 8:12 (492) snaps to 8:00.
+    expect(snapBookingRange({ ...bar, anchorMin: 492, cursorMin: 492 })).toEqual({
+      startMin: 480,
+      endMin: 540,
+    });
   });
 
-  it("clamps to the free window's end when it is under an hour away", () => {
-    expect(defaultBookingEnd("20:30", "21:00")).toBe("21:00");
-    expect(defaultBookingEnd("20:45", "21:00")).toBe("21:00");
+  it("tap near the bar end shifts the block left so it fits", () => {
+    // Tap 8:50 (530): a 1h block would overrun 9:00, so start shifts to 8:00.
+    expect(snapBookingRange({ ...bar, anchorMin: 530, cursorMin: 530 })).toEqual({
+      startMin: 480,
+      endMin: 540,
+    });
   });
 
-  it("honors a custom max duration", () => {
-    expect(defaultBookingEnd("09:00", "12:00", 75)).toBe("10:15");
+  it("drag spans anchor→cursor, snapped to 30 min", () => {
+    // Drag 8:00 → 9:00... but bar ends 9:00; use a 4:00–10:00 bar for 2h.
+    const wide = { barStartMin: 240, barEndMin: 600 };
+    expect(
+      snapBookingRange({ ...wide, anchorMin: 480, cursorMin: 600 })
+    ).toEqual({ startMin: 480, endMin: 600 });
+    // Reverse drag (cursor before anchor) still yields ordered range.
+    expect(
+      snapBookingRange({ ...wide, anchorMin: 540, cursorMin: 420 })
+    ).toEqual({ startMin: 420, endMin: 540 });
+  });
+
+  it("floors a short drag to the 1-hour minimum", () => {
+    // Drag 8:00 → 8:30 (30 min) → floored to 8:00–9:00.
+    expect(snapBookingRange({ ...bar, anchorMin: 480, cursorMin: 510 })).toEqual({
+      startMin: 480,
+      endMin: 540,
+    });
+  });
+
+  it("clamps the range inside the bar", () => {
+    // Cursor past the bar end clamps to 9:00, start held at min-1h back.
+    expect(snapBookingRange({ ...bar, anchorMin: 500, cursorMin: 900 })).toEqual({
+      startMin: 480,
+      endMin: 540,
+    });
+  });
+
+  it("returns the whole bar when it is at or under the minimum", () => {
+    expect(
+      snapBookingRange({ barStartMin: 480, barEndMin: 510, anchorMin: 490, cursorMin: 505 })
+    ).toEqual({ startMin: 480, endMin: 510 });
   });
 });

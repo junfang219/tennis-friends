@@ -16,7 +16,6 @@ import {
   isCheckoutFunnelPath,
   type BridgeMessage,
 } from "@/lib/bookingBridge";
-import { defaultBookingEnd } from "@/lib/bookingWindow";
 import type { CourtBooking } from "@/lib/supabase/queries/bookings";
 import { useSupabaseUser } from "@/lib/supabase/useUser";
 import { errorMessage } from "@/lib/errorMessage";
@@ -86,13 +85,11 @@ export default function BookingSheet({
   // "did you complete the booking?" prompt on close.
   const reachedCheckout = useRef(false);
   const [detectedReceipt, setDetectedReceipt] = useState<string | null>(null);
-  // Default the booking to one hour from the tapped start (clamped to the free
-  // window) rather than the whole window, which can span several hours.
-  const bookingEnd = defaultBookingEnd(startTime, endTime);
+  // startTime/endTime are the exact range the user selected on the grid.
   // Editable in the confirm panel — the user may have booked a different
-  // window than the slot they tapped.
+  // window than the one they selected.
   const [confirmStart, setConfirmStart] = useState(startTime);
-  const [confirmEnd, setConfirmEnd] = useState(bookingEnd);
+  const [confirmEnd, setConfirmEnd] = useState(endTime);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState<CourtBooking | null>(null);
@@ -100,14 +97,14 @@ export default function BookingSheet({
   // ActiveNet widget — flips the instruction chip copy.
   const [prefilled, setPrefilled] = useState(false);
 
-  // Pass the tapped slot to the proxied iframe as tf_* params; the injected
+  // Pass the selected slot to the proxied iframe as tf_* params; the injected
   // bridge script reads them and drives the reservation widget. ActiveNet
   // ignores unknown params, and the proxy forwards them verbatim.
   const proxyPath =
     `${toProxyPath(buildResourceBookingUrl(resourceId))}` +
     `&tf_date=${encodeURIComponent(date)}` +
     `&tf_start=${encodeURIComponent(startTime)}` +
-    `&tf_end=${encodeURIComponent(bookingEnd)}`;
+    `&tf_end=${encodeURIComponent(endTime)}`;
 
   // Listen for bridge messages from the proxied iframe. Same-origin, so we
   // still hard-check the origin and message shape before trusting anything.
@@ -185,7 +182,7 @@ export default function BookingSheet({
     onClose();
   }, [saved, stage, onClose]);
 
-  const slotLabel = `${fmtDate(date)} · ${to12h(startTime)}–${to12h(bookingEnd)}`;
+  const slotLabel = `${fmtDate(date)} · ${to12h(startTime)}–${to12h(endTime)}`;
 
   const sheet = (
     <div className="fixed inset-0 z-[650] flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4">
@@ -226,7 +223,7 @@ export default function BookingSheet({
                 <>
                   We pre-selected{" "}
                   <strong>
-                    {fmtDate(date)}, {to12h(startTime)}–{to12h(bookingEnd)}
+                    {fmtDate(date)}, {to12h(startTime)}–{to12h(endTime)}
                   </strong>
                   . Review it, adjust if needed, then tap Check availability to
                   finish. Payment is handled by Seattle Parks.
@@ -235,7 +232,7 @@ export default function BookingSheet({
                 <>
                   Sign in with your Seattle Parks account and pick{" "}
                   <strong>
-                    {fmtDate(date)}, {to12h(startTime)}–{to12h(bookingEnd)}
+                    {fmtDate(date)}, {to12h(startTime)}–{to12h(endTime)}
                   </strong>
                   . Payment is handled by Seattle Parks.
                 </>

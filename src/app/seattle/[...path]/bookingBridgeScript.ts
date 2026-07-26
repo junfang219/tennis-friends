@@ -173,20 +173,36 @@ function clearExisting(){
     setTimeout(resolve,500);
   });
 }
-function setTime(which,txt){
-  // The time field is a combobox <input> whose dropdown opens on mousedown
-  // (a synthetic .click() alone won't open it); options are li[role=option].
+// Bypass React's value tracker so setting an input's value fires its onChange.
+function setNativeValue(el,value){
+  var d=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');
+  if(d&&d.set){d.set.call(el,value);}else{el.value=value;}
+}
+// Set a start/end time. ActiveNet renders the field either as a native
+// <input type="time"> (value is 24h "HH:mm") or a custom combobox whose
+// dropdown opens on mousedown (options are li[role=option], 12h text). Handle
+// both. hhmm24 is the 24h value; txt12 is its "h:mm AM/PM" form.
+function setTime(which,hhmm24){
   return waitFor(function(){return document.querySelector('[aria-label*="'+which+'"]');},3000)
-    .then(function(box){if(box.focus)box.focus();fire(box,'mousedown');fire(box,'mouseup');fire(box,'click');
-      return waitFor(function(){return findByText('[role="option"]',txt);},3000);})
-    .then(function(opt){fire(opt,'mousedown');fire(opt,'mouseup');opt.click();return new Promise(function(r){setTimeout(r,200);});});
+    .then(function(box){
+      if(box.tagName==='INPUT'&&box.getAttribute('type')==='time'){
+        setNativeValue(box,hhmm24);
+        box.dispatchEvent(new Event('input',{bubbles:true}));
+        box.dispatchEvent(new Event('change',{bubbles:true}));
+        return new Promise(function(r){setTimeout(r,200);});
+      }
+      var txt12=fmtClock(hhmm24);
+      if(box.focus)box.focus();fire(box,'mousedown');fire(box,'mouseup');fire(box,'click');
+      return waitFor(function(){return findByText('[role="option"]',txt12);},3000)
+        .then(function(opt){fire(opt,'mousedown');fire(opt,'mouseup');opt.click();return new Promise(function(r){setTimeout(r,200);});});
+    });
 }
 function prefill(){
   var qs;try{qs=new URLSearchParams(location.search);}catch(e){return;}
   var date=qs.get('tf_date');
   if(!date)return; // no prefill requested for this page
-  var startTxt=qs.get('tf_start')?fmtClock(qs.get('tf_start')):null;
-  var endTxt=qs.get('tf_end')?fmtClock(qs.get('tf_end')):null;
+  var startRaw=qs.get('tf_start'); // 24h "HH:mm"
+  var endRaw=qs.get('tf_end');
   var dateLabel=fmtDateLabel(date);
   waitFor(function(){return document.querySelector('[aria-label*="Add dates and times"]');},9000)
     .then(function(){return clearExisting();})
@@ -203,9 +219,9 @@ function prefill(){
     })
     .then(function(slot){
       slot.click();
-      return startTxt?setTime('Start time',startTxt):null;
+      return startRaw?setTime('Start time',startRaw):null;
     })
-    .then(function(){return endTxt?setTime('End time',endTxt):null;})
+    .then(function(){return endRaw?setTime('End time',endRaw):null;})
     .then(function(){return waitFor(function(){return findByText('button,[role="button"]','Apply');},4000);})
     .then(function(apply){apply.click();try{console.log('[tf-bridge] prefill ok');}catch(e){}send({type:'prefill',ok:true});})
     .catch(function(err){try{console.log('[tf-bridge] prefill fail',err&&err.message);}catch(e){}send({type:'prefill',ok:false});});

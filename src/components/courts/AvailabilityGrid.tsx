@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type Timeslot } from "@/lib/activenet";
+import { snapBookingRange } from "@/lib/bookingWindow";
 import BookingSheet from "./BookingSheet";
 
 interface CourtAvailability {
@@ -49,6 +50,11 @@ interface AvailabilityGridProps {
 // window). Today is view-only (no same-day online booking); the other 14 are
 // bookable. Day 15+ falls outside the window, so we don't offer those tabs.
 const DAYS_SHOWN = 15;
+
+// Timeline column width. Wide enough that even a 30-min bar (½ hour)
+// comfortably fits its time label inside, so labels sit ON the block. Also
+// the px↔minute scale for pointer selection.
+const PX_PER_HOUR = 92;
 
 // Seattle Parks tennis reservation line (Amy Yee Tennis Center) — used to
 // reserve walk-on / non-online-bookable courts by phone.
@@ -146,6 +152,62 @@ export default function AvailabilityGrid({
     start: string; // 'HH:mm'
     end: string;
   } | null>(null);
+  // The sub-range the user is drawing on a bar (tap places 1h, drag resizes).
+  // Confirmed via the action bar's "Book" button — never auto-opens the sheet.
+  const [selection, setSelection] = useState<{
+    resourceId: number;
+    courtName: string;
+    startMin: number;
+    endMin: number;
+  } | null>(null);
+  // Pointer-down minute on the active bar, kept across pointermove.
+  const dragAnchorMin = useRef<number | null>(null);
+
+  // Map a pointer event to a minute-of-day within the bar it fired on.
+  const pointerMinuteInBar = (
+    e: React.PointerEvent<HTMLDivElement>,
+    barStartMin: number
+  ): number => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return barStartMin + ((e.clientX - rect.left) / PX_PER_HOUR) * 60;
+  };
+
+  const beginSelect = (
+    e: React.PointerEvent<HTMLDivElement>,
+    court: { resourceId: number; fullName: string },
+    bar: { start: number; end: number }
+  ) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const m = pointerMinuteInBar(e, bar.start);
+    dragAnchorMin.current = m;
+    const { startMin, endMin } = snapBookingRange({
+      barStartMin: bar.start,
+      barEndMin: bar.end,
+      anchorMin: m,
+      cursorMin: m,
+    });
+    setSelection({ resourceId: court.resourceId, courtName: court.fullName, startMin, endMin });
+  };
+
+  const extendSelect = (
+    e: React.PointerEvent<HTMLDivElement>,
+    court: { resourceId: number; fullName: string },
+    bar: { start: number; end: number }
+  ) => {
+    if (dragAnchorMin.current == null) return;
+    const m = pointerMinuteInBar(e, bar.start);
+    const { startMin, endMin } = snapBookingRange({
+      barStartMin: bar.start,
+      barEndMin: bar.end,
+      anchorMin: dragAnchorMin.current,
+      cursorMin: m,
+    });
+    setSelection({ resourceId: court.resourceId, courtName: court.fullName, startMin, endMin });
+  };
+
+  const endSelect = () => {
+    dragAnchorMin.current = null;
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -196,9 +258,6 @@ export default function AvailabilityGrid({
   // the global hour span (rounded out to whole hours) used as the axis. Bars
   // are positioned proportionally so a 5:15pm start visibly begins a quarter
   // into the 5p column.
-  // Wide enough that even a 30-min bar (½ hour) comfortably fits its time
-  // label inside, so labels sit ON the block without overhanging.
-  const PX_PER_HOUR = 92; // column width in px
   const allRows = (courts ?? []).map((c) => ({
     resourceId: c.resourceId,
     name: shortCourtName(c.courtName),
@@ -256,7 +315,10 @@ export default function AvailabilityGrid({
           return (
             <button
               key={key}
-              onClick={() => setSelected(key)}
+              onClick={() => {
+                setSelected(key);
+                setSelection(null);
+              }}
               className={`flex flex-col items-center shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                 active
                   ? "bg-court-green text-white"
@@ -394,9 +456,9 @@ export default function AvailabilityGrid({
                           const left = (b.start / 60 - axisStartH) * PX_PER_HOUR;
                           const width = ((b.end - b.start) / 60) * PX_PER_HOUR;
                           const label = formatRangeShort(b.start, b.end);
-                          // Reservable courts: tennis-ball yellow + booking
-                          // link. Walk-on / phone-only courts: muted grey, not a
-                          // link (you can see the opening but not book it here).
+                          // Reservable courts: tennis-ball yellow + selectable.
+                          // Walk-on / phone-only courts: muted grey, not
+                          // selectable (you can see the opening but not book it here).
                           const fill = !c.reservable
                             ? "bg-gray-300"
                             : isSnapshot
@@ -416,24 +478,44 @@ export default function AvailabilityGrid({
                               {label}
                             </span>
                           );
-                          return bookingUrl && !isSnapshot && c.reservable ? (
-                            <button
+                          const selectable = !!bookingUrl && !isSnapshot && c.reservable;
+                          // The active selection, if it falls inside this bar.
+                          const sel =
+                            selectable &&
+                            selection &&
+                            selection.resourceId === c.resourceId &&
+                            selection.startMin >= b.start &&
+                            selection.endMin <= b.end
+                              ? selection
+                              : null;
+                          return selectable ? (
+                            <div
                               key={idx}
-                              type="button"
-                              onClick={() =>
-                                setBookingSlot({
-                                  resourceId: c.resourceId,
-                                  courtName: c.fullName,
-                                  start: toClock24(b.start),
-                                  end: toClock24(b.end),
-                                })
-                              }
-                              title={`${label} · book ${c.name} on Seattle Parks`}
+                              onPointerDown={(e) => beginSelect(e, c, b)}
+                              onPointerMove={(e) => extendSelect(e, c, b)}
+                              onPointerUp={endSelect}
+                              onPointerCancel={endSelect}
+                              title={`${label} · tap or drag to book ${c.name}`}
                               style={{ left, width }}
-                              className={`${common} hover:brightness-95 transition cursor-pointer`}
+                              className={`${common} touch-none cursor-pointer hover:brightness-95 transition`}
                             >
-                              {text}
-                            </button>
+                              {/* Hide the window label while a selection sits on
+                                  this bar so it doesn't clash with the overlay. */}
+                              {!sel && text}
+                              {sel && (
+                                <div
+                                  className="absolute inset-y-0 rounded-md bg-court-green flex items-center justify-center pointer-events-none"
+                                  style={{
+                                    left: ((sel.startMin - b.start) / 60) * PX_PER_HOUR,
+                                    width: ((sel.endMin - sel.startMin) / 60) * PX_PER_HOUR,
+                                  }}
+                                >
+                                  <span className="px-1 text-[9px] font-semibold leading-none whitespace-nowrap text-white">
+                                    {formatRangeShort(sel.startMin, sel.endMin)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
                           ) : (
                             <div title={label} style={{ left, width }} className={common} key={idx}>
                               {text}
@@ -447,6 +529,48 @@ export default function AvailabilityGrid({
                 </div>
               </div>
             )}
+            {/* Selected sub-range → confirm to book (select-then-tap). */}
+            {selection && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-court-green/30 bg-court-green-soft/5 px-3 py-2">
+                <div className="min-w-0 flex-1 text-sm truncate">
+                  <span className="font-semibold text-gray-900">
+                    {shortCourtName(selection.courtName)}
+                  </span>
+                  <span className="text-gray-500">
+                    {" · "}
+                    {(days.find((d) => ymd(d) === selected) ?? new Date()).toLocaleDateString(
+                      [],
+                      { weekday: "short", month: "numeric", day: "numeric" }
+                    )}
+                    {" · "}
+                    {formatRangeShort(selection.startMin, selection.endMin)}
+                  </span>
+                </div>
+                <button
+                  onClick={() =>
+                    setBookingSlot({
+                      resourceId: selection.resourceId,
+                      courtName: selection.courtName,
+                      start: toClock24(selection.startMin),
+                      end: toClock24(selection.endMin),
+                    })
+                  }
+                  className="shrink-0 px-3.5 py-1.5 rounded-lg bg-court-green text-white text-xs font-semibold hover:bg-court-green-light"
+                >
+                  Book
+                </button>
+                <button
+                  onClick={() => setSelection(null)}
+                  aria-label="Clear selection"
+                  className="shrink-0 w-7 h-7 rounded-lg bg-gray-100 text-gray-500 hover:bg-gray-200 flex items-center justify-center"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+            )}
             {/* Legend + status line */}
             <div className="mt-3 pt-3 border-t border-gray-100 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-400">
               <span className="flex items-center gap-1.5">
@@ -457,7 +581,7 @@ export default function AvailabilityGrid({
                 />
                 {isSnapshot
                   ? `Available as of last night${snapshotAsOf ? ` (${new Date(snapshotAsOf).toLocaleString([], { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })})` : ""}`
-                  : "Book online · tap a slot"}
+                  : "Tap or drag a slot to pick a time, then Book"}
               </span>
               {hasNonReservable && (
                 <span className="flex items-center gap-1.5">
