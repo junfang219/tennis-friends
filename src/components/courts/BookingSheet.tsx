@@ -16,6 +16,7 @@ import {
   isCheckoutFunnelPath,
   type BridgeMessage,
 } from "@/lib/bookingBridge";
+import { defaultBookingEnd } from "@/lib/bookingWindow";
 import type { CourtBooking } from "@/lib/supabase/queries/bookings";
 import { useSupabaseUser } from "@/lib/supabase/useUser";
 import { errorMessage } from "@/lib/errorMessage";
@@ -85,15 +86,28 @@ export default function BookingSheet({
   // "did you complete the booking?" prompt on close.
   const reachedCheckout = useRef(false);
   const [detectedReceipt, setDetectedReceipt] = useState<string | null>(null);
+  // Default the booking to one hour from the tapped start (clamped to the free
+  // window) rather than the whole window, which can span several hours.
+  const bookingEnd = defaultBookingEnd(startTime, endTime);
   // Editable in the confirm panel — the user may have booked a different
   // window than the slot they tapped.
   const [confirmStart, setConfirmStart] = useState(startTime);
-  const [confirmEnd, setConfirmEnd] = useState(endTime);
+  const [confirmEnd, setConfirmEnd] = useState(bookingEnd);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState<CourtBooking | null>(null);
+  // Whether the injected bridge managed to pre-select the slot in the
+  // ActiveNet widget — flips the instruction chip copy.
+  const [prefilled, setPrefilled] = useState(false);
 
-  const proxyPath = toProxyPath(buildResourceBookingUrl(resourceId));
+  // Pass the tapped slot to the proxied iframe as tf_* params; the injected
+  // bridge script reads them and drives the reservation widget. ActiveNet
+  // ignores unknown params, and the proxy forwards them verbatim.
+  const proxyPath =
+    `${toProxyPath(buildResourceBookingUrl(resourceId))}` +
+    `&tf_date=${encodeURIComponent(date)}` +
+    `&tf_start=${encodeURIComponent(startTime)}` +
+    `&tf_end=${encodeURIComponent(bookingEnd)}`;
 
   // Listen for bridge messages from the proxied iframe. Same-origin, so we
   // still hard-check the origin and message shape before trusting anything.
@@ -104,6 +118,9 @@ export default function BookingSheet({
       const msg = e.data as BridgeMessage;
       if (msg.type === "nav" && isCheckoutFunnelPath(msg.path)) {
         reachedCheckout.current = true;
+      }
+      if (msg.type === "prefill") {
+        setPrefilled(msg.ok);
       }
       if (msg.type === "checkout-complete") {
         reachedCheckout.current = true;
@@ -168,7 +185,7 @@ export default function BookingSheet({
     onClose();
   }, [saved, stage, onClose]);
 
-  const slotLabel = `${fmtDate(date)} · ${to12h(startTime)}–${to12h(endTime)}`;
+  const slotLabel = `${fmtDate(date)} · ${to12h(startTime)}–${to12h(bookingEnd)}`;
 
   const sheet = (
     <div className="fixed inset-0 z-[650] flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4">
@@ -201,15 +218,28 @@ export default function BookingSheet({
           </button>
         </div>
 
-        {/* Instruction chip */}
+        {/* Instruction chip — changes once the bridge pre-fills the slot. */}
         {stage === "browsing" && (
           <div className="px-4 py-2 bg-ball-yellow/15 border-b border-ball-yellow/30">
             <p className="text-[12px] text-amber-800 leading-snug">
-              Sign in with your Seattle Parks account and pick{" "}
-              <strong>
-                {fmtDate(date)}, {to12h(startTime)}–{to12h(endTime)}
-              </strong>
-              . Payment is handled by Seattle Parks.
+              {prefilled ? (
+                <>
+                  We pre-selected{" "}
+                  <strong>
+                    {fmtDate(date)}, {to12h(startTime)}–{to12h(bookingEnd)}
+                  </strong>
+                  . Review it, adjust if needed, then tap Check availability to
+                  finish. Payment is handled by Seattle Parks.
+                </>
+              ) : (
+                <>
+                  Sign in with your Seattle Parks account and pick{" "}
+                  <strong>
+                    {fmtDate(date)}, {to12h(startTime)}–{to12h(bookingEnd)}
+                  </strong>
+                  . Payment is handled by Seattle Parks.
+                </>
+              )}
             </p>
           </div>
         )}

@@ -22,13 +22,19 @@ export type BridgeMessage =
       path: string;
       receiptNumber?: string;
       rawSummary?: string;
-    };
+    }
+  // Result of the script's attempt to prefill the tapped slot into the
+  // ActiveNet reservation widget. ok=false means the DOM drive gave up
+  // (e.g. widget not present or aria-labels changed) and the user picks
+  // manually.
+  | { source: typeof BRIDGE_SOURCE; type: "prefill"; ok: boolean };
 
 /** True for window `message` payloads sent by the injected bridge script. */
 export function isBridgeMessage(data: unknown): data is BridgeMessage {
   if (typeof data !== "object" || data === null) return false;
   const d = data as Record<string, unknown>;
   if (d.source !== BRIDGE_SOURCE) return false;
+  if (d.type === "prefill") return typeof d.ok === "boolean";
   if (typeof d.path !== "string") return false;
   return d.type === "nav" || d.type === "checkout-complete";
 }
@@ -81,4 +87,30 @@ export function parseReceiptFromCheckoutJson(
     }
   }
   return null;
+}
+
+// The two formatters below produce the exact strings ActiveNet's reservation
+// widget renders, so the injected prefill routine can match its date cells and
+// time-dropdown options by text. The bridge script (bookingBridgeScript.ts)
+// carries byte-identical copies — it can't import this module — so these
+// exported versions exist mainly to lock the format under unit tests. Keep
+// the two in sync.
+
+const MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/** "17:00" → "5:00 PM", "07:30" → "7:30 AM", "00:00" → "12:00 AM". */
+export function formatActiveNetClock(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  const suffix = h < 12 ? "AM" : "PM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${suffix}`;
+}
+
+/** "2026-07-30" → "Jul 30, 2026" (matches the day-cell aria-label prefix). */
+export function formatActiveNetDateLabel(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return `${MONTHS[m - 1]} ${d}, ${y}`;
 }

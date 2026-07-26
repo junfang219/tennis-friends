@@ -33,6 +33,33 @@ export type BookingWindowResult =
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+/** "HH:mm" → minutes from midnight. */
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+/** minutes from midnight → "HH:mm" (24h). */
+function toClock(min: number): string {
+  return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+}
+
+/**
+ * The end time to pre-fill for a booking: `start + maxMinutes`, but never past
+ * the tapped free window's end. Used to default a booking to one hour (the
+ * $16/hr courts' 1-hour minimum) instead of the whole free window the user
+ * tapped, which can be several hours.
+ */
+export function defaultBookingEnd(
+  startHHmm: string,
+  windowEndHHmm: string,
+  maxMinutes = 60
+): string {
+  const start = toMinutes(startHHmm);
+  const windowEnd = toMinutes(windowEndHHmm);
+  return toClock(Math.min(windowEnd, start + maxMinutes));
+}
+
 /** Calendar date in `tz` for the instant `now` (YYYY-MM-DD). */
 function todayIn(tz: string, now: Date): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(now);

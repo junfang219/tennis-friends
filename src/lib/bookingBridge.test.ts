@@ -5,6 +5,8 @@ import {
   isCheckoutFunnelPath,
   isConfirmationPath,
   parseReceiptFromCheckoutJson,
+  formatActiveNetClock,
+  formatActiveNetDateLabel,
 } from "./bookingBridge";
 import checkoutFixture from "./__fixtures__/activenet-checkout.json";
 
@@ -23,6 +25,16 @@ describe("isBridgeMessage", () => {
     ).toBe(true);
   });
 
+  it("accepts a prefill result message (no path, boolean ok)", () => {
+    expect(isBridgeMessage({ source: BRIDGE_SOURCE, type: "prefill", ok: true })).toBe(
+      true
+    );
+    expect(isBridgeMessage({ source: BRIDGE_SOURCE, type: "prefill", ok: false })).toBe(
+      true
+    );
+    expect(isBridgeMessage({ source: BRIDGE_SOURCE, type: "prefill" })).toBe(false); // ok not boolean
+  });
+
   it("rejects foreign or malformed payloads", () => {
     expect(isBridgeMessage(null)).toBe(false);
     expect(isBridgeMessage("hello")).toBe(false);
@@ -33,6 +45,24 @@ describe("isBridgeMessage", () => {
     expect(
       isBridgeMessage({ source: BRIDGE_SOURCE, type: "other", path: "/x" })
     ).toBe(false);
+  });
+});
+
+describe("formatActiveNetClock", () => {
+  it("matches ActiveNet's 12-hour dropdown option text", () => {
+    expect(formatActiveNetClock("17:00")).toBe("5:00 PM");
+    expect(formatActiveNetClock("07:30")).toBe("7:30 AM");
+    expect(formatActiveNetClock("00:00")).toBe("12:00 AM");
+    expect(formatActiveNetClock("12:00")).toBe("12:00 PM");
+    expect(formatActiveNetClock("23:30")).toBe("11:30 PM");
+  });
+});
+
+describe("formatActiveNetDateLabel", () => {
+  it("matches the day-cell aria-label prefix", () => {
+    expect(formatActiveNetDateLabel("2026-07-30")).toBe("Jul 30, 2026");
+    expect(formatActiveNetDateLabel("2026-01-05")).toBe("Jan 5, 2026");
+    expect(formatActiveNetDateLabel("2026-12-01")).toBe("Dec 1, 2026");
   });
 });
 

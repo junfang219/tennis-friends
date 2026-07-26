@@ -108,6 +108,108 @@ function scanConfirmation(){
   var m=(document.body&&document.body.innerText||'').match(/receipt\\s*(?:number|#|no\\.?)?\\s*[:#]?\\s*([A-Za-z0-9-]{3,})/i);
   send({type:'checkout-complete',path:curPath(),receiptNumber:m?m[1]:undefined});
 }
-document.addEventListener('DOMContentLoaded',function(){nav();scanConfirmation();});
-if(document.readyState!=='loading'){nav();scanConfirmation();}
+// --- Prefill: drive the ActiveNet reservation widget from tf_* URL params ---
+// Best-effort DOM automation of a third-party SPA. Every step is bounded and
+// wrapped; on any failure we post {type:'prefill',ok:false} and leave the page
+// untouched so the user picks manually. Formatters MUST match the strings in
+// src/lib/bookingBridge.ts (formatActiveNetClock / formatActiveNetDateLabel).
+var MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function pad2(n){return n<10?'0'+n:''+n;}
+function fmtClock(hhmm){var a=hhmm.split(':');var h=parseInt(a[0],10),m=parseInt(a[1],10);var s=h<12?'AM':'PM';var h12=h%12===0?12:h%12;return h12+':'+pad2(m)+' '+s;}
+function fmtDateLabel(ymd){var a=ymd.split('-');return MONTHS[parseInt(a[1],10)-1]+' '+parseInt(a[2],10)+', '+parseInt(a[0],10);}
+function qa(sel){return Array.prototype.slice.call(document.querySelectorAll(sel));}
+function visible(el){return !!(el&&el.offsetParent!==null);}
+function waitFor(getter,timeoutMs){
+  return new Promise(function(resolve,reject){
+    var start=Date.now();
+    (function tick(){
+      var el=null;try{el=getter();}catch(e){}
+      if(el){resolve(el);return;}
+      if(Date.now()-start>timeoutMs){reject(new Error('timeout'));return;}
+      setTimeout(tick,150);
+    })();
+  });
+}
+function findByText(sel,txt){
+  var els=qa(sel);
+  for(var i=0;i<els.length;i++){if((els[i].textContent||'').trim()===txt&&visible(els[i]))return els[i];}
+  return null;
+}
+function findDayRegion(dateLabel,monthTries){
+  // Wait for the calendar to actually render (its day cells load async after
+  // the picker opens) BEFORE deciding whether we need to page to another
+  // month — otherwise we'd try month-nav before the nav button even exists.
+  return waitFor(function(){
+    return document.querySelector('[aria-label^="'+dateLabel+'"]')
+      || document.querySelector('[aria-label*="go to next month"]');
+  },8000).then(function(){
+    return new Promise(function(resolve,reject){
+      function attempt(remaining){
+        waitFor(function(){return document.querySelector('[aria-label^="'+dateLabel+'"]');},1500)
+          .then(resolve)
+          .catch(function(){
+            if(remaining<=0){reject(new Error('day not found'));return;}
+            var next=document.querySelector('[aria-label*="go to next month"]:not([disabled])');
+            if(!next){reject(new Error('no next month'));return;}
+            next.click();
+            setTimeout(function(){attempt(remaining-1);},600);
+          });
+      }
+      attempt(monthTries);
+    });
+  });
+}
+function fire(el,type){el.dispatchEvent(new MouseEvent(type,{bubbles:true}));}
+// ActiveNet persists the reservation selection in the session, so a reopened
+// sheet can start with a stale date/time. The field-level "Delete all dates
+// and times" control wipes it in one click (only present when a selection
+// exists); do this before opening the picker so we add onto a clean slate.
+function clearExisting(){
+  return new Promise(function(resolve){
+    try{
+      var del=document.querySelector('[aria-label*="Delete all dates and times"]');
+      if(del){fire(del,'mousedown');fire(del,'mouseup');del.click();}
+    }catch(e){}
+    setTimeout(resolve,500);
+  });
+}
+function setTime(which,txt){
+  // The time field is a combobox <input> whose dropdown opens on mousedown
+  // (a synthetic .click() alone won't open it); options are li[role=option].
+  return waitFor(function(){return document.querySelector('[aria-label*="'+which+'"]');},3000)
+    .then(function(box){if(box.focus)box.focus();fire(box,'mousedown');fire(box,'mouseup');fire(box,'click');
+      return waitFor(function(){return findByText('[role="option"]',txt);},3000);})
+    .then(function(opt){fire(opt,'mousedown');fire(opt,'mouseup');opt.click();return new Promise(function(r){setTimeout(r,200);});});
+}
+function prefill(){
+  var qs;try{qs=new URLSearchParams(location.search);}catch(e){return;}
+  var date=qs.get('tf_date');
+  if(!date)return; // no prefill requested for this page
+  var startTxt=qs.get('tf_start')?fmtClock(qs.get('tf_start')):null;
+  var endTxt=qs.get('tf_end')?fmtClock(qs.get('tf_end')):null;
+  var dateLabel=fmtDateLabel(date);
+  waitFor(function(){return document.querySelector('[aria-label*="Add dates and times"]');},9000)
+    .then(function(){return clearExisting();})
+    .then(function(){return waitFor(function(){return document.querySelector('[aria-label*="Add dates and times"]');},4000);})
+    .then(function(trigger){trigger.click();return findDayRegion(dateLabel,2);})
+    .then(function(){
+      // Wait for the day's clickable slot to render (it's an <a role="button">
+      // that loads with the availability data, after the region cell itself).
+      // Re-query each poll so a React re-render doesn't hand us a stale node.
+      return waitFor(function(){
+        var r=document.querySelector('[aria-label^="'+dateLabel+'"]');
+        return r&&r.querySelector('[role="button"],a');
+      },5000);
+    })
+    .then(function(slot){
+      slot.click();
+      return startTxt?setTime('Start time',startTxt):null;
+    })
+    .then(function(){return endTxt?setTime('End time',endTxt):null;})
+    .then(function(){return waitFor(function(){return findByText('button,[role="button"]','Apply');},4000);})
+    .then(function(apply){apply.click();try{console.log('[tf-bridge] prefill ok');}catch(e){}send({type:'prefill',ok:true});})
+    .catch(function(err){try{console.log('[tf-bridge] prefill fail',err&&err.message);}catch(e){}send({type:'prefill',ok:false});});
+}
+document.addEventListener('DOMContentLoaded',function(){nav();scanConfirmation();prefill();});
+if(document.readyState!=='loading'){nav();scanConfirmation();prefill();}
 })();</script>`;
