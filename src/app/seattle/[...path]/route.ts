@@ -192,7 +192,13 @@ var LEGACY=/^\\/seattle\\/(ActiveNet_|Activity_|Create_Account|myaccount|wishlis
 // pointing back to the tennis-court reservation search page. After
 // successful authentication, ActiveNet redirects to this callback URL so
 // the user lands back on the search page — not on their account page.
-var CALLBACK_URL='https://anc.apm.activecommunities.com/seattle/reservation/search?keyword=tennis court&resourceType=0&equipmentQty=0&fromLoginPage=true&from_original_cui=true';
+// CRITICAL: the callback must point at OUR origin (the proxy), not the
+// absolute anc.apm host — otherwise the post-login redirect navigates the
+// booking iframe out to activecommunities.com, which refuses framing
+// ("refused to connect"). location.origin is the proxy origin in both dev
+// (http://localhost:3000) and prod (https://mytennisfriends.com), so the
+// user stays inside the embedded flow.
+var CALLBACK_URL=location.origin+'/seattle/reservation/search?keyword=tennis court&resourceType=0&equipmentQty=0&fromLoginPage=true&from_original_cui=true';
 var SIGNIN_URL='/seattle/signin?onlineSiteId=0&from_original_cui=true&override_partial_error=False&custom_amount=False&params='+encodeURIComponent(btoa(CALLBACK_URL))+'&locale=en-US';
 var TEXT_TO_URL={
   'sign in':SIGNIN_URL,
