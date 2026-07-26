@@ -83,8 +83,6 @@ create type public.event_participant_status  as enum ('registered', 'waitlist', 
 create type public.message_kind              as enum ('chat', 'announcement');
 create type public.reaction_target           as enum ('dm', 'group', 'chat');
 create type public.device_platform           as enum ('ios', 'android');
-create type public.booking_status            as enum ('pending', 'confirmed', 'cancelled');
-create type public.booking_player_status     as enum ('invited', 'accepted', 'declined');
 create type public.notification_type         as enum (
   'comment',
   'like',
@@ -1024,7 +1022,7 @@ create table public.guest_expense_shares (
 create index guest_expense_shares_expense_idx on public.guest_expense_shares (expense_id);
 
 -- =========================================================================
--- Courts, venues, bookings, reviews
+-- Courts, bookings, reviews
 -- =========================================================================
 
 create table public.courts (
@@ -1042,68 +1040,47 @@ create table public.courts (
 create index courts_added_by_idx on public.courts (added_by_id);
 create index courts_location_idx on public.courts using gist (location);
 
-create table public.venues (
-  id            uuid primary key default gen_random_uuid(),
-  name          text not null,
-  address       text not null,
-  latitude      double precision not null,
-  longitude     double precision not null,
-  location      geography(Point, 4326) generated always as (
-    st_setsrid(st_makepoint(longitude, latitude), 4326)::geography
-  ) stored,
-  neighborhood  text not null default '',
-  amenities     jsonb not null default '[]'::jsonb,
-  image_url     text not null default '',
-  active_net_id text not null default '',
-  created_at    timestamptz not null default now(),
-  updated_at    timestamptz not null default now()
-);
-create index venues_location_idx on public.venues using gist (location);
-
-create table public.venue_courts (
-  id            uuid primary key default gen_random_uuid(),
-  venue_id      uuid not null references public.venues (id) on delete cascade,
-  court_number  integer not null,
-  surface       text not null default 'hard',
-  is_lighted    boolean not null default false,
-  active_net_id text not null default '',
-  created_at    timestamptz not null default now(),
-  updated_at    timestamptz not null default now(),
-  constraint venue_courts_unique unique (venue_id, court_number)
-);
-
-create table public.bookings (
+-- Court reservations the user completed on Seattle Parks (ActiveNet) through
+-- the embedded in-app checkout. We only RECORD what was booked — ActiveNet
+-- owns the actual inventory, payment, and cancellation, so there is no
+-- overlap/exclusion constraint here. facility_id shares the mixed text
+-- namespace of court_reviews.court_id ("tf-N" catalog ids); center_id /
+-- resource_id are the authoritative ActiveNet identifiers from
+-- data/activenet-seattle.json (no FK — they live in a JSON seed).
+create table public.court_bookings (
   id              uuid primary key default gen_random_uuid(),
-  court_id        uuid not null references public.venue_courts (id) on delete restrict,
-  organizer_id    uuid not null references public.profiles (id) on delete restrict,
+  user_id         uuid not null references public.profiles (id) on delete cascade,
+  facility_id     text,
+  venue_name      text not null,
+  court_name      text not null,
+  center_id       integer not null,
+  resource_id     integer not null,
   start_time      timestamptz not null,
   end_time        timestamptz not null,
-  status          booking_status not null default 'pending',
-  active_net_url  text not null default '',
+  -- IANA timezone the booking's wall-clock times were entered in.
+  timezone        text not null default 'America/Los_Angeles',
+  status          text not null default 'confirmed'
+                    check (status in ('confirmed', 'cancelled')),
+  -- 'detected' = the booking bridge scraped a checkout confirmation;
+  -- 'manual' = the user confirmed the booking themselves.
+  confirmation    text not null default 'manual'
+                    check (confirmation in ('detected', 'manual')),
+  receipt_number  text,
+  activenet_url   text not null default '',
+  -- Set once "find players" spawns a find_players post from this booking.
+  session_post_id uuid references public.posts (id) on delete set null,
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),
-  constraint bookings_time_order check (end_time > start_time),
-  -- Per-court non-overlap: no two non-cancelled bookings on the same
-  -- court may overlap. tstzrange '[)' is half-open so back-to-back
-  -- bookings (end_time = next start_time) don't collide.
-  constraint bookings_no_overlap_per_court exclude using gist (
-    court_id WITH =,
-    tstzrange(start_time, end_time, '[)') WITH &&
-  ) WHERE (status <> 'cancelled')
+  constraint court_bookings_time_order check (end_time > start_time)
 );
-create index bookings_court_time_idx on public.bookings (court_id, start_time, end_time);
-create index bookings_organizer_idx  on public.bookings (organizer_id);
-
-create table public.booking_players (
-  id         uuid primary key default gen_random_uuid(),
-  booking_id uuid not null references public.bookings (id) on delete cascade,
-  user_id    uuid not null references public.profiles (id) on delete cascade,
-  status     booking_player_status not null default 'invited',
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint booking_players_unique unique (booking_id, user_id)
-);
-create index booking_players_user_idx on public.booking_players (user_id);
+-- Access pattern is "my bookings, newest first" — one index covers it.
+create index court_bookings_user_start_idx
+  on public.court_bookings (user_id, start_time desc);
+-- Guard against double-saving the same slot (e.g. bridge auto-detect fired
+-- AND the user answered the manual confirm prompt).
+create unique index court_bookings_dedupe_idx
+  on public.court_bookings (user_id, resource_id, start_time)
+  where status <> 'cancelled';
 
 -- court_id is text (not uuid) and intentionally has no FK to courts(id):
 -- the app uses two ID namespaces — UUIDs for user-added courts and "tf-N"
@@ -1226,10 +1203,7 @@ create trigger opponent_teams_updated_at          before update on public.oppone
 create trigger practice_series_updated_at         before update on public.practice_series         for each row execute function public.set_updated_at();
 create trigger team_practices_updated_at          before update on public.team_practices          for each row execute function public.set_updated_at();
 create trigger practice_availabilities_updated_at before update on public.practice_availabilities for each row execute function public.set_updated_at();
-create trigger venues_updated_at                  before update on public.venues                  for each row execute function public.set_updated_at();
-create trigger venue_courts_updated_at            before update on public.venue_courts            for each row execute function public.set_updated_at();
-create trigger bookings_updated_at                before update on public.bookings                for each row execute function public.set_updated_at();
-create trigger booking_players_updated_at         before update on public.booking_players         for each row execute function public.set_updated_at();
+create trigger court_bookings_updated_at          before update on public.court_bookings          for each row execute function public.set_updated_at();
 create trigger court_reviews_updated_at           before update on public.court_reviews           for each row execute function public.set_updated_at();
 create trigger device_tokens_updated_at           before update on public.device_tokens           for each row execute function public.set_updated_at();
 
@@ -2466,7 +2440,7 @@ create policy guest_expense_shares_write_payer on public.guest_expense_shares
   );
 
 -- =========================================================================
--- Courts + venues + bookings + reviews
+-- Courts + bookings + reviews
 -- =========================================================================
 
 alter table public.courts enable row level security;
@@ -2485,63 +2459,23 @@ create policy courts_update_self on public.courts
 create policy courts_delete_self on public.courts
   for delete to authenticated using (added_by_id = auth.uid());
 
-alter table public.venues enable row level security;
+-- court_bookings are private to their owner; sharing happens through the
+-- linked find_players post, not the booking row.
+alter table public.court_bookings enable row level security;
 
-create policy venues_select_all on public.venues
-  for select to authenticated using (true);
--- venues + venue_courts are catalog data; writes via service_role only.
+create policy court_bookings_select_own on public.court_bookings
+  for select to authenticated using (user_id = (select auth.uid()));
 
-alter table public.venue_courts enable row level security;
+create policy court_bookings_insert_own on public.court_bookings
+  for insert to authenticated with check (user_id = (select auth.uid()));
 
-create policy venue_courts_select_all on public.venue_courts
-  for select to authenticated using (true);
-
-alter table public.bookings enable row level security;
-
-create policy bookings_select_member on public.bookings
-  for select to authenticated
-  using (
-    organizer_id = auth.uid()
-    or exists(select 1 from public.booking_players bp
-              where bp.booking_id = bookings.id and bp.user_id = auth.uid())
-  );
-
-create policy bookings_insert_organizer on public.bookings
-  for insert to authenticated with check (organizer_id = auth.uid());
-
-create policy bookings_update_organizer on public.bookings
+create policy court_bookings_update_own on public.court_bookings
   for update to authenticated
-  using (organizer_id = auth.uid())
-  with check (organizer_id = auth.uid());
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
 
-create policy bookings_delete_organizer on public.bookings
-  for delete to authenticated using (organizer_id = auth.uid());
-
-alter table public.booking_players enable row level security;
-
-create policy booking_players_select_member on public.booking_players
-  for select to authenticated
-  using (
-    user_id = auth.uid()
-    or exists(select 1 from public.bookings b
-              where b.id = booking_id and b.organizer_id = auth.uid())
-  );
-
-create policy booking_players_write_organizer on public.booking_players
-  for all to authenticated
-  using (
-    exists(select 1 from public.bookings b
-           where b.id = booking_id and b.organizer_id = auth.uid())
-  )
-  with check (
-    exists(select 1 from public.bookings b
-           where b.id = booking_id and b.organizer_id = auth.uid())
-  );
-
-create policy booking_players_update_self on public.booking_players
-  for update to authenticated
-  using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+create policy court_bookings_delete_own on public.court_bookings
+  for delete to authenticated using (user_id = (select auth.uid()));
 
 alter table public.court_reviews enable row level security;
 
@@ -3461,12 +3395,6 @@ COMMENT ON TABLE reminder_sent IS
 
 -- ============== Courts / venues ==============
 
-COMMENT ON TABLE venues IS
-  'Curated facilities (e.g. Seattle Parks ActiveNet locations). venue_courts holds the individual courts within. Separate from the user-added courts table — the curated set has ActiveNet metadata that user-added courts don''t.';
-
-COMMENT ON TABLE venue_courts IS
-  'Individual numbered courts inside a curated venue.';
-
 COMMENT ON TABLE courts IS
   'User-added courts (not from the curated ActiveNet set). Considered for consolidation with venues but kept separate because the schemas (ActiveNet metadata vs. user-supplied notes) diverge.';
 
@@ -3479,11 +3407,8 @@ COMMENT ON TABLE court_review_photos IS
 COMMENT ON TABLE court_availability_reports IS
   'Crowd-sourced "is the court available right now?" reports. Has a rate-limit guard (one report per user per court per N minutes) enforced in the query helper.';
 
-COMMENT ON TABLE bookings IS
-  'Court reservations. Sister to event_participants but with payment / time-slot semantics; not unified because the use cases barely overlap.';
-
-COMMENT ON TABLE booking_players IS
-  'Players included in a court booking. Many-to-many between bookings and profiles.';
+COMMENT ON TABLE court_bookings IS
+  'Record of a court reservation the user completed on Seattle Parks (ActiveNet) via the embedded in-app checkout. ActiveNet owns inventory/payment/cancellation; we only track what was booked, so the user can see upcoming bookings and spawn a find_players post from one.';
 
 -- ============== Albums / files / expenses / polls ==============
 
@@ -3947,7 +3872,7 @@ DROP POLICY expense_shares_update_self_settle ON expense_shares;
 CREATE POLICY expense_shares_update_self_settle ON expense_shares FOR UPDATE TO authenticated
   USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
 
--- ============== courts + court_reviews + court_review_photos + court_availability_reports + bookings + booking_players ==============
+-- ============== courts + court_reviews + court_review_photos + court_availability_reports ==============
 
 DROP POLICY courts_insert_self ON courts;
 CREATE POLICY courts_insert_self ON courts FOR INSERT TO authenticated WITH CHECK (added_by_id = (SELECT auth.uid()));
@@ -3979,37 +3904,6 @@ CREATE POLICY court_availability_reports_insert_self ON court_availability_repor
 
 DROP POLICY court_availability_reports_delete_self ON court_availability_reports;
 CREATE POLICY court_availability_reports_delete_self ON court_availability_reports FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()));
-
-DROP POLICY bookings_select_member ON bookings;
-CREATE POLICY bookings_select_member ON bookings FOR SELECT TO authenticated
-  USING (organizer_id = (SELECT auth.uid()) OR EXISTS (
-    SELECT 1 FROM booking_players bp WHERE bp.booking_id = bookings.id AND bp.user_id = (SELECT auth.uid())
-  ));
-
-DROP POLICY bookings_insert_organizer ON bookings;
-CREATE POLICY bookings_insert_organizer ON bookings FOR INSERT TO authenticated WITH CHECK (organizer_id = (SELECT auth.uid()));
-
-DROP POLICY bookings_update_organizer ON bookings;
-CREATE POLICY bookings_update_organizer ON bookings FOR UPDATE TO authenticated
-  USING (organizer_id = (SELECT auth.uid())) WITH CHECK (organizer_id = (SELECT auth.uid()));
-
-DROP POLICY bookings_delete_organizer ON bookings;
-CREATE POLICY bookings_delete_organizer ON bookings FOR DELETE TO authenticated USING (organizer_id = (SELECT auth.uid()));
-
-DROP POLICY booking_players_select_member ON booking_players;
-CREATE POLICY booking_players_select_member ON booking_players FOR SELECT TO authenticated
-  USING (user_id = (SELECT auth.uid()) OR EXISTS (
-    SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())
-  ));
-
-DROP POLICY booking_players_update_self ON booking_players;
-CREATE POLICY booking_players_update_self ON booking_players FOR UPDATE TO authenticated
-  USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
-
-DROP POLICY booking_players_write_organizer ON booking_players;
-CREATE POLICY booking_players_write_organizer ON booking_players FOR ALL TO authenticated
-  USING (EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())))
-  WITH CHECK (EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())));
 
 -- ============== availabilities + device_tokens ==============
 
@@ -4062,25 +3956,6 @@ CREATE POLICY device_tokens_self ON device_tokens FOR ALL TO authenticated
 --
 -- Fix: split each FOR ALL into separate FOR INSERT / FOR UPDATE / FOR
 -- DELETE policies, and merge any pair that targets the same command.
-
--- ============== booking_players ==============
-
-DROP POLICY booking_players_write_organizer ON booking_players;
-DROP POLICY booking_players_update_self ON booking_players;
-
-CREATE POLICY booking_players_insert_organizer ON booking_players FOR INSERT TO authenticated
-  WITH CHECK (EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())));
-
-CREATE POLICY booking_players_update_self_or_organizer ON booking_players FOR UPDATE TO authenticated
-  USING (user_id = (SELECT auth.uid()) OR EXISTS (
-    SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())
-  ))
-  WITH CHECK (user_id = (SELECT auth.uid()) OR EXISTS (
-    SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())
-  ));
-
-CREATE POLICY booking_players_delete_organizer ON booking_players FOR DELETE TO authenticated
-  USING (EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())));
 
 -- ============== court_review_photos ==============
 
@@ -4333,9 +4208,6 @@ AS $$
 BEGIN
   DELETE FROM public.album_items WHERE added_by_id = uid;
   DELETE FROM public.albums WHERE created_by_id = uid;
-  DELETE FROM public.booking_players
-    WHERE booking_id IN (SELECT id FROM public.bookings WHERE organizer_id = uid);
-  DELETE FROM public.bookings WHERE organizer_id = uid;
   DELETE FROM public.chat_messages
     WHERE chat_id IN (SELECT id FROM public.chats WHERE creator_id = uid);
   DELETE FROM public.chat_participants

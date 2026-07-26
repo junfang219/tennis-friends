@@ -192,17 +192,17 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "availabilities_member_id_fkey"
-            columns: ["member_id"]
-            isOneToOne: false
-            referencedRelation: "group_members"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "availabilities_match_id_fkey"
             columns: ["match_id"]
             isOneToOne: false
             referencedRelation: "team_matches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "availabilities_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "group_members"
             referencedColumns: ["id"]
           },
           {
@@ -253,6 +253,13 @@ export type Database = {
           user_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "availability_poll_responses_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "group_members"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "availability_poll_responses_poll_id_fkey"
             columns: ["poll_id"]
@@ -327,6 +334,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "availability_polls_for_match_id_fkey"
+            columns: ["for_match_id"]
+            isOneToOne: false
+            referencedRelation: "team_matches"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "availability_polls_group_id_fkey"
             columns: ["group_id"]
             isOneToOne: false
@@ -372,99 +386,6 @@ export type Database = {
           {
             foreignKeyName: "blocks_blocker_id_fkey"
             columns: ["blocker_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      booking_players: {
-        Row: {
-          booking_id: string
-          created_at: string
-          id: string
-          status: Database["public"]["Enums"]["booking_player_status"]
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          booking_id: string
-          created_at?: string
-          id?: string
-          status?: Database["public"]["Enums"]["booking_player_status"]
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          booking_id?: string
-          created_at?: string
-          id?: string
-          status?: Database["public"]["Enums"]["booking_player_status"]
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "booking_players_booking_id_fkey"
-            columns: ["booking_id"]
-            isOneToOne: false
-            referencedRelation: "bookings"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "booking_players_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      bookings: {
-        Row: {
-          active_net_url: string
-          court_id: string
-          created_at: string
-          end_time: string
-          id: string
-          organizer_id: string
-          start_time: string
-          status: Database["public"]["Enums"]["booking_status"]
-          updated_at: string
-        }
-        Insert: {
-          active_net_url?: string
-          court_id: string
-          created_at?: string
-          end_time: string
-          id?: string
-          organizer_id: string
-          start_time: string
-          status?: Database["public"]["Enums"]["booking_status"]
-          updated_at?: string
-        }
-        Update: {
-          active_net_url?: string
-          court_id?: string
-          created_at?: string
-          end_time?: string
-          id?: string
-          organizer_id?: string
-          start_time?: string
-          status?: Database["public"]["Enums"]["booking_status"]
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "bookings_court_id_fkey"
-            columns: ["court_id"]
-            isOneToOne: false
-            referencedRelation: "venue_courts"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "bookings_organizer_id_fkey"
-            columns: ["organizer_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -697,48 +618,6 @@ export type Database = {
           },
         ]
       }
-      court_availability_reports: {
-        Row: {
-          court_id: string
-          has_empty: boolean
-          id: string
-          post_id: string | null
-          reported_at: string
-          user_id: string
-        }
-        Insert: {
-          court_id: string
-          has_empty: boolean
-          id?: string
-          post_id?: string | null
-          reported_at?: string
-          user_id: string
-        }
-        Update: {
-          court_id?: string
-          has_empty?: boolean
-          id?: string
-          post_id?: string | null
-          reported_at?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "court_availability_reports_post_id_fkey"
-            columns: ["post_id"]
-            isOneToOne: false
-            referencedRelation: "posts"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "court_availability_reports_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       court_alert_sent: {
         Row: {
           alert_id: string
@@ -821,6 +700,48 @@ export type Database = {
           },
         ]
       }
+      court_availability_reports: {
+        Row: {
+          court_id: string
+          has_empty: boolean
+          id: string
+          post_id: string | null
+          reported_at: string
+          user_id: string
+        }
+        Insert: {
+          court_id: string
+          has_empty: boolean
+          id?: string
+          post_id?: string | null
+          reported_at?: string
+          user_id: string
+        }
+        Update: {
+          court_id?: string
+          has_empty?: boolean
+          id?: string
+          post_id?: string | null
+          reported_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "court_availability_reports_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "court_availability_reports_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       court_availability_snapshot: {
         Row: {
           captured_at: string
@@ -847,6 +768,81 @@ export type Database = {
           windows?: Json
         }
         Relationships: []
+      }
+      court_bookings: {
+        Row: {
+          activenet_url: string
+          center_id: number
+          confirmation: string
+          court_name: string
+          created_at: string
+          end_time: string
+          facility_id: string | null
+          id: string
+          receipt_number: string | null
+          resource_id: number
+          session_post_id: string | null
+          start_time: string
+          status: string
+          timezone: string
+          updated_at: string
+          user_id: string
+          venue_name: string
+        }
+        Insert: {
+          activenet_url?: string
+          center_id: number
+          confirmation?: string
+          court_name: string
+          created_at?: string
+          end_time: string
+          facility_id?: string | null
+          id?: string
+          receipt_number?: string | null
+          resource_id: number
+          session_post_id?: string | null
+          start_time: string
+          status?: string
+          timezone?: string
+          updated_at?: string
+          user_id: string
+          venue_name: string
+        }
+        Update: {
+          activenet_url?: string
+          center_id?: number
+          confirmation?: string
+          court_name?: string
+          created_at?: string
+          end_time?: string
+          facility_id?: string | null
+          id?: string
+          receipt_number?: string | null
+          resource_id?: number
+          session_post_id?: string | null
+          start_time?: string
+          status?: string
+          timezone?: string
+          updated_at?: string
+          user_id?: string
+          venue_name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "court_bookings_session_post_id_fkey"
+            columns: ["session_post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "court_bookings_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       court_review_photos: {
         Row: {
@@ -2596,47 +2592,6 @@ export type Database = {
           },
         ]
       }
-      photos: {
-        Row: {
-          created_at: string
-          duration_ms: number | null
-          id: string
-          kind: string
-          order: number
-          post_id: string
-          thumbnail_url: string
-          url: string
-        }
-        Insert: {
-          created_at?: string
-          duration_ms?: number | null
-          id?: string
-          kind?: string
-          order?: number
-          post_id: string
-          thumbnail_url?: string
-          url: string
-        }
-        Update: {
-          created_at?: string
-          duration_ms?: number | null
-          id?: string
-          kind?: string
-          order?: number
-          post_id?: string
-          thumbnail_url?: string
-          url?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "photos_post_id_fkey"
-            columns: ["post_id"]
-            isOneToOne: false
-            referencedRelation: "posts"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       personal_events: {
         Row: {
           court_facility_id: string | null
@@ -2686,6 +2641,47 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      photos: {
+        Row: {
+          created_at: string
+          duration_ms: number | null
+          id: string
+          kind: string
+          order: number
+          post_id: string
+          thumbnail_url: string
+          url: string
+        }
+        Insert: {
+          created_at?: string
+          duration_ms?: number | null
+          id?: string
+          kind?: string
+          order?: number
+          post_id: string
+          thumbnail_url?: string
+          url: string
+        }
+        Update: {
+          created_at?: string
+          duration_ms?: number | null
+          id?: string
+          kind?: string
+          order?: number
+          post_id?: string
+          thumbnail_url?: string
+          url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "photos_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
             referencedColumns: ["id"]
           },
         ]
@@ -3461,124 +3457,25 @@ export type Database = {
           },
         ]
       }
-      venue_courts: {
-        Row: {
-          active_net_id: string
-          court_number: number
-          created_at: string
-          id: string
-          is_lighted: boolean
-          surface: string
-          updated_at: string
-          venue_id: string
-        }
-        Insert: {
-          active_net_id?: string
-          court_number: number
-          created_at?: string
-          id?: string
-          is_lighted?: boolean
-          surface?: string
-          updated_at?: string
-          venue_id: string
-        }
-        Update: {
-          active_net_id?: string
-          court_number?: number
-          created_at?: string
-          id?: string
-          is_lighted?: boolean
-          surface?: string
-          updated_at?: string
-          venue_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "venue_courts_venue_id_fkey"
-            columns: ["venue_id"]
-            isOneToOne: false
-            referencedRelation: "venues"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      venues: {
-        Row: {
-          active_net_id: string
-          address: string
-          amenities: Json
-          created_at: string
-          id: string
-          image_url: string
-          latitude: number
-          location: unknown
-          longitude: number
-          name: string
-          neighborhood: string
-          updated_at: string
-        }
-        Insert: {
-          active_net_id?: string
-          address: string
-          amenities?: Json
-          created_at?: string
-          id?: string
-          image_url?: string
-          latitude: number
-          location?: unknown
-          longitude: number
-          name: string
-          neighborhood?: string
-          updated_at?: string
-        }
-        Update: {
-          active_net_id?: string
-          address?: string
-          amenities?: Json
-          created_at?: string
-          id?: string
-          image_url?: string
-          latitude?: number
-          location?: unknown
-          longitude?: number
-          name?: string
-          neighborhood?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
       _delete_user_owned_rows: { Args: { uid: string }; Returns: undefined }
-      add_roster_placeholders: { Args: { p_group_id: string; p_people: Json; p_scope?: string }; Returns: Json }
-      claim_roster_placeholder: { Args: { p_token: string }; Returns: Json }
-      get_roster_placeholder_links: { Args: { p_group_id: string }; Returns: Json }
-      link_roster_placeholder: { Args: { p_member_id: string; p_user_id: string }; Returns: Json }
-      guest_create_placeholder: { Args: { p_group_token: string; p_name: string }; Returns: Json }
-      guest_join_post: { Args: { p_post_id: string; p_name: string; p_contact?: string; p_note?: string }; Returns: Json }
-      guest_poll_view: { Args: { p_token: string }; Returns: Json }
-      guest_roster_view: { Args: { p_token: string }; Returns: Json }
-      guest_set_poll_response: { Args: { p_token: string; p_poll_id: string; p_blocks: Json }; Returns: Json }
-      guest_set_availability: {
-        Args: {
-          p_token: string
-          p_event_kind: string
-          p_event_id: string
-          p_status: string
-          p_match_types?: string
-        }
-        Returns: Json
+      _merge_placeholder_into_user: {
+        Args: { p_member_id: string; p_target: string }
+        Returns: boolean
       }
-      guest_update_name: { Args: { p_token: string; p_name: string }; Returns: Json }
-      mint_roster_link: { Args: { p_group_id: string }; Returns: string }
-      revoke_roster_link: { Args: { p_group_id: string }; Returns: undefined }
+      _norm_name: { Args: { p: string }; Returns: string }
       accept_club_invite: { Args: { p_invite_id: string }; Returns: Json }
       accept_club_invite_link: { Args: { p_token: string }; Returns: Json }
       accept_group_invite: { Args: { p_token: string }; Returns: Json }
       active_season_id: { Args: { g: string }; Returns: string }
+      add_roster_placeholders: {
+        Args: { p_group_id: string; p_people: Json; p_scope?: string }
+        Returns: Json
+      }
       advance_event_match_to_next_round: {
         Args: { p_match_id: string }
         Returns: undefined
@@ -3593,12 +3490,14 @@ export type Database = {
         Args: { p: Database["public"]["Tables"]["posts"]["Row"] }
         Returns: boolean
       }
+      claim_roster_placeholder: { Args: { p_token: string }; Returns: Json }
       cleanup_user_for_test: { Args: { uid: string }; Returns: undefined }
       count_user_friends: { Args: { user_id: string }; Returns: number }
       create_club: {
         Args: { p_invitee_ids?: string[]; p_name: string }
         Returns: Json
       }
+      delete_expired_game_chats: { Args: never; Returns: number }
       delete_my_account: { Args: never; Returns: undefined }
       email_exists: { Args: { p_email: string }; Returns: boolean }
       generate_round_robin_schedule: {
@@ -3609,6 +3508,72 @@ export type Database = {
       get_invite_by_token: { Args: { p_token: string }; Returns: Json }
       get_or_create_club_invite_link: {
         Args: { p_friend_group_id: string }
+        Returns: Json
+      }
+      get_roster_placeholder_links: {
+        Args: { p_group_id: string }
+        Returns: Json
+      }
+      guest_create_placeholder: {
+        Args: { p_group_token: string; p_name: string }
+        Returns: Json
+      }
+      guest_join_post: {
+        Args: {
+          p_contact?: string
+          p_name: string
+          p_note?: string
+          p_post_id: string
+        }
+        Returns: Json
+      }
+      guest_poll_view: { Args: { p_token: string }; Returns: Json }
+      guest_resolve_placeholder: {
+        Args: { p_token: string }
+        Returns: {
+          archived_at: string | null
+          claim_expires_at: string | null
+          claim_token: string | null
+          cleared_at: string | null
+          created_at: string
+          group_id: string
+          hidden_at: string | null
+          id: string
+          last_read_at: string
+          member_type: string
+          muted: boolean
+          pinned_at: string | null
+          placeholder_email: string | null
+          placeholder_name: string | null
+          placeholder_phone: string | null
+          placeholder_scope: string | null
+          roles: Database["public"]["Enums"]["group_member_role"][]
+          user_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "group_members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      guest_roster_view: { Args: { p_token: string }; Returns: Json }
+      guest_set_availability: {
+        Args: {
+          p_event_id: string
+          p_event_kind: string
+          p_match_types?: string
+          p_status: string
+          p_token: string
+        }
+        Returns: Json
+      }
+      guest_set_poll_response: {
+        Args: { p_blocks: Json; p_poll_id: string; p_token: string }
+        Returns: Json
+      }
+      guest_update_name: {
+        Args: { p_name: string; p_token: string }
         Returns: Json
       }
       has_pending_club_invite: { Args: { fg: string }; Returns: boolean }
@@ -3626,6 +3591,11 @@ export type Database = {
       is_friend: { Args: { other_user: string }; Returns: boolean }
       is_friend_group_member: { Args: { fg: string }; Returns: boolean }
       is_group_member: { Args: { g: string }; Returns: boolean }
+      link_roster_placeholder: {
+        Args: { p_member_id: string; p_user_id: string }
+        Returns: Json
+      }
+      mint_roster_link: { Args: { p_group_id: string }; Returns: string }
       post_event_rotation_round: {
         Args: {
           p_bye?: string
@@ -3656,6 +3626,7 @@ export type Database = {
         Args: { p_court_id: string; p_has_empty: boolean; p_post_id?: string }
         Returns: Json
       }
+      revoke_roster_link: { Args: { p_group_id: string }; Returns: undefined }
       rotate_club_invite_link: {
         Args: { p_friend_group_id: string }
         Returns: Json
@@ -3676,8 +3647,6 @@ export type Database = {
     }
     Enums: {
       availability_event_kind: "match" | "practice"
-      booking_player_status: "invited" | "accepted" | "declined"
-      booking_status: "pending" | "confirmed" | "cancelled"
       device_platform: "ios" | "android"
       event_match_status:
         | "proposed"
@@ -3858,8 +3827,6 @@ export const Constants = {
   public: {
     Enums: {
       availability_event_kind: ["match", "practice"],
-      booking_player_status: ["invited", "accepted", "declined"],
-      booking_status: ["pending", "confirmed", "cancelled"],
       device_platform: ["ios", "android"],
       event_match_status: [
         "proposed",

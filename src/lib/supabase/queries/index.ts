@@ -10,6 +10,7 @@ export * from "./groups";
 export * from "./events";
 export * from "./courts";
 export * from "./courtAlerts";
+export * from "./bookings";
 export * from "./personalEvents";
 export * from "./chats";
 export * from "./misc";
