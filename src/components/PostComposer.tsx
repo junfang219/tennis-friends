@@ -53,6 +53,20 @@ export type ChatTarget =
   | { kind: "club"; chatId: string; friendGroupId: string; name: string }
   | { kind: "team"; groupId: string; name: string };
 
+/**
+ * Seeds the Find-Players form from an existing plan (e.g. a court booking),
+ * so "find players for this booking" opens the composer with the court and
+ * time already filled in.
+ */
+export type ComposerInitialSession = {
+  playDate: string; // 'YYYY-MM-DD'
+  playTime: string; // 'HH:mm'
+  playDuration: number; // minutes
+  courtLocation: string;
+  courtFacilityId: string | null;
+  courtBooked: boolean;
+};
+
 export default function PostComposer({
   onPost,
   hideProposeTeam = false,
@@ -176,6 +190,7 @@ export function ComposerModal({
   placeholder,
   initialFindPlayers,
   initialProposeTeam,
+  initialSession,
   chatTarget,
   onPost,
   onClose,
@@ -184,6 +199,9 @@ export function ComposerModal({
   placeholder: string;
   initialFindPlayers?: boolean;
   initialProposeTeam?: boolean;
+  // Pre-fill the Find-Players form (e.g. from a court booking). Forces the
+  // composer into find-players mode with the court + time already set.
+  initialSession?: ComposerInitialSession;
   // When set, the composer is locked to a Looking-for-Player request scoped to
   // this chat: the feed post is audience-targeted to the chat, and a shared-post
   // card is sent into it. Audience picker, broadcast, and mode toggles are hidden.
@@ -251,20 +269,26 @@ export function ComposerModal({
   };
 
   // Find Players
-  const [findPlayers, setFindPlayers] = useState(initialFindPlayers || !!chatTarget);
-  const [playDate, setPlayDate] = useState("");
-  const [playTime, setPlayTime] = useState("");
-  const [courtLocation, setCourtLocation] = useState("");
+  const [findPlayers, setFindPlayers] = useState(
+    initialFindPlayers || !!chatTarget || !!initialSession
+  );
+  const [playDate, setPlayDate] = useState(initialSession?.playDate ?? "");
+  const [playTime, setPlayTime] = useState(initialSession?.playTime ?? "");
+  const [courtLocation, setCourtLocation] = useState(
+    initialSession?.courtLocation ?? ""
+  );
   // Set when the author picks a catalog court from the typeahead. Cleared
   // whenever they edit the text afterwards so the picked id doesn't drift
   // away from what the input now reads. computeCourtFacilityId() on submit
   // gives a free-text entry one last chance to resolve to a catalog id.
-  const [courtFacilityId, setCourtFacilityId] = useState<string | null>(null);
+  const [courtFacilityId, setCourtFacilityId] = useState<string | null>(
+    initialSession?.courtFacilityId ?? null
+  );
   const [gameType, setGameType] = useState("singles");
   const [playersNeeded, setPlayersNeeded] = useState(1);
   const [skillBucket, setSkillBucket] = useState<"any" | "beginner" | "intermediate" | "advanced" | "pro">("any");
-  const [playDuration, setPlayDuration] = useState(90);
-  const [courtBooked, setCourtBooked] = useState(false);
+  const [playDuration, setPlayDuration] = useState(initialSession?.playDuration ?? 90);
+  const [courtBooked, setCourtBooked] = useState(initialSession?.courtBooked ?? false);
   const [isBroadcast, setIsBroadcast] = useState(false);
   const [broadcastRadius, setBroadcastRadius] = useState<5 | 10 | 25>(10);
   const [hasLocation, setHasLocation] = useState<boolean | null>(null);

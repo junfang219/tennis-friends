@@ -8,10 +8,15 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
   listMyBookings,
   markBookingCancelled,
+  linkBookingSession,
   type CourtBooking,
 } from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 import { errorMessage } from "@/lib/errorMessage";
+import {
+  ComposerModal,
+  type ComposerInitialSession,
+} from "@/components/PostComposer";
 
 const BOOKINGS_CACHE_KEY = "courtBookings:mine";
 
@@ -20,6 +25,45 @@ function shortCourtName(name: string): string {
   const cleaned = name.replace(/\s*\([^)]*\)\s*$/, "").trim();
   const m = cleaned.match(/(court\s+\S+)\s*$/i);
   return m ? m[1].replace(/^c/, "C") : cleaned;
+}
+
+/** Wall-clock parts of a booking in its own timezone. */
+function bookingParts(b: CourtBooking): {
+  playDate: string;
+  playTime: string;
+  durationMin: number;
+} {
+  const start = new Date(b.start_time);
+  const end = new Date(b.end_time);
+  const playDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: b.timezone,
+  }).format(start); // YYYY-MM-DD
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: b.timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(start);
+  const hh = parts.find((p) => p.type === "hour")?.value ?? "00";
+  const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
+  return {
+    playDate,
+    playTime: `${hh}:${mm}`,
+    durationMin: Math.round((end.getTime() - start.getTime()) / 60_000),
+  };
+}
+
+/** Seed the Find-Players composer from a booking. */
+function fromBooking(b: CourtBooking): ComposerInitialSession {
+  const { playDate, playTime, durationMin } = bookingParts(b);
+  return {
+    playDate,
+    playTime,
+    playDuration: durationMin,
+    courtLocation: b.venue_name,
+    courtFacilityId: b.facility_id,
+    courtBooked: true,
+  };
 }
 
 function fmtWhen(b: CourtBooking): string {
@@ -47,14 +91,19 @@ function fmtWhen(b: CourtBooking): string {
 
 function BookingCard({
   b,
+  isPast,
   onCancel,
+  onFindPlayers,
   busy,
 }: {
   b: CourtBooking;
+  isPast: boolean;
   onCancel: (b: CourtBooking) => void;
+  onFindPlayers: (b: CourtBooking) => void;
   busy: boolean;
 }) {
   const cancelled = b.status === "cancelled";
+  const hasSession = !!b.session_post_id;
   return (
     <li
       className={`bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-4 ${
@@ -87,6 +136,23 @@ function BookingCard({
 
       {!cancelled && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
+          {hasSession ? (
+            <Link
+              href={`/p/${b.session_post_id}`}
+              className="px-3 py-1.5 rounded-lg bg-court-green-soft/10 text-court-green text-xs font-semibold hover:bg-court-green-soft/20"
+            >
+              Session created ✓
+            </Link>
+          ) : (
+            !isPast && (
+              <button
+                onClick={() => onFindPlayers(b)}
+                className="px-3 py-1.5 rounded-lg bg-court-green text-white text-xs font-semibold hover:bg-court-green-light"
+              >
+                Find players
+              </button>
+            )
+          )}
           <a
             href="/seattle/myaccount"
             target="_blank"
@@ -109,11 +175,13 @@ function BookingCard({
 }
 
 export default function BookingsPage() {
-  const { status } = useSession();
+  const { data: session, status } = useSession();
   const router = useRouter();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [showPast, setShowPast] = useState(false);
+  // The booking we're spawning a find-players post for (opens the composer).
+  const [composerFor, setComposerFor] = useState<CourtBooking | null>(null);
 
   const query = useCachedQuery(
     status === "authenticated" ? BOOKINGS_CACHE_KEY : null,
@@ -136,6 +204,26 @@ export default function BookingsPage() {
     up.reverse();
     return { upcoming: up, past: pa };
   }, [bookings]);
+
+  const onSessionPosted = async (post: Record<string, unknown>) => {
+    const booking = composerFor;
+    setComposerFor(null);
+    const postId = typeof post.id === "string" ? post.id : null;
+    if (!booking || !postId) return;
+    // Optimistically flip the card to "Session created", then persist the link.
+    query.mutate((prev) =>
+      (prev ?? []).map((x) =>
+        x.id === booking.id ? { ...x, session_post_id: postId } : x
+      )
+    );
+    try {
+      await linkBookingSession(createSupabaseBrowserClient(), booking.id, postId);
+      await query.refetch();
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't link the session."));
+      await query.refetch();
+    }
+  };
 
   const cancel = async (b: CourtBooking) => {
     setError("");
@@ -202,7 +290,9 @@ export default function BookingsPage() {
                 <BookingCard
                   key={b.id}
                   b={b}
+                  isPast={false}
                   onCancel={cancel}
+                  onFindPlayers={setComposerFor}
                   busy={busyId === b.id}
                 />
               ))}
@@ -223,7 +313,9 @@ export default function BookingsPage() {
                     <BookingCard
                       key={b.id}
                       b={b}
+                      isPast
                       onCancel={cancel}
+                      onFindPlayers={setComposerFor}
                       busy={busyId === b.id}
                     />
                   ))}
@@ -232,6 +324,16 @@ export default function BookingsPage() {
             </div>
           )}
         </>
+      )}
+
+      {composerFor && (
+        <ComposerModal
+          session={session}
+          placeholder="Looking for a player…"
+          initialSession={fromBooking(composerFor)}
+          onPost={onSessionPosted}
+          onClose={() => setComposerFor(null)}
+        />
       )}
     </div>
   );
