@@ -188,17 +188,22 @@ async function proxy(
       // prevent the SPA from ever entering its 404 state.
       const interceptScript = `<script>(function(){
 var LEGACY=/^\\/seattle\\/(ActiveNet_|Activity_|Create_Account|myaccount|wishlist|servlet|logout)/i;
-// Build the ActiveNet signin URL with a base64-encoded params= callback
-// pointing back to the tennis-court reservation search page. After
-// successful authentication, ActiveNet redirects to this callback URL so
-// the user lands back on the search page — not on their account page.
+// Build the ActiveNet signin URL with a base64-encoded params= callback.
+// After successful authentication, ActiveNet redirects to this callback.
+// When we're in an embedded booking (the URL carries our tf_* prefill
+// params), return the user to THIS exact court+time page so the selection
+// survives sign-in and the bridge re-prefills it — otherwise they'd land on
+// the generic search page and lose their slot. Off the booking path, fall
+// back to the tennis-court search page.
 // CRITICAL: the callback must point at OUR origin (the proxy), not the
 // absolute anc.apm host — otherwise the post-login redirect navigates the
 // booking iframe out to activecommunities.com, which refuses framing
-// ("refused to connect"). location.origin is the proxy origin in both dev
-// (http://localhost:3000) and prod (https://mytennisfriends.com), so the
+// ("refused to connect"). location.origin/href is the proxy origin in both
+// dev (http://localhost:3000) and prod (https://mytennisfriends.com), so the
 // user stays inside the embedded flow.
-var CALLBACK_URL=location.origin+'/seattle/reservation/search?keyword=tennis court&resourceType=0&equipmentQty=0&fromLoginPage=true&from_original_cui=true';
+var CALLBACK_URL=/[?&]tf_date=/.test(location.search)
+  ? location.href
+  : location.origin+'/seattle/reservation/search?keyword=tennis court&resourceType=0&equipmentQty=0&fromLoginPage=true&from_original_cui=true';
 var SIGNIN_URL='/seattle/signin?onlineSiteId=0&from_original_cui=true&override_partial_error=False&custom_amount=False&params='+encodeURIComponent(btoa(CALLBACK_URL))+'&locale=en-US';
 var TEXT_TO_URL={
   'sign in':SIGNIN_URL,
