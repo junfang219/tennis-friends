@@ -1,5 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { parseDailyAvailability } from "./activenet";
+import { parseDailyAvailability, toProxyPath } from "./activenet";
+
+describe("toProxyPath", () => {
+  it("strips the ActiveNet origin so the URL is served by the /seattle proxy", () => {
+    expect(
+      toProxyPath(
+        "https://anc.apm.activecommunities.com/seattle/reservation/search/detail/281?locale=en-US"
+      )
+    ).toBe("/seattle/reservation/search/detail/281?locale=en-US");
+    expect(
+      toProxyPath("https://apm.activecommunities.com/seattle/reservation/search")
+    ).toBe("/seattle/reservation/search");
+  });
+
+  it("leaves an already-relative or non-ActiveNet URL unchanged", () => {
+    expect(toProxyPath("/seattle/signin")).toBe("/seattle/signin");
+    expect(toProxyPath("https://example.com/x")).toBe("https://example.com/x");
+  });
+});
 
 // Captured verbatim from a live call to
 //   GET /seattle/rest/reservation/resource/availability/daily/279

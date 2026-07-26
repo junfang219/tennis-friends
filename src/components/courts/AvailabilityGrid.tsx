@@ -8,7 +8,8 @@
 // we can resolve to an ActiveNet center.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { buildResourceBookingUrl, type Timeslot } from "@/lib/activenet";
+import { type Timeslot } from "@/lib/activenet";
+import BookingSheet from "./BookingSheet";
 
 interface CourtAvailability {
   resourceId: number;
@@ -22,6 +23,9 @@ interface AvailabilityGridProps {
   /** ActiveNet center ID for the venue. */
   centerId: number;
   venueName: string;
+  /** Catalog facility id ("tf-N") for the venue, saved with a booking so it
+   *  links back to the court page. Null for venues not in the catalog. */
+  facilityId?: string | null;
   /** Venue booking URL — open windows link here so a tap goes straight to
    *  the Seattle Parks reservation flow. */
   bookingUrl?: string | null;
@@ -73,6 +77,11 @@ function toMinutes(t: string): number {
   return (h || 0) * 60 + (m || 0);
 }
 
+/** Minutes from midnight → "HH:mm". */
+function toClock24(min: number): string {
+  return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+}
+
 /** Compact column header for an hour: 7a, 12p, 1p, 9p. */
 function hourLabel(h: number): string {
   const h12 = h % 12 === 0 ? 12 : h % 12;
@@ -109,6 +118,7 @@ function shortCourtName(name: string): string {
 export default function AvailabilityGrid({
   centerId,
   venueName,
+  facilityId,
   bookingUrl,
   liveViewUrl,
   initialDate,
@@ -129,6 +139,13 @@ export default function AvailabilityGrid({
   const [snapshotAsOf, setSnapshotAsOf] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  // The open slot the user tapped, opened as an embedded BookingSheet.
+  const [bookingSlot, setBookingSlot] = useState<{
+    resourceId: number;
+    courtName: string;
+    start: string; // 'HH:mm'
+    end: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -185,6 +202,7 @@ export default function AvailabilityGrid({
   const allRows = (courts ?? []).map((c) => ({
     resourceId: c.resourceId,
     name: shortCourtName(c.courtName),
+    fullName: c.courtName,
     error: c.error,
     reservable: c.reservable,
     bars: c.slots.map((s) => ({
@@ -399,17 +417,23 @@ export default function AvailabilityGrid({
                             </span>
                           );
                           return bookingUrl && !isSnapshot && c.reservable ? (
-                            <a
+                            <button
                               key={idx}
-                              href={buildResourceBookingUrl(c.resourceId)}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                              type="button"
+                              onClick={() =>
+                                setBookingSlot({
+                                  resourceId: c.resourceId,
+                                  courtName: c.fullName,
+                                  start: toClock24(b.start),
+                                  end: toClock24(b.end),
+                                })
+                              }
                               title={`${label} · book ${c.name} on Seattle Parks`}
                               style={{ left, width }}
-                              className={`${common} hover:brightness-95 transition`}
+                              className={`${common} hover:brightness-95 transition cursor-pointer`}
                             >
                               {text}
-                            </a>
+                            </button>
                           ) : (
                             <div title={label} style={{ left, width }} className={common} key={idx}>
                               {text}
@@ -455,6 +479,20 @@ export default function AvailabilityGrid({
           </>
         )}
       </div>
+
+      {bookingSlot && (
+        <BookingSheet
+          resourceId={bookingSlot.resourceId}
+          centerId={centerId}
+          courtName={bookingSlot.courtName}
+          venueName={venueName}
+          facilityId={facilityId ?? null}
+          date={selected}
+          startTime={bookingSlot.start}
+          endTime={bookingSlot.end}
+          onClose={() => setBookingSlot(null)}
+        />
+      )}
     </div>
   );
 }

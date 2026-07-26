@@ -16,6 +16,7 @@ import { DirectionsButton } from "@/components/courts/DirectionsButton";
 import { getFacilityByCourtId, getSeattleParksDashboardUrl } from "@/lib/facilities";
 import { resolveAvailabilityTarget } from "@/lib/activenetSeattleCourts";
 import AvailabilityGrid from "@/components/courts/AvailabilityGrid";
+import { toProxyPath } from "@/lib/activenet";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listCourtReviews } from "@/lib/supabase/queries";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
@@ -127,6 +128,11 @@ export default function CourtDetailPage() {
   // same time as the tap (no real hover), so users paid the full ~2–4s
   // cold load every open.
   const [mountDashboardIframe, setMountDashboardIframe] = useState(false);
+  // Embedded Seattle Parks booking modal for ActiveNet venues — the top CTA
+  // opens the reservation page in-app (via the /seattle proxy) instead of
+  // redirecting out. Per-slot booking lives in the AvailabilityGrid below.
+  const [bookOpen, setBookOpen] = useState(false);
+  const [mountBookIframe, setMountBookIframe] = useState(false);
   const availabilityButtonRef = useRef<HTMLButtonElement | null>(null);
   // Geolocation for the Directions chooser's `origin` param — the chosen
   // map app opens with the route already drawn instead of asking "from
@@ -595,27 +601,40 @@ export default function CourtDetailPage() {
           )}
           {!isClosed && !court.bookingLinks && court.bookingUrl && (
             <div className="mb-5 flex flex-col sm:flex-row gap-2">
-              <a
-                href={court.bookingUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-primary flex-1 flex items-center justify-center gap-2 py-3"
-              >
-                {court.bookingLabel ?? "Book this court"}
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
+              {court.activeNetCenterId != null ? (
+                // ActiveNet venue: book in-app via the /seattle proxy.
+                <button
+                  onClick={() => {
+                    setMountBookIframe(true);
+                    setBookOpen(true);
+                  }}
+                  className="btn-primary flex-1 flex items-center justify-center gap-2 py-3"
                 >
-                  <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-                  <polyline points="15 3 21 3 21 9" />
-                  <line x1="10" y1="14" x2="21" y2="3" />
-                </svg>
-              </a>
+                  {court.bookingLabel ?? "Book this court"}
+                </button>
+              ) : (
+                <a
+                  href={court.bookingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-primary flex-1 flex items-center justify-center gap-2 py-3"
+                >
+                  {court.bookingLabel ?? "Book this court"}
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                  >
+                    <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                    <polyline points="15 3 21 3 21 9" />
+                    <line x1="10" y1="14" x2="21" y2="3" />
+                  </svg>
+                </a>
+              )}
               {court.dashboardUrl && (
                 <button
                   ref={availabilityButtonRef}
@@ -640,6 +659,7 @@ export default function CourtDetailPage() {
               <AvailabilityGrid
                 centerId={court.activeNetCenterId}
                 venueName={court.name}
+                facilityId={court.courtId}
                 bookingUrl={court.bookingUrl}
                 liveViewUrl={court.liveAvailabilityUrl}
                 courtFilter={court.availabilityCourtFilter}
@@ -946,6 +966,47 @@ export default function CourtDetailPage() {
               title="Seattle Parks tennis court availability"
               className="w-full flex-1 border-0"
               allowFullScreen
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Embedded Seattle Parks reservation page for ActiveNet venues, served
+          same-origin through the /seattle proxy so the user can sign in and
+          book without leaving the app. Kept mounted across opens (hidden via
+          display:none) so the session survives a close/reopen. */}
+      {mountBookIframe && court.bookingUrl && court.activeNetCenterId != null && (
+        <div
+          className={`${bookOpen ? "flex" : "hidden"} fixed inset-0 z-[600] bg-black/60 items-end sm:items-center justify-center p-0 sm:p-4`}
+          aria-hidden={!bookOpen}
+          onClick={() => setBookOpen(false)}
+        >
+          <div
+            className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-3xl h-[92vh] sm:h-[88vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+              <div>
+                <h3 className="font-semibold text-gray-900 text-sm">Book on Seattle Parks</h3>
+                <p className="text-[11px] text-gray-500">
+                  Sign in with your Seattle Parks account · payment handled by Seattle Parks
+                </p>
+              </div>
+              <button
+                onClick={() => setBookOpen(false)}
+                className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center"
+                aria-label="Close booking"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <iframe
+              src={toProxyPath(court.bookingUrl)}
+              title="Reserve on Seattle Parks"
+              className="w-full flex-1 border-0"
             />
           </div>
         </div>

@@ -316,3 +316,16 @@ export function buildBookingUrl(courtName: string): string {
 export function buildResourceBookingUrl(resourceId: number): string {
   return `https://anc.apm.activecommunities.com/seattle/reservation/search/detail/${resourceId}?locale=en-US`;
 }
+
+/**
+ * Turn an absolute ActiveNet URL into a same-origin path served by our
+ * /seattle reverse proxy (src/app/seattle/[...path]/route.ts), so it can be
+ * loaded inside the in-app BookingSheet iframe. A path or non-ActiveNet URL
+ * is returned unchanged.
+ */
+export function toProxyPath(url: string): string {
+  return url.replace(
+    /^https?:\/\/(?:anc\.)?apm\.activecommunities\.com/i,
+    ""
+  );
+}
