@@ -3,10 +3,16 @@
 // strings (e.g. section is "Pacific NW", not "NW"). Shared by the search UI
 // and validated server-side. If tennisrecord changes its options, update here.
 
-export const SEARCH_YEARS = [
-  "2026", "2025", "2024", "2023", "2022", "2021", "2020",
-  "2019", "2018", "2017", "2016", "2015", "2014",
-] as const;
+// The site lists years from next season (registration opens before the
+// calendar year starts) back to 2014. Generated so the list rolls forward
+// on its own each season.
+const FIRST_SEARCH_YEAR = 2014;
+const LATEST_SEARCH_YEAR = new Date().getFullYear() + 1;
+
+export const SEARCH_YEARS: string[] = Array.from(
+  { length: LATEST_SEARCH_YEAR - FIRST_SEARCH_YEAR + 1 },
+  (_, i) => String(LATEST_SEARCH_YEAR - i),
+);
 
 // Value "" means "All". Labels mirror the site.
 export const SEARCH_LEAGUE_TYPES: { value: string; label: string }[] = [
@@ -38,7 +44,7 @@ export const SEARCH_SECTIONS: string[] = [
 ];
 
 export const DEFAULT_SECTION = "Pacific NW";
-export const DEFAULT_YEAR = "2026";
+export const DEFAULT_YEAR = String(new Date().getFullYear());
 
 const LEAGUE_TYPE_VALUES = new Set(SEARCH_LEAGUE_TYPES.map((o) => o.value));
 const SECTION_VALUES = new Set(["", ...SEARCH_SECTIONS]);
