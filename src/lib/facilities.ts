@@ -229,25 +229,55 @@ export function getFacilityByCourtId(courtId: string): Facility | null {
   return load().facilities.find((f) => f.externalId === externalId) ?? null;
 }
 
+/** Lowercase and collapse punctuation to spaces so "Columbia Athletic Club -
+ *  Silver Lake" and "Columbia Athletic Club (Silver lake)" compare equal. */
+function normalizeName(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** Score a normalized query against a normalized facility name. Tiers:
+ *  5 exact, 4 prefix (either way), 3 word-boundary hit, 2 substring,
+ *  1 query contains the full name, 0.5 token overlap (reordered/variant
+ *  names like "Tukwila Sports Center - Gorin" vs "Gorin Sports Tukwila").
+ *  0 = no match. Shared by the resolver and the search picker so both
+ *  rank identically. */
+function scoreNameMatch(q: string, n: string): number {
+  if (n === q) return 5;
+  if (n.startsWith(q) || q.startsWith(n)) return 4;
+  if (new RegExp(`\\b${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(n)) return 3;
+  if (n.includes(q)) return 2;
+  if (q.includes(n) && n.length >= 6) return 1;
+  // Token overlap: at least two shared words covering all but at most one
+  // of the shorter name's words. Catches reorderings and near-synonyms
+  // ("Forest Crest Athletic Club" → "Forest Crest Tennis Club") without
+  // letting a single shared word ("Bellevue") cross-match venues. Ranked
+  // within the tier by Jaccard overlap (0.5–0.9, always below tier 1) so
+  // "Boeing Tennis Club" picks "Boeing Employees Tennis Club" over the
+  // equally-eligible-but-weaker "Seattle Tennis Club".
+  const qTokens = new Set(q.split(" ").filter(Boolean));
+  const nTokens = new Set(n.split(" ").filter(Boolean));
+  const shared = [...qTokens].filter((t) => nTokens.has(t)).length;
+  const minTokens = Math.min(qTokens.size, nTokens.size);
+  if (shared >= 2 && shared >= minTokens - 1) {
+    const union = qTokens.size + nTokens.size - shared;
+    return 0.5 + 0.4 * (shared / union);
+  }
+  return 0;
+}
+
 /** Best-effort fuzzy match: free-text "court location" string → Facility.
  *  Returns the highest-scoring facility whose name contains the query (or vice
  *  versa). Returns null if nothing matches with confidence. Mirrors the
  *  scoring used by /api/courts/search so the arrival-detection picks the
  *  same facility the user would see in the picker. */
 export function resolveFacilityByName(query: string): Facility | null {
-  const q = query.trim().toLowerCase();
+  const q = normalizeName(query);
   if (q.length < 3) return null;
   const facilities = load().facilities;
   let best: { f: Facility; s: number } | null = null;
   for (const f of facilities) {
     if (f.latitude == null || f.longitude == null) continue;
-    const n = f.name.toLowerCase();
-    let s = 0;
-    if (n === q) s = 5;
-    else if (n.startsWith(q) || q.startsWith(n)) s = 4;
-    else if (new RegExp(`\\b${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(n)) s = 3;
-    else if (n.includes(q)) s = 2;
-    else if (q.includes(n) && n.length >= 6) s = 1;
+    const s = scoreNameMatch(q, normalizeName(f.name));
     if (s > 0 && (!best || s > best.s || (s === best.s && f.externalId < best.f.externalId))) {
       best = { f, s };
     }
@@ -283,19 +313,13 @@ export function computeCourtFacilityId(
  *  search rank identically. Returns at most `limit` facilities sorted
  *  by score desc. */
 export function searchFacilitiesByName(query: string, limit: number = 8): Facility[] {
-  const q = query.trim().toLowerCase();
+  const q = normalizeName(query);
   if (q.length < 2) return [];
   const facilities = load().facilities;
   const scored: Array<{ f: Facility; s: number }> = [];
   for (const f of facilities) {
     if (f.latitude == null || f.longitude == null) continue;
-    const n = f.name.toLowerCase();
-    let s = 0;
-    if (n === q) s = 5;
-    else if (n.startsWith(q) || q.startsWith(n)) s = 4;
-    else if (new RegExp(`\\b${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(n)) s = 3;
-    else if (n.includes(q)) s = 2;
-    else if (q.includes(n) && n.length >= 6) s = 1;
+    const s = scoreNameMatch(q, normalizeName(f.name));
     if (s > 0) scored.push({ f, s });
   }
   scored.sort((a, b) => {

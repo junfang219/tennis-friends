@@ -6995,6 +6995,33 @@
       "notes": "Court count of 4 from third-party tennis directories. Verify current public-access timing with Tukwila SD.",
       "category": "school",
       "status": "active"
+    },
+    {
+      "id": 270,
+      "name": "Harbor Square Athletic Club",
+      "address": "160 W Dayton St, Edmonds, WA 98020",
+      "street": "160 W Dayton St",
+      "city": "Edmonds",
+      "state": "WA",
+      "zip": "98020",
+      "latitude": 47.8076,
+      "longitude": -122.3774,
+      "court_count": null,
+      "lighted": true,
+      "hitting_wall": false,
+      "pickleball_lined": true,
+      "indoor_outdoor": "both",
+      "managed_by": "Club",
+      "reservation_policy": "Membership required",
+      "contact_phone": "(425) 778-3546",
+      "booking_url": "https://www.bayclubs.com/clubs/harborsquare",
+      "court_level_booking_url": null,
+      "bookable": false,
+      "hours": null,
+      "description": "Harbor Square Athletic Club (now Bay Club Harbor Square) is a full-service athletic club on the Edmonds waterfront with indoor and outdoor tennis courts and an active tennis and pickleball community.",
+      "notes": "Added as a USTA league match venue (team schedules reference it by this name).",
+      "category": "private_club",
+      "status": "active"
     }
   ]
 }

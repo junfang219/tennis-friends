@@ -54,3 +54,27 @@ export function combineDateAndTime(
   const out = new Date(trueUtcMs);
   return Number.isFinite(out.getTime()) ? out : null;
 }
+
+// Render a UTC instant back to the event's local wall clock for reminder
+// copy ("Sat, Sep 26, 12:30 PM"). Without an explicit timeZone the cron's
+// toLocaleString rendered in server time (Vercel = UTC), so push + email
+// bodies showed times 7-8 hours later than the actual match.
+export function formatWhenLabel(
+  target: Date,
+  timezone: string | null | undefined
+): string {
+  const opts: Intl.DateTimeFormatOptions = {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  };
+  const tz = timezone && timezone.length > 0 ? timezone : "America/Los_Angeles";
+  try {
+    return target.toLocaleString("en-US", { ...opts, timeZone: tz });
+  } catch {
+    // Invalid IANA in the row — fall back to the app's home zone.
+    return target.toLocaleString("en-US", { ...opts, timeZone: "America/Los_Angeles" });
+  }
+}

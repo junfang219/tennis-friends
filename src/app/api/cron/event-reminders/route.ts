@@ -4,7 +4,7 @@ import { postPushFanout } from "@/lib/pushFanout";
 import { parseReminderPrefs } from "@/lib/reminderPrefs";
 import { isInReminderWindow } from "@/lib/reminderWindow";
 import { sendReminderEmail } from "@/lib/reminderEmail";
-import { combineDateAndTime } from "@/lib/wallClock";
+import { combineDateAndTime, formatWhenLabel } from "@/lib/wallClock";
 
 /**
  * Reminder cron — triggered every 15 minutes by the `event-reminders-hourly`
@@ -109,6 +109,7 @@ export async function GET(request: Request) {
         memberUserIds: members,
         hoursBefore,
         target,
+        timezone: m.timezone,
         title: m.opponent ? `vs ${m.opponent}` : "Team match",
         location: m.location,
         rsvpPath: `/groups/${m.group_id}/availability?focus=${m.id}`,
@@ -175,6 +176,7 @@ export async function GET(request: Request) {
         memberUserIds: members,
         hoursBefore,
         target,
+        timezone: p.timezone,
         title: p.series.name,
         location: p.series.location,
         rsvpPath: `/groups/${group.id}/practice?focus=${p.id}`,
@@ -233,6 +235,7 @@ type DispatchOpts = {
   memberUserIds: string[];
   hoursBefore: number;
   target: Date;
+  timezone: string | null;
   title: string;
   location: string;
   rsvpPath: string;
@@ -258,13 +261,9 @@ async function dispatch(
 
   const origin = new URL(opts.request.url).origin;
   const rsvpUrl = `${origin}${opts.rsvpPath}`;
-  const whenLabel = opts.target.toLocaleString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  // Render in the event's zone, not the server's — the cron runs on
+  // Vercel in UTC, which used to shift the label 7-8 hours.
+  const whenLabel = formatWhenLabel(opts.target, opts.timezone);
   const kindLabel = opts.kind === "match" ? "Match" : "Practice";
 
   // Single APN code path: push-fanout (Web Crypto ES256 + HTTP/2). We

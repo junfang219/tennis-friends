@@ -1,5 +1,7 @@
 "use client";
 
+import TeamCalendarSubscription from "@/components/calendar/TeamCalendarSubscription";
+
 import { Fragment, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -29,6 +31,8 @@ import { AvailabilityTabs } from "@/components/availability/AvailabilityTabs";
 import DismissibleTip from "@/components/DismissibleTip";
 import { AVAIL_MATRIX_GUIDE_KEY } from "@/lib/seenFlags";
 import FindUstaTeam from "@/components/scouting/FindUstaTeam";
+import { LocationDirections } from "@/components/courts/LocationDirections";
+import { downloadIcsBundle, type ExportEvent } from "@/lib/calendarExport";
 import SendLineupMenu from "@/components/availability/SendLineupMenu";
 import ActionMenu from "@/components/ActionMenu";
 import { closePoll, seedPollAvailability } from "@/lib/supabase/queries/availabilityPolls";
@@ -64,6 +68,7 @@ type Match = {
   id: string;
   matchDate: string;
   matchTime: string;
+  timezone: string | null;
   location: string;
   opponent: string;
   opponentTeamId: string | null;
@@ -269,7 +274,7 @@ export default function AvailabilityPage() {
         supabase
           .from("team_matches")
           .select(
-            `id, match_date, match_time, location, opponent, opponent_team_id, season_id, notes, scheduling_status, window_end,
+            `id, match_date, match_time, timezone, location, opponent, opponent_team_id, season_id, notes, scheduling_status, window_end,
              availabilities ( id, member_id, user_id, status, match_types, lineup_slot )`
           )
           .eq("group_id", groupId)
@@ -310,6 +315,7 @@ export default function AvailabilityPage() {
         id: string;
         match_date: string;
         match_time: string;
+        timezone: string | null;
         location: string;
         opponent: string;
         opponent_team_id: string | null;
@@ -324,6 +330,7 @@ export default function AvailabilityPage() {
           id: m.id,
           matchDate: m.match_date,
           matchTime: m.match_time,
+          timezone: m.timezone,
           location: m.location,
           opponent: m.opponent,
           opponentTeamId: m.opponent_team_id,
@@ -563,7 +570,7 @@ export default function AvailabilityPage() {
         .from("team_matches")
         .update(fields)
         .eq("id", editingMatchId)
-        .select("id, match_date, match_time, location, opponent, notes, scheduling_status, window_end")
+        .select("id, match_date, match_time, timezone, location, opponent, notes, scheduling_status, window_end")
         .single();
       if (!updErr && data) {
         // Poll → schedule handoff on an existing match: seed the poll's
@@ -585,6 +592,7 @@ export default function AvailabilityPage() {
                       ...m,
                       matchDate: data.match_date,
                       matchTime: data.match_time,
+                      timezone: data.timezone,
                       location: data.location,
                       opponent: data.opponent,
                       notes: data.notes,
@@ -610,7 +618,7 @@ export default function AvailabilityPage() {
         // config (lineup format, level) applies without a manual step.
         season_id: seasonLeagues.find((s) => s.isActive)?.id ?? null,
       })
-      .select("id, match_date, match_time, location, opponent, season_id, notes, scheduling_status, window_end")
+      .select("id, match_date, match_time, timezone, location, opponent, season_id, notes, scheduling_status, window_end")
       .single();
     if (!insErr && data) {
       // When the match came from a poll window, pre-fill every member's
@@ -623,6 +631,7 @@ export default function AvailabilityPage() {
         id: data.id,
         matchDate: data.match_date,
         matchTime: data.match_time,
+        timezone: data.timezone,
         location: data.location,
         opponent: data.opponent,
         opponentTeamId: null,
@@ -818,6 +827,24 @@ export default function AvailabilityPage() {
   };
 
   const noLineupAssigned = () => alert("Assign at least one player to a lineup slot first.");
+
+  // One .ics containing every listed match; import support varies by client. Window/TBD matches have no real slot yet, so they export as
+  // all-day entries on their date (parseTiming treats empty time as all-day).
+  const exportSchedule = () => {
+    if (!team) return;
+    const events: ExportEvent[] = matches.map((m) => ({
+      id: `match-${m.id}`,
+      title: `${team.name} vs ${m.opponent || "TBD"}`,
+      description: m.notes,
+      date: m.matchDate,
+      time: m.schedulingStatus === "fixed" ? m.matchTime : "",
+      timezone: m.timezone,
+      location: m.location,
+    }));
+    const slug =
+      team.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "team";
+    downloadIcsBundle(events, `${slug}-matches.ics`);
+  };
 
   // Build the LineupMatch shape buildLineupText expects: availabilities no
   // longer carry the player profile, so resolve each name from the roster by
@@ -1026,8 +1053,8 @@ export default function AvailabilityPage() {
         <p className="text-[10px] text-gray-500">{match.matchTime}</p>
       )}
       {match.location && (
-        <p className="text-[11px] text-gray-700 font-medium truncate" title={match.location}>
-          📍 {match.location}
+        <p className="text-[11px] font-medium truncate" title={match.location}>
+          <LocationDirections location={match.location} />
         </p>
       )}
       {match.opponent && (
@@ -1186,7 +1213,7 @@ export default function AvailabilityPage() {
   return (
     <div className="max-w-5xl mx-auto px-4 py-6">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-5">
+      <div className="flex flex-wrap items-center gap-3 mb-5">
         <Link
           href={`/groups/${groupId}`}
           className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500"
@@ -1195,10 +1222,25 @@ export default function AvailabilityPage() {
             <polyline points="15,18 9,12 15,6" />
           </svg>
         </Link>
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 basis-3/4 sm:basis-0">
           <h1 className="font-display text-xl font-bold text-court-green truncate">{team.name}</h1>
           <p className="text-xs text-gray-500">Match Availability</p>
         </div>
+        {matches.length > 0 && (
+          <button
+            onClick={exportSchedule}
+            className="btn-secondary btn-sm inline-flex shrink-0"
+            title="Export the match schedule as an .ics file. Import support varies by calendar app."
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+            Export schedule (.ics)
+          </button>
+        )}
         {isCaptain && (
           <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
             <button
@@ -1242,6 +1284,8 @@ export default function AvailabilityPage() {
           </div>
         )}
       </div>
+
+      <TeamCalendarSubscription teamId={groupId} />
 
       {/* Import USTA schedule modal — reuses FindUstaTeam (search → preview →
           import) right where the captain manages matches. Imported league

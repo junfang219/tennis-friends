@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { combineDateAndTime } from "./wallClock";
+import { combineDateAndTime, formatWhenLabel } from "./wallClock";
 
 // combineDateAndTime interprets the wall-clock dateStr + timeStr
 // against the provided IANA zone — the same semantics Postgres'
@@ -57,5 +57,37 @@ describe("combineDateAndTime", () => {
     const d = combineDateAndTime("2026-07-15", "18:00", "Foo/Bar");
     expect(d).not.toBeNull();
     expect(d!.toISOString()).toBe("2026-07-15T18:00:00.000Z");
+  });
+});
+
+// formatWhenLabel is the display counterpart: it renders a UTC instant
+// back in the event's zone for reminder push/email copy. Regression for
+// the cron rendering in server-UTC — a 12:30 PM Pacific match showed as
+// "7:30 PM" in every reminder.
+describe("formatWhenLabel", () => {
+  // 2026-09-26 12:30 America/Los_Angeles (PDT) = 19:30Z.
+  const target = new Date("2026-09-26T19:30:00.000Z");
+
+  it("renders the event's local wall clock, not the server's", () => {
+    expect(formatWhenLabel(target, "America/Los_Angeles")).toBe(
+      "Sat, Sep 26, 12:30 PM"
+    );
+  });
+
+  it("handles standard time (PST) dates too", () => {
+    // 2026-01-16 02:00Z = 18:00 PST on Jan 15.
+    const winter = new Date("2026-01-16T02:00:00.000Z");
+    expect(formatWhenLabel(winter, "America/Los_Angeles")).toBe(
+      "Thu, Jan 15, 6:00 PM"
+    );
+  });
+
+  it("defaults empty/null timezone to America/Los_Angeles", () => {
+    expect(formatWhenLabel(target, "")).toBe("Sat, Sep 26, 12:30 PM");
+    expect(formatWhenLabel(target, null)).toBe("Sat, Sep 26, 12:30 PM");
+  });
+
+  it("falls back to America/Los_Angeles on an invalid IANA zone", () => {
+    expect(formatWhenLabel(target, "Foo/Bar")).toBe("Sat, Sep 26, 12:30 PM");
   });
 });
