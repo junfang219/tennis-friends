@@ -42,6 +42,18 @@ PGlite is a test-only runtime and is not added to the application dependencies. 
 
 ## Known boundaries
 
+### PR review corrections
+
+The follow-up migration `20261116041817_fix_team_onboarding_invitation_lifecycle.sql` must be applied before releasing the corrected application. It replaces only the save and acceptance RPCs, retaining their authorization checks and restricted permissions. The original migration remains unchanged. This follow-up has been tested locally and has **not** been applied to the hosted database.
+
+- Revoked and removed associations no longer block a replacement invitation. Another active association still blocks acceptance, and merging preserves a single membership.
+- Saving a revoked player's corrected contact details/account association now persists the changes and updates the placeholder. Recipient changes rotate the credential and clear issuance while keeping the invitation revoked. Explicitly renew and prepare/send it before sharing; previous links remain invalid.
+- Joined players who have not completed USTA registration can receive email or shareable reminders after join-link expiry. Expired unaccepted invitations and revoked invitations remain blocked, and confirmed players are excluded.
+
+Regression verification covers the correction/replacement lifecycle in embedded PostgreSQL and both reminder delivery modes in route tests. Production onboarding remains disabled.
+
+### Existing boundaries
+
 - USTA confirmation is captain-managed. Automatic TennisLink ingestion is not implemented.
 - Invites without an associated account are bearer invitations: anyone holding the personal link can accept after signing in. Sign-in identifies the accepting account, not ownership of the invited phone.
 - Invitations expire after 30 days; captains can prepare and send a replacement link for expired/revoked invitations while preserving the intended roster entry.

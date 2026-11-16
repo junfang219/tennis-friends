@@ -19,8 +19,8 @@ try {
  const end=canonical.indexOf('-- Reworked to delegate',start);
  await db.exec(canonical.slice(start,end));
  const {readdir}=await import('node:fs/promises');
- const migration=(await readdir('supabase/migrations')).find(n=>n.endsWith('_team_onboarding.sql'));
- await db.exec(await readFile(`supabase/migrations/${migration}`,'utf8'));
+ const migrations=(await readdir('supabase/migrations')).filter(n=>n.endsWith('_team_onboarding.sql')||n.endsWith('_fix_team_onboarding_invitation_lifecycle.sql')).sort();
+ for(const migration of migrations)await db.exec(await readFile(`supabase/migrations/${migration}`,'utf8'));
  const owner=randomUUID(),friend=randomUUID(),stranger=randomUUID(),group=randomUUID(),pid=randomUUID(),other=randomUUID();
  for(const [id,name] of [[owner,'Captain'],[friend,'Taylor'],[stranger,'Stranger']])await db.query('insert into profiles values($1,$2,$3)',[id,name,`${name}@example.com`]);
  await db.query("insert into friendships values($1,$2,'accepted')",[owner,friend]);
@@ -78,5 +78,71 @@ try {
  check(renewed.token!==rev.token,'Renewal rotates the credential');
  check((await db.query('select view_team_onboarding_invitation($1) as data',[rev.token])).rows[0].data===null,'Old link is unavailable after renewal');
  check((await db.query('select view_team_onboarding_invitation($1) as data',[renewed.token])).rows[0].data===null,'New link remains unavailable until sent');
+
+ // Correcting a revoked recipient must persist without reactivating their old link.
+ const correctionGroup=randomUUID(), correctionId=randomUUID(), replacementId=randomUUID();
+ const original={id:correctionId,name:'Corrected player',phone:'+12065550104',email:'old@example.com',associatedAccountId:friend,confirmedAt:null};
+ const corrected={...original,phone:'+12065550105',email:'corrected@example.com',associatedAccountId:stranger,confirmedAt:'2026-11-15T00:00:00Z'};
+ await db.query("insert into friendships values($1,$2,'accepted')",[owner,stranger]);
+ await db.query('select save_team_onboarding($1,$2::jsonb,$3::jsonb)',[correctionGroup,JSON.stringify(config),JSON.stringify([original])]);
+ await db.query('update team_onboarding_players set sent_at=now() where id=$1',[correctionId]);
+ const originalToken=(await db.query('select token from team_onboarding_players where id=$1',[correctionId])).rows[0].token;
+ await db.exec('SET ROLE authenticated');
+ await rejects(()=>db.query('select save_team_onboarding($1,$2::jsonb,$3::jsonb)',[correctionGroup,JSON.stringify(config),JSON.stringify([corrected])]),/Revoke the sent invitation/);
+ await db.query('select revoke_team_onboarding_invitation($1,$2)',[correctionGroup,correctionId]);
+ await db.query('select save_team_onboarding($1,$2::jsonb,$3::jsonb)',[correctionGroup,JSON.stringify(config),JSON.stringify([corrected])]);
+ await db.exec('RESET ROLE');
+ const correction=(await db.query('select * from team_onboarding_players where id=$1',[correctionId])).rows[0];
+ check(correction.phone===corrected.phone&&correction.email===corrected.email&&correction.associated_account_id===stranger,'Revoked recipient corrections persist');
+ check(Boolean(correction.confirmed_at),'Revoked player USTA confirmation persists');
+ check(Boolean(correction.revoked_at)&&correction.sent_at===null&&correction.token!==originalToken,'Correction rotates the credential and keeps invitation revoked/unissued');
+ const placeholder=(await db.query('select * from group_members where id=$1',[correction.member_id])).rows[0];
+ check(placeholder.placeholder_phone===corrected.phone&&placeholder.placeholder_email===corrected.email,'Placeholder contact details stay in sync');
+ await db.exec('SET ROLE anon');
+ check((await db.query('select view_team_onboarding_invitation($1) as data',[originalToken])).rows[0].data===null,'Old recipient link is unavailable after correction');
+ await db.exec('RESET ROLE');
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[stranger]);
+ await db.exec('SET ROLE authenticated');
+ await rejects(()=>db.query('select accept_team_onboarding_invitation($1)',[correction.token]),/unavailable/);
+ await db.exec('RESET ROLE');
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[owner]);
+ await db.query('select renew_team_onboarding_invitation($1,$2)',[correctionGroup,correctionId]);
+ const correctedToken=(await db.query('select token from team_onboarding_players where id=$1',[correctionId])).rows[0].token;
+ check(correctedToken!==correction.token&&correctedToken!==originalToken,'Explicit renewal does not reuse either previous recipient credential');
+ await db.query('update team_onboarding_players set sent_at=now() where id=$1',[correctionId]);
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[friend]);
+ await db.exec('SET ROLE authenticated');
+ await rejects(()=>db.query('select accept_team_onboarding_invitation($1)',[correctedToken]),/Switch/);
+ await db.exec('RESET ROLE');
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[owner]);
+ await db.query('select revoke_team_onboarding_invitation($1,$2)',[correctionGroup,correctionId]);
+
+ // A replacement may use an account from a revoked or removed invitation.
+ // Another active association must still stop a bearer invitation claiming it.
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[owner]);
+ const replacement={...corrected,id:replacementId};
+ await db.query('select save_team_onboarding($1,$2::jsonb,$3::jsonb)',[correctionGroup,JSON.stringify(config),JSON.stringify([corrected,replacement])]);
+ await db.query('update team_onboarding_players set sent_at=now() where id=$1',[replacementId]);
+ const replacementToken=(await db.query('select token from team_onboarding_players where id=$1',[replacementId])).rows[0].token;
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[stranger]);
+ await db.exec('SET ROLE authenticated');
+ await db.query('select accept_team_onboarding_invitation($1)',[replacementToken]);
+ await db.query('select accept_team_onboarding_invitation($1)',[replacementToken]);
+ await db.exec('RESET ROLE');
+ check(Number((await db.query('select count(*) from group_members where group_id=$1 and user_id=$2',[correctionGroup,stranger])).rows[0].count)===1,'Replacement ignores revoked association and repeated acceptance creates one membership');
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[owner]);
+ await db.query('select save_team_onboarding($1,$2::jsonb,$3::jsonb)',[correctionGroup,JSON.stringify(config),'[]']);
+ const finalId=randomUUID(), bearerId=randomUUID();
+ const finalPlayer={...corrected,id:finalId}, bearer={id:bearerId,name:'Bearer',phone:'',email:'bearer@example.com',confirmedAt:null};
+ await db.query('select save_team_onboarding($1,$2::jsonb,$3::jsonb)',[correctionGroup,JSON.stringify(config),JSON.stringify([finalPlayer,bearer])]);
+ await db.query('update team_onboarding_players set sent_at=now() where id in ($1,$2)',[finalId,bearerId]);
+ const bearerToken=(await db.query('select token from team_onboarding_players where id=$1',[bearerId])).rows[0].token;
+ const finalToken=(await db.query('select token from team_onboarding_players where id=$1',[finalId])).rows[0].token;
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[stranger]);
+ await db.exec('SET ROLE authenticated');
+ await rejects(()=>db.query('select accept_team_onboarding_invitation($1)',[bearerToken]),/already associated/);
+ await db.query('select accept_team_onboarding_invitation($1)',[finalToken]);
+ await db.exec('RESET ROLE');
+ check(Number((await db.query('select count(*) from group_members where group_id=$1 and user_id=$2',[correctionGroup,stranger])).rows[0].count)===1,'Removed accepted association does not block replacement and existing membership is merged');
  console.log(`${checks} embedded PostgreSQL checks passed (migration + canonical merge helper).`);
 } finally {await db.close();}

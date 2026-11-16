@@ -19,6 +19,10 @@ export async function POST(req:Request,ctx:{params:Promise<{id:string}>}) {
  const saved=storedOnboardingSchema.safeParse(data);
  if(!saved.success)return NextResponse.json({error:"Save your team first"},{status:400});
  const {config:settings,players}=saved.data;
+ // Joining and USTA registration are independent. Existing members can still
+ // receive registration reminders after their original invitation expires.
+ const invitationUnavailable=(player:(typeof players)[number])=>player.revoked_at!==null||
+  (Date.parse(player.expires_at)<Date.now()&&!(body.reminder&&player.accepted_by!==null));
  const selected=players.filter(p=>!body.reminder||!p.confirmed_at);
  const issues=invitationIssues({...settings,players:players.map(p=>({id:p.id,name:p.name,phone:p.phone??"",email:p.email??"",memberId:p.accepted_by,confirmedAt:p.confirmed_at,invitedAt:p.sent_at,remindedAt:null}))});
  if(issues.length||!selected.length)return NextResponse.json({error:issues.join(" ")||"No recipients"},{status:400});
@@ -31,7 +35,7 @@ export async function POST(req:Request,ctx:{params:Promise<{id:string}>}) {
  if(body.mode==="prepare") {
   const invitations=[];
   for(const player of recipients) {
-   if(Date.parse(player.expires_at)<Date.now()||player.revoked_at)continue;
+   if(invitationUnavailable(player))continue;
    const link=`${config.origin.replace(/\/$/,"")}/team-invitations/${player.token}`;
    // sent_at means the invitation is issued/available, not proof of SMS delivery.
    const {error:issueError}=await admin.from("team_onboarding_players").update({sent_at:player.sent_at??new Date().toISOString()}).eq("id",player.id).eq("token",player.token).is("revoked_at",null).select("id").single();
@@ -46,7 +50,7 @@ export async function POST(req:Request,ctx:{params:Promise<{id:string}>}) {
  if((count??0)>500)return NextResponse.json({error:"Too many invitations recently; try later"},{status:429});
  let sent=0,failed=0,pending=0;
  for(const player of recipients) {
-  if(Date.parse(player.expires_at)<Date.now()||player.revoked_at){failed++;continue;}
+  if(invitationUnavailable(player)){failed++;continue;}
   const link=`${config.origin.replace(/\/$/,"")}/team-invitations/${player.token}`;
   const message=registrationMessage({...settings,players:[]},link,body.reminder);
   for(const [channel,address] of [["email",player.email]] as const) {
