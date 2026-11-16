@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 
-const mocks = vi.hoisted(() => ({ getUser: vi.fn(), onChange: vi.fn(), from: vi.fn(), insert: vi.fn() }));
+const mocks = vi.hoisted(() => ({ initialize: vi.fn(), getUser: vi.fn(), onChange: vi.fn(), from: vi.fn(), insert: vi.fn() }));
 vi.mock("./browser", () => ({ createSupabaseBrowserClient: () => ({
-  auth: { getUser: mocks.getUser, onAuthStateChange: mocks.onChange }, from: mocks.from,
+  auth: { initialize: mocks.initialize, getUser: mocks.getUser, onAuthStateChange: mocks.onChange }, from: mocks.from,
 }) }));
 vi.mock("@capacitor/core", () => ({ Capacitor: { getPlatform: () => "web" } }));
 vi.mock("react", () => ({
@@ -25,7 +25,7 @@ function deferred<T>() {
   const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
   return { promise, resolve, reject };
 }
-async function flushPromises() { await Promise.resolve(); await Promise.resolve(); }
+async function flushPromises() { await vi.advanceTimersByTimeAsync(0); }
 async function pendingUserRequest(source: "initial" | "refresh") {
   const pending = deferred<UserResult>();
   const store = await import("./auth-store");
@@ -38,6 +38,7 @@ async function pendingUserRequest(source: "initial" | "refresh") {
   if (source === "refresh") {
     mocks.getUser.mockReturnValueOnce(pending.promise);
     request = store.refreshAuthSnapshot();
+    await flushPromises();
   }
   return { store, pending, request };
 }
@@ -47,6 +48,7 @@ beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks(); vi.useFakeTimers();
   vi.stubGlobal("window", { location: { pathname: "/groups" } });
   vi.stubGlobal("document", { visibilityState: "visible" });
+  mocks.initialize.mockResolvedValue({ error: null });
   mocks.getUser.mockReturnValue(new Promise(() => {}));
   mocks.onChange.mockImplementation((callback: Listener) => { listener = callback; });
   mocks.from.mockReturnValue({ insert: mocks.insert });
@@ -83,7 +85,7 @@ it("settles initial loading when the initial auth request rejects", async () => 
   mocks.getUser.mockRejectedValue(new Error("Auth temporarily unavailable"));
   const store = await import("./auth-store");
   store.useAuthSnapshot();
-  await Promise.resolve(); await Promise.resolve();
+  await flushPromises();
   expect(store.useAuthSnapshot()).toMatchObject({ loaded: true, user: null });
 });
 
@@ -92,9 +94,10 @@ it("preserves an event-provided identity if an older initial auth request reject
   mocks.getUser.mockReturnValue(new Promise((_resolve, reject) => { rejectInitial = reject; }));
   const store = await import("./auth-store");
   store.useAuthSnapshot();
+  await flushPromises();
   listener("SIGNED_IN", session);
   rejectInitial(new Error("Initial request failed"));
-  await Promise.resolve(); await Promise.resolve();
+  await flushPromises();
   expect(store.useAuthSnapshot()).toMatchObject({ loaded: true, user: { id: "test-user" } });
 });
 

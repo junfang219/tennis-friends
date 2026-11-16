@@ -93,10 +93,14 @@ function setSnapshot(next: Snapshot) {
 }
 
 async function readAuthSnapshot(supabase: SupabaseClient): Promise<void> {
-  const revision = authRevision;
+  let revision = authRevision;
   const request = ++latestUserRequest;
   const isCurrent = () => revision === authRevision && request === latestUserRequest;
   try {
+    // Recovery can emit SIGNED_IN or TOKEN_REFRESHED before getUser starts.
+    // Validate that recovered session; only later events invalidate the read.
+    await supabase.auth.initialize();
+    revision = authRevision;
     const { data } = await supabase.auth.getUser();
     if (!isCurrent()) return;
     hasAppliedUserRequest = true;
