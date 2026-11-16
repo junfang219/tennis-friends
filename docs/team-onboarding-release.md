@@ -20,6 +20,15 @@ The production implementation is separate from `/onboarding-preview`. It contain
 - After deployment, repeated confirmation → full reload → reminder preparation. Preparation succeeded and omitted the confirmed Gmail player. Undid the confirmation, reloaded again, and verified `confirmed_at IS NULL`, exactly one recipient membership, and that the Gmail player was included in prepared reminders again.
 - Shared only the Gmail player's personal reminder through the native share sheet and sent it in Messages to the authorized phone ending in 7749. The older phone-only onboarding row belongs to the earlier captain-accepted invitation; its prepared reminder was not sent. Messages showed the new outgoing reminder and an empty composer. No automated email was sent (delivery table remains empty). The recipient confirmed receipt on the phone ending in 7749 and successfully opened the team from the reminder link, completing the phone reminder test.
 
+## Email invitation and reminder pilot — November 15, 2026
+
+- Created `Email Onboarding Test — Jun` (`7529de09-a044-48aa-837b-7af2eb02ca1b`) with exactly one intended recipient, `yuchaoran2011@gmail.com`. The prior phone-test team's older captain-linked row would also receive a batch email, so this separate team keeps delivery restricted to the requested recipient. Reused the clearly labeled test USTA task (`0000000000`, November 22, 2026) with the external registration link disabled.
+- Sent one invitation through the production onboarding UI. Its delivery record is `sent`, and the connected recipient Gmail account received it in `INBOX` at 10:02 PM Pacific. Verified sender, recipient, test-only body, deadline, personal join link, and passing SPF/DKIM headers. The public invitation was inspected at 375px and requires sign-in before acceptance.
+- The recipient reported accepting and reopening the link from the email. Database verification confirms acceptance as the intended Gmail account at 10:03 PM Pacific, exactly one recipient membership, and no remaining placeholder.
+- Temporarily confirmed registration through the captain UI. Reminder review showed no unconfirmed recipients; attempting email reminders returned `No recipients`. The delivery table and Gmail both remained at one message, proving no email was created for the confirmed player.
+- Undid the temporary confirmation and sent one email reminder through the production UI. Gmail received the second message in `INBOX` at 10:06 PM Pacific with passing SPF/DKIM. Its body begins with the USTA reminder and includes the same personal invitation link already accepted and reopened by the recipient. Gmail groups both messages in the same thread because the reminder currently uses the invitation subject.
+- Final verification: two successful email delivery records, zero failed/pending deliveries, exactly one recipient membership, and `confirmed_at IS NULL`. The recipient is left unconfirmed. This test needed no application changes or deployment.
+
 ## Implemented
 
 - `/groups/new`: authenticated team-name/description → intended-player contacts and optional real-friend association → invitations and optional USTA instructions.
