@@ -3,6 +3,13 @@ import { saveOnboardingSchema } from "./contracts";
 const player={id:"11111111-1111-4111-8111-111111111111",name:"Sam",phone:"(206) 555-0101",email:"",confirmedAt:null};
 const draft={name:"Team",teamNumber:"",deadline:"",includeUsta:false};
 describe("production team onboarding input",()=>{
+ it.each(["2026-11-16T05:37:17.457Z","2026-11-16T05:37:17.457+00:00","2026-11-15T21:37:17.457-08:00"])("preserves a registration confirmation when saving the returned timestamp %s",confirmedAt=>{
+  const result=saveOnboardingSchema.parse({draft,players:[{...player,confirmedAt}]});
+  expect(result.players[0].confirmedAt).toBe(confirmedAt);
+ });
+ it.each(["2026-11-16T05:37:17.457","not-a-date","2026-11-16T05:37:17+25:00"])("rejects invalid or unzoned confirmation timestamp %s",confirmedAt=>{
+  expect(saveOnboardingSchema.safeParse({draft,players:[{...player,confirmedAt}]}).success).toBe(false);
+ });
  it("normalizes phones and discards client-supplied acceptance and token fields",()=>{
   const result=saveOnboardingSchema.parse({draft,players:[{...player,memberId:"spoof",token:"spoof",acceptedAt:"spoof"}]});
   expect(result.players[0].phone).toBe("+12065550101");

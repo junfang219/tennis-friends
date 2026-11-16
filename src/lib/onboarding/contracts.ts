@@ -6,7 +6,9 @@ export const playerInputSchema = z.object({
   id: z.uuid(), name: z.string().trim().min(1).max(100),
   phone: z.string().max(40).transform(value => value ? parsePhoneNumberFromString(value, "US")?.number ?? value : "").refine(value => !value || Boolean(parsePhoneNumberFromString(value)?.isValid()), "Invalid phone number"),
   email: z.union([z.email(), z.literal("")]), associatedAccountId: z.uuid().nullable().optional(),
-  confirmedAt: z.iso.datetime().nullable(),
+  // Postgres returns saved timestamptz values with an offset (+00:00).
+  // Accept those as well as browser-generated Z timestamps on later saves.
+  confirmedAt: z.iso.datetime({ offset: true }).nullable(),
 }).refine(p => p.phone || p.email, "Provide a phone number or email");
 export const saveOnboardingSchema = z.object({
   draft: registrationDraftSchema.omit({ players: true }).extend({ name: z.string().trim().min(1).max(100) }),
