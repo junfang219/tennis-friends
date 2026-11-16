@@ -7,7 +7,7 @@
 - Follow-up migration `20261116043105_fix_team_onboarding_invitation_lifecycle.sql` is applied. Its local filename matches hosted migration history; do not reapply either onboarding migration. Player and membership row fingerprints were unchanged by migration application.
 - Google sign-in returned to the production team creation page. Created a controlled test team and prepared a personal invitation with the canonical production origin. The native share sheet sent it through Messages to the previously authorized test recipient. No automatic email was sent.
 - The signed-out public invitation was inspected at 375px and requires sign-in before acceptance. The authenticated friends API correctly rejects signed-out requests (401), and the development-only preview renders not-found. The initial deployment error-log check returned no errors.
-- Recipient phone acceptance and reopening remain pending for this production test. Earlier preview acceptance results below are separate evidence.
+- The recipient accepted a fresh invitation as `yuchaoran2011@gmail.com`. Database verification confirms exactly one membership for that account, two account-backed members total, and authenticated row-security access to the team and both members. Chrome loads Communities and the team details. The recipient reported indefinite loading on the phone; Safari reproduced an auth initialization/Web Lock stall. PR #29 tracks the client SDK correction and browser retest. Earlier preview acceptance results below are separate evidence.
 
 The production implementation is separate from `/onboarding-preview`. It contains no simulated sign-in, sample friend accounts, or browser-only team storage.
 
@@ -59,7 +59,7 @@ The follow-up migration `20261116043105_fix_team_onboarding_invitation_lifecycle
 - Saving a revoked player's corrected contact details/account association now persists the changes and updates the placeholder. Recipient changes rotate the credential and clear issuance while keeping the invitation revoked. Explicitly renew and prepare/send it before sharing; previous links remain invalid.
 - Joined players who have not completed USTA registration can receive email or shareable reminders after join-link expiry. Expired unaccepted invitations and revoked invitations remain blocked, and confirmed players are excluded.
 
-Regression verification covers the correction/replacement lifecycle in embedded PostgreSQL and both reminder delivery modes in route tests. Production onboarding remains disabled.
+Regression verification covers the correction/replacement lifecycle in embedded PostgreSQL and both reminder delivery modes in route tests. Production onboarding is now enabled as recorded in the current release above.
 
 ### Existing boundaries
 
