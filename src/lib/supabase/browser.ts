@@ -13,7 +13,9 @@ import type { Database } from "./types";
 // refresh token out from under each other and trip Supabase's
 // refresh-token-reuse detection, which revokes the whole session and logs the
 // user out. Memoizing to a single instance gives one refresh authority on the
-// client (the SSR middleware remains the server-side authority).
+// client (the SSR middleware remains the server-side authority). Supabase
+// 2.119 coordinates refresh races with session commit guards rather than a
+// browser Web Lock, which can remain blocked after Safari suspends a tab.
 let browserClient: SupabaseClient<Database> | null = null;
 
 function newClient(): SupabaseClient<Database> {
