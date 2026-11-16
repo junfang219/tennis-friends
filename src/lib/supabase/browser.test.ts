@@ -11,7 +11,7 @@ afterEach(() => {
   vi.resetModules();
 });
 
-it("recovers an orphaned browser auth lock through the real SDK", async () => {
+it("initializes auth and reads data even when a suspended tab holds the old auth lock", async () => {
   vi.useFakeTimers();
   vi.stubGlobal("window", {
     location: { href: "https://example.com/groups" },
@@ -19,30 +19,20 @@ it("recovers an orphaned browser auth lock through the real SDK", async () => {
   });
   vi.stubGlobal("document", { cookie: "", visibilityState: "hidden" });
   vi.stubGlobal("BroadcastChannel", undefined);
-  let orphaned = true;
-  const request = vi.fn((
-    name: string, options: LockOptions, callback: (lock: { name: string }) => Promise<unknown>
-  ) => {
-    if (options.steal) orphaned = false;
-    if (!orphaned) return callback({ name });
-    // Model a suspended tab holding the lock until the SDK's acquisition
-    // timeout aborts this waiting request. No network request can start yet.
-    return new Promise((_resolve, reject) => {
-      options.signal?.addEventListener("abort", () => {
-        reject(new DOMException("Timed out", "AbortError"));
-      }, { once: true });
-    });
-  });
+  // Any attempt to acquire the old mutex would hang forever, as it did in
+  // Safari. Exercise our client factory and the real auth/PostgREST SDKs.
+  const request = vi.fn(() => new Promise<never>(() => {}));
   vi.stubGlobal("navigator", { locks: { request } });
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const fetch = vi.fn().mockResolvedValue(new Response("[]", {
+    status: 200, headers: { "Content-Type": "application/json" },
+  }));
+  vi.stubGlobal("fetch", fetch);
   const { createSupabaseBrowserClient } = await import("./browser");
   const client = createSupabaseBrowserClient();
-  const result = client.auth.getUser();
-  await vi.advanceTimersByTimeAsync(5001);
-  await expect(result).resolves.toMatchObject({ data: { user: null } });
-  expect(request).toHaveBeenCalledWith(
-    "lock:sb-test-auth-token", expect.objectContaining({ steal: true }), expect.any(Function)
-  );
+  await expect(client.auth.getUser()).resolves.toMatchObject({ data: { user: null } });
+  await expect(client.from("groups").select("id")).resolves.toMatchObject({ data: [], error: null });
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(request).not.toHaveBeenCalled();
   expect(createSupabaseBrowserClient()).toBe(client);
-  warn.mockRestore();
+  await client.auth.dispose();
 });

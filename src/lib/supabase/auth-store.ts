@@ -56,10 +56,9 @@ function recordAuthEvent(
 ): void {
   const userInitiated = event === "SIGNED_OUT" && pendingUserInitiatedSignOut;
   if (event === "SIGNED_OUT") pendingUserInitiatedSignOut = false;
-  // Supabase invokes auth listeners while holding its session lock. Even a
-  // fire-and-forget database request asks that client for an access token.
-  // Start diagnostic I/O in a later task so it cannot stall session recovery
-  // and every subsequent authenticated query (including the team pages).
+  // Keep diagnostic I/O outside auth-state dispatch. Database requests ask
+  // this client for an access token and may need session recovery; callbacks
+  // must stay synchronous so diagnostics cannot block auth transitions.
   const details = {
     path: window.location?.pathname ?? null,
     visibility: typeof document !== "undefined" ? document.visibilityState : null,
