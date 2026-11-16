@@ -7,7 +7,13 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
-  const next = url.searchParams.get("next") ?? "/";
+  const requestedNext = url.searchParams.get("next") ?? "/";
+  const next = requestedNext.startsWith("/") && !requestedNext.startsWith("//") && !requestedNext.includes("\\") ? requestedNext : "/";
+  // Next dev may internally use localhost even when the browser used 127.0.0.1.
+  // Keep the browser's loopback host so PKCE/session cookies stay on one origin.
+  const host = request.headers.get("host");
+  const origin = process.env.NODE_ENV === "development" && host && /^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host)
+    ? `${url.protocol}//${host}` : url.origin;
 
   // OAuth can't tell us up front whether this is a brand-new account or a
   // returning user — both arrive through signInWithOAuth. So the page-supplied
@@ -20,7 +26,10 @@ export async function GET(request: NextRequest) {
     const supabase = await createSupabaseServerClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (error) {
-      return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(error.message)}`, url.origin));
+      const retry = new URL("/login", origin);
+      retry.searchParams.set("error", "Sign-in could not reach the authentication service. Please try again.");
+      retry.searchParams.set("next", next);
+      return NextResponse.redirect(retry);
     }
 
     const {
@@ -50,5 +59,5 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.redirect(new URL(dest, url.origin));
+  return NextResponse.redirect(new URL(dest, origin));
 }

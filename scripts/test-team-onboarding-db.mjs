@@ -1,0 +1,82 @@
+// Runs only in embedded PostgreSQL. No Supabase connection or credentials.
+// ONBOARDING_PGLITE_MODULE may point to a separately installed PGlite runtime.
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
+import assert from 'node:assert/strict';
+const modulePath=process.env.ONBOARDING_PGLITE_MODULE;
+if(!modulePath)throw new Error('Set ONBOARDING_PGLITE_MODULE to an installed @electric-sql/pglite dist/index.js (test-only).');
+const {PGlite}=await import(pathToFileURL(resolve(modulePath)).href);
+const db=new PGlite();
+let checks=0;
+const check=(condition,message)=>{assert.ok(condition,message);checks++;};
+async function rejects(work,pattern){await assert.rejects(work,pattern);checks++;}
+try {
+ await db.exec(await readFile('tests/sql/team-onboarding-fixture.sql','utf8'));
+ const canonical=await readFile('supabase/schema.sql','utf8');
+ const start=canonical.indexOf('CREATE OR REPLACE FUNCTION public._merge_placeholder_into_user');
+ const end=canonical.indexOf('-- Reworked to delegate',start);
+ await db.exec(canonical.slice(start,end));
+ const {readdir}=await import('node:fs/promises');
+ const migration=(await readdir('supabase/migrations')).find(n=>n.endsWith('_team_onboarding.sql'));
+ await db.exec(await readFile(`supabase/migrations/${migration}`,'utf8'));
+ const owner=randomUUID(),friend=randomUUID(),stranger=randomUUID(),group=randomUUID(),pid=randomUUID(),other=randomUUID();
+ for(const [id,name] of [[owner,'Captain'],[friend,'Taylor'],[stranger,'Stranger']])await db.query('insert into profiles values($1,$2,$3)',[id,name,`${name}@example.com`]);
+ await db.query("insert into friendships values($1,$2,'accepted')",[owner,friend]);
+ const config={name:'Test Team',description:'An isolated team',includeUsta:true,teamNumber:'1234567890',deadline:'2026-12-04'};
+ const players=[{id:pid,name:'Taylor Chen',phone:'+12065550102',email:'',associatedAccountId:friend,confirmedAt:'2026-11-15T00:00:00Z'}];
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[owner]);
+ await db.exec('SET ROLE authenticated');
+ await db.query('select save_team_onboarding($1,$2::jsonb,$3::jsonb)',[group,JSON.stringify(config),JSON.stringify(players)]);
+ check((await db.query('select read_team_onboarding($1) as data',[group])).rows[0].data.players.length===1,'Captain can save/read');
+ await db.exec('RESET ROLE');
+ const record=(await db.query('select * from team_onboarding_players where id=$1',[pid])).rows[0];
+ const rosterId=record.member_id, token=record.token;
+ check(token.length===64,'Personal credential has 256 bits');
+ check((await db.query('select claim_token from group_members where id=$1',[rosterId])).rows[0].claim_token===null,'No legacy token bypass');
+ await db.exec('SET ROLE anon');
+ await rejects(()=>db.query('select * from team_onboarding_players'),/permission denied/);
+ check((await db.query('select view_team_onboarding_invitation($1) as data',[token])).rows[0].data===null,'Unsent token is unavailable');
+ await rejects(()=>db.query('select accept_team_onboarding_invitation($1)',[token]),/permission denied/);
+ await db.exec('RESET ROLE');
+ await db.query('update team_onboarding_players set sent_at=now() where id=$1',[pid]);
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[stranger]);
+ await db.exec('SET ROLE authenticated');
+ await rejects(()=>db.query('select read_team_onboarding($1)',[group]),/manager access/);
+ await rejects(()=>db.query('select accept_team_onboarding_invitation($1)',[token]),/Switch/);
+ await db.exec('RESET ROLE');
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[friend]);
+ await db.exec('SET ROLE authenticated');
+ await db.query('select accept_team_onboarding_invitation($1)',[token]);
+ await db.query('select accept_team_onboarding_invitation($1)',[token]);
+ await db.exec('RESET ROLE');
+ const accepted=(await db.query('select * from team_onboarding_players where id=$1',[pid])).rows[0];
+ check(accepted.accepted_by===friend,'Associated signed-in account accepted');
+ check(accepted.member_id===rosterId,'Roster ID preserved');
+ check(Boolean(accepted.confirmed_at),'USTA registration preserved');
+ check(Number((await db.query('select count(*) from group_members where group_id=$1 and user_id=$2',[group,friend])).rows[0].count)===1,'Repeat acceptance is idempotent');
+ // Unassociated email-only invitation: no phone or USTA registration is needed.
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[owner]);
+ const emailPlayer={id:other,name:'Other',phone:'',email:'other@example.com',confirmedAt:null};
+ await db.query('select save_team_onboarding($1,$2::jsonb,$3::jsonb)',[group,JSON.stringify({...config,includeUsta:false}),JSON.stringify([...players,emailPlayer])]);
+ const emailRecord=(await db.query('select * from team_onboarding_players where id=$1',[other])).rows[0];
+ await db.query('update team_onboarding_players set sent_at=now() where id=$1',[other]);
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[stranger]);
+ await db.query('select accept_team_onboarding_invitation($1)',[emailRecord.token]);
+ check((await db.query('select accepted_by from team_onboarding_players where id=$1',[other])).rows[0].accepted_by===stranger,'Unassociated email invitation accepts signed-in account without phone');
+ // Captain revocation invalidates a token, even if someone retained the URL.
+ const revocable=randomUUID();
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[owner]);
+ await db.query('select save_team_onboarding($1,$2::jsonb,$3::jsonb)',[group,JSON.stringify(config),JSON.stringify([...players,emailPlayer,{id:revocable,name:'Revoked',phone:'+12065550103',email:'',confirmedAt:null}])]);
+ const rev=(await db.query('select token from team_onboarding_players where id=$1',[revocable])).rows[0];
+ await db.query('update team_onboarding_players set sent_at=now() where id=$1',[revocable]);
+ await db.query('select revoke_team_onboarding_invitation($1,$2)',[group,revocable]);
+ await rejects(()=>db.query('select accept_team_onboarding_invitation($1)',[rev.token]),/unavailable/);
+ await db.query('select renew_team_onboarding_invitation($1,$2)',[group,revocable]);
+ const renewed=(await db.query('select token from team_onboarding_players where id=$1',[revocable])).rows[0];
+ check(renewed.token!==rev.token,'Renewal rotates the credential');
+ check((await db.query('select view_team_onboarding_invitation($1) as data',[rev.token])).rows[0].data===null,'Old link is unavailable after renewal');
+ check((await db.query('select view_team_onboarding_invitation($1) as data',[renewed.token])).rows[0].data===null,'New link remains unavailable until sent');
+ console.log(`${checks} embedded PostgreSQL checks passed (migration + canonical merge helper).`);
+} finally {await db.close();}

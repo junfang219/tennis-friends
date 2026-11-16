@@ -163,6 +163,7 @@ export default function GroupPage() {
           </div>
 
           <div className="px-6 pb-6 pt-3">
+            {process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" && session?.user?.id === group.ownerId && <Link className="text-sm underline text-court-green block mb-3" href={`/groups/${group.id}/onboarding`}>Manage invitations and registration</Link>}
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <h1 className="font-display text-2xl font-bold text-gray-900">

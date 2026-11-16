@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "dev:onboarding": "TEAM_ONBOARDING_REVIEW=1 WATCHPACK_POLLING=true NEXT_PUBLIC_SENTRY_DSN= SENTRY_DSN= next dev --turbopack --hostname 127.0.0.1 --port 3105",
     "dev:clean": "lsof -ti:3000 | xargs kill -9 2>/dev/null ; rm -rf .next && next dev --turbopack",
     "build": "next build",
     "start": "next start",
@@ -18,7 +19,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "dev:onboarding-live": "WATCHPACK_POLLING=true NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED=true TEAM_ONBOARDING_REVIEW=0 ONBOARDING_PUBLIC_ORIGIN=http://127.0.0.1:3110 NEXT_PUBLIC_SENTRY_DSN= SENTRY_DSN= next dev --hostname 127.0.0.1 --port 3110"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.0",

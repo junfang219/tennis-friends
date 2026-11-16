@@ -31,6 +31,15 @@ const REFRESH_THRESHOLD_SECONDS = 120;
 export async function middleware(req: NextRequest) {
   const response = NextResponse.next({ request: req });
 
+  if (process.env.NODE_ENV === "development" && process.env.TEAM_ONBOARDING_REVIEW === "1") {
+    // The review server only serves the isolated flow. Prevent navigation to
+    // live-backed pages and API routes while reviewing with production env files.
+    if (req.nextUrl.pathname !== "/onboarding-preview") {
+      return new NextResponse("This review server only serves /onboarding-preview.", { status: 404 });
+    }
+    return response;
+  }
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   if (!supabaseUrl || !supabaseKey) return response;
