@@ -25,6 +25,7 @@
 
 # next.js
 /.next/
+/.next-onboarding-review/
 ".next 2"/
 /out/
 

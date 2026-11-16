@@ -1,5 +1,6 @@
 node_modules
 .next
+.next-onboarding-review
 out
 ios
 public/uploads

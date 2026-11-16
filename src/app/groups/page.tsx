@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import TeamInvitationInbox from "@/components/groups/TeamInvitationInbox";
 import Avatar from "@/components/Avatar";
 import CommunitiesTabs from "@/components/CommunitiesTabs";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -42,6 +43,13 @@ export default function GroupsPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [swipedKey, setSwipedKey] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("setup") === "existing") {
+      // Explicit legacy import entry, preserved alongside the new wizard.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setShowCreate(true);
+    }
+  }, []);
 
   const groupsQuery = useCachedQuery<GroupsBundle>("groups:my", async () => {
     const supabase = createSupabaseBrowserClient();
@@ -200,6 +208,7 @@ export default function GroupsPage() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <CommunitiesTabs />
+      {process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" && <TeamInvitationInbox />}
       <div className="animate-fade-in-up flex items-start justify-between mb-6 gap-3">
         <div className="min-w-0">
           <h1 className="font-display text-2xl font-bold text-court-green mb-1">
@@ -209,7 +218,7 @@ export default function GroupsPage() {
         </div>
         {!showCreate && (
           <button
-            onClick={() => setShowCreate(true)}
+            onClick={() => process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" ? router.push("/groups/new") : setShowCreate(true)}
             className="btn-primary btn-sm shrink-0"
             aria-label="Create a new team"
           >

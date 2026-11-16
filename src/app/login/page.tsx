@@ -41,7 +41,7 @@ export default function SupabaseLoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() => search.get("error"));
   // `?deleted=1` is set by the post-delete redirect in Settings → Danger zone.
   // Seed the banner from the URL on first render, then strip the param so a
   // page refresh doesn't keep showing it.
@@ -113,6 +113,7 @@ export default function SupabaseLoginPage() {
       provider,
       options: {
         redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(redirectTo)}`,
+        ...(provider === "google" ? { queryParams: { prompt: "select_account" } } : {}),
       },
     });
     if (oauthError) {
