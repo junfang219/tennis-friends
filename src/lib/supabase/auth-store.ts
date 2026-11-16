@@ -56,25 +56,31 @@ function recordAuthEvent(
 ): void {
   const userInitiated = event === "SIGNED_OUT" && pendingUserInitiatedSignOut;
   if (event === "SIGNED_OUT") pendingUserInitiatedSignOut = false;
-  try {
-    void supabase
-      .from("auth_debug_events")
-      .insert({
-        event,
-        prior_user_id: priorUserId,
-        has_session: !!session,
-        user_initiated: userInitiated,
-        platform: detectedPlatform,
-        details: {
-          path: window.location?.pathname ?? null,
-          visibility:
-            typeof document !== "undefined" ? document.visibilityState : null,
-        },
-      })
-      .then(() => {}, () => {}); // swallow — diagnostics must never surface errors
-  } catch {
-    // best-effort
-  }
+  // Supabase invokes auth listeners while holding its session lock. Even a
+  // fire-and-forget database request asks that client for an access token.
+  // Start diagnostic I/O in a later task so it cannot stall session recovery
+  // and every subsequent authenticated query (including the team pages).
+  const details = {
+    path: window.location?.pathname ?? null,
+    visibility: typeof document !== "undefined" ? document.visibilityState : null,
+  };
+  setTimeout(() => {
+    try {
+      void supabase
+        .from("auth_debug_events")
+        .insert({
+          event,
+          prior_user_id: priorUserId,
+          has_session: !!session,
+          user_initiated: userInitiated,
+          platform: detectedPlatform,
+          details,
+        })
+        .then(() => {}, () => {}); // swallow — diagnostics must never surface errors
+    } catch {
+      // best-effort
+    }
+  }, 0);
 }
 
 function setSnapshot(next: Snapshot) {
@@ -89,6 +95,10 @@ function start() {
   const supabase = createSupabaseBrowserClient();
   supabase.auth.getUser().then(({ data }) => {
     setSnapshot({ user: data.user ?? null, loaded: true });
+  }).catch(() => {
+    // A rejected initial auth request must not leave the app loading forever.
+    // Preserve any newer identity already delivered by the auth listener.
+    setSnapshot({ user: snapshot.user, loaded: true });
   });
   supabase.auth.onAuthStateChange((event, session) => {
     const priorUserId = snapshot.user?.id ?? null;
