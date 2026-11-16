@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
+import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 
 const mocks = vi.hoisted(() => ({ getUser: vi.fn(), onChange: vi.fn(), from: vi.fn(), insert: vi.fn() }));
 vi.mock("./browser", () => ({ createSupabaseBrowserClient: () => ({
@@ -17,6 +17,30 @@ const session: Session = {
   access_token: "test-only", refresh_token: "test-only", expires_in: 3600, token_type: "bearer",
   user: { id: "test-user", aud: "authenticated", app_metadata: {}, user_metadata: {}, created_at: "2026-01-01T00:00:00Z" },
 };
+const otherSession: Session = { ...session, user: { ...session.user, id: "other-user" } };
+type UserResult = { data: { user: User | null } };
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  let reject: (error: Error) => void = () => {};
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+async function flushPromises() { await Promise.resolve(); await Promise.resolve(); }
+async function pendingUserRequest(source: "initial" | "refresh") {
+  const pending = deferred<UserResult>();
+  const store = await import("./auth-store");
+  if (source === "initial") mocks.getUser.mockReturnValueOnce(pending.promise);
+  else mocks.getUser.mockResolvedValueOnce({ data: { user: session.user } });
+  store.useAuthSnapshot();
+  await flushPromises();
+  listener("INITIAL_SESSION", session);
+  let request: Promise<void> | undefined;
+  if (source === "refresh") {
+    mocks.getUser.mockReturnValueOnce(pending.promise);
+    request = store.refreshAuthSnapshot();
+  }
+  return { store, pending, request };
+}
 type Listener = (event: AuthChangeEvent, session: Session | null) => void;
 let listener: Listener;
 beforeEach(() => {
@@ -72,4 +96,111 @@ it("preserves an event-provided identity if an older initial auth request reject
   rejectInitial(new Error("Initial request failed"));
   await Promise.resolve(); await Promise.resolve();
   expect(store.useAuthSnapshot()).toMatchObject({ loaded: true, user: { id: "test-user" } });
+});
+
+it.each(["initial", "refresh"] as const)("ignores an old %s user result after sign-out", async source => {
+  const { store, pending, request } = await pendingUserRequest(source);
+  listener("SIGNED_OUT", null);
+  pending.resolve({ data: { user: session.user } });
+  await request; await flushPromises();
+  expect(store.useAuthSnapshot()).toEqual({ user: null, loaded: true });
+  expect(store.getCachedUserId()).toBeNull();
+});
+
+it.each(["initial", "refresh"] as const)("ignores an old %s account after switching accounts", async source => {
+  const { store, pending, request } = await pendingUserRequest(source);
+  listener("SIGNED_OUT", null);
+  listener("SIGNED_IN", otherSession);
+  pending.resolve({ data: { user: session.user } });
+  await request; await flushPromises();
+  expect(store.useAuthSnapshot()).toEqual({ user: otherSession.user, loaded: true });
+  expect(store.getCachedUserId()).toBe("other-user");
+});
+
+it.each(["initial", "refresh"] as const)("ignores a stale signed-out %s result after a new sign-in", async source => {
+  const { store, pending, request } = await pendingUserRequest(source);
+  listener("SIGNED_IN", otherSession);
+  pending.resolve({ data: { user: null } });
+  await request; await flushPromises();
+  expect(store.getCachedUserId()).toBe("other-user");
+});
+
+it.each(["SIGNED_OUT", "SIGNED_IN"] as const)("ignores a delayed INITIAL_SESSION after %s", async event => {
+  const { store } = await pendingUserRequest("initial");
+  listener(event, event === "SIGNED_OUT" ? null : otherSession);
+  listener("INITIAL_SESSION", session);
+  expect(store.getCachedUserId()).toBe(event === "SIGNED_OUT" ? null : "other-user");
+});
+
+it("keeps a newer same-account auth update over an older lookup", async () => {
+  const { store, pending, request } = await pendingUserRequest("refresh");
+  const updated = { ...session, user: { ...session.user, user_metadata: { name: "Updated name" } } };
+  listener("USER_UPDATED", updated);
+  pending.resolve({ data: { user: session.user } });
+  await request;
+  expect(store.useAuthSnapshot().user).toEqual(updated.user);
+});
+
+it("lets the latest refresh win when requests finish out of order", async () => {
+  const { store, pending: initial } = await pendingUserRequest("initial");
+  const older = deferred<UserResult>();
+  const newer = deferred<UserResult>();
+  mocks.getUser.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+  const olderRequest = store.refreshAuthSnapshot();
+  const newerRequest = store.refreshAuthSnapshot();
+  newer.resolve({ data: { user: otherSession.user } });
+  await newerRequest;
+  older.resolve({ data: { user: session.user } });
+  await olderRequest;
+  initial.resolve({ data: { user: null } });
+  await flushPromises();
+  expect(store.getCachedUserId()).toBe("other-user");
+});
+
+it("propagates refresh errors while preserving the current identity", async () => {
+  const { store, pending, request } = await pendingUserRequest("refresh");
+  const error = new Error("Refresh failed");
+  const rejected = expect(request).rejects.toBe(error);
+  listener("SIGNED_IN", otherSession);
+  pending.reject(error);
+  await rejected;
+  expect(store.getCachedUserId()).toBe("other-user");
+});
+
+it("settles loading if a newer refresh fails while the initial lookup is pending", async () => {
+  const initial = deferred<UserResult>();
+  mocks.getUser.mockReturnValueOnce(initial.promise);
+  const store = await import("./auth-store");
+  store.useAuthSnapshot();
+  mocks.getUser.mockRejectedValueOnce(new Error("Refresh failed"));
+  await expect(store.refreshAuthSnapshot()).rejects.toThrow("Refresh failed");
+  expect(store.useAuthSnapshot()).toEqual({ user: null, loaded: true });
+  initial.resolve({ data: { user: session.user } });
+  await flushPromises();
+  expect(store.getCachedUserId()).toBeNull();
+});
+
+it.each([session.user, null])("lets the initial lookup validate the bootstrap session: %j", async user => {
+  const { store, pending } = await pendingUserRequest("initial");
+  pending.resolve({ data: { user } });
+  await flushPromises();
+  expect(store.useAuthSnapshot()).toEqual({ user, loaded: true });
+});
+
+it("ignores a delayed bootstrap session after a user lookup has completed", async () => {
+  mocks.getUser.mockResolvedValueOnce({ data: { user: null } });
+  const store = await import("./auth-store");
+  store.useAuthSnapshot();
+  await flushPromises();
+  listener("INITIAL_SESSION", session);
+  expect(store.getCachedUserId()).toBeNull();
+});
+
+it("can still initialize from the session after a rejected bootstrap lookup", async () => {
+  mocks.getUser.mockRejectedValueOnce(new Error("Offline"));
+  const store = await import("./auth-store");
+  store.useAuthSnapshot();
+  await flushPromises();
+  listener("INITIAL_SESSION", session);
+  expect(store.useAuthSnapshot()).toEqual({ user: session.user, loaded: true });
 });
