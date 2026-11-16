@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 
-const mocks = vi.hoisted(() => ({ initialize: vi.fn(), getUser: vi.fn(), onChange: vi.fn(), from: vi.fn(), insert: vi.fn() }));
+const mocks = vi.hoisted(() => ({ initialize: vi.fn(), getSession: vi.fn(), getUser: vi.fn(), onChange: vi.fn(), from: vi.fn(), insert: vi.fn() }));
 vi.mock("./browser", () => ({ createSupabaseBrowserClient: () => ({
-  auth: { initialize: mocks.initialize, getUser: mocks.getUser, onAuthStateChange: mocks.onChange }, from: mocks.from,
+  auth: { initialize: mocks.initialize, getSession: mocks.getSession, getUser: mocks.getUser, onAuthStateChange: mocks.onChange }, from: mocks.from,
 }) }));
 vi.mock("@capacitor/core", () => ({ Capacitor: { getPlatform: () => "web" } }));
 vi.mock("react", () => ({
@@ -17,7 +17,7 @@ const session: Session = {
   access_token: "test-only", refresh_token: "test-only", expires_in: 3600, token_type: "bearer",
   user: { id: "test-user", aud: "authenticated", app_metadata: {}, user_metadata: {}, created_at: "2026-01-01T00:00:00Z" },
 };
-const otherSession: Session = { ...session, user: { ...session.user, id: "other-user" } };
+const otherSession: Session = { ...session, access_token: "other-test-only", user: { ...session.user, id: "other-user" } };
 type UserResult = { data: { user: User | null } };
 function deferred<T>() {
   let resolve: (value: T) => void = () => {};
@@ -45,10 +45,11 @@ async function pendingUserRequest(source: "initial" | "refresh") {
 type Listener = (event: AuthChangeEvent, session: Session | null) => void;
 let listener: Listener;
 beforeEach(() => {
-  vi.resetModules(); vi.clearAllMocks(); vi.useFakeTimers();
+  vi.resetModules(); vi.resetAllMocks(); vi.useFakeTimers();
   vi.stubGlobal("window", { location: { pathname: "/groups" } });
   vi.stubGlobal("document", { visibilityState: "visible" });
   mocks.initialize.mockResolvedValue({ error: null });
+  mocks.getSession.mockResolvedValue({ data: { session }, error: null });
   mocks.getUser.mockReturnValue(new Promise(() => {}));
   mocks.onChange.mockImplementation((callback: Listener) => { listener = callback; });
   mocks.from.mockReturnValue({ insert: mocks.insert });
@@ -150,7 +151,9 @@ it("lets the latest refresh win when requests finish out of order", async () => 
   const newer = deferred<UserResult>();
   mocks.getUser.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
   const olderRequest = store.refreshAuthSnapshot();
+  await flushPromises();
   const newerRequest = store.refreshAuthSnapshot();
+  await flushPromises();
   newer.resolve({ data: { user: otherSession.user } });
   await newerRequest;
   older.resolve({ data: { user: session.user } });
@@ -175,6 +178,7 @@ it("settles loading if a newer refresh fails while the initial lookup is pending
   mocks.getUser.mockReturnValueOnce(initial.promise);
   const store = await import("./auth-store");
   store.useAuthSnapshot();
+  await flushPromises();
   mocks.getUser.mockRejectedValueOnce(new Error("Refresh failed"));
   await expect(store.refreshAuthSnapshot()).rejects.toThrow("Refresh failed");
   expect(store.useAuthSnapshot()).toEqual({ user: null, loaded: true });
@@ -206,4 +210,61 @@ it("can still initialize from the session after a rejected bootstrap lookup", as
   await flushPromises();
   listener("INITIAL_SESSION", session);
   expect(store.useAuthSnapshot()).toEqual({ user: session.user, loaded: true });
+});
+
+it.each(["sign-out", "account switch", "token refresh"] as const)("discards an old session prepared during %s", async action => {
+  mocks.getUser.mockResolvedValueOnce({ data: { user: session.user } });
+  const store = await import("./auth-store");
+  store.useAuthSnapshot();
+  await flushPromises();
+  const pending = deferred<{ data: { session: Session | null }; error: null }>();
+  mocks.getSession.mockReturnValueOnce(pending.promise);
+  const request = store.refreshAuthSnapshot();
+  await flushPromises();
+  const refreshed = { ...session, access_token: "refreshed-test-only", user: { ...session.user, user_metadata: { name: "Updated name" } } };
+  if (action === "token refresh") listener("TOKEN_REFRESHED", refreshed);
+  else {
+    listener("SIGNED_OUT", null);
+    if (action === "account switch") listener("SIGNED_IN", otherSession);
+  }
+  pending.resolve({ data: { session }, error: null });
+  await request;
+  expect(mocks.getUser).toHaveBeenCalledTimes(1);
+  const expectedUser = action === "sign-out" ? null : action === "account switch" ? otherSession.user : refreshed.user;
+  expect(store.useAuthSnapshot()).toEqual({ user: expectedUser, loaded: true });
+});
+
+it("preserves a token refresh received after server validation starts", async () => {
+  const { store, pending, request } = await pendingUserRequest("refresh");
+  const refreshed = { ...session, access_token: "refreshed-test-only" };
+  listener("TOKEN_REFRESHED", refreshed);
+  pending.resolve({ data: { user: null } });
+  await request;
+  expect(store.useAuthSnapshot()).toEqual({ user: session.user, loaded: true });
+});
+
+it("settles a missing session without starting implicit-token validation", async () => {
+  mocks.getSession.mockResolvedValueOnce({ data: { session: null }, error: null });
+  const store = await import("./auth-store");
+  store.useAuthSnapshot();
+  await flushPromises();
+  expect(store.useAuthSnapshot()).toEqual({ user: null, loaded: true });
+  expect(mocks.getUser).not.toHaveBeenCalled();
+});
+
+it("validates the explicit token returned by session preparation", async () => {
+  mocks.getUser.mockResolvedValue({ data: { user: session.user } });
+  const store = await import("./auth-store");
+  store.useAuthSnapshot();
+  await flushPromises();
+  const refreshed = { ...session, access_token: "refreshed-test-only" };
+  mocks.getSession.mockImplementationOnce(async () => {
+    listener("TOKEN_REFRESHED", refreshed);
+    return { data: { session: refreshed }, error: null };
+  });
+  const validatedUser = { ...session.user, user_metadata: { name: "Validated name" } };
+  mocks.getUser.mockResolvedValueOnce({ data: { user: validatedUser } });
+  await store.refreshAuthSnapshot();
+  expect(mocks.getUser).toHaveBeenLastCalledWith(refreshed.access_token);
+  expect(store.useAuthSnapshot()).toEqual({ user: validatedUser, loaded: true });
 });

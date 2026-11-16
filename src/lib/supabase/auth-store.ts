@@ -29,6 +29,7 @@ let started = false;
 // Live auth events invalidate in-flight user reads. Within the same auth
 // state, the most recently started read owns the result.
 let authRevision = 0;
+let eventAccessToken: string | null = null;
 let latestUserRequest = 0;
 let hasAppliedUserRequest = false;
 
@@ -97,14 +98,20 @@ async function readAuthSnapshot(supabase: SupabaseClient): Promise<void> {
   const request = ++latestUserRequest;
   const isCurrent = () => revision === authRevision && request === latestUserRequest;
   try {
-    // Recovery can emit SIGNED_IN or TOKEN_REFRESHED before getUser starts.
-    // Validate that recovered session; only later events invalidate the read.
+    // Finish recovery and refresh before validating an explicit token. Calling
+    // getUser() without a token can refresh internally and invalidate itself.
     await supabase.auth.initialize();
     revision = authRevision;
-    const { data } = await supabase.auth.getUser();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (request !== latestUserRequest) return;
+    // Session preparation may publish a refresh or race an account change.
+    // Continue only if it returned the session now published by that event.
+    if (revision !== authRevision && (session?.access_token ?? null) !== eventAccessToken) return;
+    revision = authRevision;
+    const user = session ? (await supabase.auth.getUser(session.access_token)).data.user : null;
     if (!isCurrent()) return;
     hasAppliedUserRequest = true;
-    setSnapshot({ user: data.user ?? null, loaded: true });
+    setSnapshot({ user: user ?? null, loaded: true });
   } catch (error) {
     // Even a newer failed refresh must settle initial loading. A stale
     // failure must leave a newer event or lookup untouched.
@@ -126,10 +133,12 @@ function start() {
       // This is a bootstrap read, not a new sign-in. It must neither cancel
       // user validation nor overwrite an already resolved auth state.
       if (authRevision === 0 && !hasAppliedUserRequest) {
+        eventAccessToken = session?.access_token ?? null;
         setSnapshot({ user: session?.user ?? null, loaded: true });
       }
     } else {
       authRevision++;
+      eventAccessToken = session?.access_token ?? null;
       setSnapshot({ user: session?.user ?? null, loaded: true });
     }
     recordAuthEvent(supabase, event, session, priorUserId);
