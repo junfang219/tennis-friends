@@ -22,6 +22,10 @@ function newClient(): SupabaseClient<Database> {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
+      // supabase-js 2.106.1 forwards an omitted timeout as undefined,
+      // overriding auth-js's 5s default. Restore its orphaned Web Lock
+      // recovery while retaining cross-tab refresh coordination.
+      lockAcquireTimeout: 5000,
     },
   });
 }
