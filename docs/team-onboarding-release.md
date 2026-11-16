@@ -12,6 +12,14 @@
 
 The production implementation is separate from `/onboarding-preview`. It contains no simulated sign-in, sample friend accounts, or browser-only team storage.
 
+## USTA confirmation and reminder pilot — November 15, 2026
+
+- Used `Production Onboarding Test — Jun` with the already accepted Gmail recipient. At the user's request, configured `TEST ONLY — No real USTA team`, placeholder number `0000000000`, and deadline November 22, 2026 (one week from the user's local date). The description and messages identify the test, and the external USTA registration link is disabled.
+- Confirmed the Gmail player through the captain controls, reloaded, and verified the stored confirmation. Reminder review excluded that player. The first preparation attempt exposed a request-validation bug: PostgreSQL returns `confirmed_at` with a `+00:00` offset, while the input schema accepted only `Z` timestamps.
+- PR #30 accepts valid ISO timezone offsets and retains malformed/unzoned timestamp rejection. Application commit `5c78b7d` is deployed to production as `dpl_6EsxGNsGUyTX51hw6GBFnLf8kXAT`, READY at the canonical domain. All 32 focused onboarding/reminder tests, TypeScript, changed-file ESLint, diff checks, and the remote build passed. The initial deployment error scan returned no errors. No migration was needed.
+- After deployment, repeated confirmation → full reload → reminder preparation. Preparation succeeded and omitted the confirmed Gmail player. Undid the confirmation, reloaded again, and verified `confirmed_at IS NULL`, exactly one recipient membership, and that the Gmail player was included in prepared reminders again.
+- Shared only the Gmail player's personal reminder through the native share sheet and sent it in Messages to the authorized phone ending in 7749. The older phone-only onboarding row belongs to the earlier captain-accepted invitation; its prepared reminder was not sent. Messages showed the new outgoing reminder and an empty composer. No automated email was sent (delivery table remains empty). Receiving-phone arrival and link-open confirmation remain pending.
+
 ## Implemented
 
 - `/groups/new`: authenticated team-name/description → intended-player contacts and optional real-friend association → invitations and optional USTA instructions.
