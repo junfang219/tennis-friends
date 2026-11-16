@@ -1,5 +1,14 @@
 # General team onboarding: production integration
 
+## Current production release — November 15, 2026
+
+- PR #28 merged into `court-booking-embedded` as `71d10f1`.
+- Production deployment `dpl_HrdfYFxjSWWWrDmN9j49ryNoPLVV` is READY and serves `https://mytennisfriends.com`. `NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED=true` is configured in Vercel Production and included in the build.
+- Follow-up migration `20261116043105_fix_team_onboarding_invitation_lifecycle.sql` is applied. Its local filename matches hosted migration history; do not reapply either onboarding migration. Player and membership row fingerprints were unchanged by migration application.
+- Google sign-in returned to the production team creation page. Created a controlled test team and prepared a personal invitation with the canonical production origin. The native share sheet sent it through Messages to the previously authorized test recipient. No automatic email was sent.
+- The signed-out public invitation was inspected at 375px and requires sign-in before acceptance. The authenticated friends API correctly rejects signed-out requests (401), and the development-only preview renders not-found. The initial deployment error-log check returned no errors.
+- Recipient phone acceptance and reopening remain pending for this production test. Earlier preview acceptance results below are separate evidence.
+
 The production implementation is separate from `/onboarding-preview`. It contains no simulated sign-in, sample friend accounts, or browser-only team storage.
 
 ## Implemented
@@ -44,7 +53,7 @@ PGlite is a test-only runtime and is not added to the application dependencies. 
 
 ### PR review corrections
 
-The follow-up migration `20261116041817_fix_team_onboarding_invitation_lifecycle.sql` must be applied before releasing the corrected application. It replaces only the save and acceptance RPCs, retaining their authorization checks and restricted permissions. The original migration remains unchanged. This follow-up has been tested locally and has **not** been applied to the hosted database.
+The follow-up migration `20261116043105_fix_team_onboarding_invitation_lifecycle.sql` must be applied before releasing the corrected application. It replaces only the save and acceptance RPCs, retaining their authorization checks and restricted permissions. The original migration remains unchanged. This follow-up was applied to the hosted database on November 15, 2026, with explicit user authorization (hosted migration version `20261116043105`). The local filename matches hosted history. Before/after fingerprints of all onboarding players and memberships matched; only the two RPC definitions changed. Anonymous execution remains denied and authenticated execution remains allowed.
 
 - Revoked and removed associations no longer block a replacement invitation. Another active association still blocks acceptance, and merging preserves a single membership.
 - Saving a revoked player's corrected contact details/account association now persists the changes and updates the placeholder. Recipient changes rotate the credential and clear issuance while keeping the invitation revoked. Explicitly renew and prepare/send it before sharing; previous links remain invalid.
