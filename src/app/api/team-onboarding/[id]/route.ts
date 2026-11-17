@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { listGroupMembers } from "@/lib/supabase/queries/groups";
+import { readTeamRoster } from "@/lib/onboarding/roster-data";
 import { teamManagementMutationSchema, teamManagementStateSchema } from "@/lib/onboarding/management";
 import { onboardingDb } from "@/lib/onboarding/db";
 import { saveOnboardingSchema } from "@/lib/onboarding/contracts";
@@ -15,17 +15,16 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (!auth.user) return NextResponse.json({ error: "Sign in first" }, { status: 401 });
   const { data, error } = await onboardingDb(db).rpc("read_team_onboarding", { p_group: id });
   if (error) return NextResponse.json({ error: "Cannot load onboarding. Confirm the database migration is installed and you manage this team." }, { status: 403 });
-  const [group, members, legacy] = await Promise.all([
-    db.from("groups").select("name").eq("id", id).single(),
-    listGroupMembers(db, id),
+  const [group, legacy] = await Promise.all([
+    readTeamRoster(db, id),
     db.from("group_invites").select("id,email,token,roles,member_type").eq("group_id", id).eq("status", "pending").gt("expires_at", new Date().toISOString()),
   ]);
-  if (!group.data) return NextResponse.json({ error: "Team not found" }, { status: 404 });
+  if (!group) return NextResponse.json({ error: "Team not found" }, { status: 404 });
   const raw = z.object({ config: z.unknown(), players: z.array(z.unknown()) }).safeParse(data);
   if (!raw.success) return NextResponse.json({ error: "Cannot load team invitations" }, { status: 500 });
-  const config = raw.data.config ?? { name: group.data.name, description: "", includeUsta: false, teamNumber: "", deadline: "" };
-  const parsed = teamManagementStateSchema.safeParse({ config: { ...z.record(z.string(),z.unknown()).parse(config), name: group.data.name }, players: raw.data.players,
-    members: members.map(m => ({ id: m.id, userId: m.user_id, name: m.user.name })),
+  const config = raw.data.config ?? { name: group.name, description: "", includeUsta: false, teamNumber: "", deadline: "" };
+  const parsed = teamManagementStateSchema.safeParse({ config: { ...z.record(z.string(),z.unknown()).parse(config), name: group.name }, players: raw.data.players,
+    members: group.members.map(m => ({ id: m.id, userId: m.userId, name: m.user.name })),
     legacyInvitations: (legacy.data ?? []).map(i => ({ id: i.id, email: i.email, token: i.token, roles: i.roles, memberType: i.member_type })),
   });
   if (!parsed.success) return NextResponse.json({ error: "Cannot load team invitations" }, { status: 500 });

@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ getUser: vi.fn(), group: vi.fn(), members: vi.fn(), redirect: vi.fn((url: string) => { throw new Error(`redirect:${url}`); }), notFound: vi.fn(() => { throw new Error("not-found"); }) }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect, notFound: mocks.notFound }));
 vi.mock("@/lib/supabase/server", () => ({ createSupabaseServerClient: async () => ({ auth: { getUser: mocks.getUser } }) }));
-vi.mock("@/lib/supabase/queries/groups", () => ({ getGroup: mocks.group, listGroupMembers: mocks.members }));
+vi.mock("./roster-data", () => ({ readTeamRoster: async () => { const g = await mocks.group(); return g ? { id: g.id, name: g.name, ownerId: g.owner_id, memberTypes: [], members: (await mocks.members()).map((m: { id: string; user_id: string; roles: ("manager" | "captain")[]; member_type: string; isPlaceholder: boolean; user: { id: string; name: string; profile_image_url: string } }) => ({ id: m.id, userId: m.user_id, roles: m.roles, memberType: m.member_type, isPlaceholder: m.isPlaceholder, user: { id: m.user.id, name: m.user.name, profileImageUrl: m.user.profile_image_url } })) } : null; } }));
 import { teamPage } from "./team-page";
 const id = "33333333-3333-4333-8333-333333333333", owner = "11111111-1111-4111-8111-111111111111", memberId = "44444444-4444-4444-8444-444444444444";
 function member(roles: string[] = []) { return { id: memberId, user_id: memberId, roles, member_type: "", isPlaceholder: false, user: { id: memberId, name: "Member", profile_image_url: "" } }; }

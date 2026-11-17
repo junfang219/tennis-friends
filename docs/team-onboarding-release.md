@@ -2,7 +2,7 @@
 
 ## Pending PR #32: create team → Roster → Invite players
 
-The application is unmerged and undeployed. `/groups/new` now collects only team name and optional description. Create team saves those details and opens `/groups/:id/roster` directly. The Roster page shows Invite players immediately and supports join-request review, existing role management, member types, account linking, and removal. Creation retries do not replace a roster that has already changed.
+The application is unmerged and undeployed. `/groups/new` now collects only team name and optional description. Create team saves those details and opens `/groups/:id/roster` directly. A server-only loader reads the current roster without importing browser query helpers. The Roster page shows Invite players immediately and supports join-request review, existing role management, member types, account linking, and removal. Creation retries do not replace a roster that has already changed.
 
 - The team-page Invite players button and the Roster action open the same `/groups/:id/invite-players` page. Team Settings → Roster opens the canonical Roster page. The old underlined Manage invitations and registration entry is removed; `/groups/:id/onboarding` redirects to Roster.
 - Invite players starts with Share team link and Send by email. Sharing requires no player details and retains approval before membership. Email fields appear only for email delivery; names are optional. Batch sending targets only selected recipients, preserving other pending invitations. No phone entry or setup stepper remains.
@@ -12,7 +12,7 @@ The application is unmerged and undeployed. `/groups/new` now collects only team
 
 The already approved shared-link migration is installed in production as `20261117162141_shared_team_join_approval.sql`; do not reapply it. This revision also needs the additive `20261117174222_roster_first_team_management.sql` migration before using the new mutation controls. It adds a private checked implementation and public invoker wrapper; applying it does not update existing team data. Its hosted application is pending separate approval because the local app uses the production database.
 
-Verification: 674 unit/route tests, 32 browser cases at 375px and desktop, and 74 embedded PostgreSQL checks pass. TypeScript, changed-file ESLint, and diff checks pass; the team page's three existing image warnings are unchanged. Automated tests use isolated fixtures and send no real messages. The review middleware rewrites only the fixed fixture team's canonical routes and blocks live APIs; friend/guest actions cannot reach live data in review mode.
+Verification: 678 unit/route tests, 32 browser cases at 375px and desktop, and 74 embedded PostgreSQL checks pass. TypeScript, changed-file ESLint, and diff checks pass; the team page's three existing image warnings are unchanged. Automated tests use isolated fixtures and send no real messages. The review middleware rewrites only the fixed fixture team's canonical routes and blocks live APIs; friend/guest actions cannot reach live data in review mode.
 
 ### Shared-link migration verification — November 17, 2026
 
