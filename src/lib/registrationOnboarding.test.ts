@@ -25,7 +25,7 @@ it("supports email-only players and routes existing members through in-app and e
   expect(registrationChannels(player)).toBe("Email");
   expect(registrationChannels({ ...player, memberId: "member-one" })).toBe("Email + In-app invitation");
   expect(() => prepareRegistrationPlayer({ id: "two", name: "Sam", phone: "", email: "sam@example.com" }, [player])).toThrow("already");
-  expect(() => prepareRegistrationPlayer({ id: "three", name: "Sam", phone: "", email: "" }, [])).toThrow("phone number or email");
+  expect(prepareRegistrationPlayer({ id: "three", name: "Sam", phone: "", email: "" }, [])).toMatchObject({ name: "Sam", phone: "", email: "" });
 });
 
 it("sends app-only invitations without USTA fields and always includes a join link", () => {
@@ -52,11 +52,11 @@ it("supports USTA tasks added later and captain-selected registration links", ()
 
 describe("invitation account linking", () => {
   const invited = () => ({ ...prepareRegistrationPlayer({ id: "roster-one", name: "Sam", phone: "2065550101", email: "" }, []), invitedAt: "2026-11-15T00:00:00Z", confirmedAt: "2026-11-14T00:00:00Z" });
-  it("associates a friend without accepting membership or removing SMS", () => {
+  it("associates a friend without accepting membership", () => {
     const player = associateRegistrationAccount([invited()], "roster-one", { id: "friend", name: "Sam" })[0];
     expect(player.memberId).toBeNull();
     expect(player.associatedAccountId).toBe("friend");
-    expect(registrationChannels(player)).toContain("SMS");
+    expect(registrationChannels(player)).toBe("In-app invitation");
   });
   it("links new or existing accounts into the original roster entry and is idempotent", () => {
     for (const id of ["new-account", "existing-account"]) {

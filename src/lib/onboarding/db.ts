@@ -3,6 +3,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/lib/database.types";
 
 type ExtraFunctions = {
+  manage_team_join_link: { Args: { p_group: string; p_action: string }; Returns: Json };
+  view_team_join_link: { Args: { p_token: string }; Returns: Json };
+  request_team_join: { Args: { p_token: string }; Returns: Json };
+  review_team_join_request: { Args: { p_group: string; p_request: string; p_decision: string; p_player: string | null }; Returns: Json };
   list_team_onboarding_invitations: { Args: Record<string, never>; Returns: Json };
   save_team_onboarding: { Args: { p_group: string; p_config: Json; p_players: Json }; Returns: Json };
   read_team_onboarding: { Args: { p_group: string }; Returns: Json };

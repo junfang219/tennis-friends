@@ -44,7 +44,7 @@ export async function POST(req:Request,ctx:{params:Promise<{id:string}>}) {
   }
   return NextResponse.json({invitations});
  }
- if(!recipients.some(p=>p.email))return NextResponse.json({error:"No email addresses available. Prepare invitations and share them through Messages instead."},{status:400});
+ if(!recipients.some(p=>p.email))return NextResponse.json({error:"No email addresses available. Add emails on Players, or use the shared team link."},{status:400});
  if(recipients.some(p=>p.email)&&(!config.emailKey||!config.emailFrom))return NextResponse.json({error:"Email delivery is not configured"},{status:503});
  const {count}=await admin.from("team_onboarding_deliveries").select("id",{count:"exact",head:true}).in("player_id",players.map(p=>p.id)).gte("created_at",new Date(Date.now()-3600000).toISOString());
  if((count??0)>500)return NextResponse.json({error:"Too many invitations recently; try later"},{status:429});

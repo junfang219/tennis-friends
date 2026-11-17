@@ -114,3 +114,15 @@ it("still rejects an expired joined invitation for a normal invitation email", a
   expect(await response.json()).toMatchObject({ sent: 0, failed: 1 });
   expect(mocks.deliver).not.toHaveBeenCalled();
 });
+
+it("emails registration reminders to a shared-link member using their account email", async () => {
+  setPlayers([player({ email: null, associated_account_id: accountId, sent_at: null, revoked_at: null })]);
+  const deliveryQuery = mocks.from("team_onboarding_deliveries");
+  mocks.from.mockImplementation((table: string) => table === "profiles"
+    ? { select: () => ({ in: async () => ({ data: [{ id: accountId, email: "shared@example.com" }] }) }) }
+    : deliveryQuery);
+  const response = await request("email", true);
+  expect(await response.json()).toMatchObject({ sent: 1, failed: 0, pending: 0 });
+  expect(mocks.deliver).toHaveBeenCalledWith("email", "shared@example.com",
+    expect.stringContaining("Reminder: please register"), expect.any(String), "delivery-id", expect.any(Object));
+});

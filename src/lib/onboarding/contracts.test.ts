@@ -27,12 +27,16 @@ describe("production team onboarding input",()=>{
   expect(result.players[0].phone).toBe("+12065550101");
   expect(result.players[0]).not.toHaveProperty("token");expect(result.players[0]).not.toHaveProperty("memberId");
  });
+ it("allows a name-only roster and a team with no pre-entered players",()=>{
+  expect(saveOnboardingSchema.parse({draft,players:[{id:player.id,name:"Sam",email:"",confirmedAt:null}]}).players[0].phone).toBe("");
+  expect(saveOnboardingSchema.safeParse({draft,players:[]}).success).toBe(true);
+ });
  it("rejects duplicate contacts after normalization",()=>{
   expect(saveOnboardingSchema.safeParse({draft,players:[player,{...player,id:"22222222-2222-4222-8222-222222222222",phone:"+12065550101"}]}).success).toBe(false);
  });
- it("rejects invalid account associations, contact details, and empty teams",()=>{
+ it("rejects invalid account associations and empty team names",()=>{
   expect(saveOnboardingSchema.safeParse({draft,players:[{...player,associatedAccountId:"sample-friend-sam"}]}).success).toBe(false);
-  expect(saveOnboardingSchema.safeParse({draft,players:[{...player,phone:"",email:""}]}).success).toBe(false);
+  expect(saveOnboardingSchema.safeParse({draft,players:[{...player,phone:"",email:"invalid"}]}).success).toBe(false);
   expect(saveOnboardingSchema.safeParse({draft:{...draft,name:""},players:[]}).success).toBe(false);
  });
 });

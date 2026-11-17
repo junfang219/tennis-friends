@@ -72,12 +72,11 @@ export function prepareRegistrationPlayer(value: { id: string; name: string; pho
   const result = registrationPlayerSchema.safeParse({ ...value, name: value.name.trim(), phone: phone?.number ?? "", email: value.email.trim().toLowerCase() });
   if (!result.success) throw new Error("Enter a name and a valid email address, if provided.");
   const player = result.data;
-  if (!player.memberId && !player.phone && !player.email) throw new Error("Add a phone number or email to invite this player to your team.");
   if (players.some(p => (player.memberId && p.memberId === player.memberId) || (player.phone && p.phone === player.phone) || (player.email && p.email === player.email))) throw new Error("This player is already on your list.");
   return player;
 }
 export function registrationChannels(player: RegistrationPlayer) {
-  return [player.phone ? "SMS" : "", player.email ? "Email" : "", player.memberId || player.associatedAccountId ? "In-app invitation" : ""].filter(Boolean).join(" + ");
+  return [player.email ? "Email" : "", player.memberId || player.associatedAccountId ? "In-app invitation" : ""].filter(Boolean).join(" + ") || "Shared team link";
 }
 
 // Review-only state transitions. Real acceptance must authenticate the account

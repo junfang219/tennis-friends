@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: ["onboarding-review.spec.ts", "team-onboarding-flow.spec.ts"],
+  testMatch: ["onboarding-review.spec.ts", "team-onboarding-flow.spec.ts", "shared-team-invitation.spec.ts"],
   use: { baseURL: "http://127.0.0.1:3105", channel: "chrome" },
   projects: [
     { name: "mobile", use: { ...devices["iPhone 13"], defaultBrowserType: "chromium", channel: "chrome", viewport: { width: 375, height: 812 } } },

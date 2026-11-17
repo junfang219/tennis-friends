@@ -29,6 +29,7 @@ async function openWizard(page: Page, players: Player[]) {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (path.endsWith("/friends")) return route.fulfill({ json: friends });
+    if (path.endsWith("/shared-link")) return route.fulfill({ json: { token: null, enabled: false, requests: [] } });
     if (["PUT", "POST"].includes(request.method())) {
       const body: unknown = request.postDataJSON();
       writes.push({ method: request.method(), path, body });

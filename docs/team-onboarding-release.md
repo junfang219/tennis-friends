@@ -1,5 +1,18 @@
 # General team onboarding: production integration
 
+## Pending PR #32: shared link with approval
+
+This branch adds a shared team link alongside personal email invitations. It is not deployed. Before deploying, apply `supabase/migrations/20261117070738_shared_team_join_approval.sql` to staging and verify the hosted flow; apply it to production only as part of an authorized release. The migration adds tables and checked functions without changing existing onboarding records.
+
+- The Players step is optional. Add names for an intended roster and optional emails for personal invitations. Phone entry is removed; previously saved phone contacts are preserved for compatibility.
+- On Overview, create/copy/share one team link for a group chat. It remains active until disabled or replaced. Replacing invalidates the old URL; disabling prevents new requests. Neither removes members or pending requests.
+- `/join-team/:token` requires sign-in before requesting to join. The request uses the authenticated account, grants no membership, and remains pending until a team manager approves it. Rejected requests cannot be reset by repeatedly opening the link. A captain can separately issue a personal email invitation if reconsidering a rejection.
+- Review requests on Overview using Refresh requests. Approve as a new player or match to an existing unjoined roster entry to retain its ID, RSVPs, and USTA confirmation. Approval grants ordinary membership without elevated roles. Players can check approval status from the shared link and open the team after approval. No approval notification is sent automatically.
+- Personal email invitations retain individual links and direct acceptance, with batch delivery and existing revocation/renewal controls. USTA confirmation and reminders remain separate. Approved shared-link members can receive email reminders through their associated account email.
+- New tables have RLS enabled and no direct client table grants. Public RPCs are invokers; private implementations check authentication, manager permissions, token validity, and team/request/roster ownership. All mutations use the existing group-first lock order.
+
+Verification uses the actual migrations in embedded PostgreSQL plus route/unit tests and the production React components with isolated API fixtures at 375px and desktop. No hosted schema, team data, or email delivery is changed by these tests. Run `npm test`, `npm run test:e2e:onboarding`, and the embedded database command below. The browser suite uses installed Google Chrome; the development-only fixture server rejects live API requests.
+
 ## Current production release — November 15, 2026
 
 - PR #28 merged into `court-booking-embedded` as `71d10f1`.
