@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { groupId, playerId, managementFixture, player } from "./helpers/team-management";
-test("team details create the team and land directly on Roster before any invitations", async ({ context, page }) => {
+test("two-step setup defaults to a ready shared link and can finish without sending invitations", async ({ context, page }) => {
   const fixture = await managementFixture(context);
   await page.goto("/groups/new");
   await page.getByLabel("Team name", { exact: true }).fill("Slice Society");
@@ -8,14 +8,29 @@ test("team details create the team and land directly on Roster before any invita
   await expect(page.getByLabel("Email", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Continue", exact: true })).toHaveCount(0);
   await page.screenshot({ path: `/tmp/tennis-create-${test.info().project.name}.png`, fullPage: true });
-  await page.getByRole("button", { name: "Create team", exact: true }).click();
+  await page.getByRole("button", { name: "Create team & continue", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/invite-players\\?setup=1$`));
+  await expect(page.getByRole("group", { name: "Invitation method", exact: true }).getByRole("button", { name: "Share team link", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Send by email", exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Email", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Create shared team link", exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Team setup")).toContainText("2. Invite players (optional)");
+  await page.reload();
+  await expect(page.getByRole("navigation", { name: "Setup navigation" })).toBeVisible();
+  const nav = page.getByRole("navigation", { name: "Setup navigation" });
+  await expect(page.getByLabel("Team invitation link", { exact: true })).toBeVisible();
+  const back = await nav.getByRole("link", { name: "Back", exact: true }).boundingBox();
+  const finish = await nav.getByRole("link", { name: "Go to Roster", exact: true }).boundingBox();
+  expect(back?.height).toBe(finish?.height); expect(back?.y).toBe(finish?.y);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: `/tmp/tennis-setup-invite-${test.info().project.name}.png`, fullPage: true });
+  await nav.getByRole("link", { name: "Go to Roster", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
   await expect(page.getByRole("heading", { name: "Roster", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Invite players", exact: true })).toBeVisible();
   expect(fixture.writes.map(w => w.path)).toEqual([`/api/team-onboarding/${groupId}/create`]);
   await page.getByRole("link", { name: "Invite players", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Invite players", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Create shared team link", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Team setup")).toHaveCount(0);
 });
 test("method switching and Back to roster never write a stale roster", async ({ context, page }) => {
   const fixture = await managementFixture(context, [player()]);
@@ -112,4 +127,48 @@ test("captains check and confirm USTA registration directly in the roster", asyn
   await expect(page.getByRole("textbox", { name: "Reminder for Captain", exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: `/tmp/tennis-rosters-registration-${test.info().project.name}.png`, fullPage: true, animations: "disabled" });
+});
+
+test("Back edits the same team's details without replacing roster, USTA settings, or shared link", async ({ context, page }) => {
+  const fixture = await managementFixture(context, [player()]);
+  fixture.shared.token = "a".repeat(64); fixture.shared.enabled = true;
+  fixture.state.config = { ...fixture.state.config, includeUsta: true, teamNumber: "0000000000", deadline: "2026-11-24" };
+  await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+  await page.getByRole("navigation", { name: "Setup navigation" }).getByRole("link", { name: "Back", exact: true }).click();
+  await expect(page.getByLabel("Team name", { exact: true })).toHaveValue("Shared review");
+  await expect(page.getByRole("textbox", { name: /^Description/ })).toHaveValue("Saved description");
+  await page.getByLabel("Team name", { exact: true }).fill("Updated team");
+  await page.getByRole("textbox", { name: /^Description/ }).fill("Updated description");
+  fixture.state.players.push(player("77777777-7777-4777-8777-777777777777"));
+  await page.getByRole("button", { name: "Save & continue", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/invite-players\\?setup=1$`));
+  expect(fixture.writes).toEqual([{ path: `/api/team-onboarding/${groupId}/create`, method: "PATCH", body: { name: "Updated team", description: "Updated description" } }]);
+  expect(fixture.state.players).toHaveLength(2);
+  expect(fixture.state.config).toMatchObject({ includeUsta: true, teamNumber: "0000000000", deadline: "2026-11-24" });
+  expect(fixture.shared).toMatchObject({ enabled: true, token: "a".repeat(64) });
+});
+test("successful setup email sending finishes on Roster and targets only new recipients", async ({ context, page }) => {
+  const fixture = await managementFixture(context, [player()]);
+  await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+  await page.getByRole("button", { name: "Send by email", exact: true }).click();
+  await page.getByRole("textbox", { name: "Email", exact: true }).fill("new@example.com");
+  await page.getByRole("group", { name: "Invitation method", exact: true }).getByRole("button", { name: "Share team link", exact: true }).click();
+  await page.getByRole("button", { name: "Send by email", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Email", exact: true })).toHaveValue("new@example.com");
+  expect(fixture.writes).toHaveLength(0);
+  await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+  const send = fixture.writes.find(w => w.path.endsWith("/send"))?.body as { playerIds: string[] };
+  expect(send.playerIds).toHaveLength(1); expect(send.playerIds).not.toContain(playerId);
+});
+for (const result of ["failed", "pending"] as const) test(`setup email ${result} stays on step two for review`, async ({ context, page }) => {
+  const fixture = await managementFixture(context);
+  fixture.controls[result === "failed" ? "emailFailed" : "emailPending"] = 1;
+  await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+  await page.getByRole("button", { name: "Send by email", exact: true }).click();
+  await page.getByRole("textbox", { name: "Email", exact: true }).fill("retry@example.com");
+  await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText(result === "failed" ? "1 failed" : "1 pending");
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/invite-players\\?setup=1$`));
+  await expect(page.getByRole("textbox", { name: "Email", exact: true })).toHaveValue("retry@example.com");
 });

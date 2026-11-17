@@ -1,8 +1,10 @@
 "use client";
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { z } from "zod";
 import TeamSharedInvitations from "./TeamSharedInvitations";
+import TeamSetupProgress from "./TeamSetupProgress";
 import AddFriendsPanel from "./AddFriendsPanel";
 import InvitePlayersPanel from "./InvitePlayersPanel";
 import { useTeamManagement, teamResponse } from "./useTeamManagement";
@@ -21,7 +23,8 @@ function RecipientEditor({ player, save }: { player: Player; save: (change: { na
     <button className="btn-secondary w-full" type="submit">Save recipient</button>
   </form>;
 }
-export default function TeamInvitations({ group, review = false }: { group: RosterGroup; currentUserName: string; review?: boolean }) {
+export default function TeamInvitations({ group, review = false, setup = false }: { group: RosterGroup; currentUserName: string; review?: boolean; setup?: boolean }) {
+  const router = useRouter();
   const { state, error: loadError, load, mutate } = useTeamManagement(group.id);
   const [mode, setMode] = useState<"link" | "email">("link");
   const [rows, setRows] = useState(() => [{ id: crypto.randomUUID(), name: "", email: "" }]);
@@ -32,15 +35,17 @@ export default function TeamInvitations({ group, review = false }: { group: Rost
   async function action(work: () => Promise<void>) { if (busy) return; setBusy(true); setError(""); setNotice(""); try { await work(); } catch (e) { setError(e instanceof Error ? e.message : "Could not complete action"); } finally { setBusy(false); } }
   const body = message ?? state?.config.invitationMessage ?? `You're invited to join ${group.name} on TennisFriends!`;
   const withUsta = includeUsta ?? state?.config.includeUstaInInvitations !== false;
-  async function send(ids: string[]) {
+  async function send(ids: string[], finish = false) {
     await mutate({ action: "message", message: body, includeUstaInInvitations: withUsta });
     batch.current ??= crypto.randomUUID();
     const report = z.object({ sent: z.number(), failed: z.number(), pending: z.number(), message: z.string() }).parse(await teamResponse(await fetch(`/api/team-onboarding/${group.id}/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "email", reminder: false, batchId: batch.current, playerIds: ids }) })));
     setNotice(`${report.sent} emails accepted; ${report.failed} failed; ${report.pending} pending. ${report.message}`);
     if (!report.failed && !report.pending) { batch.current = null; setRows([{ id: crypto.randomUUID(), name: "", email: "" }]); }
     await load();
+    if (setup && finish && !report.failed && !report.pending) { router.replace(`/groups/${group.id}/roster`); router.refresh(); }
   }
-  return <main className="max-w-2xl mx-auto p-4 py-6 space-y-5"><Link href={`/groups/${group.id}/roster`} className="text-sm underline text-court-green">Back to roster</Link><header><p className="text-sm text-gray-600">{group.name}</p><h1 className="font-display text-3xl font-bold text-court-green">Invite players</h1></header>
+  return <main className="max-w-2xl mx-auto p-4 py-6 space-y-5">{!setup && <Link href={`/groups/${group.id}/roster`} className="text-sm underline text-court-green">Back to roster</Link>}<header><p className="text-sm text-gray-600">{group.name}</p><h1 className="font-display text-3xl font-bold text-court-green">Invite players</h1></header>
+    {setup && <><TeamSetupProgress step={2} /><p className="text-sm text-gray-600">Your team has been created. Invite players now, or choose Go to Roster to invite them later.</p></>}
     {(error || loadError) && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{error || loadError}</p>}{notice && <p role="status" className="rounded-xl bg-green-50 p-3 text-sm text-green-950">{notice}</p>}
     <fieldset disabled={busy} className="min-w-0 space-y-5">
       <div role="group" aria-label="Invitation method" className="grid grid-cols-2 gap-3"><button type="button" aria-pressed={mode === "link"} className={mode === "link" ? "btn-primary" : "btn-secondary"} onClick={() => setMode("link")}>Share team link</button><button type="button" aria-pressed={mode === "email"} className={mode === "email" ? "btn-primary" : "btn-secondary"} onClick={() => setMode("email")}>Send by email</button></div>
@@ -50,13 +55,13 @@ export default function TeamInvitations({ group, review = false }: { group: Rost
           if (!body.trim()) throw new Error("Enter an invitation message");
           const recipients = z.array(recipientSchema).min(1).parse(rows.map(row => ({ ...row, name: row.name.trim() || row.email.split("@")[0].slice(0, 100) })));
           if (new Set(recipients.map(r => r.email)).size !== recipients.length) throw new Error("Use a different email for each recipient");
-          await mutate({ action: "recipients", recipients }); await send(recipients.map(r => r.id));
+          await mutate({ action: "recipients", recipients }); await send(recipients.map(r => r.id), true);
         }); }}>
           {rows.map((row, index) => <fieldset key={row.id} className="rounded-xl border border-gray-200 p-3 space-y-3"><legend className="px-1 text-sm font-semibold">Recipient {index + 1}</legend><label className="block text-sm">Email<input className={input} required type="email" value={row.email} onChange={e => { batch.current = null; setRows(all => all.map(r => r.id === row.id ? { ...r, email: e.target.value } : r)); }} /></label><label className="block text-sm">Name (optional)<input className={input} maxLength={100} value={row.name} onChange={e => setRows(all => all.map(r => r.id === row.id ? { ...r, name: e.target.value } : r))} /></label>{rows.length > 1 && <button type="button" className="text-sm underline text-red-800" onClick={() => setRows(all => all.filter(r => r.id !== row.id))}>Remove recipient {index + 1}</button>}</fieldset>)}
           <button type="button" className="btn-secondary w-full" onClick={() => setRows(all => [...all, { id: crypto.randomUUID(), name: "", email: "" }])}>Add another email</button>
           <details className="rounded-xl border p-3"><summary className="cursor-pointer text-sm font-semibold text-court-green">Customize message</summary><label className="block text-sm mt-3">Invitation message<textarea className={input} rows={4} value={body} onChange={e => { batch.current = null; setMessage(e.target.value); }} /></label></details>
-          {state.config.includeUsta ? <label className="flex gap-3 text-sm"><input type="checkbox" checked={withUsta} onChange={e => setIncludeUsta(e.target.checked)} />Include USTA instructions in email</label> : <p className="text-sm text-gray-600">USTA registration is optional. <Link className="underline text-court-green" href={`/groups/${group.id}/registration`}>Set it up separately</Link>.</p>}
-          <button className="btn-primary h-12 w-full" type="submit">{busy ? "Sending…" : "Send invitations"}</button>
+          {state.config.includeUsta ? <label className="flex gap-3 text-sm"><input type="checkbox" checked={withUsta} onChange={e => setIncludeUsta(e.target.checked)} />Include USTA instructions in email</label> : setup ? <p className="text-sm text-gray-600">You can set up USTA registration later from Roster.</p> : <p className="text-sm text-gray-600">USTA registration is optional. <Link className="underline text-court-green" href={`/groups/${group.id}/registration`}>Set it up separately</Link>.</p>}
+          <button className="btn-primary h-12 w-full" type="submit">{busy ? "Sending…" : setup ? "Send invitations & finish" : "Send invitations"}</button>
         </form>
       </section>}
       {state && (state.players.some(p => !p.accepted_by) || state.legacyInvitations.length > 0) && <section className="rounded-2xl border bg-white p-5 space-y-4"><h2 className="text-xl font-bold">Pending invitations</h2><ul className="divide-y">{state.players.filter(p => !p.accepted_by).map(p => <li key={p.id} className="py-4 space-y-3"><strong className="break-words">{p.name}</strong><p className="text-sm break-all">{p.email}</p><p className="text-sm text-gray-600">{p.revoked_at ? "Invitation revoked" : p.sent_at ? "Invitation issued" : "Invitation not issued"}</p>
@@ -67,5 +72,6 @@ export default function TeamInvitations({ group, review = false }: { group: Rost
       </li>)}{state.legacyInvitations.map(i => <li key={i.id} className="py-4 space-y-3"><p className="text-sm break-all">{i.email ?? "Previously shared personal invitation"}</p><p className="text-xs text-gray-600">Existing invitation · {i.roles.length ? i.roles.join(" · ") : "Member"}{i.memberType ? ` · ${i.memberType}` : ""}</p><button className="btn-secondary w-full" type="button" onClick={() => void action(async () => { await navigator.clipboard.writeText(`${window.location.origin}/invite/${i.token}`); setNotice("Existing invitation link copied."); })}>Copy existing invitation link</button><button className="text-sm underline text-red-800" type="button" onClick={() => void action(async () => { await mutate({ action: "cancel-legacy", inviteId: i.id }); })}>Cancel existing invitation</button></li>)}</ul></section>}
       <details className="rounded-xl border bg-white p-4"><summary className="cursor-pointer text-sm font-semibold text-court-green">More ways to add people</summary><div className="space-y-4 pt-4"><div className="grid gap-3"><button type="button" className="btn-secondary" onClick={() => setMore(more === "friends" ? null : "friends")}>Add an existing friend</button><button type="button" className="btn-secondary" onClick={() => setMore(more === "availability" ? null : "availability")}>Track availability without an account</button></div>{more && review && <p className="text-sm text-gray-600">Friend and guest actions are disabled in this isolated preview.</p>}{more === "friends" && !review && <AddFriendsPanel groupId={group.id} existingMemberUserIds={(state?.members ?? group.members).map(m => m.userId).filter((id): id is string => Boolean(id))} onAdded={() => { void load(); }} />}{more === "availability" && !review && <InvitePlayersPanel groupId={group.id} groupName={group.name} scope="all" onChanged={() => { void load(); }} />}</div></details>
     </fieldset>
+    {setup && <nav aria-label="Setup navigation" className="grid grid-cols-2 gap-3">{busy ? <><button disabled className="btn-secondary h-12 w-full">Back</button><button disabled className="btn-primary h-12 w-full">Go to Roster</button></> : <><Link href={`/groups/${group.id}/setup-details`} className="btn-secondary h-12 w-full text-center">Back</Link><Link href={`/groups/${group.id}/roster`} className="btn-primary h-12 w-full text-center">Go to Roster</Link></>}</nav>}
   </main>;
 }

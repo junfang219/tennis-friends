@@ -14,7 +14,7 @@ export function player(id = playerId, overrides: Partial<z.infer<typeof storedPl
 export async function managementFixture(context: BrowserContext, initialPlayers: z.infer<typeof storedPlayerSchema>[] = []) {
   const state: TeamManagementState = { config: { name: "Shared review", description: "Saved description", includeUsta: false, teamNumber: "", deadline: "" }, players: initialPlayers, members: [], legacyInvitations: [] };
   const shared: z.infer<typeof teamLinkStateSchema> = { token: null, enabled: false, requests: [] };
-  const controls = { denyApproval: false, status: "ready" };
+  const controls = { denyApproval: false, status: "ready", emailFailed: 0, emailPending: 0 };
   const writes: Array<{ path: string; method: string; body: unknown }> = [];
   await context.route("**/api/**", async route => {
     const req = route.request(), path = new URL(req.url()).pathname;
@@ -39,7 +39,7 @@ export async function managementFixture(context: BrowserContext, initialPlayers:
       }
       return route.fulfill({ json: { status: input.decision === "approve" ? "approved" : "rejected" } });
     }
-    if (path.endsWith("/create")) { const input = createTeamSchema.parse(req.postDataJSON()); state.config = { ...state.config, ...input }; return route.fulfill({ json: { groupId } }); }
+    if (path.endsWith("/create")) { const input = createTeamSchema.parse(req.postDataJSON()); state.config = { ...state.config, ...input }; if (req.method() === "POST") { shared.token ??= token; shared.enabled = true; } return route.fulfill({ json: { groupId } }); }
     if (path.endsWith("/revoke")) {
       const { playerId: id, renew } = z.object({ playerId: z.uuid(), renew: z.boolean().optional() }).parse(req.postDataJSON());
       state.players = state.players.map(p => p.id !== id ? p : renew ? { ...p, sent_at: null, revoked_at: null, token: "d".repeat(64) } : { ...p, revoked_at: "2026-11-17T01:00:00Z" });
@@ -50,7 +50,7 @@ export async function managementFixture(context: BrowserContext, initialPlayers:
       const selected = state.players.filter(p => (!body.playerIds || body.playerIds.includes(p.id)) && (!body.reminder || !p.confirmed_at) && !p.revoked_at);
       if (body.mode === "prepare") return route.fulfill({ json: { invitations: selected.map(p => ({ id: p.id, name: p.name, message: `Reminder: ${p.name} · ${state.config.teamNumber}` })) } });
       for (const p of selected) p.sent_at = "2026-11-17T02:00:00Z";
-      return route.fulfill({ json: { sent: selected.length, failed: 0, pending: 0, message: "Test provider accepted email" } });
+      return route.fulfill({ json: { sent: Math.max(0, selected.length - controls.emailFailed - controls.emailPending), failed: controls.emailFailed, pending: controls.emailPending, message: "Test provider accepted email" } });
     }
     if (path === `/api/team-onboarding/${groupId}`) {
       if (req.method() === "PUT") throw new Error("Full-roster writes are forbidden in the new flow");

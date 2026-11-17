@@ -4,7 +4,7 @@ import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { readTeamRoster } from "./roster-data";
 import { canAdmin } from "@/lib/groupRoles";
-export async function teamPage(id: string, section: "roster" | "invite-players" | "registration") {
+export async function teamPage(id: string, section: "roster" | "invite-players" | "registration" | "setup-details") {
   if (!z.uuid().safeParse(id).success || process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED !== "true") notFound();
   const db = await createSupabaseServerClient();
   const { data: auth } = await db.auth.getUser();
