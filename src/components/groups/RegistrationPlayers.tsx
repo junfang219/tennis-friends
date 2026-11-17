@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { prepareRegistrationPlayer, registrationChannels, associateRegistrationAccount, type RegistrationPlayer } from "@/lib/registrationOnboarding";
 
 import { REVIEW_FRIEND_ACCOUNTS } from "@/lib/registrationReviewAccounts";
 
 const input = "mt-1 w-full rounded-xl border border-gray-300 bg-white px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-court-green";
-export default function RegistrationPlayers({ players, onChange, friendAccounts, review = true }: { players: RegistrationPlayer[]; onChange: (players: RegistrationPlayer[]) => void; friendAccounts?: { id: string; name: string }[]; review?: boolean }) {
+export default function RegistrationPlayers({ players, onChange, friendAccounts, friendsLoading = false, friendsError = "", review = true }: { players: RegistrationPlayer[]; onChange: (players: RegistrationPlayer[]) => void; friendAccounts?: { id: string; name: string }[]; friendsLoading?: boolean; friendsError?: string; review?: boolean }) {
   const accounts = friendAccounts ?? (review ? REVIEW_FRIEND_ACCOUNTS : []);
+  const contactHintId = useId();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -23,13 +24,17 @@ export default function RegistrationPlayers({ players, onChange, friendAccounts,
   }
   return <div className="space-y-4">
     <h2 className="text-xl font-bold">Who do you plan to play with?</h2>
-    <p className="text-sm text-gray-600">Add everyone by name and contact details, whether or not they already use TennisFriends. No friendship is required.</p>
+    <p className="text-sm text-gray-600">Add the players you want to invite to your team. They don’t need a TennisFriends account yet.</p>
     <form className="space-y-3 rounded-xl border border-gray-200 p-4" onSubmit={e => { e.preventDefault(); if (add({ name, phone, email })) { setName(""); setPhone(""); setEmail(""); } }}>
       <label className="block text-sm font-semibold">Player name<input required className={input} value={name} onChange={e => setName(e.target.value)} autoComplete="name" placeholder="First and last name" /></label>
-      <label className="block text-sm font-semibold">Phone number<input type="tel" className={input} value={phone} onChange={e => setPhone(e.target.value)} autoComplete="tel" placeholder="(206) 555-0101" /></label>
-      <label className="block text-sm font-semibold">Email <span className="font-normal text-gray-600">(optional if phone provided)</span><input type="email" className={input} value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" placeholder="player@example.com" /></label>
-      <p className="text-xs text-gray-600">Provide a phone number, an email, or both. No app account required. {review ? "The preview simulates delivery to the supplied channels." : "Invitations use the supplied contact details."}</p>
-      <label className="block text-sm font-semibold">Associate a friend account (optional)<select className={input} value={associatedId} onChange={e => setAssociatedId(e.target.value)}><option value="">No account selected</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
+      <fieldset aria-describedby={contactHintId} className="space-y-3 rounded-xl bg-surface p-3"><legend className="px-1 text-sm font-semibold">Invitation contact</legend>
+        <p id={contactHintId} className="text-sm text-gray-700">Add a phone number, email address, or both. Only one is needed to invite this player.</p>
+        <label className="block text-sm font-semibold">Phone number<input type="tel" className={input} value={phone} onChange={e => setPhone(e.target.value)} autoComplete="tel" placeholder="(206) 555-0101" /></label>
+        <label className="block text-sm font-semibold">Email<input type="email" className={input} value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" placeholder="player@example.com" /></label>
+        <p className="text-xs text-gray-600">Adding a player won’t send an invitation. {review && "Sending is simulated in this preview."}</p>
+      </fieldset>
+      <label className="block text-sm font-semibold">Associate a friend account (optional)<select disabled={friendsLoading} className={input} value={associatedId} onChange={e => setAssociatedId(e.target.value)}><option value="">{friendsLoading ? "Loading friends…" : "No account selected"}</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
+      {friendsError && <p role="status" className="text-sm text-gray-600">{friendsError}</p>}
       <p className="text-xs text-gray-600">{review ? "Fictional friend accounts for this review. " : "Select an existing friend if you know their account. "}Selecting an account helps identify the player; it does not accept their invitation. You can still share the invitation through your own Messages app.</p>
       <button className="btn-secondary w-full" type="submit">Add player</button>
     </form>
