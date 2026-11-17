@@ -13,17 +13,19 @@ export async function POST(req:Request,ctx:{params:Promise<{id:string}>}) {
  const {id}=await ctx.params;
  const db=await createSupabaseServerClient(); const {data:auth}=await db.auth.getUser();
  if(!auth.user)return NextResponse.json({error:"Sign in first"},{status:401});
- let body;try{body=z.object({batchId:z.uuid(),reminder:z.boolean().default(false),mode:z.enum(["prepare","email"]).default("prepare")}).parse(await req.json());if(!z.uuid().safeParse(id).success)throw new Error();}catch{return NextResponse.json({error:"Invalid send request"},{status:400});}
+ let body;try{body=z.object({batchId:z.uuid(),reminder:z.boolean().default(false),mode:z.enum(["prepare","email"]).default("prepare"),playerIds:z.array(z.uuid()).min(1).max(100).optional()}).parse(await req.json());if(!z.uuid().safeParse(id).success)throw new Error();}catch{return NextResponse.json({error:"Invalid send request"},{status:400});}
+ if(body.reminder){const {error:syncError}=await onboardingDb(db).rpc("patch_team_onboarding",{p_group:id,p_change:{action:"init"}});if(syncError)return NextResponse.json({error:"Could not prepare the current team roster"},{status:403});}
  const {data,error}=await onboardingDb(db).rpc("read_team_onboarding",{p_group:id});
  if(error)return NextResponse.json({error:"Team manager access required"},{status:403});
  const saved=storedOnboardingSchema.safeParse(data);
  if(!saved.success)return NextResponse.json({error:"Save your team first"},{status:400});
- const {config:settings,players}=saved.data;
+ const {config:storedSettings,players}=saved.data;
+ const settings=body.reminder||storedSettings.includeUstaInInvitations!==false?storedSettings:{...storedSettings,includeUsta:false};
  // Joining and USTA registration are independent. Existing members can still
  // receive registration reminders after their original invitation expires.
  const invitationUnavailable=(player:(typeof players)[number])=>player.revoked_at!==null||
   (Date.parse(player.expires_at)<Date.now()&&!(body.reminder&&player.accepted_by!==null));
- const selected=players.filter(p=>!body.reminder||!p.confirmed_at);
+ const selected=players.filter(p=>(!body.playerIds||body.playerIds.includes(p.id))&&(!body.reminder||!p.confirmed_at));
  const issues=invitationIssues({...settings,players:players.map(p=>({id:p.id,name:p.name,phone:p.phone??"",email:p.email??"",memberId:p.accepted_by,confirmedAt:p.confirmed_at,invitedAt:p.sent_at,remindedAt:null}))});
  if(issues.length||!selected.length)return NextResponse.json({error:issues.join(" ")||"No recipients"},{status:400});
  let config;try{config=deliveryConfig();}catch{return NextResponse.json({error:"Set ONBOARDING_PUBLIC_ORIGIN to the app's public URL before sending"},{status:503});}
@@ -44,7 +46,7 @@ export async function POST(req:Request,ctx:{params:Promise<{id:string}>}) {
   }
   return NextResponse.json({invitations});
  }
- if(!recipients.some(p=>p.email))return NextResponse.json({error:"No email addresses available. Add emails on Players, or use the shared team link."},{status:400});
+ if(!recipients.some(p=>p.email))return NextResponse.json({error:"No email addresses available. Add email recipients in Invite players, or use the shared team link."},{status:400});
  if(recipients.some(p=>p.email)&&(!config.emailKey||!config.emailFrom))return NextResponse.json({error:"Email delivery is not configured"},{status:503});
  const {count}=await admin.from("team_onboarding_deliveries").select("id",{count:"exact",head:true}).in("player_id",players.map(p=>p.id)).gte("created_at",new Date(Date.now()-3600000).toISOString());
  if((count??0)>500)return NextResponse.json({error:"Too many invitations recently; try later"},{status:429});

@@ -21,6 +21,7 @@ export const registrationDraftSchema = z.object({
   description: z.string().max(2000).optional(),
   ustaTeamName: z.string().max(100).optional(),
   includeUsta: z.boolean().optional(),
+  includeUstaInInvitations: z.boolean().optional(),
   // Retain the database compatibility field, but retire the old UI opt-out.
   // Missing flags already default to inclusion in the invitation lookup.
   includeDescription: z.boolean().transform((): boolean => true).optional(),

@@ -19,7 +19,7 @@ try {
  const end=canonical.indexOf('-- Reworked to delegate',start);
  await db.exec(canonical.slice(start,end));
  const {readdir}=await import('node:fs/promises');
- const migrations=(await readdir('supabase/migrations')).filter(n=>n.endsWith('_team_onboarding.sql')||n.endsWith('_fix_team_onboarding_invitation_lifecycle.sql')||n.endsWith('_shared_team_join_approval.sql')).sort();
+ const migrations=(await readdir('supabase/migrations')).filter(n=>n.endsWith('_team_onboarding.sql')||n.endsWith('_fix_team_onboarding_invitation_lifecycle.sql')||n.endsWith('_shared_team_join_approval.sql')||n.endsWith('_roster_first_team_management.sql')).sort();
  for(const migration of migrations)await db.exec(await readFile(`supabase/migrations/${migration}`,'utf8'));
  const owner=randomUUID(),friend=randomUUID(),stranger=randomUUID(),group=randomUUID(),pid=randomUUID(),other=randomUUID();
  for(const [id,name] of [[owner,'Captain'],[friend,'Taylor'],[stranger,'Stranger']])await db.query('insert into profiles values($1,$2,$3)',[id,name,`${name}@example.com`]);
@@ -255,5 +255,68 @@ try {
  // Catalog checks on the actual applied migration: no public definer entry points or table grants.
  check(Number((await db.query("select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('manage_team_join_link','view_team_join_link','request_team_join','review_team_join_request') and p.prosecdef")).rows[0].count)===0,'Public RPC wrappers are security invokers');
  check((await db.query("select bool_and(relrowsecurity) as enabled from pg_class where relname in ('team_join_links','team_join_requests')")).rows[0].enabled,'All shared invitation tables have RLS enabled');
+ // Roster-first creation and scoped edits: no client roster snapshot is accepted.
+ const managementGroup=randomUUID(), actualMember=randomUUID(), emailEntry=randomUUID();
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[owner]);
+ await db.query('select save_team_onboarding($1,$2::jsonb,$3::jsonb)',[managementGroup,JSON.stringify({...config,name:'Roster first',includeUsta:false,includeDescription:false}),'[]']);
+ check(Number((await db.query('select count(*) from team_onboarding_players where group_id=$1',[managementGroup])).rows[0].count)===0,'Creation needs no player information');
+ await db.query('insert into group_members(id,group_id,user_id) values($1,$2,$3)',[actualMember,managementGroup,friend]);
+ const patch=async change=>db.query('select patch_team_onboarding($1,$2::jsonb)',[managementGroup,JSON.stringify(change)]);
+ await db.exec('SET ROLE authenticated');
+ await patch({action:'registration',includeUsta:true,ustaTeamName:'TEST ONLY',teamNumber:'0000000000',deadline:'2026-11-24',includeRegistrationLink:false});
+ await patch({action:'confirmation',playerId:actualMember,confirmed:true});
+ await db.exec('RESET ROLE');
+ const tracked=(await db.query('select * from team_onboarding_players where group_id=$1 and accepted_by=$2',[managementGroup,friend])).rows[0];
+ check(tracked.member_id===actualMember&&Boolean(tracked.confirmed_at),'USTA settings include legacy/friend members and confirmation preserves their membership');
+ await db.exec('SET ROLE authenticated');
+ const newRecipients={action:'recipients',recipients:[{id:emailEntry,name:'Email Player',email:'new-email@example.com'}]};
+ await patch(newRecipients); await patch(newRecipients);
+ await patch({action:'message',message:'An email greeting',includeUstaInInvitations:false,players:[]});
+ await db.exec('RESET ROLE');
+ check(Number((await db.query('select count(*) from team_onboarding_players where group_id=$1',[managementGroup])).rows[0].count)===2,'Adding recipients and saving a message retain the current roster and deduplicate retries');
+ check(Boolean((await db.query('select confirmed_at from team_onboarding_players where id=$1',[tracked.id])).rows[0].confirmed_at),'Email operations preserve current confirmations');
+ const managementConfig=(await db.query('select config from team_onboarding where group_id=$1',[managementGroup])).rows[0].config;
+ check(managementConfig.includeUsta===true&&managementConfig.includeUstaInInvitations===false,'Email instruction opt-out does not disable USTA tracking');
+ check(managementConfig.includeDescription===true,'Scoped saves normalize the legacy description flag for public invitation pages');
+ await db.exec('SET ROLE authenticated');
+ await patch({action:'confirmation',playerId:emailEntry,confirmed:true});
+ await db.query('select revoke_team_onboarding_invitation($1,$2)',[managementGroup,emailEntry]);
+ await patch({action:'recipient',playerId:emailEntry,name:'Corrected',email:'corrected-email@example.com',associatedAccountId:null});
+ await db.exec('RESET ROLE');
+ const correctedEmail=(await db.query('select * from team_onboarding_players where id=$1',[emailEntry])).rows[0];
+ check(correctedEmail.email==='corrected-email@example.com'&&correctedEmail.sent_at===null&&Boolean(correctedEmail.revoked_at)&&Boolean(correctedEmail.confirmed_at),'Scoped recipient correction keeps revocation and USTA confirmation');
+ await db.query("update groups set name='Renamed team' where id=$1",[managementGroup]);
+ await db.exec('SET ROLE authenticated');
+ await patch({action:'message',message:'New greeting',includeUstaInInvitations:true});
+ await patch({action:'confirmation',playerId:actualMember,confirmed:false});
+ await db.exec('RESET ROLE');
+ check((await db.query('select name from groups where id=$1',[managementGroup])).rows[0].name==='Renamed team','Saving invitation settings never restores a stale team name');
+ check((await db.query('select confirmed_at from team_onboarding_players where id=$1',[tracked.id])).rows[0].confirmed_at===null,'Undo confirmation works for existing members');
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[stranger]);
+ await db.exec('SET ROLE authenticated');
+ await rejects(()=>patch({action:'init'}),/manager access/);
+ await db.exec('RESET ROLE');
+ await db.exec('SET ROLE anon');
+ await rejects(()=>patch({action:'init'}),/permission denied/);
+ await db.exec('RESET ROLE');
+ // A friend directly added after an associated invitation is folded into that
+ // same intended roster entry when registration is enabled.
+ const associatedGroup=randomUUID(), associatedEntry=randomUUID(), joinedMember=randomUUID();
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[owner]);
+ await db.query('select save_team_onboarding($1,$2::jsonb,$3::jsonb)',[associatedGroup,JSON.stringify({...config,includeUsta:false}),JSON.stringify([{id:associatedEntry,name:'Taylor',phone:'',email:'friend@example.com',associatedAccountId:friend,confirmedAt:'2026-11-15T00:00:00Z'}])]);
+ await db.query('insert into group_members(id,group_id,user_id) values($1,$2,$3)',[joinedMember,associatedGroup,friend]);
+ await db.exec('SET ROLE authenticated');
+ await db.query('select patch_team_onboarding($1,$2::jsonb)',[associatedGroup,JSON.stringify({action:'registration',includeUsta:true,ustaTeamName:'TEST',teamNumber:'0000000000',deadline:'2026-11-24',includeRegistrationLink:false})]);
+ await db.exec('RESET ROLE');
+ const associatedTracked=(await db.query('select * from team_onboarding_players where id=$1',[associatedEntry])).rows[0];
+ check(associatedTracked.member_id===joinedMember&&associatedTracked.accepted_by===friend&&Boolean(associatedTracked.confirmed_at),'Associated friend joining through the existing path retains intended roster history');
+ check(Number((await db.query('select count(*) from group_members where group_id=$1',[associatedGroup])).rows[0].count)===1,'Synchronizing a friend merges its placeholder without duplicate membership');
+ await db.exec('SET ROLE authenticated');
+ await db.query('select patch_team_onboarding($1,$2::jsonb)',[associatedGroup,JSON.stringify({action:'remove-member',memberId:joinedMember})]);
+ await db.exec('RESET ROLE');
+ const removedTracked=(await db.query('select * from team_onboarding_players where id=$1',[associatedEntry])).rows[0];
+ check(Boolean(removedTracked.removed_at)&&Boolean(removedTracked.revoked_at)&&Boolean(removedTracked.confirmed_at),'Roster removal retires onboarding/reminders while preserving registration history');
+ check(Number((await db.query('select count(*) from group_members where group_id=$1',[associatedGroup])).rows[0].count)===0,'Roster removal deletes only the requested membership');
+
  console.log(`${checks} embedded PostgreSQL checks passed (migration + canonical merge helper).`);
 } finally {await db.close();}

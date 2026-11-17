@@ -10,8 +10,13 @@ async function manage(id: string, action: string) {
   const db = await createSupabaseServerClient();
   const { data: auth } = await db.auth.getUser();
   if (!auth.user) return NextResponse.json({ error: "Sign in first" }, { status: 401 });
+  if (action !== "read") {
+    const { error: setupError } = await onboardingDb(db).rpc("patch_team_onboarding", { p_group: id, p_change: { action: "init" } });
+    if (setupError) return NextResponse.json({ error: "Could not initialize team invitations" }, { status: 403 });
+  }
   const { data, error } = await onboardingDb(db).rpc("manage_team_join_link", { p_group: id, p_action: action });
   if (error) {
+    if (action === "read" && error.code === "P0001" && error.message === "Save team setup first") return NextResponse.json({ token: null, enabled: false, requests: [] }, { headers: { "Cache-Control": "no-store" } });
     if (["PGRST202", "42883", "42P01"].includes(error.code)) {
       return NextResponse.json({ error: "Shared team invitations are not available yet. The shared-link database migration must be installed." }, { status: 503 });
     }

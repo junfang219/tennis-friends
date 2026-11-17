@@ -126,3 +126,17 @@ it("emails registration reminders to a shared-link member using their account em
   expect(mocks.deliver).toHaveBeenCalledWith("email", "shared@example.com",
     expect.stringContaining("Reminder: please register"), expect.any(String), "delivery-id", expect.any(Object));
 });
+
+it("sends only the selected email recipients and keeps other pending players untouched", async () => {
+  const selectedId = "66666666-6666-4666-8666-666666666666";
+  setPlayers([player({ id: selectedId, accepted_by: null, expires_at: "2099-12-31T00:00:00Z" }), player({ id: "77777777-7777-4777-8777-777777777777", email: "other@example.com", accepted_by: null, expires_at: "2099-12-31T00:00:00Z" })]);
+  const response = await POST(new Request("https://example.com", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "email", reminder: false, batchId: "55555555-5555-4555-8555-555555555555", playerIds: [selectedId] }) }), { params: Promise.resolve({ id: groupId }) });
+  expect(await response.json()).toMatchObject({ sent: 1 }); expect(mocks.deliver).toHaveBeenCalledTimes(1);
+});
+it("an email instruction opt-out preserves separate USTA tracking", async () => {
+  mocks.rpc.mockResolvedValue({ data: { config: { name: "Test team", includeUsta: true, includeUstaInInvitations: false, teamNumber: "0000000000", deadline: "2099-12-01" }, players: [player({ expires_at: "2099-12-31T00:00:00Z" })] }, error: null });
+  await request("email", false);
+  expect(mocks.deliver.mock.calls[0][2]).not.toContain("USTA team:");
+  mocks.deliver.mockClear(); await request("email", true);
+  expect(mocks.deliver.mock.calls[0][2]).toContain("USTA team:");
+});

@@ -34,6 +34,16 @@ export async function middleware(req: NextRequest) {
   if (process.env.NODE_ENV === "development" && process.env.TEAM_ONBOARDING_REVIEW === "1") {
     // The review server only serves the isolated flow. Prevent navigation to
     // live-backed pages and API routes while reviewing with production env files.
+    // Canonical URLs exercise production component navigation with isolated
+    // fixtures. API routes remain blocked unless Playwright intercepts them.
+    const fixture = req.nextUrl.pathname.match(/^\/groups\/(33333333-3333-4333-8333-333333333333)\/(roster|invite-players|registration)$/);
+    if (fixture || req.nextUrl.pathname === "/groups/new") {
+      const url = req.nextUrl.clone();
+      url.pathname = "/onboarding-preview";
+      url.search = "";
+      url.searchParams.set("flow", fixture ? (fixture[2] === "invite-players" ? "invite" : fixture[2]) : "create");
+      return NextResponse.rewrite(url);
+    }
     if (req.nextUrl.pathname !== "/onboarding-preview") {
       return new NextResponse("This review server only serves /onboarding-preview.", { status: 404 });
     }

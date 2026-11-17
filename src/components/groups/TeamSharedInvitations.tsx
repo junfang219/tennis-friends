@@ -14,8 +14,8 @@ async function readResponse(response: Response): Promise<unknown> {
   }
   return raw;
 }
-export default function TeamSharedInvitations({ groupId, players, onApproved, onBusyChange }: {
-  groupId: string; players: RegistrationPlayer[]; onApproved: () => Promise<void>; onBusyChange: (busy: boolean) => void;
+export default function TeamSharedInvitations({ groupId, players, onApproved, onBusyChange, view = "all" }: {
+  view?: "all" | "link" | "requests"; groupId: string; players: RegistrationPlayer[]; onApproved: () => Promise<void>; onBusyChange: (busy: boolean) => void;
 }) {
   const [state, setState] = useState<State | null>(null);
   const [origin, setOrigin] = useState("");
@@ -51,7 +51,7 @@ export default function TeamSharedInvitations({ groupId, players, onApproved, on
   const rosterEntry = (request: State["requests"][number]) =>
     selected[request.id] ?? players.find(p => !p.memberId && p.associatedAccountId === request.userId)?.id ?? "";
   return <section aria-label="Shared invitations and approvals" className="space-y-5">
-    <fieldset disabled={busy} className="min-w-0 rounded-xl border border-gray-200 p-4 space-y-3 disabled:opacity-70">
+    {view !== "requests" && <fieldset disabled={busy} className="min-w-0 rounded-xl border border-gray-200 p-4 space-y-3 disabled:opacity-70">
       <legend className="px-1 font-semibold">Shared team invitation</legend>
       <p className="text-sm text-gray-700">Send this link to a player or share it with a group. Each player signs in and requests to join. You approve each request before they become a team member.</p>
       {!state ? <p className="text-sm">{error ? "Team link could not be loaded." : "Loading team link…"}</p> : link ? <>
@@ -65,8 +65,8 @@ export default function TeamSharedInvitations({ groupId, players, onApproved, on
         })}>Share team link</button><button type="button" className="btn-secondary w-full" onClick={() => void action(async () => { await navigator.clipboard.writeText(link); setNotice("Team link copied."); })}>Copy link</button></div>
         <details><summary className="cursor-pointer text-sm font-semibold text-court-green">Manage team link</summary><div className="mt-3 space-y-3"><p className="text-xs text-gray-600">Replacing the link disables the old one. Disabling stops new requests. Neither action removes existing members or requests.</p><button type="button" className="btn-secondary w-full" onClick={() => void action(() => change("replace"))}>Replace team link</button><button type="button" className="text-sm underline text-red-800" onClick={() => void action(() => change("disable"))}>Disable team link</button></div></details>
       </> : <><p className="text-sm text-gray-600">{state.token ? "The shared link is disabled." : "No shared link has been created."}</p><button type="button" className="btn-primary w-full" onClick={() => void action(() => change(state.token ? "replace" : "enable"))}>{state.token ? "Create new team link" : "Create shared team link"}</button></>}
-    </fieldset>
-    <fieldset disabled={busy} className="min-w-0 rounded-xl border border-gray-200 p-4 space-y-3 disabled:opacity-70"><legend className="px-1 font-semibold">Join requests{state ? ` (${state.requests.length})` : ""}</legend>
+    </fieldset>}
+    {view !== "link" && <fieldset disabled={busy} className="min-w-0 rounded-xl border border-gray-200 p-4 space-y-3 disabled:opacity-70"><legend className="px-1 font-semibold">Join requests{state ? ` (${state.requests.length})` : ""}</legend>
       <button type="button" className="text-sm underline text-court-green" onClick={() => void action(load)}>Refresh requests</button>
       {state?.requests.length === 0 && <p className="text-sm text-gray-600">No pending requests. Players using the shared link will appear here after signing in and requesting to join.</p>}
       <ul className="divide-y divide-gray-200">{state?.requests.map(request => <li key={request.id} className="py-4 space-y-3">
@@ -79,7 +79,7 @@ export default function TeamSharedInvitations({ groupId, players, onApproved, on
           await onApproved(); await load(); setNotice(decision === "approve" ? `${request.name} is now a team member.` : `Request from ${request.name} rejected.`);
         })}>{decision === "approve" ? "Approve" : "Reject"}</button>)}</div>
       </li>)}</ul>
-    </fieldset>
+    </fieldset>}
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}{notice && <p role="status" className="text-sm text-green-950">{notice}</p>}
   </section>;
 }

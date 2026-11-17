@@ -20,9 +20,11 @@ import { toGroupCamel, toGroupMemberCamel } from "@/lib/supabase/adapters";
 import { adaptFeedPost, type FeedPostView } from "@/lib/adaptFeedPost";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { errorMessage } from "@/lib/errorMessage";
+import { canAdmin, type TeamRole } from "@/lib/groupRoles";
 
 type Member = {
   id: string;
+  roles: TeamRole[];
   isPlaceholder: boolean; // account-less roster member — no profile to link to
   user: { id: string; name: string; profileImageUrl: string; skillLevel: string };
 };
@@ -73,6 +75,7 @@ export default function GroupPage() {
       const adaptedMembers = members.map((m) => ({
         id: m.id,
         isPlaceholder: m.isPlaceholder,
+        roles: m.roles,
         user: {
           id: m.user.id,
           name: m.user.name,
@@ -163,7 +166,7 @@ export default function GroupPage() {
           </div>
 
           <div className="px-6 pb-6 pt-3">
-            {process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" && session?.user?.id === group.ownerId && <Link className="text-sm underline text-court-green block mb-3" href={`/groups/${group.id}/onboarding`}>Manage invitations and registration</Link>}
+
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <h1 className="font-display text-2xl font-bold text-gray-900">
@@ -185,6 +188,12 @@ export default function GroupPage() {
                 </svg>
               </Link>
             </div>
+
+            {process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" && <div className="mt-4 grid grid-cols-2 gap-3">
+              <Link href={`/groups/${group.id}/roster`} className="btn-secondary text-center">Roster</Link>
+              {canAdmin({ isOwner: session?.user?.id === group.ownerId, roles: group.members.find(m => m.user.id === session?.user?.id)?.roles ?? [] }) && <Link href={`/groups/${group.id}/invite-players`} className="btn-primary text-center">Invite players</Link>}
+              {canAdmin({ isOwner: session?.user?.id === group.ownerId, roles: group.members.find(m => m.user.id === session?.user?.id)?.roles ?? [] }) && <Link href={`/groups/${group.id}/registration`} className="text-sm underline text-court-green col-span-2">USTA registration</Link>}
+            </div>}
 
             {/* Members row */}
             <div className="mt-4 flex items-center gap-3">

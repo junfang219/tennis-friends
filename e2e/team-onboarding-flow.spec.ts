@@ -1,151 +1,89 @@
-import { expect, test, type Page } from "@playwright/test";
-import { z } from "zod";
-import { saveOnboardingSchema, storedOnboardingSchema, storedPlayerSchema } from "../src/lib/onboarding/contracts";
-
-type Player = z.infer<typeof storedPlayerSchema>;
-const groupId = "33333333-3333-4333-8333-333333333333";
-const wrongAccount = "66666666-6666-4666-8666-666666666666";
-const correctAccount = "77777777-7777-4777-8777-777777777777";
-const friends = [{ id: wrongAccount, name: "Wrong Account" }, { id: correctAccount, name: "Correct Account" }];
-
-function player(id: string, overrides: Partial<Player> = {}): Player {
-  return {
-    id, group_id: groupId, member_id: null, name: "Invited Player",
-    phone: null, email: "player@example.com", associated_account_id: null,
-    associated_account_name: null, accepted_by: null, confirmed_at: null,
-    sent_at: "2026-11-16T00:00:00Z", accepted_at: null,
-    token: "test-only-invitation", expires_at: "2099-12-31T00:00:00Z", revoked_at: null,
-    ...overrides,
-  };
-}
-
-async function openWizard(page: Page, players: Player[]) {
-  const snapshot: z.infer<typeof storedOnboardingSchema> = {
-    config: { name: "Navigation review", description: "Saved description", includeUsta: false, teamNumber: "", deadline: "" },
-    players,
-  };
-  const writes: Array<{ method: string; path: string; body: unknown }> = [];
-  await page.route("**/api/team-onboarding/**", async route => {
-    const request = route.request();
-    const path = new URL(request.url()).pathname;
-    if (path.endsWith("/friends")) return route.fulfill({ json: friends });
-    if (path.endsWith("/shared-link")) return route.fulfill({ json: { token: null, enabled: false, requests: [] } });
-    if (["PUT", "POST"].includes(request.method())) {
-      const body: unknown = request.postDataJSON();
-      writes.push({ method: request.method(), path, body });
-      if (request.method() === "PUT") {
-        const input = saveOnboardingSchema.parse(body);
-        snapshot.config = input.draft;
-        // Match the persisted save contract: omitted players are removed;
-        // correcting a revoked recipient clears issuance, but not revocation.
-        snapshot.players = input.players.map(value => {
-          const previous = snapshot.players.find(p => p.id === value.id) ?? player(value.id, { sent_at: null });
-          const associated = value.associatedAccountId ?? null;
-          const recipientChanged = previous.associated_account_id !== associated ||
-            previous.phone !== (value.phone || null) || previous.email !== (value.email || null);
-          return {
-            ...previous, name: value.name, phone: value.phone || null, email: value.email || null,
-            associated_account_id: associated,
-            associated_account_name: friends.find(friend => friend.id === associated)?.name ?? null,
-            confirmed_at: value.confirmedAt,
-            ...(previous.revoked_at && recipientChanged ? { sent_at: null, token: "corrected-test-only-invitation" } : {}),
-          };
-        });
-        return route.fulfill({ json: { ok: true } });
-      }
-      if (path.endsWith("/revoke")) {
-        const input = z.object({ playerId: z.uuid(), renew: z.boolean().default(false) }).parse(body);
-        snapshot.players = snapshot.players.map(p => p.id !== input.playerId ? p : input.renew
-          ? { ...p, token: "replacement-test-only-invitation", revoked_at: null, sent_at: null }
-          : { ...p, revoked_at: "2026-11-16T01:00:00Z" });
-        return route.fulfill({ json: { ok: true } });
-      }
-      return route.fulfill({ status: 400, json: { error: "Delivery is disabled in this fixture" } });
-    }
-    return route.fulfill({ json: snapshot });
-  });
-  await page.goto("/onboarding-preview?flow=team");
-  await expect(page.getByRole("heading", { name: snapshot.config.name, exact: true })).toBeVisible();
-  return { snapshot, writes };
-}
-
-test("Back never overwrites a roster that changed after Overview loaded", async ({ page }) => {
-  const first = player("44444444-4444-4444-8444-444444444441");
-  const addedElsewhere = player("44444444-4444-4444-8444-444444444442", { name: "Added in another tab", email: "other@example.com" });
-  const fixture = await openWizard(page, [first]);
-  fixture.snapshot.players.push(addedElsewhere);
-  for (const heading of ["Invite your players", "Add your players", "Create your team"]) {
-    await page.getByRole("button", { name: "Back", exact: true }).click();
-    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeFocused();
-    expect(fixture.writes).toEqual([]);
-    expect(fixture.snapshot.players).toEqual([first, addedElsewhere]);
-  }
-  await expect(page.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
+import { expect, test } from "@playwright/test";
+import { groupId, playerId, managementFixture, player } from "./helpers/team-management";
+test("team details create the team and land directly on Roster before any invitations", async ({ context, page }) => {
+  const fixture = await managementFixture(context);
+  await page.goto("/groups/new");
+  await page.getByLabel("Team name", { exact: true }).fill("Slice Society");
+  await page.getByRole("textbox", { name: /^Description/ }).fill("Our tennis team");
+  await expect(page.getByLabel("Email", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Continue", exact: true })).toHaveCount(0);
+  await page.screenshot({ path: `/tmp/tennis-create-${test.info().project.name}.png`, fullPage: true });
+  await page.getByRole("button", { name: "Create team", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+  await expect(page.getByRole("heading", { name: "Roster", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Invite players", exact: true })).toBeVisible();
+  expect(fixture.writes.map(w => w.path)).toEqual([`/api/team-onboarding/${groupId}/create`]);
+  await page.getByRole("link", { name: "Invite players", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Invite players", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create shared team link", exact: true })).toBeVisible();
 });
-
-test("Back preserves draft edits until Continue explicitly saves them", async ({ page }) => {
-  const fixture = await openWizard(page, [player("44444444-4444-4444-8444-444444444441")]);
-  await page.getByRole("button", { name: "Back", exact: true }).click();
-  await page.getByRole("textbox", { name: /^Invitation message/ }).fill("Updated invitation");
-  await page.getByLabel("Include USTA registration instructions", { exact: true }).check();
+test("method switching and Back to roster never write a stale roster", async ({ context, page }) => {
+  const fixture = await managementFixture(context, [player()]);
+  await page.goto(`/groups/${groupId}/invite-players`);
+  fixture.state.players.push(player("77777777-7777-4777-8777-777777777777", { name: "Added elsewhere", email: "other@example.com" }));
+  await page.getByRole("button", { name: "Send by email", exact: true }).click();
+  await page.getByRole("textbox", { name: "Email", exact: true }).fill("draft@example.com");
+  await page.getByRole("link", { name: "Back to roster", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Roster", exact: true })).toBeVisible();
+  expect(fixture.writes).toEqual([]); expect(fixture.state.players).toHaveLength(2);
+});
+test("email contacts are requested only for email, and sending targets only the new recipients", async ({ context, page }) => {
+  const fixture = await managementFixture(context, [player()]);
+  await page.goto(`/groups/${groupId}/invite-players`);
+  await expect(page.getByRole("textbox", { name: "Email", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Send by email", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Phone number", exact: true })).toHaveCount(0);
+  await page.getByRole("textbox", { name: "Email", exact: true }).fill("email@example.com");
+  await page.getByRole("button", { name: "Add another email", exact: true }).click();
+  await page.getByRole("textbox", { name: "Email", exact: true }).nth(1).fill("second@example.com");
+  await page.screenshot({ path: `/tmp/tennis-invite-${test.info().project.name}.png`, fullPage: true });
+  await page.getByRole("button", { name: "Send invitations", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("2 emails accepted");
+  const send = fixture.writes.find(w => w.path.endsWith("/send"))?.body as { playerIds: string[] };
+  expect(send.playerIds).toHaveLength(2); expect(send.playerIds).not.toContain(playerId);
+  expect(fixture.state.players).toHaveLength(3);
+});
+test("correcting a revoked recipient retains renewal and never changes confirmations", async ({ context, page }) => {
+  const fixture = await managementFixture(context, [player(playerId, { confirmed_at: "2026-11-17T00:00:00Z", revoked_at: "2026-11-17T00:00:00Z" })]);
+  await page.goto(`/groups/${groupId}/invite-players`);
+  await page.getByRole("button", { name: "Edit recipient for Invited Player", exact: true }).click();
+  await page.getByRole("textbox", { name: "Email", exact: true }).fill("corrected@example.com");
+  await page.getByRole("button", { name: "Save recipient", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("Recipient updated.");
+  expect(fixture.state.players[0]).toMatchObject({ sent_at: null, revoked_at: expect.any(String), confirmed_at: "2026-11-17T00:00:00Z" });
+  await page.getByLabel("Manage invitation for Invited Player", { exact: true }).click();
+  await page.getByRole("button", { name: "Prepare new invitation link", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("old link no longer works");
+});
+for (const state of ["never-issued", "joined"] as const) test(`Manage invitation is hidden for ${state} players`, async ({ context, page }) => {
+  await managementFixture(context, [player(playerId, state === "joined" ? { accepted_by: "55555555-5555-4555-8555-555555555555" } : { sent_at: null })]);
+  await page.goto(`/groups/${groupId}/invite-players`);
+  await expect(page.getByLabel("Manage invitation for Invited Player", { exact: true })).toHaveCount(0);
+});
+test("USTA is separate: configure, Confirm → Undo, and remind only unconfirmed players", async ({ context, page }) => {
+  const fixture = await managementFixture(context, [player()]);
+  await page.goto(`/groups/${groupId}/registration`);
+  await page.getByLabel("Enable USTA registration", { exact: true }).check();
   await page.getByLabel("USTA team number", { exact: true }).fill("0000000000");
   await page.getByLabel("Registration deadline", { exact: true }).fill("2026-11-24");
-  await page.getByRole("button", { name: "Back", exact: true }).click();
-  await page.getByLabel("Player name", { exact: true }).fill("New Player");
-  await page.getByLabel("Email", { exact: true }).fill("new@example.com");
-  await page.getByRole("button", { name: "Add player", exact: true }).click();
-  await page.getByRole("button", { name: "Back", exact: true }).click();
-  expect(fixture.writes).toEqual([]);
-  await page.getByRole("textbox", { name: /^Description/ }).fill("Updated description");
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page.getByText("New Player", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page.getByRole("textbox", { name: /^Invitation message/ })).toHaveValue("Updated invitation");
-  await expect(page.getByLabel("Registration deadline", { exact: true })).toHaveValue("2026-11-24");
-  await expect(page.locator("pre")).toContainText("Updated description");
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Navigation review", exact: true })).toBeVisible();
-  expect(fixture.snapshot.players).toHaveLength(2);
-  expect(fixture.snapshot.config.invitationMessage).toBe("Updated invitation");
-  expect(fixture.snapshot.config.deadline).toBe("2026-11-24");
-  expect(fixture.writes.map(write => write.method)).toEqual(["PUT", "PUT", "PUT"]);
+  await page.getByRole("button", { name: "Save registration details", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("USTA registration settings saved.");
+  await page.getByRole("button", { name: "Confirm registration for Invited Player", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Send email reminders", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Undo confirmation for Invited Player", exact: true }).click();
+  await page.getByRole("button", { name: "Prepare reminders to share", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Reminder for Invited Player", exact: true })).toContainText("0000000000");
+  await page.screenshot({ path: `/tmp/tennis-registration-${test.info().project.name}.png`, fullPage: true });
+  expect(fixture.state.players[0].confirmed_at).toBeNull();
+  expect(fixture.writes.every(w => w.method !== "PUT")).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
-
-test("a corrected revoked invitation stays renewable", async ({ page }) => {
-  const invited = player("44444444-4444-4444-8444-444444444441", {
-    associated_account_id: wrongAccount, associated_account_name: "Wrong Account",
-  });
-  const fixture = await openWizard(page, [invited]);
-  const row = page.getByRole("listitem").filter({ has: page.getByText(invited.name, { exact: true }) });
-  await row.locator("summary").click();
-  await row.getByRole("button", { name: "Revoke invitation", exact: true }).click();
-  await expect(row.getByText("Invitation revoked", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Back", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Invite your players", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Back", exact: true }).click();
-  await page.getByRole("combobox", { name: /Associate account for Invited Player/ }).selectOption(correctAccount);
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Invite your players", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Navigation review", exact: true })).toBeVisible();
-  expect(fixture.snapshot.players[0]).toMatchObject({ associated_account_id: correctAccount, sent_at: null, revoked_at: expect.any(String) });
-  await expect(row.locator("summary")).toHaveText("Manage invitation");
-  await row.locator("summary").click();
-  await expect(row.getByRole("button", { name: "Revoke invitation", exact: true })).toHaveCount(0);
-  await row.getByRole("button", { name: "Prepare new invitation link", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("old link no longer works");
-  expect(fixture.snapshot.players[0]).toMatchObject({ revoked_at: null, sent_at: null, token: "replacement-test-only-invitation" });
-  expect(fixture.writes.filter(write => write.method === "POST").map(write => write.body)).toEqual([
-    { playerId: invited.id }, { playerId: invited.id, renew: true },
-  ]);
-  await expect(row.locator("summary")).toHaveCount(0);
+test("previous invitations remain visible with their roles and cancellation controls", async ({ context, page }) => {
+  const fixture = await managementFixture(context);
+  fixture.state.legacyInvitations.push({ id: playerId, email: "legacy@example.com", token: "old-token", roles: ["captain"], memberType: "Sub" });
+  await page.goto(`/groups/${groupId}/invite-players`);
+  await expect(page.getByText("legacy@example.com", { exact: true })).toBeVisible();
+  await expect(page.getByText("Existing invitation · captain · Sub", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel existing invitation", exact: true }).click();
+  await expect(page.getByText("legacy@example.com", { exact: true })).toHaveCount(0);
 });
-
-for (const state of ["never issued", "joined"] as const) {
-  test(`Manage invitation remains hidden for a player who ${state === "joined" ? "has joined" : "has never been issued an invitation"}`, async ({ page }) => {
-    await openWizard(page, [player("44444444-4444-4444-8444-444444444441", state === "never issued"
-      ? { sent_at: null }
-      : { accepted_by: correctAccount, accepted_at: "2026-11-16T01:00:00Z", revoked_at: "2026-11-16T02:00:00Z" })]);
-    await expect(page.getByLabel("Manage invitation for Invited Player", { exact: true })).toHaveCount(0);
-  });
-}
