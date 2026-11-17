@@ -10,6 +10,7 @@ async function requestToJoin(context: BrowserContext) {
 test("share once, receive the request on Roster, approve, and open the team", async ({ context, page }) => {
   const fixture = await managementFixture(context);
   await page.goto(`/groups/${groupId}/invite-players`);
+  await page.getByRole("button", { name: "Share a team link instead", exact: true }).click();
   await page.getByRole("button", { name: "Create shared team link", exact: true }).click();
   await expect(page.getByLabel("Team invitation link", { exact: true })).toHaveValue(new RegExp(`/join-team/${token}$`));
   const applicant = await requestToJoin(context); expect(fixture.state.players).toHaveLength(0);
@@ -48,6 +49,7 @@ test("rejection and failed approval grant no membership", async ({ context, page
 });
 test("replacement and disable still invalidate shared URLs", async ({ context, page }) => {
   await managementFixture(context); await page.goto(`/groups/${groupId}/invite-players`);
+  await page.getByRole("button", { name: "Share a team link instead", exact: true }).click();
   await page.getByRole("button", { name: "Create shared team link", exact: true }).click();
   await page.getByText("Manage team link", { exact: true }).click();
   await page.getByRole("button", { name: "Replace team link", exact: true }).click();

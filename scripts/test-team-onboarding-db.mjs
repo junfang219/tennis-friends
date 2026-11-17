@@ -19,7 +19,7 @@ try {
  const end=canonical.indexOf('-- Reworked to delegate',start);
  await db.exec(canonical.slice(start,end));
  const {readdir}=await import('node:fs/promises');
- const migrations=(await readdir('supabase/migrations')).filter(n=>n.endsWith('_team_onboarding.sql')||n.endsWith('_fix_team_onboarding_invitation_lifecycle.sql')||n.endsWith('_shared_team_join_approval.sql')||n.endsWith('_roster_first_team_management.sql')||n.endsWith('_guided_team_setup_details.sql')).sort();
+ const migrations=(await readdir('supabase/migrations')).filter(n=>n.endsWith('_team_onboarding.sql')||n.endsWith('_fix_team_onboarding_invitation_lifecycle.sql')||n.endsWith('_shared_team_join_approval.sql')||n.endsWith('_roster_first_team_management.sql')||n.endsWith('_guided_team_setup_details.sql')||n.endsWith('_automatic_sms_team_invitations.sql')).sort();
  for(const migration of migrations)await db.exec(await readFile(`supabase/migrations/${migration}`,'utf8'));
  const owner=randomUUID(),friend=randomUUID(),stranger=randomUUID(),group=randomUUID(),pid=randomUUID(),other=randomUUID();
  for(const [id,name] of [[owner,'Captain'],[friend,'Taylor'],[stranger,'Stranger']])await db.query('insert into profiles values($1,$2,$3)',[id,name,`${name}@example.com`]);
@@ -344,5 +344,45 @@ try {
  check(Boolean(removedTracked.removed_at)&&Boolean(removedTracked.revoked_at)&&Boolean(removedTracked.confirmed_at),'Roster removal retires onboarding/reminders while preserving registration history');
  check(Number((await db.query('select count(*) from group_members where group_id=$1',[associatedGroup])).rows[0].count)===0,'Roster removal deletes only the requested membership');
 
+ // Automatic SMS uses scoped, phone-only recipients and preserves existing state.
+ const smsId=randomUUID(),smsBatch=randomUUID(),smsBatch2=randomUUID();
+ const smsPatch=async change=>db.query('select patch_team_sms_invitations($1,$2::jsonb)',[managementGroup,JSON.stringify(change)]);
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[owner]);
+ const smsBefore=await snapshotDetails();
+ const smsSettings=(await db.query('select config from team_onboarding where group_id=$1',[managementGroup])).rows[0].config;
+ await db.exec('SET ROLE authenticated');
+ const phoneRecipients={action:'sms-recipients',recipients:[{id:smsId,name:'SMS Player',phone:'+12065550109'}]};
+ await smsPatch(phoneRecipients); await smsPatch(phoneRecipients);
+ await rejects(()=>smsPatch({action:'sms-recipients',recipients:[{id:randomUUID(),name:'Duplicate',phone:'+12065550109'}]}),/unique/);
+ await rejects(()=>smsPatch({action:'sms-recipients',recipients:[{id:randomUUID(),name:'Invalid',phone:'invalid'}]}),/valid phone/);
+ await rejects(()=>smsPatch({action:'sms-recipients',recipients:[{id:tracked.id,name:'Collision',phone:'+12065550109'}]}),/already exists/);
+ await db.exec('RESET ROLE');
+ const smsRow=(await db.query('select * from team_onboarding_players where id=$1',[smsId])).rows[0];
+ check(smsRow.phone==='+12065550109'&&smsRow.email===null&&smsRow.sent_at===null,'Phone-only invitation draft needs no email and does not issue or send a message');
+ const smsAfter=await snapshotDetails();
+ check(JSON.stringify(smsBefore.players)===JSON.stringify(smsAfter.players.filter(p=>p.id!==smsId)),'SMS recipient addition preserves existing player records and confirmations');
+ check(JSON.stringify(smsBefore.link)===JSON.stringify(smsAfter.link),'SMS recipient addition leaves the shared link unchanged');
+ check(JSON.stringify(smsSettings)===JSON.stringify((await db.query('select config from team_onboarding where group_id=$1',[managementGroup])).rows[0].config),'SMS recipient addition preserves current USTA and invitation settings');
+ check(Number((await db.query('select count(*) from team_onboarding_players where id=$1',[smsId])).rows[0].count)===1,'SMS draft retries do not duplicate players');
+ await db.query("insert into team_onboarding_deliveries(player_id,batch_id,channel,status) values($1,$2,'sms','sending')",[smsId,smsBatch]);
+ await rejects(()=>db.query("insert into team_onboarding_deliveries(player_id,batch_id,channel,status) values($1,$2,'sms','sending')",[smsId,smsBatch2]),/unique/);
+ await db.exec('SET ROLE authenticated');
+ await rejects(()=>smsPatch({action:'recipient',playerId:smsId,name:'Changed',phone:'+12065550110',email:'',associatedAccountId:null}),/pending SMS/);
+ await db.exec('RESET ROLE');
+ await db.query("update team_onboarding_deliveries set status='failed' where player_id=$1",[smsId]);
+ await db.query("update team_onboarding_players set sent_at=now(),confirmed_at=now() where id=$1",[smsId]);
+ await db.exec('SET ROLE authenticated');
+ await rejects(()=>smsPatch({action:'recipient',playerId:smsId,name:'Changed',phone:'+12065550110',email:'',associatedAccountId:null}),/Revoke/);
+ await db.query('select revoke_team_onboarding_invitation($1,$2)',[managementGroup,smsId]);
+ await smsPatch({action:'recipient',playerId:smsId,name:'Corrected',phone:'+12065550110',email:'',associatedAccountId:null});
+ await db.exec('RESET ROLE');
+ const correctedSms=(await db.query('select * from team_onboarding_players where id=$1',[smsId])).rows[0];
+ check(correctedSms.phone==='+12065550110'&&Boolean(correctedSms.revoked_at)&&Boolean(correctedSms.confirmed_at)&&correctedSms.sent_at===null&&correctedSms.token!==smsRow.token,'Revoked phone correction rotates the personal link and preserves revocation and confirmation');
+ await db.query("insert into team_onboarding_deliveries(player_id,batch_id,channel,status) values($1,$2,'sms','sending')",[smsId,smsBatch2]);
+ check(Number((await db.query('select count(*) from team_onboarding_deliveries where player_id=$1',[smsId])).rows[0].count)===2,'An explicit failed attempt releases the pending SMS guard');
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[stranger]);
+ await db.exec('SET ROLE authenticated');await rejects(()=>smsPatch(phoneRecipients),/manager access/);await db.exec('RESET ROLE');
+ await db.exec('SET ROLE anon');await rejects(()=>smsPatch(phoneRecipients),/permission denied/);await db.exec('RESET ROLE');
+ check((await db.query("select prosecdef from pg_proc where oid='public.patch_team_sms_invitations(uuid,jsonb)'::regprocedure")).rows[0].prosecdef===false,'SMS RPC wrapper remains a security invoker');
  console.log(`${checks} embedded PostgreSQL checks passed (migration + canonical merge helper).`);
 } finally {await db.close();}

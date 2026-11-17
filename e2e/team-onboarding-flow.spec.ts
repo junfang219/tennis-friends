@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { groupId, playerId, managementFixture, player } from "./helpers/team-management";
-test("two-step setup defaults to a ready shared link and can finish without sending invitations", async ({ context, page }) => {
+test("two-step setup defaults to SMS and can finish without sending invitations", async ({ context, page }) => {
   const fixture = await managementFixture(context);
   await page.goto("/groups/new");
   await page.getByLabel("Team name", { exact: true }).fill("Slice Society");
@@ -10,15 +10,17 @@ test("two-step setup defaults to a ready shared link and can finish without send
   await page.screenshot({ path: `/tmp/tennis-create-${test.info().project.name}.png`, fullPage: true });
   await page.getByRole("button", { name: "Create team & continue", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/invite-players\\?setup=1$`));
-  await expect(page.getByRole("group", { name: "Invitation method", exact: true }).getByRole("button", { name: "Share team link", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Send by SMS", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "Send by email", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Share a team link instead", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Team invitation link", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "Email", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Create shared team link", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Team setup")).toContainText("2. Invite players (optional)");
   await page.reload();
   await expect(page.getByRole("navigation", { name: "Setup navigation" })).toBeVisible();
   const nav = page.getByRole("navigation", { name: "Setup navigation" });
-  await expect(page.getByLabel("Team invitation link", { exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Phone number", exact: true })).toBeVisible();
   const back = await nav.getByRole("link", { name: "Back", exact: true }).boundingBox();
   const finish = await nav.getByRole("link", { name: "Go to Roster", exact: true }).boundingBox();
   expect(back?.height).toBe(finish?.height); expect(back?.y).toBe(finish?.y);
@@ -152,7 +154,7 @@ test("successful setup email sending finishes on Roster and targets only new rec
   await page.goto(`/groups/${groupId}/invite-players?setup=1`);
   await page.getByRole("button", { name: "Send by email", exact: true }).click();
   await page.getByRole("textbox", { name: "Email", exact: true }).fill("new@example.com");
-  await page.getByRole("group", { name: "Invitation method", exact: true }).getByRole("button", { name: "Share team link", exact: true }).click();
+  await page.getByRole("button", { name: "Share a team link instead", exact: true }).click();
   await page.getByRole("button", { name: "Send by email", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Email", exact: true })).toHaveValue("new@example.com");
   expect(fixture.writes).toHaveLength(0);
@@ -171,4 +173,45 @@ for (const result of ["failed", "pending"] as const) test(`setup email ${result}
   await expect(page.getByRole("status")).toContainText(result === "failed" ? "1 failed" : "1 pending");
   await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/invite-players\\?setup=1$`));
   await expect(page.getByRole("textbox", { name: "Email", exact: true })).toHaveValue("retry@example.com");
+});
+
+test("SMS is sent automatically to normalized phone-only recipients and finishes on Roster", async ({ context, page }) => {
+ const fixture = await managementFixture(context, [player()]);
+ await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+ await page.getByRole("textbox", {name:"Phone number",exact:true}).fill("(206) 555-0101");
+ await page.getByRole("button",{name:"Add another phone number",exact:true}).click();
+ await page.getByRole("textbox", {name:"Phone number",exact:true}).nth(1).fill("+44 20 7946 0018");
+ await page.getByLabel("These players agreed to receive this team invitation by text.",{exact:true}).check();
+ await page.screenshot({path:`/tmp/tennis-sms-invitations-${test.info().project.name}.png`,fullPage:true});
+ await page.getByRole("button",{name:"Send invitations & finish",exact:true}).click();
+ await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+ const request=fixture.writes.find(w=>w.path.endsWith("/send"))?.body as {mode:string;smsConsent:boolean;playerIds:string[]};
+ expect(request).toMatchObject({mode:"sms",smsConsent:true});expect(request.playerIds).toHaveLength(2);expect(request.playerIds).not.toContain(playerId);
+ expect(fixture.state.players.slice(1).map(p=>p.phone)).toEqual(["+12065550101","+442079460018"]);
+ expect(fixture.writes.some(w=>w.method==="PUT")).toBe(false);
+});
+test("invalid and duplicate SMS numbers do not save or send",async({context,page})=>{
+ const fixture=await managementFixture(context);await page.goto(`/groups/${groupId}/invite-players`);
+ await page.getByRole("textbox",{name:"Phone number",exact:true}).fill("123");await page.getByLabel("These players agreed to receive this team invitation by text.",{exact:true}).check();
+ await page.getByRole("button",{name:"Send SMS invitations",exact:true}).click();await expect(page.getByRole("main").getByRole("alert")).toContainText("valid phone");expect(fixture.writes).toHaveLength(0);
+ await page.getByRole("textbox",{name:"Phone number",exact:true}).fill("2065550101");await page.getByRole("button",{name:"Add another phone number",exact:true}).click();await page.getByRole("textbox",{name:"Phone number",exact:true}).nth(1).fill("+12065550101");
+ await page.getByRole("button",{name:"Send SMS invitations",exact:true}).click();await expect(page.getByRole("main").getByRole("alert")).toContainText("different phone number");expect(fixture.writes).toHaveLength(0);
+});
+test("SMS and email keep separate drafts and shared links remain secondary",async({context,page})=>{
+ const fixture=await managementFixture(context);await page.goto(`/groups/${groupId}/invite-players`);
+ await page.getByRole("textbox",{name:"Phone number",exact:true}).fill("2065550101");await page.getByRole("button",{name:"Send by email",exact:true}).click();
+ await page.getByRole("textbox",{name:"Email",exact:true}).fill("draft@example.com");await page.getByRole("button",{name:"Share a team link instead",exact:true}).click();await expect(page.getByRole("button",{name:"Create shared team link",exact:true})).toBeVisible();
+ await expect(page.getByRole("textbox",{name:"Phone number",exact:true})).toHaveCount(0);await page.getByRole("button",{name:"Send by SMS",exact:true}).click();await expect(page.getByRole("textbox",{name:"Phone number",exact:true})).toHaveValue("2065550101");
+ await page.getByRole("button",{name:"Send by email",exact:true}).click();await expect(page.getByRole("textbox",{name:"Email",exact:true})).toHaveValue("draft@example.com");expect(fixture.writes).toHaveLength(0);
+});
+test("unconfigured SMS shows an error and keeps the captain on invitations",async({context,page})=>{
+ const fixture=await managementFixture(context);fixture.controls.smsConfigured=false;await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+ await page.getByRole("textbox",{name:"Phone number",exact:true}).fill("2065550101");await page.getByLabel("These players agreed to receive this team invitation by text.",{exact:true}).check();await page.getByRole("button",{name:"Send invitations & finish",exact:true}).click();
+ await expect(page.getByRole("main").getByRole("alert")).toContainText("SMS delivery is not configured");await expect(page.getByRole("textbox",{name:"Phone number",exact:true})).toHaveValue("2065550101");await expect(page.getByRole("heading",{name:"Invite players",exact:true})).toBeVisible();
+});
+test("pending SMS stays for review and a retry retains its delivery batch",async({context,page})=>{
+ const fixture=await managementFixture(context);fixture.controls.smsPending=1;await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+ await page.getByRole("textbox",{name:"Phone number",exact:true}).fill("2065550101");await page.getByLabel("These players agreed to receive this team invitation by text.",{exact:true}).check();await page.getByRole("button",{name:"Send invitations & finish",exact:true}).click();await expect(page.getByRole("status")).toContainText("1 pending");
+ await page.getByRole("button",{name:"Send by email",exact:true}).click();await page.getByRole("button",{name:"Send by SMS",exact:true}).click();await page.getByRole("button",{name:"Send invitations & finish",exact:true}).click();await expect(page.getByRole("status")).toContainText("1 pending");
+ const sends=fixture.writes.filter(w=>w.path.endsWith("/send")).map(w=>w.body as {batchId:string});expect(sends).toHaveLength(2);expect(sends[0].batchId).toBe(sends[1].batchId);await expect(page.getByRole("heading",{name:"Invite players",exact:true})).toBeVisible();
 });

@@ -30,3 +30,13 @@ it("legacy invite cancellation is manager-gated and scoped to this team", async 
   expect((await request({ action: "cancel-legacy", inviteId: playerId })).status).toBe(200);
   expect(query.eq).toHaveBeenCalledWith("group_id", id); expect(query.eq).toHaveBeenCalledWith("id", playerId);
 });
+
+it("normalizes phone-only recipients and routes them through the scoped SMS RPC",async()=>{
+ expect((await request({action:"sms-recipients",recipients:[{id:playerId,name:" Sam ",phone:"(206) 555-0101",confirmedAt:"spoof",email:"spoof"}]})).status).toBe(200);
+ expect(mocks.rpc).toHaveBeenCalledWith("patch_team_sms_invitations",{p_group:id,p_change:{action:"sms-recipients",recipients:[{id:playerId,name:"Sam",phone:"+12065550101"}]}});
+});
+it("phone edits use the scoped SMS RPC while retaining the account and email",async()=>{
+ await request({action:"recipient",playerId,name:"Sam",phone:"2065550101",email:"",associatedAccountId:null});
+ expect(mocks.rpc).toHaveBeenCalledWith("patch_team_sms_invitations",{p_group:id,p_change:expect.objectContaining({phone:"+12065550101",associatedAccountId:null})});
+});
+it("rejects invalid phone entries before the database",async()=>{expect((await request({action:"sms-recipients",recipients:[{id:playerId,name:"Sam",phone:"123"}]})).status).toBe(400);expect(mocks.rpc).not.toHaveBeenCalled();});

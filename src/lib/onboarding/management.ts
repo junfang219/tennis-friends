@@ -1,13 +1,16 @@
 import { z } from "zod";
+import { invitationPhoneSchema } from "./phone";
 import { storedOnboardingSchema } from "./contracts";
 
 export const createTeamSchema = z.object({ name: z.string().trim().min(1, "Enter a team name").max(100), description: z.string().trim().max(2000).default("") });
 const email = z.string().trim().toLowerCase().pipe(z.email());
 export const recipientSchema = z.object({ id: z.uuid(), name: z.string().trim().min(1).max(100), email });
+export const smsRecipientSchema = z.object({ id: z.uuid(), name: z.string().trim().min(1).max(100), phone: invitationPhoneSchema });
 export const teamManagementMutationSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("init") }),
+  z.object({ action: z.literal("sms-recipients"), recipients: z.array(smsRecipientSchema).min(1).max(100) }),
   z.object({ action: z.literal("recipients"), recipients: z.array(recipientSchema).min(1).max(100) }),
-  z.object({ action: z.literal("recipient"), playerId: z.uuid(), name: z.string().trim().min(1).max(100), email: z.union([email, z.literal("")]), associatedAccountId: z.uuid().nullable() }),
+  z.object({ action: z.literal("recipient"), playerId: z.uuid(), name: z.string().trim().min(1).max(100), email: z.union([email, z.literal("")]), associatedAccountId: z.uuid().nullable(), phone: invitationPhoneSchema.optional() }),
   z.object({ action: z.literal("message"), message: z.string().trim().min(1).max(4000), includeUstaInInvitations: z.boolean() }),
   z.object({ action: z.literal("registration"), includeUsta: z.boolean(), ustaTeamName: z.string().trim().max(100), teamNumber: z.string().trim().max(10), deadline: z.union([z.iso.date(), z.literal("")]), includeRegistrationLink: z.boolean() }).refine(v => !v.includeUsta || (/^\d{10}$/.test(v.teamNumber) && Boolean(v.deadline)), "Enter a 10-digit team number and deadline"),
   z.object({ action: z.literal("confirmation"), playerId: z.uuid(), confirmed: z.boolean() }),

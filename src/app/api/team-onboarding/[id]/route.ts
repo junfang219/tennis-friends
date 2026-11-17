@@ -58,7 +58,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     const { error } = await db.from("group_invites").update({ status: "cancelled" }).eq("group_id", id).eq("id", input.inviteId).eq("status", "pending");
     return error ? NextResponse.json({ error: "Could not cancel invitation" }, { status: 400 }) : NextResponse.json({ ok: true });
   }
-  const { error } = await onboardingDb(db).rpc("patch_team_onboarding", { p_group: id, p_change: input as Json });
-  if (error) return NextResponse.json({ error: error.code === "42501" ? "Team manager access required" : "Could not save changes. Revoke issued invitations before correcting a recipient, and check for duplicate emails." }, { status: error.code === "42501" ? 403 : 400 });
+  const rpc = input.action === "sms-recipients" || (input.action === "recipient" && input.phone !== undefined) ? "patch_team_sms_invitations" : "patch_team_onboarding";
+  const { error } = await onboardingDb(db).rpc(rpc, { p_group: id, p_change: input as Json });
+  if (error) return NextResponse.json({ error: error.code === "42501" ? "Team manager access required" : "Could not save changes. Revoke issued invitations before correcting a recipient, and check for duplicate contacts." }, { status: error.code === "42501" ? 403 : 400 });
   return NextResponse.json({ ok: true });
 }

@@ -3,7 +3,7 @@ import type { z } from "zod";
 import type { storedPlayerSchema } from "@/lib/onboarding/contracts";
 
 const mocks = vi.hoisted(() => ({
-  getUser: vi.fn(), rpc: vi.fn(), from: vi.fn(), deliver: vi.fn(),
+  getUser: vi.fn(), rpc: vi.fn(), from: vi.fn(), deliver: vi.fn(), config: vi.fn(),
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: async () => ({ auth: { getUser: mocks.getUser }, rpc: mocks.rpc }),
@@ -11,10 +11,10 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdminClient: () => ({ from: mocks.from }),
 }));
-vi.mock("@/lib/onboarding/delivery", () => ({
-  deliver: mocks.deliver,
-  deliveryConfig: () => ({ origin: "https://example.com", emailKey: "test", emailFrom: "team@example.com" }),
+vi.mock("@/lib/onboarding/delivery", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/onboarding/delivery")>(), deliver: mocks.deliver, deliveryConfig: mocks.config,
 }));
+import { DeliveryError } from "@/lib/onboarding/delivery";
 import { POST } from "./route";
 
 const groupId = "11111111-1111-4111-8111-111111111111";
@@ -43,11 +43,12 @@ function request(mode: "prepare" | "email", reminder = true) {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.config.mockReturnValue({origin:"https://example.com",emailKey:"test",emailFrom:"team@example.com",smsAccount:"AC"+"a".repeat(32),smsToken:"test",smsFrom:"+12065550101"});
   mocks.getUser.mockResolvedValue({ data: { user: { id: accountId } } });
   mocks.deliver.mockResolvedValue("provider-id");
   const query = {
     select: vi.fn(), in: vi.fn(), gte: vi.fn(), update: vi.fn(),
-    eq: vi.fn(), is: vi.fn(), insert: vi.fn(), single: vi.fn(), error: null,
+    eq: vi.fn(), is: vi.fn(), insert: vi.fn(), single: vi.fn(), maybeSingle: vi.fn(), error: null,
   };
   for (const name of ["select", "in", "update", "eq", "is", "insert"] as const) {
     query[name].mockReturnValue(query);
@@ -140,3 +141,38 @@ it("an email instruction opt-out preserves separate USTA tracking", async () => 
   mocks.deliver.mockClear(); await request("email", true);
   expect(mocks.deliver.mock.calls[0][2]).toContain("USTA team:");
 });
+
+const smsRequest=(extra:Record<string,unknown>={})=>POST(new Request("https://example.com/api/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"sms",reminder:false,smsConsent:true,batchId:"55555555-5555-4555-8555-555555555555",...extra})}),{params:Promise.resolve({id:groupId})});
+function smsPlayer(){return player({phone:"+12065550102",email:null,accepted_by:null,accepted_at:null,expires_at:"2099-12-31T00:00:00Z"});}
+it("sends phone-only invitations by SMS with each personal join URL",async()=>{
+ setPlayers([smsPlayer()]);expect(await(await smsRequest()).json()).toMatchObject({sent:1,failed:0,pending:0});
+ expect(mocks.deliver).toHaveBeenCalledWith("sms","+12065550102",expect.stringContaining(`/team-invitations/${"a".repeat(64)}`),expect.any(String),"delivery-id",expect.any(Object));
+ expect(mocks.from("team_onboarding_deliveries").insert).toHaveBeenCalledWith(expect.objectContaining({channel:"sms",status:"sending"}));
+});
+it("requires SMS consent before claiming or sending",async()=>{expect((await smsRequest({smsConsent:false})).status).toBe(400);expect(mocks.rpc).not.toHaveBeenCalled();expect(mocks.deliver).not.toHaveBeenCalled();});
+it("fails clearly before delivery claims when Twilio is not configured",async()=>{
+ setPlayers([smsPlayer()]);mocks.config.mockReturnValue({origin:"https://example.com"});expect((await smsRequest()).status).toBe(503);expect(mocks.from("team_onboarding_deliveries").insert).not.toHaveBeenCalled();expect(mocks.deliver).not.toHaveBeenCalled();
+});
+it("leaves uncertain SMS attempts pending without marking failed or retrying",async()=>{
+ setPlayers([smsPlayer()]);mocks.deliver.mockRejectedValueOnce(new DeliveryError("timeout","unknown"));
+ expect(await(await smsRequest()).json()).toMatchObject({sent:0,failed:0,pending:1});expect(mocks.deliver).toHaveBeenCalledTimes(1);expect(mocks.from("team_onboarding_deliveries").update).not.toHaveBeenCalled();
+});
+it("records explicit SMS rejection as failed",async()=>{
+ setPlayers([smsPlayer()]);mocks.deliver.mockRejectedValueOnce(new DeliveryError("rejected","failed"));expect(await(await smsRequest()).json()).toMatchObject({sent:0,failed:1,pending:0});expect(mocks.from("team_onboarding_deliveries").update).toHaveBeenCalledWith({status:"failed"});
+});
+it.each(["sent","sending","failed"])("duplicate SMS claim in %s state never calls the provider again",async status=>{
+ setPlayers([smsPlayer()]);const query=mocks.from("team_onboarding_deliveries");query.single.mockResolvedValue({data:null,error:{code:"23505"}});query.maybeSingle.mockResolvedValue({data:{status}});
+ expect(await(await smsRequest()).json()).toMatchObject({sent:status==="sent"?1:0,pending:status==="sending"?1:0,failed:status==="failed"?1:0});expect(mocks.deliver).not.toHaveBeenCalled();
+});
+it("a pending SMS in another batch also blocks sending",async()=>{
+ setPlayers([smsPlayer()]);const query=mocks.from("team_onboarding_deliveries");query.single.mockResolvedValue({data:null,error:{code:"23505"}});query.maybeSingle.mockResolvedValue({data:null});expect(await(await smsRequest()).json()).toMatchObject({pending:1});expect(mocks.deliver).not.toHaveBeenCalled();
+});
+it.each([{phone:null},{phone:"invalid"},{accepted_by:accountId},{revoked_at:"2026-11-17T00:00:00Z"}])("does not text an unavailable or invalid SMS recipient %j",async overrides=>{
+ setPlayers([{...smsPlayer(),...overrides}]);await smsRequest();expect(mocks.deliver).not.toHaveBeenCalled();
+});
+it("does not treat a foreign selected player ID as permission to send",async()=>{setPlayers([smsPlayer()]);expect((await smsRequest({playerIds:["99999999-9999-4999-8999-999999999999"]})).status).toBe(400);expect(mocks.deliver).not.toHaveBeenCalled();});
+it("does not send SMS USTA reminders under invitation consent",async()=>{expect((await smsRequest({reminder:true})).status).toBe(400);expect(mocks.deliver).not.toHaveBeenCalled();});
+it("caps SMS attempts before claiming another batch",async()=>{setPlayers([smsPlayer()]);mocks.from("team_onboarding_deliveries").gte.mockResolvedValue({count:100});expect((await smsRequest()).status).toBe(429);expect(mocks.deliver).not.toHaveBeenCalled();});
+it("rejects an oversized SMS before creating a delivery",async()=>{mocks.rpc.mockResolvedValue({data:{config:{name:"Team",description:"a".repeat(2000),includeUsta:false,teamNumber:"",deadline:""},players:[smsPlayer()]},error:null});expect((await smsRequest()).status).toBe(400);expect(mocks.deliver).not.toHaveBeenCalled();});
+
+it("does not text a localhost invitation URL that the receiving phone cannot open",async()=>{setPlayers([smsPlayer()]);mocks.config.mockReturnValue({...mocks.config(),origin:"http://127.0.0.1:3110"});expect((await smsRequest()).status).toBe(503);expect(mocks.deliver).not.toHaveBeenCalled();});

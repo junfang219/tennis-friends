@@ -14,7 +14,7 @@ export function player(id = playerId, overrides: Partial<z.infer<typeof storedPl
 export async function managementFixture(context: BrowserContext, initialPlayers: z.infer<typeof storedPlayerSchema>[] = []) {
   const state: TeamManagementState = { config: { name: "Shared review", description: "Saved description", includeUsta: false, teamNumber: "", deadline: "" }, players: initialPlayers, members: [], legacyInvitations: [] };
   const shared: z.infer<typeof teamLinkStateSchema> = { token: null, enabled: false, requests: [] };
-  const controls = { denyApproval: false, status: "ready", emailFailed: 0, emailPending: 0 };
+  const controls = { denyApproval: false, status: "ready", emailFailed: 0, emailPending: 0, smsPending: 0, smsFailed: 0, smsConfigured: true };
   const writes: Array<{ path: string; method: string; body: unknown }> = [];
   await context.route("**/api/**", async route => {
     const req = route.request(), path = new URL(req.url()).pathname;
@@ -46,21 +46,24 @@ export async function managementFixture(context: BrowserContext, initialPlayers:
       return route.fulfill({ json: { ok: true } });
     }
     if (path.endsWith("/send")) {
-      const body = z.object({ mode: z.enum(["prepare", "email"]), reminder: z.boolean(), playerIds: z.array(z.uuid()).optional() }).parse(req.postDataJSON());
+      const body = z.object({ mode: z.enum(["prepare", "email", "sms"]), reminder: z.boolean(), playerIds: z.array(z.uuid()).optional() }).parse(req.postDataJSON());
+      if (body.mode === "sms" && !controls.smsConfigured) return route.fulfill({ status: 503, json: { error: "SMS delivery is not configured. Use email or the shared team link." } });
       const selected = state.players.filter(p => (!body.playerIds || body.playerIds.includes(p.id)) && (!body.reminder || !p.confirmed_at) && !p.revoked_at);
       if (body.mode === "prepare") return route.fulfill({ json: { invitations: selected.map(p => ({ id: p.id, name: p.name, message: `Reminder: ${p.name} · ${state.config.teamNumber}` })) } });
       for (const p of selected) p.sent_at = "2026-11-17T02:00:00Z";
-      return route.fulfill({ json: { sent: Math.max(0, selected.length - controls.emailFailed - controls.emailPending), failed: controls.emailFailed, pending: controls.emailPending, message: "Test provider accepted email" } });
+      const failed = body.mode === "sms" ? controls.smsFailed : controls.emailFailed, pending = body.mode === "sms" ? controls.smsPending : controls.emailPending;
+      return route.fulfill({ json: { sent: Math.max(0, selected.length - failed - pending), failed, pending, message: "Test provider report" } });
     }
     if (path === `/api/team-onboarding/${groupId}`) {
       if (req.method() === "PUT") throw new Error("Full-roster writes are forbidden in the new flow");
       if (req.method() === "PATCH") {
         const input = teamManagementMutationSchema.parse(req.postDataJSON());
+        if (input.action === "sms-recipients") { for (const r of input.recipients) if (!state.players.some(p => p.id === r.id)) state.players.push(player(r.id, { name: r.name, phone: r.phone, email: null, sent_at: null })); }
         if (input.action === "recipients") { for (const r of input.recipients) if (!state.players.some(p => p.id === r.id)) state.players.push(player(r.id, { name: r.name, email: r.email, sent_at: null })); }
         if (input.action === "message") { state.config.invitationMessage = input.message; state.config.includeUstaInInvitations = input.includeUstaInInvitations; }
         if (input.action === "registration") { const { action: _action, ...config } = input; void _action; state.config = { ...state.config, ...config }; }
         if (input.action === "confirmation") { let p = state.players.find(p => p.id === input.playerId); if (!p) { const m = state.members.find(m => m.id === input.playerId); if (m) { p = player(m.id, { name: m.name, accepted_by: m.userId, sent_at: null }); state.players.push(p); } } if (p) p.confirmed_at = input.confirmed ? "2026-11-17T00:00:00Z" : null; }
-        if (input.action === "recipient") { const p = state.players.find(p => p.id === input.playerId); if (p) { const changed = p.email !== input.email || p.associated_account_id !== input.associatedAccountId; Object.assign(p, { name: input.name, email: input.email, associated_account_id: input.associatedAccountId }); if (p.revoked_at && changed) { p.sent_at = null; p.token = "e".repeat(64); } } }
+        if (input.action === "recipient") { const p = state.players.find(p => p.id === input.playerId); if (p) { const changed = p.email !== input.email || p.associated_account_id !== input.associatedAccountId || (input.phone !== undefined && p.phone !== input.phone); Object.assign(p, { name: input.name, email: input.email, associated_account_id: input.associatedAccountId, ...(input.phone !== undefined ? {phone: input.phone} : {}) }); if (p.revoked_at && changed) { p.sent_at = null; p.token = "e".repeat(64); } } }
         if (input.action === "cancel-legacy") state.legacyInvitations = state.legacyInvitations.filter(i => i.id !== input.inviteId);
         return route.fulfill({ json: { ok: true } });
       }
