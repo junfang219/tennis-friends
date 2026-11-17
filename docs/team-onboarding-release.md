@@ -2,7 +2,7 @@
 
 ## Pending PR #32: shared link with approval
 
-This branch adds a shared team link alongside personal email invitations. It is not deployed. Before deploying, apply `supabase/migrations/20261117070738_shared_team_join_approval.sql` to staging and verify the hosted flow; apply it to production only as part of an authorized release. The migration adds tables and checked functions without changing existing onboarding records.
+This branch adds a shared team link alongside personal email invitations. It is not deployed. The shared-link migration was applied to the production TennisFriend database on November 17, 2026 with explicit user approval, so the local app can use the new controls. Its hosted version is `20261117162141`; the local filename now matches hosted migration history. Do not reapply it. The application remains unmerged and undeployed; real-recipient sharing requires an application deployment as well. The migration adds tables and checked functions without changing existing onboarding records.
 
 - The Players step is optional. Add names for an intended roster and optional emails for personal invitations. Phone entry is removed; previously saved phone contacts are preserved for compatibility.
 - On Overview, create/copy/share one team link with an individual player or a group. It remains active until disabled or replaced. Replacing invalidates the old URL; disabling prevents new requests. Neither removes members or pending requests.
@@ -12,6 +12,14 @@ This branch adds a shared team link alongside personal email invitations. It is 
 - New tables have RLS enabled and no direct client table grants. Public RPCs are invokers; private implementations check authentication, manager permissions, token validity, and team/request/roster ownership. All mutations use the existing group-first lock order.
 
 Verification uses the actual migrations in embedded PostgreSQL plus route/unit tests and the production React components with isolated API fixtures at 375px and desktop. No hosted schema, team data, or email delivery is changed by these tests. Run `npm test`, `npm run test:e2e:onboarding`, and the embedded database command below. The browser suite uses installed Google Chrome; the development-only fixture server rejects live API requests.
+
+### Shared-link migration verification — November 17, 2026
+
+- Applied only the reviewed additive migration. Before/after fingerprints matched for profiles, groups, memberships, onboarding settings, intended players, delivery records, and all existing public function definitions.
+- Both new tables have RLS enabled and no anonymous or authenticated direct table reads. Anonymous execution of request creation is denied; the public RPC wrappers are security invokers.
+- The advisor delta has no new security warnings. Two informational [RLS-without-policies notices](https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy) describe the intentionally closed RPC-only tables. New unused-index notices are expected before traffic; existing unrelated advisories were unchanged.
+- Reloaded the user's local Overview for team `2222`, confirmed the setup error disappeared, and created its shared link through the signed-in captain UI. The link field, Share team link, Copy link, and the success message appeared. No join request, membership, or email was created by this verification.
+- The generated link currently points to the local app on port 3110. PR #32 is not merged or deployed, so do not distribute a production-domain shared link until the application release.
 
 ## Current production release — November 15, 2026
 
