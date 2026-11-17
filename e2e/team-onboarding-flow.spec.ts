@@ -215,3 +215,60 @@ test("pending SMS stays for review and a retry retains its delivery batch",async
  await page.getByRole("button",{name:"Send by email",exact:true}).click();await page.getByRole("button",{name:"Send by SMS",exact:true}).click();await page.getByRole("button",{name:"Send invitations & finish",exact:true}).click();await expect(page.getByRole("status")).toContainText("1 pending");
  const sends=fixture.writes.filter(w=>w.path.endsWith("/send")).map(w=>w.body as {batchId:string});expect(sends).toHaveLength(2);expect(sends[0].batchId).toBe(sends[1].batchId);await expect(page.getByRole("heading",{name:"Invite players",exact:true})).toBeVisible();
 });
+
+for (const delivery of ["sms", "email"] as const) test(`include USTA details with the ${delivery} invitation without leaving setup`, async ({ context, page }) => {
+  const fixture = await managementFixture(context, [player(playerId, { confirmed_at: "2026-11-17T00:00:00Z" })]);
+  await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+  const include = page.getByLabel("Include USTA registration instructions", { exact: true });
+  await expect(include).not.toBeChecked();
+  await expect(page.getByLabel("USTA team number", { exact: true })).toHaveCount(0);
+  await include.check();
+  await page.getByLabel("USTA team name", { exact: true }).fill("TEST ONLY — USTA details");
+  await page.getByLabel("USTA team number", { exact: true }).fill("0000000000");
+  await page.getByLabel("Registration deadline", { exact: true }).fill("2026-11-24");
+  await page.getByLabel("Include USTA registration link in invitation", { exact: true }).uncheck();
+  await page.getByRole("button", { name: "Send by email", exact: true }).click();
+  await expect(page.getByLabel("USTA team number", { exact: true })).toHaveValue("0000000000");
+  if (delivery === "sms") {
+    await page.getByRole("button", { name: "Send by SMS", exact: true }).click();
+    await page.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550101");
+    await page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
+  } else await page.getByRole("textbox", { name: "Email", exact: true }).fill("usta@example.com");
+  expect(fixture.writes).toHaveLength(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: `/tmp/tennis-invite-usta-${delivery}-${test.info().project.name}.png`, fullPage: true });
+  await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+  expect(fixture.state.config).toMatchObject({ includeUsta: true, includeUstaInInvitations: true, ustaTeamName: "TEST ONLY — USTA details", teamNumber: "0000000000", deadline: "2026-11-24", includeRegistrationLink: false });
+  expect(fixture.state.players[0].confirmed_at).toBe("2026-11-17T00:00:00Z");
+  const registration = fixture.writes.findIndex(w => (w.body as { action?: string }).action === "registration");
+  const send = fixture.writes.findIndex(w => w.path.endsWith("/send"));
+  expect(registration).toBeGreaterThanOrEqual(0); expect(registration).toBeLessThan(send);
+});
+test("USTA details are required only when included and incomplete details never save or send", async ({ context, page }) => {
+  const fixture = await managementFixture(context);
+  await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+  await page.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550101");
+  await page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
+  await page.getByLabel("Include USTA registration instructions", { exact: true }).check();
+  await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  expect(fixture.writes).toHaveLength(0);
+  await expect(page.getByLabel("USTA team number", { exact: true })).toHaveAttribute("required", "");
+  await page.getByLabel("Include USTA registration instructions", { exact: true }).uncheck();
+  await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+  expect(fixture.state.config.includeUsta).toBe(false);
+  expect(fixture.writes.some(w => (w.body as { action?: string }).action === "registration")).toBe(false);
+});
+test("omitting USTA instructions keeps existing registration tracking enabled", async ({ context, page }) => {
+  const fixture = await managementFixture(context);
+  fixture.state.config = { ...fixture.state.config, includeUsta: true, teamNumber: "0000000000", deadline: "2026-11-24" };
+  await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+  await page.getByLabel("Include USTA registration instructions", { exact: true }).uncheck();
+  await page.getByRole("button", { name: "Send by email", exact: true }).click();
+  await page.getByRole("textbox", { name: "Email", exact: true }).fill("omit@example.com");
+  await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+  expect(fixture.state.config).toMatchObject({ includeUsta: true, includeUstaInInvitations: false, teamNumber: "0000000000", deadline: "2026-11-24" });
+  expect(fixture.writes.some(w => (w.body as { action?: string }).action === "registration")).toBe(false);
+});

@@ -176,3 +176,12 @@ it("caps SMS attempts before claiming another batch",async()=>{setPlayers([smsPl
 it("rejects an oversized SMS before creating a delivery",async()=>{mocks.rpc.mockResolvedValue({data:{config:{name:"Team",description:"a".repeat(2000),includeUsta:false,teamNumber:"",deadline:""},players:[smsPlayer()]},error:null});expect((await smsRequest()).status).toBe(400);expect(mocks.deliver).not.toHaveBeenCalled();});
 
 it("does not text a localhost invitation URL that the receiving phone cannot open",async()=>{setPlayers([smsPlayer()]);mocks.config.mockReturnValue({...mocks.config(),origin:"http://127.0.0.1:3110"});expect((await smsRequest()).status).toBe(503);expect(mocks.deliver).not.toHaveBeenCalled();});
+
+it.each(["sms", "email"] as const)("includes saved USTA details in the actual %s provider message", async mode => {
+  mocks.rpc.mockResolvedValue({ data: { config: { name: "Test team", includeUsta: true, includeUstaInInvitations: true, ustaTeamName: "TEST ONLY USTA", teamNumber: "0000000000", deadline: "2099-12-01", includeRegistrationLink: true }, players: [{ ...smsPlayer(), email: "player@example.com" }] }, error: null });
+  if (mode === "sms") await smsRequest(); else await request("email", false);
+  const message = mocks.deliver.mock.calls[0][2] as string;
+  expect(message).toContain("USTA team: TEST ONLY USTA"); expect(message).toContain("Team number: 0000000000");
+  expect(message).toContain("Register by: December 1, 2099"); expect(message).toContain("https://tennislink.usta.com/");
+  expect(message).toContain(`/team-invitations/${"a".repeat(64)}`);
+});

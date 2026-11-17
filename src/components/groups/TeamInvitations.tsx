@@ -9,7 +9,7 @@ import AddFriendsPanel from "./AddFriendsPanel";
 import InvitePlayersPanel from "./InvitePlayersPanel";
 import { useTeamManagement, teamResponse } from "./useTeamManagement";
 import type { RosterGroup } from "./TeamRoster";
-import { recipientSchema, smsRecipientSchema } from "@/lib/onboarding/management";
+import { recipientSchema, smsRecipientSchema, teamManagementMutationSchema } from "@/lib/onboarding/management";
 import type { storedPlayerSchema } from "@/lib/onboarding/contracts";
 type Channel = "sms" | "email";
 type RecipientRow = { id: string; name: string; contact: string };
@@ -38,16 +38,24 @@ export default function TeamInvitations({ group, review = false, setup = false }
   const rows = drafts[channel];
   function setRows(next: (all: RecipientRow[]) => RecipientRow[]) { setDrafts(all => ({ ...all, [channel]: next(all[channel]) })); }
   const [message, setMessage] = useState<string | null>(null); const [includeUsta, setIncludeUsta] = useState<boolean | null>(null);
+  const [ustaDraft, setUstaDraft] = useState<{ ustaTeamName: string; teamNumber: string; deadline: string; includeRegistrationLink: boolean } | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<string | null>(null); const [more, setMore] = useState<"friends" | "availability" | null>(null);
   const batches = useRef<Record<string, string>>({});
   async function action(work: () => Promise<void>) { if (busy) return; setBusy(true); setError(""); setNotice(""); try { await work(); } catch (e) { setError(e instanceof z.ZodError ? e.issues[0]?.message ?? "Check the invitation details" : e instanceof Error ? e.message : "Could not complete action"); } finally { setBusy(false); } }
   const body = message ?? state?.config.invitationMessage ?? `You're invited to join ${group.name} on TennisFriends!`;
-  const withUsta = includeUsta ?? state?.config.includeUstaInInvitations !== false;
+  const withUsta = includeUsta ?? Boolean(state?.config.includeUsta && state.config.includeUstaInInvitations !== false);
+  const usta = ustaDraft ?? { ustaTeamName: state?.config.ustaTeamName ?? group.name, teamNumber: state?.config.teamNumber ?? "", deadline: state?.config.deadline ?? "", includeRegistrationLink: state?.config.includeRegistrationLink !== false };
+  function registrationChange() {
+    if (!withUsta) return null;
+    return teamManagementMutationSchema.parse({ action: "registration", includeUsta: true, ...usta });
+  }
   async function send(ids: string[], delivery: Channel, finish = false) {
     if (delivery === "sms" && !smsConsent) throw new Error("In Send by SMS, confirm these players agreed to receive their invitation by text.");
+    const registration = registrationChange();
+    if (registration && (!state?.config.includeUsta || ustaDraft !== null)) await mutate(registration);
     await mutate({ action: "message", message: body, includeUstaInInvitations: withUsta });
-    const batchKey = JSON.stringify({ ids: [...ids].sort(), delivery, body, withUsta });
+    const batchKey = JSON.stringify({ ids: [...ids].sort(), delivery, body, withUsta, usta: withUsta ? usta : null });
     batches.current[batchKey] ??= crypto.randomUUID();
     const report = z.object({ sent: z.number(), failed: z.number(), pending: z.number(), message: z.string() }).parse(await teamResponse(await fetch(`/api/team-onboarding/${group.id}/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: delivery, smsConsent: delivery === "sms" ? smsConsent : undefined, reminder: false, batchId: batches.current[batchKey], playerIds: ids }) })));
     setNotice(`${report.sent} ${delivery === "sms" ? "texts" : "emails"} accepted; ${report.failed} failed; ${report.pending} pending. ${report.message}`);
@@ -68,6 +76,7 @@ export default function TeamInvitations({ group, review = false, setup = false }
       {mode !== "link" && state && <section className="rounded-2xl border bg-white p-5 space-y-4"><h2 className="font-bold text-xl">{channel === "sms" ? "Text invitations" : "Personal email invitations"}</h2><p className="text-sm text-gray-600">TennisFriends sends each player a personal invitation link. They sign in and accept to join. {channel === "sms" ? "Enter phone numbers; names are optional. Use +country code outside the US or Canada." : "Enter email addresses; names are optional."}</p>
         <form className="space-y-4" onSubmit={e => { e.preventDefault(); void action(async () => {
           if (!body.trim()) throw new Error("Enter an invitation message");
+          registrationChange();
           if (channel === "sms") {
             if (!smsConsent) throw new Error("Confirm these players agreed to receive this invitation by SMS");
             const recipients = z.array(smsRecipientSchema).min(1).parse(rows.map(row => ({ id: row.id, name: row.name.trim() || `Player · ${row.contact.replace(/\D/g, "").slice(-4)}`, phone: row.contact })));
@@ -82,7 +91,16 @@ export default function TeamInvitations({ group, review = false, setup = false }
           {rows.map((row, index) => <fieldset key={row.id} className="rounded-xl border border-gray-200 p-3 space-y-3"><legend className="px-1 text-sm font-semibold">Recipient {index + 1}</legend><label className="block text-sm">{channel === "sms" ? "Phone number" : "Email"}<input className={input} required type={channel === "sms" ? "tel" : "email"} autoComplete={channel === "sms" ? "tel" : "email"} value={row.contact} onChange={e => setRows(all => all.map(r => r.id === row.id ? { ...r, contact: e.target.value } : r))} /></label><label className="block text-sm">Name (optional)<input className={input} maxLength={100} value={row.name} onChange={e => setRows(all => all.map(r => r.id === row.id ? { ...r, name: e.target.value } : r))} /></label>{rows.length > 1 && <button type="button" className="text-sm underline text-red-800" onClick={() => setRows(all => all.filter(r => r.id !== row.id))}>Remove recipient {index + 1}</button>}</fieldset>)}
           <button type="button" className="btn-secondary w-full" onClick={() => setRows(all => [...all, blankRow()])}>{channel === "sms" ? "Add another phone number" : "Add another email"}</button>
           <details className="rounded-xl border p-3"><summary className="cursor-pointer text-sm font-semibold text-court-green">Customize message</summary><label className="block text-sm mt-3">Invitation message<textarea className={input} rows={4} value={body} onChange={e => setMessage(e.target.value)} /></label></details>
-          {state.config.includeUsta ? <label className="flex gap-3 text-sm"><input type="checkbox" checked={withUsta} onChange={e => setIncludeUsta(e.target.checked)} />Include USTA instructions</label> : setup ? <p className="text-sm text-gray-600">You can set up USTA registration later from Roster.</p> : <p className="text-sm text-gray-600">USTA registration is optional. <Link className="underline text-court-green" href={`/groups/${group.id}/registration`}>Set it up separately</Link>.</p>}
+          <fieldset className="rounded-xl border border-gray-200 p-4 space-y-4 min-w-0">
+            <legend className="px-1 text-sm font-semibold">USTA registration (optional)</legend>
+            <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={withUsta} onChange={e => setIncludeUsta(e.target.checked)} />Include USTA registration instructions</label>
+            {withUsta && <><p className="text-sm text-gray-600">Add the team number and deadline to each invitation. These details are saved when you send; manage registration and confirmations from Roster.</p>
+              <label className="block text-sm">USTA team name<input className={input} maxLength={100} value={usta.ustaTeamName} onChange={e => setUstaDraft({ ...usta, ustaTeamName: e.target.value })} /></label>
+              <label className="block text-sm">USTA team number<input className={input} inputMode="numeric" required pattern="[0-9]{10}" maxLength={10} value={usta.teamNumber} onChange={e => setUstaDraft({ ...usta, teamNumber: e.target.value })} /></label>
+              <label className="block text-sm">Registration deadline<input className={input} type="date" required value={usta.deadline} onChange={e => setUstaDraft({ ...usta, deadline: e.target.value })} /></label>
+              <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={usta.includeRegistrationLink} onChange={e => setUstaDraft({ ...usta, includeRegistrationLink: e.target.checked })} />Include USTA registration link in invitation</label>
+            </>}
+          </fieldset>
           {channel === "sms" && <label className="flex items-start gap-3 text-sm"><input required type="checkbox" className="mt-1" checked={smsConsent} onChange={e => setSmsConsent(e.target.checked)} />These players agreed to receive this team invitation by text.</label>}
           <button className="btn-primary h-12 w-full" type="submit">{busy ? "Sending…" : setup ? "Send invitations & finish" : channel === "sms" ? "Send SMS invitations" : "Send invitations"}</button>
         </form>

@@ -12,7 +12,13 @@ The application is unmerged and undeployed. `/groups/new` now collects only team
 
 The already approved shared-link migration is installed in production as `20261117162141_shared_team_join_approval.sql`; do not reapply it. The separately approved scoped-edit migration is also installed as `20261117181245_roster_first_team_management.sql`. Its local filename matches hosted migration history; do not reapply it. It adds a private checked implementation and public invoker wrapper without updating existing team data during installation. The local app can now use the new save controls.
 
-Verification: 725 unit/route tests, 52 browser cases at 375px and desktop, and 98 embedded PostgreSQL checks pass. TypeScript, changed-file ESLint, and diff checks pass; the team page's three existing image warnings are unchanged. Automated tests use isolated fixtures and send no real messages. The review middleware rewrites only the fixed fixture team's canonical routes and blocks live APIs; friend/guest actions cannot reach live data in review mode.
+Verification: 727 unit/route tests, 60 browser cases at 375px and desktop, and 98 embedded PostgreSQL checks pass. TypeScript, changed-file ESLint, and diff checks pass; the team page's three existing image warnings are unchanged. Automated tests use isolated fixtures and send no real messages. The review middleware rewrites only the fixed fixture team's canonical routes and blocks live APIs; friend/guest actions cannot reach live data in review mode.
+
+### Include USTA registration with invitations — November 17, 2026
+
+- Invite players now has an optional **Include USTA registration instructions** choice for SMS and email. Checking it reveals USTA team name, the required 10-digit team number and deadline, and an optional TennisLink registration URL. Fields start from saved settings and retain edits when switching delivery methods.
+- The existing Send action saves changed registration details through the scoped registration API before sending, so the provider message includes the number/deadline and selected URL. There is no extra save button or navigation step. Invalid or incomplete registration input blocks sending; unchecking the option omits instructions without disabling existing Roster tracking or changing confirmations. Delivery batch identity includes the selected registration details.
+- Regression tests cover both delivery methods, optional/required fields, method switching, saving before delivery, confirmation preservation, instruction opt-out retaining tracking, and actual provider message content. No migration or live data change is required for this UI revision.
 
 ### Automatic SMS invitations — November 17, 2026
 
