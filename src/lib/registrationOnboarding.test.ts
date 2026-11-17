@@ -36,7 +36,7 @@ it("sends app-only invitations without USTA fields and always includes a join li
   expect(message).toContain("Join the team: http://localhost/join");
   expect(message).toContain("Saturday tennis");
   expect(message).not.toContain("USTA");
-  expect(registrationMessage({ ...draft, includeDescription: false }, "http://localhost/join")).not.toContain("Saturday tennis");
+  expect(registrationMessage({ ...draft, includeDescription: false }, "http://localhost/join")).toContain("Saturday tennis");
 });
 it("supports USTA tasks added later and captain-selected registration links", () => {
   const player = prepareRegistrationPlayer({ id: "one", name: "Sam", phone: "2065550101", email: "" }, []);

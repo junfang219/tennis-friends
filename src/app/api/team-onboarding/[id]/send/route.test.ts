@@ -71,6 +71,23 @@ it("prepares a shareable USTA reminder for a joined player after join-link expir
   expect(mocks.deliver).not.toHaveBeenCalled();
 });
 
+it.each(["prepare", "email"] as const)("includes a legacy draft's description in %s invitations", async mode => {
+  mocks.rpc.mockResolvedValue({ data: {
+    config: { name: "Test team", description: "Saturday tennis together", includeDescription: false, includeUsta: false, teamNumber: "", deadline: "" },
+    players: [player({ accepted_by: null, accepted_at: null, expires_at: "2099-12-01T00:00:00Z" })],
+  }, error: null });
+  const response = await request(mode, false);
+  expect(response.status).toBe(200);
+  if (mode === "prepare") {
+    expect(await response.json()).toMatchObject({ invitations: [{ message: expect.stringContaining("Saturday tennis together") }] });
+    expect(mocks.deliver).not.toHaveBeenCalled();
+  } else {
+    expect(await response.json()).toMatchObject({ sent: 1, failed: 0, pending: 0 });
+    expect(mocks.deliver).toHaveBeenCalledWith("email", "player@example.com",
+      expect.stringContaining("Saturday tennis together"), expect.any(String), "delivery-id", expect.any(Object));
+  }
+});
+
 it.each(["prepare", "email"] as const)("keeps expired unaccepted invitations blocked in %s mode", async mode => {
   setPlayers([player({ accepted_by: null, accepted_at: null })]);
   const response = await request(mode);

@@ -21,7 +21,9 @@ export const registrationDraftSchema = z.object({
   description: z.string().max(2000).optional(),
   ustaTeamName: z.string().max(100).optional(),
   includeUsta: z.boolean().optional(),
-  includeDescription: z.boolean().optional(),
+  // Retain the database compatibility field, but retire the old UI opt-out.
+  // Missing flags already default to inclusion in the invitation lookup.
+  includeDescription: z.boolean().transform((): boolean => true).optional(),
   includeRegistrationLink: z.boolean().optional(),
 });
 export type RegistrationDraft = z.infer<typeof registrationDraftSchema>;
@@ -45,7 +47,7 @@ export function parseRegistrationPlayers(text: string): RegistrationPlayer[] {
 }
 export function registrationMessage(draft: RegistrationDraft, teamLink: string, reminder = false) {
   const lines = [reminder ? `Reminder: please register for ${draft.ustaTeamName || draft.name} on USTA.` : (draft.invitationMessage ?? `You're invited to join ${draft.name} on TennisFriends!`)];
-  if (draft.includeDescription !== false && draft.description?.trim()) lines.push(draft.description.trim());
+  if (draft.description?.trim()) lines.push(draft.description.trim());
   if (draft.includeUsta !== false) {
     lines.push(`USTA team: ${draft.ustaTeamName || draft.name}`, `Team number: ${draft.teamNumber}`, `Register by: ${formatDeadline(draft.deadline)}`);
     if (draft.includeRegistrationLink !== false) lines.push(`Register: ${REGISTRATION_URL}`);
