@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ getUser: vi.fn(), rpc: vi.fn(), from: vi.fn(), group: { owner_id: "11111111-1111-4111-8111-111111111111" }, member: { id: "44444444-4444-4444-8444-444444444444", user_id: "55555555-5555-4555-8555-555555555555" as string | null, roles: [] as string[] }, update: vi.fn(), remove: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createSupabaseServerClient: async () => ({ auth: { getUser: mocks.getUser }, rpc: mocks.rpc, from: mocks.from }) }));
-import { PATCH } from "./route";
+import { PATCH, DELETE } from "./route";
 const id = "33333333-3333-4333-8333-333333333333", memberId = "44444444-4444-4444-8444-444444444444";
 const request = (body: unknown) => PATCH(new Request("https://example.com", { method: "PATCH", body: JSON.stringify(body) }), { params: Promise.resolve({ id }) });
 beforeEach(() => {
@@ -18,3 +18,10 @@ it("keeps ownership transfer restricted to the owner and actual team member", as
 it("cannot transfer ownership to a guest placeholder", async () => { mocks.member.user_id = null; expect((await request({ action: "transfer-owner", memberId })).status).toBe(403); });
 it("does not remove the owner", async () => { mocks.member.user_id = mocks.group.owner_id; expect((await request({ action: "remove", memberId })).status).toBe(403); expect(mocks.remove).not.toHaveBeenCalled(); });
 it("validates role inputs before database writes", async () => { expect((await request({ action: "member", memberId, roles: ["owner"] })).status).toBe(400); expect(mocks.update).not.toHaveBeenCalled(); });
+
+const membershipRequest = (body: unknown) => DELETE(new Request("https://example.com", { method: "DELETE", body: JSON.stringify(body) }), { params: Promise.resolve({ id }) });
+it("requires sign-in for team lifecycle actions", async () => { mocks.getUser.mockResolvedValue({ data: { user: null } }); expect((await membershipRequest({ action: "delete-team" })).status).toBe(401); expect(mocks.remove).not.toHaveBeenCalled(); });
+it("preserves the owner's existing ability to delete the team", async () => { expect((await membershipRequest({ action: "delete-team" })).status).toBe(200); expect(mocks.remove).toHaveBeenCalledTimes(1); });
+it("denies deleting a team as a non-owner", async () => { mocks.getUser.mockResolvedValue({ data: { user: { id: mocks.member.user_id } } }); expect((await membershipRequest({ action: "delete-team" })).status).toBe(403); expect(mocks.remove).not.toHaveBeenCalled(); });
+it("requires owners to transfer ownership before leaving", async () => { expect((await membershipRequest({ action: "leave-team" })).status).toBe(403); expect(mocks.remove).not.toHaveBeenCalled(); });
+it("allows a non-owner to leave without requiring manager access", async () => { mocks.getUser.mockResolvedValue({ data: { user: { id: mocks.member.user_id } } }); expect((await membershipRequest({ action: "leave-team", userId: "forged" })).status).toBe(200); expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.remove).toHaveBeenCalledTimes(1); });

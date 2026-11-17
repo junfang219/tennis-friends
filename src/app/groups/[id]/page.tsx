@@ -20,7 +20,7 @@ import { toGroupCamel, toGroupMemberCamel } from "@/lib/supabase/adapters";
 import { adaptFeedPost, type FeedPostView } from "@/lib/adaptFeedPost";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { errorMessage } from "@/lib/errorMessage";
-import { canAdmin, type TeamRole } from "@/lib/groupRoles";
+import { type TeamRole } from "@/lib/groupRoles";
 
 type Member = {
   id: string;
@@ -189,12 +189,6 @@ export default function GroupPage() {
               </Link>
             </div>
 
-            {process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" && <div className="mt-4 grid grid-cols-2 gap-3">
-              <Link href={`/groups/${group.id}/roster`} className="btn-secondary text-center">Roster</Link>
-              {canAdmin({ isOwner: session?.user?.id === group.ownerId, roles: group.members.find(m => m.user.id === session?.user?.id)?.roles ?? [] }) && <Link href={`/groups/${group.id}/invite-players`} className="btn-primary text-center">Invite players</Link>}
-              {canAdmin({ isOwner: session?.user?.id === group.ownerId, roles: group.members.find(m => m.user.id === session?.user?.id)?.roles ?? [] }) && <Link href={`/groups/${group.id}/registration`} className="text-sm underline text-court-green col-span-2">USTA registration</Link>}
-            </div>}
-
             {/* Members row */}
             <div className="mt-4 flex items-center gap-3">
               <div className="flex items-center -space-x-2">
@@ -216,12 +210,14 @@ export default function GroupPage() {
                   </div>
                 )}
               </div>
+              {process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" ? <Link href={`/groups/${group.id}/roster`} className="text-sm font-semibold text-court-green underline underline-offset-4">Rosters</Link> : (
               <MembersButton
                 groupId={group.id}
                 ownerId={group.ownerId}
                 members={group.members}
                 currentUserId={session?.user?.id || ""}
               />
+              )}
             </div>
 
             {/* Team actions */}

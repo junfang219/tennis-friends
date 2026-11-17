@@ -15,7 +15,7 @@ export default async function OnboardingPreviewPage({ searchParams }: {
   if (!query.success) notFound();
   // Playwright supplies isolated API fixtures for the production component.
   // Review middleware blocks its API URLs if no fixture handles a request.
-  const group = { id: "33333333-3333-4333-8333-333333333333", name: "Shared review", ownerId: "11111111-1111-4111-8111-111111111111", memberTypes: [], members: [] };
+  const group = { id: "33333333-3333-4333-8333-333333333333", name: "Shared review", ownerId: "11111111-1111-4111-8111-111111111111", memberTypes: [], members: [{ id: "88888888-8888-4888-8888-888888888888", userId: "11111111-1111-4111-8111-111111111111", roles: [], memberType: "", isPlaceholder: false, user: { id: "11111111-1111-4111-8111-111111111111", name: "Captain", profileImageUrl: "" } }] };
   if (query.data.flow === "create") return <CreateTeamForm groupId={group.id} />;
   if (query.data.flow === "team" || query.data.flow === "roster") return <TeamRosterScreen group={group} currentUser={{ id: group.ownerId, name: "Captain" }} />;
   if (query.data.flow === "invite") return <TeamInvitations group={group} currentUserName="Captain" review />;

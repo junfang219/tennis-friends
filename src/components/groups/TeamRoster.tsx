@@ -21,12 +21,14 @@ export default function TeamRoster({
   currentUserId,
   currentUserName,
   onSaved,
+  registration,
 }: {
   group: RosterGroup;
   canManage: boolean;
   currentUserId: string;
   currentUserName: string;
   onSaved: () => void;
+  registration?: { players: { id: string; member_id: string | null; accepted_by: string | null; confirmed_at: string | null }[]; members: { id: string }[]; confirm: (playerId: string, confirmed: boolean) => Promise<void> };
 }) {
   const types = parseMemberTypes(group.memberTypes);
   const callerIsOwner = currentUserId === group.ownerId;
@@ -107,6 +109,8 @@ export default function TeamRoster({
       <div className="divide-y divide-gray-100">
         {group.members.map((m) => {
           const isOwnerRow = m.userId === group.ownerId;
+          const tracked = registration?.players.find(p => p.member_id === m.id || (m.userId && p.accepted_by === m.userId));
+          const registrationEligible = Boolean(tracked || (m.userId && registration?.members.some(member => member.id === m.id)));
           // Row actions collapsed into the "⋯" menu (owner/manager only).
           const canRemoveRow = !isOwnerRow && m.userId !== currentUserId;
           const canMakeOwnerRow = callerIsOwner && !isOwnerRow && !m.isPlaceholder;
@@ -186,6 +190,10 @@ export default function TeamRoster({
                     {m.memberType ? ` · ${m.memberType}` : ""}
                   </p>
                 )}
+                {registration && registrationEligible && <div className="mt-3 space-y-2">
+                  <p className={`text-sm font-semibold ${tracked?.confirmed_at ? "text-green-900" : "text-gray-700"}`}>USTA: {tracked?.confirmed_at ? "Confirmed by captain" : "Unconfirmed"}</p>
+                  {canManage && <button type="button" disabled={busyId === m.id} className="btn-secondary w-full text-sm" aria-label={`${tracked?.confirmed_at ? "Undo confirmation for" : "Confirm registration for"} ${m.user.name}`} onClick={() => { setBusyId(m.id); setErr(""); void registration.confirm(tracked?.id ?? m.id, !tracked?.confirmed_at).catch(e => setErr(e instanceof Error ? e.message : "Could not save registration confirmation")).finally(() => setBusyId("")); }}>{tracked?.confirmed_at ? "Undo confirmation" : "Confirm from TennisLink"}</button>}
+                </div>}
               </div>
               {showRowMenu && (
                 <button

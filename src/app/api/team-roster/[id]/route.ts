@@ -36,3 +36,23 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   const { error } = await db.from("group_members").update(patch).eq("group_id", id).eq("id", member.id);
   return error ? NextResponse.json({ error: "Could not save roster change" }, { status: 400 }) : NextResponse.json({ ok: true });
 }
+
+export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const { id } = await ctx.params;
+  if (!z.uuid().safeParse(id).success) return NextResponse.json({ error: "Invalid team" }, { status: 400 });
+  const db = await createSupabaseServerClient(); const { data: auth } = await db.auth.getUser();
+  if (!auth.user) return NextResponse.json({ error: "Sign in first" }, { status: 401 });
+  let input;
+  try { input = z.object({ action: z.enum(["delete-team", "leave-team"]) }).parse(await req.json()); }
+  catch { return NextResponse.json({ error: "Invalid team action" }, { status: 400 }); }
+  const { data: group } = await db.from("groups").select("owner_id").eq("id", id).single();
+  if (!group) return NextResponse.json({ error: "Team not found" }, { status: 404 });
+  if (input.action === "delete-team") {
+    if (group.owner_id !== auth.user.id) return NextResponse.json({ error: "Only the owner can delete this team" }, { status: 403 });
+    const { error } = await db.from("groups").delete().eq("id", id);
+    return error ? NextResponse.json({ error: "Could not delete team" }, { status: 400 }) : NextResponse.json({ ok: true });
+  }
+  if (group.owner_id === auth.user.id) return NextResponse.json({ error: "Transfer ownership before leaving this team" }, { status: 403 });
+  const { error } = await db.from("group_members").delete().eq("group_id", id).eq("user_id", auth.user.id);
+  return error ? NextResponse.json({ error: "Could not leave team" }, { status: 400 }) : NextResponse.json({ ok: true });
+}
