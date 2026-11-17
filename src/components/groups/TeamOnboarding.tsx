@@ -60,7 +60,13 @@ export default function TeamOnboarding({groupId,isNew=false}:{groupId:string;isN
  }
  async function action(work:()=>Promise<void>){if(busy)return;setBusy(true);setError("");setNotice("");try{await work();}catch(e){setError(e instanceof Error?e.message:"Could not complete action");}finally{setBusy(false);}}
  async function viewOverview(){await save();await reload();setStep(3);}
- async function back(){await save();setReminders(false);setStep(s=>s-1);}
+ function back(){
+  // Back is navigation, not a full-roster write. Keep edits locally until
+  // Continue/Save draft, including dates read directly from the native input.
+  const current=value();
+  if(current.deadline!==draft.deadline){setPrepared([]);batch.current=null;}
+  setDraft(current);setReminders(false);setError("");setNotice("");setStep(s=>s-1);
+ }
  async function shareInvitation(invitation:z.infer<typeof PreparedInvitations>[number]) {
   if(typeof navigator.share==="function") {
    try{await navigator.share({title:`Join ${draft.name}`,text:invitation.message});setNotice("Share sheet opened. Complete sending in your messaging app; delivery is not tracked.");return;}
@@ -104,7 +110,8 @@ export default function TeamOnboarding({groupId,isNew=false}:{groupId:string;isN
    <p className="text-xs text-gray-600">{p.invitedAt?"Invitation link ready · Text delivery not tracked":"Invitation not prepared"}</p>
    {draft.includeUsta&&<><p className="text-sm">USTA: {p.confirmedAt?"Confirmed by captain":"Unconfirmed"}</p><button className="btn-secondary text-sm" onClick={()=>void action(async()=>{await save({...draft,players:draft.players.map(other=>other.id===p.id?{...other,confirmedAt:other.confirmedAt?null:new Date().toISOString()}:other)});await reload();})}>{p.confirmedAt?"Undo registration confirmation":"Confirm from TennisLink"}</button></>}
    {savedPlayer?.revoked_at&&<p className="text-sm text-red-800">Invitation revoked</p>}
-   {savedPlayer?.sent_at&&!p.memberId&&<details className="rounded-xl border border-gray-200 px-3 py-2">
+   {/* Correcting a revoked recipient clears sent_at; renewal must remain reachable. */}
+   {savedPlayer&&(savedPlayer.sent_at||savedPlayer.revoked_at)&&!p.memberId&&<details className="rounded-xl border border-gray-200 px-3 py-2">
     <summary aria-label={`Manage invitation for ${p.name}`} className="cursor-pointer text-sm font-semibold text-court-green" aria-disabled={busy} tabIndex={busy?-1:0} onClick={event=>{if(busy)event.preventDefault();}}>Manage invitation</summary>
     <div className="pt-3 space-y-3">
      <p className="text-xs text-gray-600">Preparing a new link disables the previous one.</p>
@@ -126,7 +133,7 @@ export default function TeamOnboarding({groupId,isNew=false}:{groupId:string;isN
  {draft.includeUsta&&<details open={reminders} onToggle={event=>{const open=event.currentTarget.open;if(open)batch.current=null;setReminders(open);}} className="rounded-xl border border-gray-200 p-4"><summary className="cursor-pointer text-sm font-semibold text-court-green" aria-disabled={busy} tabIndex={busy?-1:0} onClick={event=>{if(busy)event.preventDefault();}}>USTA reminders</summary><div className="pt-4 space-y-3"><p className="text-sm">Only unconfirmed players: {draft.players.filter(p=>!p.confirmedAt).map(p=>p.name).join(", ")||"None"}. Check TennisLink first; imports are not automatic.</p><button className="btn-primary w-full" onClick={()=>void action(()=>send(true))}>Prepare reminders to share</button><button className="btn-secondary w-full" onClick={()=>void action(()=>send(true,"email"))}>Send email reminders</button></div></details>}</>}
 
  <div className={`grid gap-3 ${step===0?"grid-cols-1":"grid-cols-2"}`}>
- {step>0&&<button className="btn-secondary h-12 w-full" onClick={()=>void action(back)}>Back</button>}
+ {step>0&&<button className="btn-secondary h-12 w-full" onClick={back}>Back</button>}
  {step<2&&<button className="btn-primary h-12 w-full" onClick={()=>void action(async()=>{if(step===1&&!draft.players.length)throw new Error("Add at least one player");await save();setStep(s=>s+1);})}>{busy?"Saving…":"Continue"}</button>}
  {step===2&&<button className="btn-primary h-12 w-full" onClick={()=>void action(viewOverview)}>{busy?"Saving…":"Continue"}</button>}
  {step===3&&<Link className="btn-primary h-12 w-full text-center" href={`/groups/${groupId}`}>Open team</Link>}

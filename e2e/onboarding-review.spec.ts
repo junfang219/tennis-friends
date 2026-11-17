@@ -15,14 +15,14 @@ test("invite to the app, add USTA later, then remind only unconfirmed players", 
   await expect(page.getByRole("button", { name: "TennisFriends members", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(page.getByLabel("Include USTA registration instructions", { exact: true })).not.toBeChecked();
-  await page.getByLabel("Invitation message", { exact: true }).fill("Come join our team!");
+  await page.getByRole("textbox", { name: /^Invitation message/ }).fill("Come join our team!");
   await expect(page.locator("pre")).toContainText("Join the team:");
   await expect(page.locator("pre")).not.toContainText("USTA");
   await page.getByRole("button", { name: "Simulate sending invitations", exact: true }).click();
   await expect(page.getByText("USTA registration tracking is not enabled.", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Add USTA registration task", exact: true }).click();
   await page.getByRole("button", { name: "Simulate sending invitations", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("10-digit");
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("10-digit");
   await page.getByLabel("USTA team name", { exact: true }).fill("Official Crew");
   await page.getByLabel("USTA team number (required for USTA invitations)", { exact: true }).fill("1234567890");
   await page.getByLabel("Registration deadline (required for USTA invitations)", { exact: true }).fill("2026-12-04");
