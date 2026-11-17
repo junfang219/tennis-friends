@@ -29,5 +29,17 @@ it("rejects unsupported link mutations", async () => {
 });
 it("returns an error for a non-manager", async () => {
   mocks.rpc.mockResolvedValue({ data: null, error: { code: "42501" } });
-  expect((await GET(new Request("https://example.com"), ctx)).status).toBe(403);
+  const response = await GET(new Request("https://example.com"), ctx);
+  expect(response.status).toBe(403);
+  expect(await response.json()).toEqual({ error: "Only the team owner or a team manager can manage shared invitations." });
+});
+it.each(["PGRST202", "42883", "42P01"])("identifies missing database setup (%s) without blaming team permissions", async code => {
+  mocks.rpc.mockResolvedValue({ data: null, error: { code } });
+  const response = await GET(new Request("https://example.com"), ctx);
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({ error: "Shared team invitations are not available yet. The shared-link database migration must be installed." });
+});
+it("does not misclassify an unexpected database error as a permissions failure", async () => {
+  mocks.rpc.mockResolvedValue({ data: null, error: { code: "XX000" } });
+  expect((await GET(new Request("https://example.com"), ctx)).status).toBe(500);
 });

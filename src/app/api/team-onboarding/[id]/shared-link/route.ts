@@ -11,7 +11,13 @@ async function manage(id: string, action: string) {
   const { data: auth } = await db.auth.getUser();
   if (!auth.user) return NextResponse.json({ error: "Sign in first" }, { status: 401 });
   const { data, error } = await onboardingDb(db).rpc("manage_team_join_link", { p_group: id, p_action: action });
-  if (error) return NextResponse.json({ error: "Could not manage team link. Team manager access and the shared-link migration are required." }, { status: 403 });
+  if (error) {
+    if (["PGRST202", "42883", "42P01"].includes(error.code)) {
+      return NextResponse.json({ error: "Shared team invitations are not available yet. The shared-link database migration must be installed." }, { status: 503 });
+    }
+    if (error.code === "42501") return NextResponse.json({ error: "Only the team owner or a team manager can manage shared invitations." }, { status: 403 });
+    return NextResponse.json({ error: "Could not load the team link. Please try again." }, { status: 500 });
+  }
   const parsed = teamLinkStateSchema.safeParse(data);
   if (!parsed.success) return NextResponse.json({ error: "Could not load team link" }, { status: 500 });
   return NextResponse.json(parsed.data, { headers: { "Cache-Control": "no-store" } });
