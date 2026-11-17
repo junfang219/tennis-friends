@@ -10,9 +10,17 @@ The application is unmerged and undeployed. `/groups/new` now collects only team
 - `/groups/:id/registration` is the separate USTA registration section, reachable from the team, Roster, and Team Settings. It owns optional team details/deadline, Confirm → Undo, and targeted email/manual reminders. Email instruction opt-out does not disable tracking. Existing friends and earlier members are synchronized without losing roster IDs, confirmations, or availability history.
 - New scoped changes use the checked `patch_team_onboarding` RPC. The team is locked before reading the current roster; message/registration edits do not replace the roster. Recipient corrections keep confirmations and revocation intact. Member removal retires its invitation/reminders while preserving registration history. Roster mutations run through authenticated server routes and existing RLS/role guards.
 
-The already approved shared-link migration is installed in production as `20261117162141_shared_team_join_approval.sql`; do not reapply it. This revision also needs the additive `20261117174222_roster_first_team_management.sql` migration before using the new mutation controls. It adds a private checked implementation and public invoker wrapper; applying it does not update existing team data. Its hosted application is pending separate approval because the local app uses the production database.
+The already approved shared-link migration is installed in production as `20261117162141_shared_team_join_approval.sql`; do not reapply it. The separately approved scoped-edit migration is also installed as `20261117181245_roster_first_team_management.sql`. Its local filename matches hosted migration history; do not reapply it. It adds a private checked implementation and public invoker wrapper without updating existing team data during installation. The local app can now use the new save controls.
 
 Verification: 678 unit/route tests, 32 browser cases at 375px and desktop, and 74 embedded PostgreSQL checks pass. TypeScript, changed-file ESLint, and diff checks pass; the team page's three existing image warnings are unchanged. Automated tests use isolated fixtures and send no real messages. The review middleware rewrites only the fixed fixture team's canonical routes and blocks live APIs; friend/guest actions cannot reach live data in review mode.
+
+### Scoped-edit migration verification — November 17, 2026
+
+- Applied the reviewed `roster_first_team_management` migration with explicit user approval; hosted version `20261117181245`.
+- Before/after fingerprints matched for existing profiles, groups, memberships, intended players, settings, invitations, join requests, delivery records, and all pre-existing public/private function definitions.
+- The public wrapper is a security invoker, anonymous execution is denied, and the private implementation has a fixed empty search path and manager checks.
+- Executed the new initialization and message-save operations as the test team's owner in a transaction, then rolled it back. Both succeeded and subsequent fingerprints confirmed no persisted data changes. The API schema exposes the RPC while denying anonymous execution.
+- Security-advisor findings were unchanged. No team, membership, recipient, confirmation, or message was permanently changed during verification. PR #32's application remains unmerged and undeployed.
 
 ### Shared-link migration verification — November 17, 2026
 
