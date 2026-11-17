@@ -53,7 +53,7 @@ export default function TeamSharedInvitations({ groupId, players, onApproved, on
   return <section aria-label="Shared invitations and approvals" className="space-y-5">
     <fieldset disabled={busy} className="min-w-0 rounded-xl border border-gray-200 p-4 space-y-3 disabled:opacity-70">
       <legend className="px-1 font-semibold">Shared team invitation</legend>
-      <p className="text-sm text-gray-700">Post one link in your group chat. Players sign in and request to join; you approve each request before they become team members.</p>
+      <p className="text-sm text-gray-700">Send this link to a player or share it with a group. Each player signs in and requests to join. You approve each request before they become a team member.</p>
       {!state ? <p className="text-sm">{error ? "Team link could not be loaded." : "Loading team link…"}</p> : link ? <>
         <label className="block text-sm font-semibold">Team invitation link<input className="mt-1 w-full min-w-0 rounded-xl border border-gray-300 p-3 text-base" readOnly value={link} onFocus={e => e.target.select()} /></label>
         <div className="grid grid-cols-2 gap-3"><button type="button" className="btn-primary w-full" onClick={() => void action(async () => {
@@ -61,7 +61,7 @@ export default function TeamSharedInvitations({ groupId, players, onApproved, on
             try { await navigator.share({ title: "Join our tennis team", text: "Request to join our team on TennisFriends. Captain approval is required.", url: link }); setNotice("Share sheet opened."); return; }
             catch (e) { if (e instanceof Error && e.name === "AbortError") return; }
           }
-          await navigator.clipboard.writeText(link); setNotice("Team link copied. Paste it into your group chat.");
+          await navigator.clipboard.writeText(link); setNotice("Team link copied. Send it to a player or share it with a group.");
         })}>Share team link</button><button type="button" className="btn-secondary w-full" onClick={() => void action(async () => { await navigator.clipboard.writeText(link); setNotice("Team link copied."); })}>Copy link</button></div>
         <details><summary className="cursor-pointer text-sm font-semibold text-court-green">Manage team link</summary><div className="mt-3 space-y-3"><p className="text-xs text-gray-600">Replacing the link disables the old one. Disabling stops new requests. Neither action removes existing members or requests.</p><button type="button" className="btn-secondary w-full" onClick={() => void action(() => change("replace"))}>Replace team link</button><button type="button" className="text-sm underline text-red-800" onClick={() => void action(() => change("disable"))}>Disable team link</button></div></details>
       </> : <><p className="text-sm text-gray-600">{state.token ? "The shared link is disabled." : "No shared link has been created."}</p><button type="button" className="btn-primary w-full" onClick={() => void action(() => change(state.token ? "replace" : "enable"))}>{state.token ? "Create new team link" : "Create shared team link"}</button></>}
