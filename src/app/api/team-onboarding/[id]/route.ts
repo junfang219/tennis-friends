@@ -1,3 +1,4 @@
+import { smsReadiness } from "@/lib/onboarding/delivery";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -24,6 +25,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (!raw.success) return NextResponse.json({ error: "Cannot load team invitations" }, { status: 500 });
   const config = raw.data.config ?? { name: group.name, description: "", includeUsta: false, teamNumber: "", deadline: "" };
   const parsed = teamManagementStateSchema.safeParse({ config: { ...z.record(z.string(),z.unknown()).parse(config), name: group.name }, players: raw.data.players,
+    delivery: { sms: smsReadiness() },
     members: group.members.map(m => ({ id: m.id, userId: m.userId, name: m.user.name })),
     legacyInvitations: (legacy.data ?? []).map(i => ({ id: i.id, email: i.email, token: i.token, roles: i.roles, memberType: i.member_type })),
   });
@@ -60,6 +62,14 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   }
   const rpc = input.action === "sms-recipients" || (input.action === "recipient" && input.phone !== undefined) ? "patch_team_sms_invitations" : "patch_team_onboarding";
   const { error } = await onboardingDb(db).rpc(rpc, { p_group: id, p_change: input as Json });
-  if (error) return NextResponse.json({ error: error.code === "42501" ? "Team manager access required" : "Could not save changes. Revoke issued invitations before correcting a recipient, and check for duplicate contacts." }, { status: error.code === "42501" ? 403 : 400 });
+  if (error) {
+    const message = error.code === "42501" ? "Team manager access required"
+      : error.code === "23505" ? "This contact is already on the team. Use its existing entry in Pending invitations."
+      : error.message?.includes("pending SMS") || error.message?.includes("pending delivery") ? "This invitation has an unresolved delivery. Review it before changing the recipient or trying again."
+      : error.message?.includes("already issued") || error.message?.includes("Revoke the sent") ? "An invitation has already been issued to this contact. Use the existing invitation to resend, or revoke it before changing the recipient."
+      : error.message?.includes("already joined") || error.message?.includes("unjoined player") ? "This player has already joined the team."
+      : "Could not save these changes. Reload the team and check the recipient details.";
+    return NextResponse.json({ error: message }, { status: error.code === "42501" ? 403 : 400 });
+  }
   return NextResponse.json({ ok: true });
 }

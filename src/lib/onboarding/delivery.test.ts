@@ -3,7 +3,7 @@ const mocks=vi.hoisted(()=>({email:vi.fn(),sms:vi.fn(),client:vi.fn()}));
 vi.mock("server-only",()=>({}));
 vi.mock("resend",()=>({Resend:class {emails={send:mocks.email};}}));
 vi.mock("twilio",()=>({default:mocks.client}));
-import { deliver,deliveryConfig,DeliveryError } from "./delivery";
+import { deliver,deliveryConfig,DeliveryError,smsInvitationOrigin,smsReadiness } from "./delivery";
 beforeEach(()=>{vi.stubEnv("ONBOARDING_PUBLIC_ORIGIN","https://example.com");vi.stubEnv("RESEND_API_KEY","test");vi.stubEnv("ONBOARDING_EMAIL_FROM","teams@example.com");mocks.email.mockReset();mocks.sms.mockReset();mocks.client.mockReturnValue({messages:{create:mocks.sms}});});
 afterEach(()=>vi.unstubAllEnvs());
 it("does not require Twilio credentials",()=>{
@@ -55,4 +55,16 @@ it.each([new Error("timeout"),{status:503},{}])("keeps uncertain SMS acceptance 
 });
 it("rejects a malformed provider response without pretending the text was accepted",async()=>{
  mocks.sms.mockResolvedValue({sid:"",status:"queued"});await expect(deliver("sms","+12065550101","Invitation","Team","claim",smsConfig())).rejects.toBeInstanceOf(DeliveryError);
+});
+
+it("supports a public SMS origin while keeping local email/share origin unchanged",()=>{
+ vi.stubEnv("ONBOARDING_PUBLIC_ORIGIN","http://127.0.0.1:3110");vi.stubEnv("ONBOARDING_SMS_PUBLIC_ORIGIN","https://mytennisfriends.com");
+ const config=deliveryConfig();expect(config.origin).toBe("http://127.0.0.1:3110");expect(smsInvitationOrigin(config)).toMatchObject({success:true,data:"https://mytennisfriends.com"});
+});
+it("reports only readiness flags, never credentials",()=>{
+ vi.stubEnv("TWILIO_ACCOUNT_SID","AC"+"a".repeat(32));vi.stubEnv("TWILIO_AUTH_TOKEN","private-test-token");vi.stubEnv("TWILIO_FROM_NUMBER","+12065550101");vi.stubEnv("ONBOARDING_SMS_PUBLIC_ORIGIN","https://example.com");
+ expect(smsReadiness()).toEqual({configured:true,publicOrigin:true});expect(JSON.stringify(smsReadiness())).not.toContain("private-test-token");
+});
+it("ignores malformed SMS-only origin for email config, while SMS readiness rejects it",()=>{
+ vi.stubEnv("ONBOARDING_SMS_PUBLIC_ORIGIN","invalid");expect(deliveryConfig().origin).toBe("https://example.com");expect(smsInvitationOrigin(deliveryConfig()).success).toBe(false);
 });

@@ -40,3 +40,13 @@ it("phone edits use the scoped SMS RPC while retaining the account and email",as
  expect(mocks.rpc).toHaveBeenCalledWith("patch_team_sms_invitations",{p_group:id,p_change:expect.objectContaining({phone:"+12065550101",associatedAccountId:null})});
 });
 it("rejects invalid phone entries before the database",async()=>{expect((await request({action:"sms-recipients",recipients:[{id:playerId,name:"Sam",phone:"123"}]})).status).toBe(400);expect(mocks.rpc).not.toHaveBeenCalled();});
+
+it.each([
+ [{code:"23505",message:"unique constraint (private phone)"},"This contact is already on the team"],
+ [{code:"P0001",message:"Invitation already issued"},"An invitation has already been issued"],
+ [{code:"P0001",message:"Review the pending SMS before changing its recipient"},"unresolved delivery"],
+ [{code:"P0001",message:"Player already joined"},"already joined"],
+])("maps save failure %j to a specific safe explanation",async(error,expected)=>{
+ mocks.rpc.mockResolvedValue({data:null,error});const response=await request({action:"sms-recipients",recipients:[{id:playerId,name:"Sam",phone:"2065550101"}]});
+ const body=await response.json();expect(body.error).toContain(expected);expect(body.error).not.toContain("private phone");
+});

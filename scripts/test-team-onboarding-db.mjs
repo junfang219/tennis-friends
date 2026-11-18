@@ -19,7 +19,7 @@ try {
  const end=canonical.indexOf('-- Reworked to delegate',start);
  await db.exec(canonical.slice(start,end));
  const {readdir}=await import('node:fs/promises');
- const migrations=(await readdir('supabase/migrations')).filter(n=>n.endsWith('_team_onboarding.sql')||n.endsWith('_fix_team_onboarding_invitation_lifecycle.sql')||n.endsWith('_shared_team_join_approval.sql')||n.endsWith('_roster_first_team_management.sql')||n.endsWith('_guided_team_setup_details.sql')||n.endsWith('_automatic_sms_team_invitations.sql')||n.endsWith('_atomic_onboarding_deliveries.sql')||n.endsWith('_allow_acceptance_with_delivery_guards.sql')).sort();
+ const migrations=(await readdir('supabase/migrations')).filter(n=>n.endsWith('_team_onboarding.sql')||n.endsWith('_fix_team_onboarding_invitation_lifecycle.sql')||n.endsWith('_shared_team_join_approval.sql')||n.endsWith('_roster_first_team_management.sql')||n.endsWith('_guided_team_setup_details.sql')||n.endsWith('_automatic_sms_team_invitations.sql')||n.endsWith('_atomic_onboarding_deliveries.sql')||n.endsWith('_allow_acceptance_with_delivery_guards.sql')||n.endsWith('_reuse_unissued_sms_drafts.sql')).sort();
  for(const migration of migrations)await db.exec(await readFile(`supabase/migrations/${migration}`,'utf8'));
  const owner=randomUUID(),friend=randomUUID(),stranger=randomUUID(),group=randomUUID(),pid=randomUUID(),other=randomUUID();
  for(const [id,name] of [[owner,'Captain'],[friend,'Taylor'],[stranger,'Stranger']])await db.query('insert into profiles values($1,$2,$3)',[id,name,`${name}@example.com`]);
@@ -353,7 +353,10 @@ try {
  await db.exec('SET ROLE authenticated');
  const phoneRecipients={action:'sms-recipients',recipients:[{id:smsId,name:'SMS Player',phone:'+12065550109'}]};
  await smsPatch(phoneRecipients); await smsPatch(phoneRecipients);
- await rejects(()=>smsPatch({action:'sms-recipients',recipients:[{id:randomUUID(),name:'Duplicate',phone:'+12065550109'}]}),/unique/);
+ await smsPatch({action:'sms-recipients',recipients:[{id:randomUUID(),name:'Duplicate',phone:'+12065550109'}]});
+ await db.exec('RESET ROLE');
+ check(Number((await db.query("select count(*) from team_onboarding_players where group_id=$1 and phone='+12065550109'",[managementGroup])).rows[0].count)===1,'Re-entering an unissued number after reload reuses the existing draft');
+ await db.exec('SET ROLE authenticated');
  await rejects(()=>smsPatch({action:'sms-recipients',recipients:[{id:randomUUID(),name:'Invalid',phone:'invalid'}]}),/valid phone/);
  await rejects(()=>smsPatch({action:'sms-recipients',recipients:[{id:tracked.id,name:'Collision',phone:'+12065550109'}]}),/already exists|unjoined player/);
  await db.exec('RESET ROLE');
@@ -373,6 +376,7 @@ try {
  await db.query("update team_onboarding_players set sent_at=now(),confirmed_at=now() where id=$1",[smsId]);
  await db.exec('SET ROLE authenticated');
  await rejects(()=>smsPatch({action:'recipient',playerId:smsId,name:'Changed',phone:'+12065550110',email:'',associatedAccountId:null}),/Revoke/);
+ await rejects(()=>smsPatch({action:'sms-recipients',recipients:[{id:randomUUID(),name:'Duplicate issued',phone:'+12065550109'}]}),/already issued/);
  await db.query('select revoke_team_onboarding_invitation($1,$2)',[managementGroup,smsId]);
  await smsPatch({action:'recipient',playerId:smsId,name:'Corrected',phone:'+12065550110',email:'',associatedAccountId:null});
  await db.exec('RESET ROLE');
@@ -380,6 +384,9 @@ try {
  check(correctedSms.phone==='+12065550110'&&Boolean(correctedSms.revoked_at)&&Boolean(correctedSms.confirmed_at)&&correctedSms.sent_at===null&&correctedSms.token!==smsRow.token,'Revoked phone correction rotates the personal link and preserves revocation and confirmation');
  await db.query("insert into team_onboarding_deliveries(player_id,batch_id,channel,status) values($1,$2,'sms','sending')",[smsId,smsBatch2]);
  check(Number((await db.query('select count(*) from team_onboarding_deliveries where player_id=$1',[smsId])).rows[0].count)===2,'An explicit failed attempt releases the pending SMS guard');
+ await db.exec('SET ROLE authenticated');
+ await rejects(()=>smsPatch({action:'sms-recipients',recipients:[{id:randomUUID(),name:'Bypass revoked pending',phone:'+12065550110'}]}),/pending SMS/);
+ await db.exec('RESET ROLE');
  await db.query("select set_config('request.jwt.claim.sub',$1,false)",[stranger]);
  await db.exec('SET ROLE authenticated');await rejects(()=>smsPatch(phoneRecipients),/manager access/);await db.exec('RESET ROLE');
  await db.exec('SET ROLE anon');await rejects(()=>smsPatch(phoneRecipients),/permission denied/);await db.exec('RESET ROLE');

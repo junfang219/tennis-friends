@@ -233,3 +233,8 @@ it("does not send if the claimed snapshot response is malformed", async () => {
 it("validates request-scoped USTA options before touching the database", async () => {
   expect((await smsRequest({invitation:{message:"Hi",includeUsta:true}})).status).toBe(400);expect(mocks.rpc).not.toHaveBeenCalled();
 });
+
+it("uses a public SMS-only origin for texts from the local app", async () => {
+ setPlayers([smsPlayer()]);mocks.config.mockReturnValue({...mocks.config(),origin:"http://127.0.0.1:3110",smsOrigin:"https://mytennisfriends.com"});
+ expect((await smsRequest()).status).toBe(200);expect(mocks.deliver.mock.calls[0][2]).toContain("https://mytennisfriends.com/team-invitations/");expect(mocks.deliver.mock.calls[0][2]).not.toContain("127.0.0.1");
+});

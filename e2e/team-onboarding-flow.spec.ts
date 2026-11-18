@@ -207,7 +207,7 @@ test("SMS and email keep separate drafts and shared links remain secondary",asyn
 test("unconfigured SMS shows an error and keeps the captain on invitations",async({context,page})=>{
  const fixture=await managementFixture(context);fixture.controls.smsConfigured=false;await page.goto(`/groups/${groupId}/invite-players?setup=1`);
  await page.getByRole("textbox",{name:"Phone number",exact:true}).fill("2065550101");await page.getByLabel("These players agreed to receive this team invitation by text.",{exact:true}).check();await page.getByRole("button",{name:"Send invitations & finish",exact:true}).click();
- await expect(page.getByRole("main").getByRole("alert")).toContainText("SMS delivery is not configured");await expect(page.getByRole("textbox",{name:"Phone number",exact:true})).toHaveValue("2065550101");await expect(page.getByRole("heading",{name:"Invite players",exact:true})).toBeVisible();
+ await expect(page.getByRole("main").getByRole("alert")).toContainText("Automatic SMS is not set up yet");expect(fixture.writes).toHaveLength(0);expect(fixture.state.players).toHaveLength(0);await expect(page.getByRole("textbox",{name:"Phone number",exact:true})).toHaveValue("2065550101");await expect(page.getByRole("heading",{name:"Invite players",exact:true})).toBeVisible();
 });
 test("pending SMS stays for review and a retry retains its delivery batch",async({context,page})=>{
  const fixture=await managementFixture(context);fixture.controls.smsPending=1;await page.goto(`/groups/${groupId}/invite-players?setup=1`);
@@ -274,12 +274,12 @@ test("omitting USTA instructions keeps existing registration tracking enabled", 
 });
 
 test("an unsent SMS draft can be corrected in the same form after a configuration failure", async ({ context, page }) => {
-  const fixture = await managementFixture(context); fixture.controls.smsConfigured = false;
+  const fixture = await managementFixture(context, [player(playerId, { phone: "+12065550101", email: null, sent_at: null, name: "Original draft" })]); fixture.controls.smsConfigured = false;
   await page.goto(`/groups/${groupId}/invite-players?setup=1`);
   await page.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550101");
   await page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
   await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText("SMS delivery is not configured");
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("Automatic SMS is not set up yet");
   const originalId = fixture.state.players[0].id;
   expect(fixture.messages).toHaveLength(0);
   await page.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550102");
@@ -347,4 +347,24 @@ test("a pending retry does not replace this tab's draft with another captain's p
   expect(fixture.messages).toHaveLength(1);
   const sends = fixture.writes.filter(w => w.path.endsWith("/send")).map(w => w.body as {batchId:string});
   expect(sends).toHaveLength(2); expect(sends[0].batchId).toBe(sends[1].batchId);
+});
+
+test("re-entering a saved unissued phone after reload reuses its existing draft and name", async ({ context, page }) => {
+ const fixture = await managementFixture(context, [player(playerId, {name:"Saved player",phone:"+12065550101",email:null,sent_at:null})]);
+ await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+ await page.getByRole("textbox", {name:"Phone number",exact:true}).fill("(206) 555-0101");
+ await page.getByLabel("These players agreed to receive this team invitation by text.",{exact:true}).check();
+ await page.getByRole("button",{name:"Send invitations & finish",exact:true}).click();
+ await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+ expect(fixture.state.players).toHaveLength(1);expect(fixture.state.players[0]).toMatchObject({id:playerId,name:"Saved player"});
+ expect(fixture.messages).toHaveLength(1);expect(fixture.messages[0].playerId).toBe(playerId);
+});
+test("SMS requires a public invitation address before changing recipients", async ({ context, page }) => {
+ const fixture = await managementFixture(context);fixture.controls.smsPublicOrigin = false;
+ await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+ await expect(page.getByRole("note")).toContainText("public app address");
+ await page.getByRole("textbox", {name:"Phone number",exact:true}).fill("2065550101");
+ await page.getByLabel("These players agreed to receive this team invitation by text.",{exact:true}).check();
+ await page.getByRole("button",{name:"Send invitations & finish",exact:true}).click();
+ await expect(page.getByRole("main").getByRole("alert")).toContainText("public app address");expect(fixture.writes).toHaveLength(0);
 });

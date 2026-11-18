@@ -23,6 +23,7 @@ export const teamManagementMutationSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("cancel-legacy"), inviteId: z.uuid() }),
 ]);
 export const teamManagementStateSchema = storedOnboardingSchema.extend({
+  delivery: z.object({ sms: z.object({ configured: z.boolean(), publicOrigin: z.boolean() }) }).optional(),
   members: z.array(z.object({ id: z.uuid(), userId: z.uuid().nullable(), name: z.string() })).default([]),
   legacyInvitations: z.array(z.object({ id: z.uuid(), email: z.string().nullable(), token: z.string(), roles: z.array(z.string()), memberType: z.string() })).default([]),
 });
@@ -32,4 +33,12 @@ export function registrationPlayers(state: TeamManagementState) {
     id: m.id, group_id: state.players[0]?.group_id ?? "", member_id: m.id, name: m.name, phone: null, email: null, associated_account_id: m.userId,
     associated_account_name: m.name, accepted_by: m.userId, confirmed_at: null, sent_at: null, accepted_at: null, token: "", expires_at: "", revoked_at: null,
   }))];
+}
+
+export function smsSetupError(state: TeamManagementState) {
+ const status = state.delivery?.sms;
+ if (!status) return "SMS availability could not be checked. Reload the team and try again.";
+ if (!status.configured) return "Automatic SMS is not set up yet. Ask the app administrator to enable texting, or use email or the shared team link.";
+ if (!status.publicOrigin) return "SMS invitations need a public app address so players can open their links. Ask the app administrator to finish SMS setup.";
+ return null;
 }

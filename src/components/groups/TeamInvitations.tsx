@@ -9,7 +9,7 @@ import AddFriendsPanel from "./AddFriendsPanel";
 import InvitePlayersPanel from "./InvitePlayersPanel";
 import { useTeamManagement, teamResponse } from "./useTeamManagement";
 import type { RosterGroup } from "./TeamRoster";
-import { recipientSchema, smsRecipientSchema, teamManagementMutationSchema, invitationOptionsSchema, type TeamManagementState } from "@/lib/onboarding/management";
+import { recipientSchema, smsRecipientSchema, teamManagementMutationSchema, invitationOptionsSchema, type TeamManagementState, smsSetupError } from "@/lib/onboarding/management";
 import type { storedPlayerSchema } from "@/lib/onboarding/contracts";
 type Channel = "sms" | "email";
 type RecipientRow = { id: string; name: string; contact: string };
@@ -58,8 +58,10 @@ function InvitationsEditor({ group, review = false, setup = false, management }:
     if (!withUsta) return null;
     return teamManagementMutationSchema.parse({ action: "registration", includeUsta: true, ...usta });
   }
-  async function send(ids: string[], delivery: Channel, finish = false, source: TeamManagementState | null = state) {
+  async function send(ids: string[], delivery: Channel, finish = false, source: TeamManagementState | null = null) {
     if (delivery === "sms" && !smsConsent) throw new Error("In Send by SMS, confirm these players agreed to receive their invitation by text.");
+    source ??= await load();
+    if (delivery === "sms") { const setupError = smsSetupError(source); if (setupError) throw new Error(setupError); }
     const registration = registrationChange();
     if (registration && (!state?.config.includeUsta || ustaDraft !== null)) await mutate(registration);
     const invitation = invitationOptionsSchema.parse({ message: body, includeUsta: withUsta, ...(withUsta ? { registration: usta } : {}) });
@@ -82,6 +84,7 @@ function InvitationsEditor({ group, review = false, setup = false, management }:
       <div role="group" aria-label="Invitation method" className="grid grid-cols-2 gap-3"><button type="button" aria-pressed={mode === "sms"} className={mode === "sms" ? "btn-primary" : "btn-secondary"} onClick={() => setMode("sms")}>Send by SMS</button><button type="button" aria-pressed={mode === "email"} className={mode === "email" ? "btn-primary" : "btn-secondary"} onClick={() => setMode("email")}>Send by email</button></div>
       <button type="button" aria-pressed={mode === "link"} className="text-sm font-semibold underline text-court-green" onClick={() => setMode("link")}>Share a team link instead</button>
       {mode === "link" && <section className="rounded-2xl border bg-white p-4">{state ? <TeamSharedInvitations view="link" groupId={group.id} players={[]} onApproved={async () => { await load(); }} onBusyChange={setBusy} /> : <p className="text-sm">{loadError ? "Invitations could not be loaded." : "Loading invitations…"}</p>}</section>}
+      {mode === "sms" && state.delivery && smsSetupError(state) && <p role="note" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{smsSetupError(state)}</p>}
       {mode !== "link" && state && <section className="rounded-2xl border bg-white p-5 space-y-4"><h2 className="font-bold text-xl">{channel === "sms" ? "Text invitations" : "Personal email invitations"}</h2><p className="text-sm text-gray-600">TennisFriends sends each player a personal invitation link. They sign in and accept to join. {channel === "sms" ? "Enter phone numbers; names are optional. Use +country code outside the US or Canada." : "Enter email addresses; names are optional."}</p>
         <form className="space-y-4" onSubmit={e => { e.preventDefault(); void action(async () => {
           if (!body.trim()) throw new Error("Enter an invitation message");
@@ -90,7 +93,17 @@ function InvitationsEditor({ group, review = false, setup = false, management }:
             if (!smsConsent) throw new Error("Confirm these players agreed to receive this invitation by SMS");
             const recipients = z.array(smsRecipientSchema).min(1).parse(rows.map(row => ({ id: row.id, name: row.name.trim() || `Player · ${row.contact.replace(/\D/g, "").slice(-4)}`, phone: row.contact })));
             if (new Set(recipients.map(r => r.phone)).size !== recipients.length) throw new Error("Use a different phone number for each player");
-            const next = await mutate({ action: "sms-recipients", recipients }); await send(recipients.map(r => r.id), "sms", true, next);
+            const current = await load();
+            const prepared = recipients.map((r, index) => {
+              const existing = current.players.find(p => p.id === r.id) ?? current.players.find(p => p.phone === r.phone && !p.revoked_at && !p.accepted_by && !p.sent_at);
+              return { ...r, id: existing?.id ?? r.id, name: rows[index].name.trim() || existing?.name || r.name };
+            });
+            setRows(all => all.map((row, index) => ({ ...row, id: prepared[index].id })));
+            const setupError = smsSetupError(current); if (setupError) throw new Error(setupError);
+            const next = await mutate({ action: "sms-recipients", recipients: prepared });
+            const ids = prepared.map(r => { const p = next.players.find(p => p.phone === r.phone && !p.revoked_at && !p.accepted_by); if (!p) throw new Error("Refresh the team and review this contact before sending"); return p.id; });
+            setRows(all => all.map((row, index) => ({ ...row, id: ids[index] })));
+            await send(ids, "sms", true, next);
           } else {
             const recipients = z.array(recipientSchema).min(1).parse(rows.map(row => ({ id: row.id, name: row.name.trim() || row.contact.split("@")[0].slice(0, 100), email: row.contact })));
             if (new Set(recipients.map(r => r.email)).size !== recipients.length) throw new Error("Use a different email for each recipient");

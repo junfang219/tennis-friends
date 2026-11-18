@@ -15,7 +15,7 @@ export function player(id = playerId, overrides: Partial<z.infer<typeof storedPl
 export async function managementFixture(context: BrowserContext, initialPlayers: z.infer<typeof storedPlayerSchema>[] = []) {
   const state: TeamManagementState = { config: { name: "Shared review", description: "Saved description", includeUsta: false, teamNumber: "", deadline: "" }, players: initialPlayers, members: [], legacyInvitations: [] };
   const shared: z.infer<typeof teamLinkStateSchema> = { token: null, enabled: false, requests: [] };
-  const controls = { denyApproval: false, status: "ready", emailFailed: 0, emailPending: 0, smsPending: 0, smsFailed: 0, smsConfigured: true };
+  const controls = { denyApproval: false, status: "ready", emailFailed: 0, emailPending: 0, smsPending: 0, smsFailed: 0, smsConfigured: true, smsPublicOrigin: true };
   const messages: Array<{ mode: string; playerId: string; address: string; message: string }> = [];
   const pendingSms = new Set<string>();
   const batches = new Map<string, TeamManagementState["config"]>();
@@ -72,7 +72,8 @@ export async function managementFixture(context: BrowserContext, initialPlayers:
       if (req.method() === "PUT") throw new Error("Full-roster writes are forbidden in the new flow");
       if (req.method() === "PATCH") {
         const input = teamManagementMutationSchema.parse(req.postDataJSON());
-        if (input.action === "sms-recipients") { for (const r of input.recipients) { const existing = state.players.find(p => p.id === r.id);
+        if (input.action === "sms-recipients") { for (const r of input.recipients) { const existing = state.players.find(p => p.id === r.id) ?? state.players.find(p => p.phone === r.phone && !p.revoked_at);
+          if (existing && existing.id !== r.id && (existing.sent_at || existing.accepted_by)) return route.fulfill({ status: 400, json: { error: existing.accepted_by ? "This player has already joined the team." : "An invitation has already been issued to this contact. Use the existing invitation to resend." } });
           if (!existing) state.players.push(player(r.id, { name: r.name, phone: r.phone, email: null, sent_at: null }));
           else if (existing.phone !== r.phone || existing.name !== r.name) {
             if (pendingSms.has(r.id)) return route.fulfill({ status: 400, json: { error: "Review the pending SMS before changing its recipient" } });
@@ -88,7 +89,7 @@ export async function managementFixture(context: BrowserContext, initialPlayers:
         if (input.action === "cancel-legacy") state.legacyInvitations = state.legacyInvitations.filter(i => i.id !== input.inviteId);
         return route.fulfill({ json: { ok: true } });
       }
-      return route.fulfill({ json: state });
+      return route.fulfill({ json: { ...state, delivery: { sms: { configured: controls.smsConfigured, publicOrigin: controls.smsPublicOrigin } } } });
     }
     return route.fulfill({ status: 404, json: { error: "No live APIs in this fixture" } });
   });

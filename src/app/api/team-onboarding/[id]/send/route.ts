@@ -7,7 +7,7 @@ import { storedOnboardingSchema } from "@/lib/onboarding/contracts";
 import { deliveryRecipientVersionSchema, invitationOptionsSchema } from "@/lib/onboarding/management";
 import { invitationIssues, registrationMessage } from "@/lib/registrationOnboarding";
 import { invitationPhoneSchema } from "@/lib/onboarding/phone";
-import { deliver, deliveryConfig, smsConfiguration, smsText, DeliveryError } from "@/lib/onboarding/delivery";
+import { deliver, deliveryConfig, smsConfiguration, smsInvitationOrigin, smsText, DeliveryError } from "@/lib/onboarding/delivery";
 
 export const maxDuration = 300;
 const requestSchema = z.object({ batchId: z.uuid(), reminder: z.boolean().default(false), mode: z.enum(["prepare", "email", "sms"]).default("prepare"), smsConsent: z.boolean().optional(), playerIds: z.array(z.uuid()).min(1).max(100).optional(), invitation: invitationOptionsSchema.optional(), recipients: z.array(deliveryRecipientVersionSchema).min(1).max(100).optional() });
@@ -44,7 +44,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }))) return NextResponse.json({ error: "A recipient changed. Refresh and review the invitation before sending." }, { status: 409 });
   const issues = invitationIssues({ ...settings, players: selected.map(p => ({ id: p.id, name: p.name, phone: p.phone ?? "", email: p.email ?? "", confirmedAt: p.confirmed_at, memberId: p.accepted_by, invitedAt: p.sent_at, remindedAt: null })) });
   if (issues.length || !selected.length) return NextResponse.json({ error: issues.join(" ") || "No recipients" }, { status: 400 });
-  let config;
+  let config: ReturnType<typeof deliveryConfig>;
   try { config = deliveryConfig(); }
   catch { return NextResponse.json({ error: "Set ONBOARDING_PUBLIC_ORIGIN to the app's public URL before sending" }, { status: 503 }); }
   const admin = onboardingDb(createSupabaseAdminClient());
@@ -65,7 +65,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ invitations });
   }
   if (body.mode === "sms") {
-    if (new URL(config.origin).protocol !== "https:" || ["localhost", "127.0.0.1", "[::1]"].includes(new URL(config.origin).hostname)) return NextResponse.json({ error: "SMS invitations need a public HTTPS invitation URL. Configure ONBOARDING_PUBLIC_ORIGIN or use a preview deployment." }, { status: 503 });
+    const origin = smsInvitationOrigin(config);
+    if (!origin.success) return NextResponse.json({ error: "SMS invitations need a public HTTPS invitation URL. Configure ONBOARDING_SMS_PUBLIC_ORIGIN or use a preview deployment." }, { status: 503 });
+    config = { ...config, origin: origin.data };
     if (!smsConfiguration(config).success) return NextResponse.json({ error: "SMS delivery is not configured. Contact the team administrator, or use email or the shared team link." }, { status: 503 });
     if (selected.some(p => !invitationPhoneSchema.safeParse(p.phone).success)) return NextResponse.json({ error: "Each selected player needs a valid phone number" }, { status: 400 });
     if (selected.some(p => p.accepted_by !== null)) return NextResponse.json({ error: "Choose players who have not already joined" }, { status: 400 });
