@@ -6,6 +6,12 @@ export const createTeamSchema = z.object({ name: z.string().trim().min(1, "Enter
 const email = z.string().trim().toLowerCase().pipe(z.email());
 export const recipientSchema = z.object({ id: z.uuid(), name: z.string().trim().min(1).max(100), email });
 export const smsRecipientSchema = z.object({ id: z.uuid(), name: z.string().trim().min(1).max(100), phone: invitationPhoneSchema });
+export const deliveryRecipientVersionSchema = z.object({ id: z.uuid(), token: z.string().regex(/^[a-f0-9]{64}$/), phone: z.string().nullable(), email: z.string().nullable(), associatedAccountId: z.uuid().nullable() });
+export const invitationOptionsSchema = z.object({
+  message: z.string().trim().min(1).max(4000),
+  includeUsta: z.boolean(),
+  registration: z.object({ ustaTeamName: z.string().trim().max(100), teamNumber: z.string().regex(/^\d{10}$/), deadline: z.iso.date(), includeRegistrationLink: z.boolean() }).optional(),
+}).refine(value => !value.includeUsta || Boolean(value.registration), "Enter the USTA team number and deadline");
 export const teamManagementMutationSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("init") }),
   z.object({ action: z.literal("sms-recipients"), recipients: z.array(smsRecipientSchema).min(1).max(100) }),

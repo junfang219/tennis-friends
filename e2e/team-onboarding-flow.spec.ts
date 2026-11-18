@@ -272,3 +272,79 @@ test("omitting USTA instructions keeps existing registration tracking enabled", 
   expect(fixture.state.config).toMatchObject({ includeUsta: true, includeUstaInInvitations: false, teamNumber: "0000000000", deadline: "2026-11-24" });
   expect(fixture.writes.some(w => (w.body as { action?: string }).action === "registration")).toBe(false);
 });
+
+test("an unsent SMS draft can be corrected in the same form after a configuration failure", async ({ context, page }) => {
+  const fixture = await managementFixture(context); fixture.controls.smsConfigured = false;
+  await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+  await page.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550101");
+  await page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
+  await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("SMS delivery is not configured");
+  const originalId = fixture.state.players[0].id;
+  expect(fixture.messages).toHaveLength(0);
+  await page.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550102");
+  await page.getByRole("textbox", { name: "Name (optional)", exact: true }).fill("Corrected player");
+  fixture.controls.smsConfigured = true;
+  await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+  expect(fixture.state.players).toHaveLength(1); expect(fixture.state.players[0]).toMatchObject({ id: originalId, name: "Corrected player", phone: "+12065550102" });
+  expect(fixture.messages).toMatchObject([{ address: "+12065550102", playerId: originalId }]);
+});
+test("a pending SMS cannot be redirected by editing the retry form", async ({ context, page }) => {
+  const fixture = await managementFixture(context); fixture.controls.smsPending = 1;
+  await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+  await page.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550101");
+  await page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
+  await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("1 pending");
+  await page.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550102");
+  await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("Review the pending SMS");
+  expect(fixture.messages).toHaveLength(1); expect(fixture.state.players[0].phone).toBe("+12065550101");
+});
+test("two tabs retain their own USTA choice when invitation requests overlap", async ({ context, page }) => {
+  const fixture = await managementFixture(context);
+  let release: () => void = () => {}; let arrived: () => void = () => {};
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { arrived = resolve; });
+  let first = true;
+  await context.route(`**/api/team-onboarding/${groupId}/send`, async route => {
+    if (first) { first = false; arrived(); await held; }
+    await route.fallback();
+  });
+  await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+  await page.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550101");
+  await page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
+  await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  await started;
+  const other = await context.newPage(); await other.goto(`/groups/${groupId}/invite-players?setup=1`);
+  await other.getByLabel("Include USTA registration instructions", { exact: true }).check();
+  await other.getByLabel("USTA team number", { exact: true }).fill("2222222222");
+  await other.getByLabel("Registration deadline", { exact: true }).fill("2026-12-04");
+  await other.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550102");
+  await other.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
+  await other.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  await expect(other).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+  release(); await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+  expect(fixture.messages.find(m => m.address === "+12065550101")?.message).not.toContain("USTA team:");
+  expect(fixture.messages.find(m => m.address === "+12065550102")?.message).toContain("Team number: 2222222222");
+});
+
+test("a pending retry does not replace this tab's draft with another captain's preferences", async ({ context, page }) => {
+  const fixture = await managementFixture(context); fixture.controls.smsPending = 1;
+  fixture.state.config.invitationMessage = "Captain A invitation";
+  await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+  await page.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550101");
+  await page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
+  await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("1 pending");
+  fixture.state.config = { ...fixture.state.config, invitationMessage: "Captain B invitation", includeUsta: true, includeUstaInInvitations: true, teamNumber: "2222222222", deadline: "2026-12-04" };
+  await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("1 pending");
+  await expect(page.getByLabel("Include USTA registration instructions", { exact: true })).not.toBeChecked();
+  await page.getByText("Customize message", { exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Invitation message", exact: true })).toHaveValue("Captain A invitation");
+  expect(fixture.messages).toHaveLength(1);
+  const sends = fixture.writes.filter(w => w.path.endsWith("/send")).map(w => w.body as {batchId:string});
+  expect(sends).toHaveLength(2); expect(sends[0].batchId).toBe(sends[1].batchId);
+});

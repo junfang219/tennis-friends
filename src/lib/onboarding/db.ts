@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/lib/database.types";
 
 type ExtraFunctions = {
+  claim_team_onboarding_delivery: { Args: { p_group: string; p_player: string; p_batch: string; p_channel: string; p_reminder: boolean; p_expected: Json; p_options: Json }; Returns: Json };
   patch_team_sms_invitations: { Args: { p_group: string; p_change: Json }; Returns: Json };
   update_team_setup_details: { Args: { p_group: string; p_name: string; p_description: string }; Returns: Json };
   patch_team_onboarding: { Args: { p_group: string; p_change: Json }; Returns: Json };

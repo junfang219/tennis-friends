@@ -9,7 +9,7 @@ import AddFriendsPanel from "./AddFriendsPanel";
 import InvitePlayersPanel from "./InvitePlayersPanel";
 import { useTeamManagement, teamResponse } from "./useTeamManagement";
 import type { RosterGroup } from "./TeamRoster";
-import { recipientSchema, smsRecipientSchema, teamManagementMutationSchema } from "@/lib/onboarding/management";
+import { recipientSchema, smsRecipientSchema, teamManagementMutationSchema, invitationOptionsSchema, type TeamManagementState } from "@/lib/onboarding/management";
 import type { storedPlayerSchema } from "@/lib/onboarding/contracts";
 type Channel = "sms" | "email";
 type RecipientRow = { id: string; name: string; contact: string };
@@ -28,9 +28,17 @@ function RecipientEditor({ player, save }: { player: Player; save: (change: { na
     <button className="btn-secondary w-full" type="submit">Save recipient</button>
   </form>;
 }
-export default function TeamInvitations({ group, review = false, setup = false }: { group: RosterGroup; currentUserName: string; review?: boolean; setup?: boolean }) {
+type InvitationsProps = { group: RosterGroup; currentUserName: string; review?: boolean; setup?: boolean };
+export default function TeamInvitations(props: InvitationsProps) {
+  const management = useTeamManagement(props.group.id);
+  if (!management.state) return <main className="max-w-2xl mx-auto p-4 py-6 space-y-5"><h1 className="font-display text-3xl font-bold text-court-green">Invite players</h1>{props.setup && <TeamSetupProgress step={2} />}<p role={management.error ? "alert" : "status"}>{management.error || "Loading invitations…"}</p></main>;
+  return <InvitationsEditor {...props} management={{ ...management, state: management.state }} />;
+}
+function InvitationsEditor({ group, review = false, setup = false, management }: InvitationsProps & { management: ReturnType<typeof useTeamManagement> & { state: TeamManagementState } }) {
   const router = useRouter();
-  const { state, error: loadError, load, mutate } = useTeamManagement(group.id);
+  const { state, error: loadError, load, mutate } = management;
+  // A roster reload must not replace this tab's draft with another captain's preferences.
+  const [initialConfig] = useState(state.config);
   const [mode, setMode] = useState<Channel | "link">("sms");
   const [drafts, setDrafts] = useState<Record<Channel, RecipientRow[]>>(() => ({ sms: [blankRow()], email: [blankRow()] }));
   const [smsConsent, setSmsConsent] = useState(false);
@@ -43,21 +51,22 @@ export default function TeamInvitations({ group, review = false, setup = false }
   const [editing, setEditing] = useState<string | null>(null); const [more, setMore] = useState<"friends" | "availability" | null>(null);
   const batches = useRef<Record<string, string>>({});
   async function action(work: () => Promise<void>) { if (busy) return; setBusy(true); setError(""); setNotice(""); try { await work(); } catch (e) { setError(e instanceof z.ZodError ? e.issues[0]?.message ?? "Check the invitation details" : e instanceof Error ? e.message : "Could not complete action"); } finally { setBusy(false); } }
-  const body = message ?? state?.config.invitationMessage ?? `You're invited to join ${group.name} on TennisFriends!`;
-  const withUsta = includeUsta ?? Boolean(state?.config.includeUsta && state.config.includeUstaInInvitations !== false);
-  const usta = ustaDraft ?? { ustaTeamName: state?.config.ustaTeamName ?? group.name, teamNumber: state?.config.teamNumber ?? "", deadline: state?.config.deadline ?? "", includeRegistrationLink: state?.config.includeRegistrationLink !== false };
+  const body = message ?? initialConfig.invitationMessage ?? `You're invited to join ${group.name} on TennisFriends!`;
+  const withUsta = includeUsta ?? Boolean(initialConfig.includeUsta && initialConfig.includeUstaInInvitations !== false);
+  const usta = ustaDraft ?? { ustaTeamName: initialConfig.ustaTeamName ?? group.name, teamNumber: initialConfig.teamNumber ?? "", deadline: initialConfig.deadline ?? "", includeRegistrationLink: initialConfig.includeRegistrationLink !== false };
   function registrationChange() {
     if (!withUsta) return null;
     return teamManagementMutationSchema.parse({ action: "registration", includeUsta: true, ...usta });
   }
-  async function send(ids: string[], delivery: Channel, finish = false) {
+  async function send(ids: string[], delivery: Channel, finish = false, source: TeamManagementState | null = state) {
     if (delivery === "sms" && !smsConsent) throw new Error("In Send by SMS, confirm these players agreed to receive their invitation by text.");
     const registration = registrationChange();
     if (registration && (!state?.config.includeUsta || ustaDraft !== null)) await mutate(registration);
-    await mutate({ action: "message", message: body, includeUstaInInvitations: withUsta });
-    const batchKey = JSON.stringify({ ids: [...ids].sort(), delivery, body, withUsta, usta: withUsta ? usta : null });
+    const invitation = invitationOptionsSchema.parse({ message: body, includeUsta: withUsta, ...(withUsta ? { registration: usta } : {}) });
+    const recipients = [...ids].sort().map(id => { const p = source?.players.find(p => p.id === id); if (!p) throw new Error("Refresh the team before sending this invitation"); return { id, phone: p.phone, email: p.email, token: p.token, associatedAccountId: p.associated_account_id }; });
+    const batchKey = JSON.stringify({ ids: [...ids].sort(), delivery, body, withUsta, usta: withUsta ? usta : null, recipients });
     batches.current[batchKey] ??= crypto.randomUUID();
-    const report = z.object({ sent: z.number(), failed: z.number(), pending: z.number(), message: z.string() }).parse(await teamResponse(await fetch(`/api/team-onboarding/${group.id}/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: delivery, smsConsent: delivery === "sms" ? smsConsent : undefined, reminder: false, batchId: batches.current[batchKey], playerIds: ids }) })));
+    const report = z.object({ sent: z.number(), failed: z.number(), pending: z.number(), message: z.string() }).parse(await teamResponse(await fetch(`/api/team-onboarding/${group.id}/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: delivery, smsConsent: delivery === "sms" ? smsConsent : undefined, reminder: false, invitation, recipients, batchId: batches.current[batchKey], playerIds: ids }) })));
     setNotice(`${report.sent} ${delivery === "sms" ? "texts" : "emails"} accepted; ${report.failed} failed; ${report.pending} pending. ${report.message}`);
     if (!report.failed && !report.pending) {
       delete batches.current[batchKey];
@@ -81,11 +90,11 @@ export default function TeamInvitations({ group, review = false, setup = false }
             if (!smsConsent) throw new Error("Confirm these players agreed to receive this invitation by SMS");
             const recipients = z.array(smsRecipientSchema).min(1).parse(rows.map(row => ({ id: row.id, name: row.name.trim() || `Player · ${row.contact.replace(/\D/g, "").slice(-4)}`, phone: row.contact })));
             if (new Set(recipients.map(r => r.phone)).size !== recipients.length) throw new Error("Use a different phone number for each player");
-            await mutate({ action: "sms-recipients", recipients }); await send(recipients.map(r => r.id), "sms", true);
+            const next = await mutate({ action: "sms-recipients", recipients }); await send(recipients.map(r => r.id), "sms", true, next);
           } else {
             const recipients = z.array(recipientSchema).min(1).parse(rows.map(row => ({ id: row.id, name: row.name.trim() || row.contact.split("@")[0].slice(0, 100), email: row.contact })));
             if (new Set(recipients.map(r => r.email)).size !== recipients.length) throw new Error("Use a different email for each recipient");
-            await mutate({ action: "recipients", recipients }); await send(recipients.map(r => r.id), "email", true);
+            const next = await mutate({ action: "recipients", recipients }); await send(recipients.map(r => r.id), "email", true, next);
           }
         }); }}>
           {rows.map((row, index) => <fieldset key={row.id} className="rounded-xl border border-gray-200 p-3 space-y-3"><legend className="px-1 text-sm font-semibold">Recipient {index + 1}</legend><label className="block text-sm">{channel === "sms" ? "Phone number" : "Email"}<input className={input} required type={channel === "sms" ? "tel" : "email"} autoComplete={channel === "sms" ? "tel" : "email"} value={row.contact} onChange={e => setRows(all => all.map(r => r.id === row.id ? { ...r, contact: e.target.value } : r))} /></label><label className="block text-sm">Name (optional)<input className={input} maxLength={100} value={row.name} onChange={e => setRows(all => all.map(r => r.id === row.id ? { ...r, name: e.target.value } : r))} /></label>{rows.length > 1 && <button type="button" className="text-sm underline text-red-800" onClick={() => setRows(all => all.filter(r => r.id !== row.id))}>Remove recipient {index + 1}</button>}</fieldset>)}

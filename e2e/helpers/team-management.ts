@@ -1,7 +1,8 @@
 import { expect, type BrowserContext } from "@playwright/test";
 import { z } from "zod";
-import { createTeamSchema, teamManagementMutationSchema, type TeamManagementState } from "../../src/lib/onboarding/management";
+import { createTeamSchema, teamManagementMutationSchema, type TeamManagementState, invitationOptionsSchema } from "../../src/lib/onboarding/management";
 import { reviewJoinRequestSchema, teamLinkActionSchema, teamLinkStateSchema } from "../../src/lib/onboarding/shared";
+import { registrationMessage } from "../../src/lib/registrationOnboarding";
 import type { storedPlayerSchema } from "../../src/lib/onboarding/contracts";
 export const groupId = "33333333-3333-4333-8333-333333333333";
 export const userId = "55555555-5555-4555-8555-555555555555";
@@ -15,6 +16,10 @@ export async function managementFixture(context: BrowserContext, initialPlayers:
   const state: TeamManagementState = { config: { name: "Shared review", description: "Saved description", includeUsta: false, teamNumber: "", deadline: "" }, players: initialPlayers, members: [], legacyInvitations: [] };
   const shared: z.infer<typeof teamLinkStateSchema> = { token: null, enabled: false, requests: [] };
   const controls = { denyApproval: false, status: "ready", emailFailed: 0, emailPending: 0, smsPending: 0, smsFailed: 0, smsConfigured: true };
+  const messages: Array<{ mode: string; playerId: string; address: string; message: string }> = [];
+  const pendingSms = new Set<string>();
+  const batches = new Map<string, TeamManagementState["config"]>();
+  const delivered = new Set<string>();
   const writes: Array<{ path: string; method: string; body: unknown }> = [];
   await context.route("**/api/**", async route => {
     const req = route.request(), path = new URL(req.url()).pathname;
@@ -46,11 +51,20 @@ export async function managementFixture(context: BrowserContext, initialPlayers:
       return route.fulfill({ json: { ok: true } });
     }
     if (path.endsWith("/send")) {
-      const body = z.object({ mode: z.enum(["prepare", "email", "sms"]), reminder: z.boolean(), playerIds: z.array(z.uuid()).optional() }).parse(req.postDataJSON());
+      const body = z.object({ batchId: z.uuid(), mode: z.enum(["prepare", "email", "sms"]), reminder: z.boolean(), playerIds: z.array(z.uuid()).optional(), invitation: invitationOptionsSchema.optional() }).parse(req.postDataJSON());
       if (body.mode === "sms" && !controls.smsConfigured) return route.fulfill({ status: 503, json: { error: "SMS delivery is not configured. Use email or the shared team link." } });
       const selected = state.players.filter(p => (!body.playerIds || body.playerIds.includes(p.id)) && (!body.reminder || !p.confirmed_at) && !p.revoked_at);
       if (body.mode === "prepare") return route.fulfill({ json: { invitations: selected.map(p => ({ id: p.id, name: p.name, message: `Reminder: ${p.name} · ${state.config.teamNumber}` })) } });
-      for (const p of selected) p.sent_at = "2026-11-17T02:00:00Z";
+      const freshBatch = !batches.has(body.batchId);
+      const settings = batches.get(body.batchId) ?? (body.invitation ? { ...state.config, invitationMessage: body.invitation.message, includeUsta: body.invitation.includeUsta, ...(body.invitation.includeUsta ? body.invitation.registration : {}) } : structuredClone(state.config));
+      batches.set(body.batchId, structuredClone(settings));
+      if (body.invitation && freshBatch) { state.config.invitationMessage = body.invitation.message; state.config.includeUstaInInvitations = body.invitation.includeUsta; }
+      for (const p of selected) {
+        const deliveryKey = `${body.batchId}:${p.id}:${body.mode}`;
+        if (!delivered.has(deliveryKey)) messages.push({ mode: body.mode, playerId: p.id, address: (body.mode === "sms" ? p.phone : p.email) ?? "", message: registrationMessage({ ...settings, players: [] }, `/team-invitations/${p.token}`, body.reminder) });
+        delivered.add(deliveryKey);
+        if (body.mode === "sms" && controls.smsPending) pendingSms.add(p.id); else if (!(body.mode === "sms" && controls.smsFailed)) p.sent_at = "2026-11-17T02:00:00Z";
+      }
       const failed = body.mode === "sms" ? controls.smsFailed : controls.emailFailed, pending = body.mode === "sms" ? controls.smsPending : controls.emailPending;
       return route.fulfill({ json: { sent: Math.max(0, selected.length - failed - pending), failed, pending, message: "Test provider report" } });
     }
@@ -58,7 +72,14 @@ export async function managementFixture(context: BrowserContext, initialPlayers:
       if (req.method() === "PUT") throw new Error("Full-roster writes are forbidden in the new flow");
       if (req.method() === "PATCH") {
         const input = teamManagementMutationSchema.parse(req.postDataJSON());
-        if (input.action === "sms-recipients") { for (const r of input.recipients) if (!state.players.some(p => p.id === r.id)) state.players.push(player(r.id, { name: r.name, phone: r.phone, email: null, sent_at: null })); }
+        if (input.action === "sms-recipients") { for (const r of input.recipients) { const existing = state.players.find(p => p.id === r.id);
+          if (!existing) state.players.push(player(r.id, { name: r.name, phone: r.phone, email: null, sent_at: null }));
+          else if (existing.phone !== r.phone || existing.name !== r.name) {
+            if (pendingSms.has(r.id)) return route.fulfill({ status: 400, json: { error: "Review the pending SMS before changing its recipient" } });
+            if (existing.sent_at && !existing.revoked_at) return route.fulfill({ status: 400, json: { error: "Revoke the sent invitation before changing its recipient" } });
+            existing.phone = r.phone; existing.name = r.name;
+          }
+        } }
         if (input.action === "recipients") { for (const r of input.recipients) if (!state.players.some(p => p.id === r.id)) state.players.push(player(r.id, { name: r.name, email: r.email, sent_at: null })); }
         if (input.action === "message") { state.config.invitationMessage = input.message; state.config.includeUstaInInvitations = input.includeUstaInInvitations; }
         if (input.action === "registration") { const { action: _action, ...config } = input; void _action; state.config = { ...state.config, ...config }; }
@@ -71,5 +92,5 @@ export async function managementFixture(context: BrowserContext, initialPlayers:
     }
     return route.fulfill({ status: 404, json: { error: "No live APIs in this fixture" } });
   });
-  return { state, shared, controls, writes };
+  return { state, shared, controls, writes, messages };
 }
