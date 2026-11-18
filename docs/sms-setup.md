@@ -16,7 +16,23 @@ For the personal-project pilot, captains ask each player in person or by phone b
 
 The Twilio registration screen accepts the full verbal script directly in **Opt-in method proof**, or a public link. A hosted script is optional for that field. The separate Privacy Policy and Terms of Service fields still require live public pages. The `/terms`, `/sms-consent`, and SMS updates to `/privacy` were approved and published separately through PR #33 on November 18, 2026. All three canonical production URLs were verified anonymously at mobile and desktop widths, including with JavaScript disabled. Use `https://mytennisfriends.com/privacy` and `https://mytennisfriends.com/terms` in the campaign fields. The remaining PR #32 onboarding and SMS changes are still unmerged.
 
-Before live use, configure and verify the Messaging Service's HELP response identifies TennisFriends and gives `tennisfriends123@gmail.com` as a support contact; verify its STOP handling. Use the actual provider settings and behavior in the registration. The public terms describe the intended invitation program, not proof that Twilio sending is already enabled. A controlled receipt and HELP/STOP test follows campaign approval and credential setup.
+## Configured pilot — November 18, 2026
+
+The Account SID and Auth Token were imported into the gitignored, mode-0600 local `.env.development.local` and Vercel Production sensitive variables without printing or committing their values. `TWILIO_MESSAGING_SERVICE_SID` and `ONBOARDING_SMS_PUBLIC_ORIGIN=https://mytennisfriends.com` are also set in both environments. Read-only Twilio API calls authenticated successfully and confirmed the intended **TennisFriends Invitations** service. Its existing SMS-capable number ending **5267** is attached to the sender pool. The temporary credential-entry file was removed after import.
+
+Production variables apply on the next deployment; saving them did not deploy the PR #32 application. Preview credentials were not configured. The campaign's actual status is **IN_PROGRESS** for **SOLE_PROPRIETOR**, so no SMS was sent. A service-level registration flag alone must not be treated as campaign approval.
+
+Advanced Opt-Out is enabled for the Messaging Service, with these saved settings verified again after navigation:
+
+| Action | Keywords | Response |
+| --- | --- | --- |
+| Opt out | STOP, STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT, REVOKE, OPTOUT | TennisFriends: You have opted out and will receive no further messages from this service. Reply START to resume. For help: tennisfriends123@gmail.com. |
+| Opt back in | START, UNSTOP, YES | TennisFriends: You have opted back in to invitation texts. Msg & data rates may apply. Reply HELP for help or STOP to opt out. |
+| Help | HELP, INFO | TennisFriends team invitations. For help, email tennisfriends123@gmail.com. Msg & data rates may apply. Reply STOP to opt out. |
+
+Inbound messages use **Receive the message**, without a service webhook, instead of deferring to the number's old Twilio demo SMS webhook. Messages remain available in Twilio logs/API; configured keywords are handled by Advanced Opt-Out. Voice settings were preserved. See [Twilio Advanced Opt-Out](https://www.twilio.com/docs/messaging/tutorials/advanced-opt-out) for service-wide behavior and the support requirement for disabling the feature.
+
+Configuration checks do not prove handset delivery or actual keyword responses. After campaign approval, use a consenting test recipient to verify HELP, STOP suppression, and START resubscription, then separately obtain invitation consent and run the receipt → sign-in → acceptance → reopen test below. Do not use START as a substitute for permission to send a new invitation. The public terms describe the intended program, not proof that sending is already enabled.
 
 ## Connect the local app
 
