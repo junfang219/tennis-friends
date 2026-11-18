@@ -123,7 +123,7 @@ function InvitationsEditor({ group, review = false, setup = false, management }:
               <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={usta.includeRegistrationLink} onChange={e => setUstaDraft({ ...usta, includeRegistrationLink: e.target.checked })} />Include USTA registration link in invitation</label>
             </>}
           </fieldset>
-          {channel === "sms" && <label className="flex items-start gap-3 text-sm"><input required type="checkbox" className="mt-1" checked={smsConsent} onChange={e => setSmsConsent(e.target.checked)} />These players agreed to receive this team invitation by text.</label>}
+          {channel === "sms" && <div className="space-y-2"><label className="flex items-start gap-3 text-sm"><input required type="checkbox" className="mt-1" checked={smsConsent} onChange={e => setSmsConsent(e.target.checked)} />These players agreed to receive this team invitation by text.</label><p className="text-sm text-gray-600">Before sending, use the <Link href="/sms-consent" target="_blank" rel="noopener noreferrer" className="font-semibold text-court-green underline">verbal consent script (opens in a new tab)</Link> and keep a dated record of each player&apos;s permission.</p></div>}
           <button className="btn-primary h-12 w-full" type="submit">{busy ? "Sending…" : setup ? "Send invitations & finish" : channel === "sms" ? "Send SMS invitations" : "Send invitations"}</button>
         </form>
       </section>}

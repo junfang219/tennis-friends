@@ -10,6 +10,14 @@ Current trials offer verified-recipient tests with predefined message content. A
 
 For US messaging, follow the sender's registration instructions in Twilio: [A2P 10DLC](https://www.twilio.com/docs/messaging/compliance/a2p-10dlc) for local numbers or [toll-free verification](https://www.twilio.com/docs/messaging/compliance/toll-free/console-onboarding) for toll-free numbers. A purchased SMS-capable number alone does not establish registration approval. Complete the applicable setup before testing custom invitations.
 
+## Verbal consent and registration proof
+
+For the personal-project pilot, captains ask each player in person or by phone before sending. The captain reads the complete script at `/sms-consent`, receives an explicit yes, confirms the receiving number, and keeps a private dated record. The consent checkbox confirms this process; the app does not automatically record the verbal conversation or store the captain's separate notes. One invitation is authorized per request, and an additional invitation needs permission.
+
+The Twilio registration screen accepts the full verbal script directly in **Opt-in method proof**, or a public link. A hosted script is optional for that field. The separate Privacy Policy and Terms of Service fields still require live public pages. The proposed `/terms`, `/sms-consent`, and SMS updates to `/privacy` are in PR #32 and remain unpublished until approved and deployed. Do not submit the production links while they return 404 or serve older text.
+
+Before live use, configure and verify the Messaging Service's HELP response identifies TennisFriends and gives `tennisfriends123@gmail.com` as a support contact; verify its STOP handling. Use the actual provider settings and behavior in the registration. The public terms describe the intended invitation program, not proof that Twilio sending is already enabled. A controlled receipt and HELP/STOP test follows campaign approval and credential setup.
+
 ## Connect the local app
 
 Copy the real account's Account SID and Auth Token from Twilio into the gitignored `.env.development.local` file. Use live account credentials, not Twilio test credentials. Never paste tokens into chat or commit them. Set one sender option:

@@ -14,6 +14,13 @@ The already approved shared-link migration is installed in production as `202611
 
 Verification: 743 unit/route tests, 72 browser cases at 375px and desktop, and 123 embedded PostgreSQL checks pass. TypeScript, changed-file ESLint, and diff checks pass; the team page's three existing image warnings are unchanged. Automated tests use isolated fixtures and send no real messages. The review middleware rewrites only the fixed fixture team's canonical routes and blocks live APIs; friend/guest actions cannot reach live data in review mode.
 
+### Verbal consent and public SMS disclosures — November 18, 2026
+
+- Added public server-rendered `/terms` and `/sms-consent` pages, with the full verbal script, optional SMS choice, one invitation per consent request, manual consent-record instructions, HELP/STOP and support instructions, and linked policies. Updated `/privacy` with invitation contact data, SMS use and delivery providers, and the required statement excluding marketing sharing of SMS consent data. Invite players links to the script in a new tab while retaining its draft.
+- The Twilio proof field shown during this registration accepts the verbal script inline; a hosted script is optional there. Live public privacy and terms links remain required. These pages are prepared in PR #32 and have not been published. Their production URLs must be checked after deployment before submission.
+- All three pages return 200 anonymously with JavaScript disabled at 375px and 1280px, with no horizontal overflow. The required privacy sentence is present in server-rendered output. Six existing SMS sending/validation/draft browser cases also pass across mobile and desktop. TypeScript and changed-file ESLint pass. The React checklist found no new client boundary, effect, dependency, or data-fetching work in the policy pages.
+- Captains maintain their own dated verbal-consent records. The app's checkbox does not automatically record a conversation or the captain's notes. Twilio account upgrade and Brand approval were observed in user-provided screenshots; Campaign approval, provider HELP/STOP configuration, credentials and live SMS delivery remain separate steps. No message was sent and no production application deployment occurred.
+
 ### SMS setup checks and reloaded drafts — November 17, 2026
 
 - Re-entering an existing unissued phone after a reload reuses its player ID and preserves its saved name when the name field is blank. The database also deduplicates under the team lock. Issued/joined contacts are rejected with specific guidance, and a fresh draft cannot bypass a revoked contact's unresolved delivery.
