@@ -12,7 +12,20 @@ The application is unmerged and undeployed. `/groups/new` now collects only team
 
 The already approved shared-link migration is installed in production as `20261117162141_shared_team_join_approval.sql`; do not reapply it. The separately approved scoped-edit migration is also installed as `20261117181245_roster_first_team_management.sql`. Its local filename matches hosted migration history; do not reapply it. It adds a private checked implementation and public invoker wrapper without updating existing team data during installation. The local app can now use the new save controls.
 
-Verification: 757 unit/route tests and 84 browser cases at 375px and desktop pass. The earlier 149 embedded PostgreSQL checks and eight real PostgreSQL concurrency tests also pass; their SQL and fixtures are unchanged by the loading revision. TypeScript, changed-file ESLint, and diff checks pass; the team page's three existing image warnings are unchanged. Automated tests use isolated fixtures and send no real messages. The review middleware rewrites only the fixed fixture team's canonical routes and blocks live APIs; friend/guest actions cannot reach live data in review mode.
+Verification: 761 unit/route/server-render tests pass. The existing 84 browser cases at 375px and desktop also pass; runtime code is unchanged by the real-page test revision. The earlier 149 embedded PostgreSQL checks and eight real PostgreSQL concurrency tests also pass; their SQL and fixtures are unchanged by the loading revision. TypeScript, changed-file ESLint, and diff checks pass; the team page's three existing image warnings are unchanged. Automated tests use isolated fixtures and send no real messages. The review middleware rewrites only the fixed fixture team's canonical routes and blocks live APIs; friend/guest actions cannot reach live data in review mode.
+
+### Real Invite players page regression — November 18, 2026
+
+- Added `src/app/groups/[id]/invite-players/page.test.ts`. It invokes the real async page, `teamPage`, roster/management loaders, invitation editor, and hook, then renders their actual HTML. Only Next navigation and external Supabase/network boundaries are controlled. The preview page, hard-coded `invite-ready` snapshot, and review middleware are not used. Owner and non-owner manager cases must render a phone input plus the player/message returned by the server loader, without Loading invitations. Denied RPC access and signed-out visitors must not return invitation content.
+- Enabled automatic JSX compilation in Vitest's existing Oxc transformer so imported Next pages/components can be rendered in the Node test runner. The application's Next JSX settings and dependencies are unchanged. These server-render tests protect the real page-to-editor wiring; the existing browser tests separately protect hydration without a redundant GET.
+- Mutation proof used a clean temporary source copy: all four new tests passed, removing only `initialState={data.initialManagement}` from the actual page made both ready-form tests fail (rendered output contained Loading invitations), and restoring the source made the complete 761-test suite pass. The two access-denial tests continued passing in the mutant, confirming that the failures specifically detected lost seeding. No mutation was made to the live checkout/page.
+- TypeScript, changed-file ESLint, and diff checks pass. The 84 browser cases from the loading revision remain unchanged; this revision changes tests/configuration/docs only, so no browser rerun or production deployment was needed. No database, team record, or message was changed.
+
+Run the real-page regression with:
+
+```sh
+npx vitest run 'src/app/groups/[id]/invite-players/page.test.ts'
+```
 
 ### Team details → Invite players loading — November 18, 2026
 
