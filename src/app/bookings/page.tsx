@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { z } from "zod";
 import { CourtsSectionNav } from "@/components/courts/CourtsSectionNav";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -20,6 +21,7 @@ import {
 } from "@/components/PostComposer";
 
 const BOOKINGS_CACHE_KEY = "courtBookings:mine";
+const BookingId = z.uuid();
 
 /** "AYTC Outdoor Tennis Court 01" → "Court 01"; otherwise the full name. */
 function shortCourtName(name: string): string {
@@ -96,20 +98,24 @@ function BookingCard({
   onCancel,
   onFindPlayers,
   busy,
+  focused,
 }: {
   b: CourtBooking;
   isPast: boolean;
   onCancel: (b: CourtBooking) => void;
   onFindPlayers: (b: CourtBooking) => void;
   busy: boolean;
+  focused: boolean;
 }) {
   const cancelled = b.status === "cancelled";
   const hasSession = !!b.session_post_id;
   return (
     <li
+      id={`booking-${b.id}`}
+      tabIndex={focused ? -1 : undefined}
       className={`bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-4 ${
         cancelled ? "opacity-60" : ""
-      }`}
+      } ${focused ? "ring-2 ring-court-green" : ""}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -176,11 +182,23 @@ function BookingCard({
 }
 
 export default function BookingsPage() {
+  return (
+    <>
+      <CourtsSectionNav active="/bookings" />
+      <Suspense fallback={<div className="skeleton mx-auto mt-6 h-24 max-w-2xl rounded-2xl" />}>
+        <BookingsContent />
+      </Suspense>
+    </>
+  );
+}
+
+function BookingsContent() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const bookingId = BookingId.safeParse(useSearchParams().get("booking")).data;
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const [showPast, setShowPast] = useState(false);
+  const [pastOpen, setPastOpen] = useState<boolean | null>(null);
   // The booking we're spawning a find-players post for (opens the composer).
   const [composerFor, setComposerFor] = useState<CourtBooking | null>(null);
 
@@ -191,8 +209,11 @@ export default function BookingsPage() {
   const bookings = query.data;
 
   useEffect(() => {
-    if (status === "unauthenticated") router.replace("/login?next=%2Fbookings");
-  }, [status, router]);
+    if (status === "unauthenticated") {
+      const next = bookingId ? `/bookings?booking=${bookingId}` : "/bookings";
+      router.replace(`/login?next=${encodeURIComponent(next)}`);
+    }
+  }, [status, router, bookingId]);
 
   const { upcoming, past } = useMemo(() => {
     const now = Date.now();
@@ -205,6 +226,17 @@ export default function BookingsPage() {
     up.reverse();
     return { upcoming: up, past: pa };
   }, [bookings]);
+
+  const showPast = pastOpen ?? past.some((booking) => booking.id === bookingId);
+  const showFocusedCard = upcoming.some((booking) => booking.id === bookingId)
+    || (showPast && past.some((booking) => booking.id === bookingId));
+
+  useEffect(() => {
+    if (!showFocusedCard) return;
+    const card = document.getElementById(`booking-${bookingId}`);
+    card?.focus({ preventScroll: true });
+    card?.scrollIntoView({ block: "center" });
+  }, [bookingId, showFocusedCard]);
 
   const onSessionPosted = async (post: Record<string, unknown>) => {
     const booking = composerFor;
@@ -246,90 +278,89 @@ export default function BookingsPage() {
   };
 
   return (
-    <>
-      <CourtsSectionNav active="/bookings" />
-      <div className="max-w-2xl mx-auto px-4 py-6">
-        <h1 className="font-display mb-2 text-2xl font-bold text-court-green">My bookings</h1>
-        <p className="mb-4 text-sm text-gray-600">
-          Reservations you saved after booking on Seattle Parks. To cancel a reservation, use{" "}
-          <span className="font-medium">Manage on Seattle Parks</span>.
-        </p>
+    <div className="max-w-2xl mx-auto px-4 py-6">
+      <h1 className="font-display mb-2 text-2xl font-bold text-court-green">My bookings</h1>
+      <p className="mb-4 text-sm text-gray-600">
+        Reservations you saved after booking on Seattle Parks. To cancel a reservation, use{" "}
+        <span className="font-medium">Manage on Seattle Parks</span>.
+      </p>
 
-        {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
+      {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
 
-        {bookings === undefined ? (
-          <div className="space-y-3">
-            <div className="skeleton w-full h-24 rounded-2xl" />
-            <div className="skeleton w-full h-24 rounded-2xl" />
-          </div>
-        ) : upcoming.length === 0 && past.length === 0 ? (
-          <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-8 text-center">
-            <div className="text-3xl mb-2">🎾</div>
-            <p className="text-sm font-semibold text-gray-900">No bookings yet</p>
-            <p className="text-sm text-gray-500 mt-1">
-              Find an open court and tap a time to book it in the app.
-            </p>
-            <Link
-              href="/courts"
-              className="inline-block mt-4 px-4 py-2 rounded-lg bg-court-green text-white text-sm font-semibold hover:bg-court-green-light"
-            >
-              Browse courts
-            </Link>
-          </div>
-        ) : (
-          <>
-            {upcoming.length > 0 && (
-              <ul className="space-y-3">
-                {upcoming.map((b) => (
-                  <BookingCard
-                    key={b.id}
-                    b={b}
-                    isPast={false}
-                    onCancel={cancel}
-                    onFindPlayers={setComposerFor}
-                    busy={busyId === b.id}
-                  />
-                ))}
-              </ul>
-            )}
+      {bookings === undefined ? (
+        <div className="space-y-3">
+          <div className="skeleton w-full h-24 rounded-2xl" />
+          <div className="skeleton w-full h-24 rounded-2xl" />
+        </div>
+      ) : upcoming.length === 0 && past.length === 0 ? (
+        <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-8 text-center">
+          <div className="text-3xl mb-2">🎾</div>
+          <p className="text-sm font-semibold text-gray-900">No bookings yet</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Find an open court and tap a time to book it in the app.
+          </p>
+          <Link
+            href="/courts"
+            className="inline-block mt-4 px-4 py-2 rounded-lg bg-court-green text-white text-sm font-semibold hover:bg-court-green-light"
+          >
+            Browse courts
+          </Link>
+        </div>
+      ) : (
+        <>
+          {upcoming.length > 0 && (
+            <ul className="space-y-3">
+              {upcoming.map((b) => (
+                <BookingCard
+                  key={b.id}
+                  b={b}
+                  isPast={false}
+                  onCancel={cancel}
+                  onFindPlayers={setComposerFor}
+                  busy={busyId === b.id}
+                  focused={bookingId === b.id}
+                />
+              ))}
+            </ul>
+          )}
 
-            {past.length > 0 && (
-              <div className="mt-6">
-                <button
-                  onClick={() => setShowPast((s) => !s)}
-                  className="text-sm font-semibold text-gray-500 hover:text-gray-700"
-                >
-                  {showPast ? "Hide" : "Show"} past bookings ({past.length})
-                </button>
-                {showPast && (
-                  <ul className="space-y-3 mt-3">
-                    {past.map((b) => (
-                      <BookingCard
-                        key={b.id}
-                        b={b}
-                        isPast
-                        onCancel={cancel}
-                        onFindPlayers={setComposerFor}
-                        busy={busyId === b.id}
-                      />
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </>
-        )}
+          {past.length > 0 && (
+            <div className="mt-6">
+              <button
+                onClick={() => setPastOpen(!showPast)}
+                className="text-sm font-semibold text-gray-500 hover:text-gray-700"
+              >
+                {showPast ? "Hide" : "Show"} past bookings ({past.length})
+              </button>
+              {showPast && (
+                <ul className="space-y-3 mt-3">
+                  {past.map((b) => (
+                    <BookingCard
+                      key={b.id}
+                      b={b}
+                      isPast
+                      onCancel={cancel}
+                      onFindPlayers={setComposerFor}
+                      busy={busyId === b.id}
+                      focused={bookingId === b.id}
+                    />
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </>
+      )}
 
-        {composerFor && (
-          <ComposerModal
-            session={session}
-            placeholder="Looking for a player…"
-            initialSession={fromBooking(composerFor)}
-            onPost={onSessionPosted}
-            onClose={() => setComposerFor(null)}
-          />
-        )}
-      </div>
-    </>
+      {composerFor && (
+        <ComposerModal
+          session={session}
+          placeholder="Looking for a player…"
+          initialSession={fromBooking(composerFor)}
+          onPost={onSessionPosted}
+          onClose={() => setComposerFor(null)}
+        />
+      )}
+    </div>
   );
 }

@@ -9865,7 +9865,7 @@ CREATE OR REPLACE FUNCTION public.guest_join_post(
   p_name    text,
   p_contact text DEFAULT NULL,
   p_note    text DEFAULT NULL
-) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO ''
 AS $$
 DECLARE
   v_post    public.posts%ROWTYPE;
@@ -9879,11 +9879,13 @@ BEGIN
     RAISE EXCEPTION 'Please enter your name' USING ERRCODE = 'invalid_parameter_value';
   END IF;
 
-  -- The unguessable post UUID is the capability (same trust model the
-  -- public page relies on). Only find_players posts are shareable/publicly
-  -- viewable, so scope guest RSVPs to that type.
-  SELECT * INTO v_post FROM public.posts WHERE id = p_post_id;
-  IF v_post.id IS NULL OR v_post.post_type <> 'find_players' THEN
+  -- Match the public share page. Keep the visibility check valid until
+  -- the guest request is recorded, including during concurrent edits.
+  SELECT * INTO v_post
+  FROM public.posts
+  WHERE id = p_post_id AND post_type = 'find_players' AND visibility = 'friends'
+  FOR SHARE;
+  IF v_post.id IS NULL THEN
     RAISE EXCEPTION 'This game is no longer available' USING ERRCODE = 'no_data_found';
   END IF;
 
