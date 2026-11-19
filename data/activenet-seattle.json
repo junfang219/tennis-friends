@@ -768,6 +768,7 @@
       "courts": [
         {
           "name": "Court 1 (Upper)",
+          "bookingSearchName": "Lower Woodland Playfield Upper Court 01",
           "centerId": 13,
           "resourceId": 369,
           "tags": [
@@ -778,6 +779,7 @@
         },
         {
           "name": "Court 2 (Upper)",
+          "bookingSearchName": "Lower Woodland Playfield Upper Court 02",
           "centerId": 13,
           "resourceId": 370,
           "tags": [
@@ -788,6 +790,7 @@
         },
         {
           "name": "Court 3 (Upper)",
+          "bookingSearchName": "Lower Woodland Playfield Upper Court 03",
           "centerId": 13,
           "resourceId": 371,
           "tags": [
@@ -798,6 +801,7 @@
         },
         {
           "name": "Court 4 (Upper)",
+          "bookingSearchName": "Lower Woodland Playfield Upper Court 04",
           "centerId": 13,
           "resourceId": 372,
           "tags": [
@@ -808,6 +812,7 @@
         },
         {
           "name": "Court 1 (Lower)",
+          "bookingSearchName": "Lower Woodland Playfield Tennis Court 01",
           "centerId": 13,
           "resourceId": 353,
           "tags": [
@@ -819,6 +824,7 @@
         },
         {
           "name": "Court 2 (Lower)",
+          "bookingSearchName": "Lower Woodland Playfield Tennis Court 02",
           "centerId": 13,
           "resourceId": 354,
           "tags": [
@@ -830,6 +836,7 @@
         },
         {
           "name": "Court 3 (Lower)",
+          "bookingSearchName": "Lower Woodland Playfield Tennis Court 03",
           "centerId": 13,
           "resourceId": 355,
           "tags": [
@@ -841,6 +848,7 @@
         },
         {
           "name": "Court 4 (Lower)",
+          "bookingSearchName": "Lower Woodland Playfield Tennis Court 04",
           "centerId": 13,
           "resourceId": 356,
           "tags": [
@@ -852,6 +860,7 @@
         },
         {
           "name": "Court 5 (Lower)",
+          "bookingSearchName": "Lower Woodland Playfield Tennis Court 05",
           "centerId": 13,
           "resourceId": 357,
           "tags": [
@@ -863,6 +872,7 @@
         },
         {
           "name": "Court 6 (Lower)",
+          "bookingSearchName": "Lower Woodland Playfield Tennis Court 06",
           "centerId": 13,
           "resourceId": 358,
           "tags": [
@@ -874,6 +884,7 @@
         },
         {
           "name": "Court 7 (Lower)",
+          "bookingSearchName": "Lower Woodland Playfield Tennis Court 07",
           "centerId": 13,
           "resourceId": 359,
           "tags": [
@@ -885,6 +896,7 @@
         },
         {
           "name": "Court 8 (Lower)",
+          "bookingSearchName": "Lower Woodland Playfield Tennis Court 08",
           "centerId": 13,
           "resourceId": 360,
           "tags": [
@@ -896,6 +908,7 @@
         },
         {
           "name": "Court 9 (Lower)",
+          "bookingSearchName": "Lower Woodland Playfield Tennis Court 09",
           "centerId": 13,
           "resourceId": 361,
           "tags": [
@@ -907,6 +920,7 @@
         },
         {
           "name": "Court 10 (Lower)",
+          "bookingSearchName": "Lower Woodland Playfield Tennis Court 10",
           "centerId": 13,
           "resourceId": 362,
           "tags": [

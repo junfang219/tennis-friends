@@ -14,6 +14,8 @@ import raw from "../../data/activenet-seattle.json";
 
 export interface SeattleCourt {
   name: string;
+  /** Name used in ActiveNet's search when it differs from our display name. */
+  bookingSearchName?: string;
   centerId: number;
   resourceId: number;
   tags: string[];

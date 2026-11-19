@@ -1,5 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { validateBookingWindow, snapBookingRange } from "./bookingWindow";
+import { bookingEndTimes, bookingStartTimes, validateBookingWindow, snapBookingRange } from "./bookingWindow";
+
+describe("Seattle outdoor time choices", () => {
+  const windows = [
+    { start: 435, end: 540 },
+    { start: 480, end: 600 },
+    { start: 640, end: 690 },
+    { start: 720, end: 1080 },
+  ];
+
+  it("lists distinct starts that leave a full hour and preserves an exact boundary", () => {
+    const starts = bookingStartTimes(windows);
+    expect(starts.filter((time) => time < 720)).toEqual([435, 450, 480, 510, 540]);
+    expect(starts.at(-1)).toBe(1020);
+  });
+
+  it("offers end times only within one open window and caps the range at three hours", () => {
+    expect(bookingEndTimes(windows, 435)).toEqual([495, 510, 540]);
+    expect(bookingEndTimes(windows, 480)).toEqual([540, 570, 600]);
+    expect(bookingEndTimes(windows, 600)).toEqual([]);
+    expect(bookingEndTimes(windows, 720)).toEqual([780, 810, 840, 870, 900]);
+  });
+});
 
 // Mid-day UTC so the Seattle calendar date is unambiguous: 2026-07-25 in
 // Seattle (PDT, -7).
