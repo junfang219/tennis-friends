@@ -10,6 +10,7 @@ import {
 } from "@/components/courts/CourtSummaryCard";
 import { AddMissingCourtModal } from "@/components/courts/AddMissingCourtModal";
 import AvailabilityFinder from "@/components/courts/AvailabilityFinder";
+import { CourtsSectionNav } from "@/components/courts/CourtsSectionNav";
 import {
   filterFacilitiesByBbox,
   getFacilityByCourtId,
@@ -964,9 +965,10 @@ export default function CourtsPage() {
       : null;
 
   return (
-    <div className="relative w-full" style={{ height: isNative ? "calc(100vh - 64px - 5rem)" : "calc(100vh - 64px)" }}>
+    <div className="relative flex w-full flex-col" style={{ height: isNative ? "calc(100vh - 64px - 5rem)" : "calc(100vh - 64px)" }}>
+      <CourtsSectionNav active="/courts" />
       {/* Split layout: side panel (left) + map (right) */}
-      <div className="flex h-full">
+      <div className="flex min-h-0 flex-1">
         {/* ── SEATTLE PARKS SIDE PANEL (LEFT) ── */}
         <aside
           className={`flex-shrink-0 h-full bg-white border-r border-court-green-pale/20 flex flex-col transition-all duration-300 ${
