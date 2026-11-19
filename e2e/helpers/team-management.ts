@@ -47,7 +47,8 @@ export async function managementFixture(context: BrowserContext, initialPlayers:
     if (path.endsWith("/create")) { const input = createTeamSchema.parse(req.postDataJSON()); state.config = { ...state.config, ...input }; if (req.method() === "POST") { shared.token ??= token; shared.enabled = true; } return route.fulfill({ json: { groupId } }); }
     if (path.endsWith("/revoke")) {
       const { playerId: id, renew } = z.object({ playerId: z.uuid(), renew: z.boolean().optional() }).parse(req.postDataJSON());
-      state.players = state.players.map(p => p.id !== id ? p : renew ? { ...p, sent_at: null, revoked_at: null, token: "d".repeat(64) } : { ...p, revoked_at: "2026-11-17T01:00:00Z" });
+      if (renew && pendingSms.has(id)) return route.fulfill({ status: 409, json: { error: "This invitation has an unresolved delivery. Review it before preparing a new link." } });
+      state.players = state.players.map(p => p.id !== id ? p : renew ? { ...p, sent_at: null, revoked_at: null, token: "d".repeat(64), expires_at: "2099-12-31T00:00:00Z" } : { ...p, revoked_at: "2026-11-17T01:00:00Z" });
       return route.fulfill({ json: { ok: true } });
     }
     if (path.endsWith("/send")) {
@@ -93,5 +94,5 @@ export async function managementFixture(context: BrowserContext, initialPlayers:
     }
     return route.fulfill({ status: 404, json: { error: "No live APIs in this fixture" } });
   });
-  return { state, shared, controls, writes, messages };
+  return { state, shared, controls, writes, messages, pendingSms };
 }

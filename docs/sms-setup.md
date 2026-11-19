@@ -55,4 +55,6 @@ Restart the local dev server after changing environment settings, then reload **
 
 Use a test team and one consenting recipient. Confirm permission in the SMS form, optionally include clearly labeled test USTA instructions, and send once. Re-entering an existing unsent phone number reuses that draft. Issued invitations stay in **Pending invitations**; use their existing controls instead of creating another entry.
 
+If an invitation expires before issuance, use **Renew expired invitation** in Pending invitations. This retains its player/roster entry and registration history, creates a fresh personal credential, and sends nothing until you explicitly send the SMS/email. Unresolved delivery must be reconciled before renewing. The recovery safeguards require follow-up migration `20261119031146_recheck_team_managers_and_recover_expired_drafts.sql`, which is prepared in PR #32 and not yet installed in production.
+
 Check Twilio Messaging logs for the provider status. Provider acceptance is not handset delivery. Have the recipient confirm receipt, open the link, sign in to the intended account, accept, then reopen and verify exactly one team membership. If the app reports an uncertain/pending send, reconcile it in Twilio before retrying. This revision does not enable automatic SMS USTA reminders.

@@ -368,3 +368,41 @@ test("SMS requires a public invitation address before changing recipients", asyn
  await page.getByRole("button",{name:"Send invitations & finish",exact:true}).click();
  await expect(page.getByRole("main").getByRole("alert")).toContainText("public app address");expect(fixture.writes).toHaveLength(0);
 });
+
+for (const delivery of ["sms", "email"] as const) test(`renew an expired unissued ${delivery} invitation without replacing the player`, async ({ context, page }) => {
+  const original = player(playerId, { sent_at: null, expires_at: "2000-01-01T00:00:00Z", phone: delivery === "sms" ? "+12065550101" : null, email: delivery === "email" ? "expired@example.com" : null, confirmed_at: "2026-11-15T00:00:00Z" });
+  const fixture = await managementFixture(context, [original]);
+  const before = structuredClone(original);
+  await page.goto(`/groups/${groupId}/invite-players`);
+  await expect(page.getByText("This invitation expired before it was issued.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: `${delivery === "sms" ? "Send SMS" : "Send email"} to Invited Player`, exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Manage invitation for Invited Player", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Renew expired invitation for Invited Player", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("New personal link prepared");
+  expect(fixture.state.players).toHaveLength(1);
+  expect(fixture.state.players[0]).toEqual({ ...before, token: "d".repeat(64), expires_at: "2099-12-31T00:00:00Z" });
+  expect(fixture.messages).toHaveLength(0);
+  await expect(page.getByRole("button", { name: "Renew expired invitation for Invited Player", exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Manage invitation for Invited Player", { exact: true })).toHaveCount(0);
+  if (delivery === "sms") await page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
+  await page.getByRole("button", { name: `${delivery === "sms" ? "Send SMS" : "Send email"} to Invited Player`, exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("1 " + (delivery === "sms" ? "texts" : "emails") + " accepted");
+  expect(fixture.messages).toHaveLength(1);
+  expect(fixture.messages[0].message).toContain(`/team-invitations/${"d".repeat(64)}`);
+  expect(fixture.state.players[0].confirmed_at).toBe(before.confirmed_at);
+  expect(fixture.writes.map(w => w.path.split("/").pop())).toEqual(["revoke", "send"]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("expired draft renewal cannot bypass an unresolved SMS", async ({ context, page }) => {
+  const original = player(playerId, { sent_at: null, expires_at: "2000-01-01T00:00:00Z", phone: "+12065550101", email: null });
+  const fixture = await managementFixture(context, [original]);
+  fixture.pendingSms.add(playerId);
+  const before = structuredClone(original);
+  await page.goto(`/groups/${groupId}/invite-players`);
+  await page.getByRole("button", { name: "Renew expired invitation for Invited Player", exact: true }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("unresolved delivery");
+  expect(fixture.state.players).toEqual([before]);
+  expect(fixture.messages).toHaveLength(0);
+  await expect(page.getByRole("button", { name: "Renew expired invitation for Invited Player", exact: true })).toBeEnabled();
+});

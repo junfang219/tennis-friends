@@ -12,7 +12,15 @@ The application is unmerged and undeployed. `/groups/new` now collects only team
 
 The already approved shared-link migration is installed in production as `20261117162141_shared_team_join_approval.sql`; do not reapply it. The separately approved scoped-edit migration is also installed as `20261117181245_roster_first_team_management.sql`. Its local filename matches hosted migration history; do not reapply it. It adds a private checked implementation and public invoker wrapper without updating existing team data during installation. The local app can now use the new save controls.
 
-Verification: 743 unit/route tests, 72 browser cases at 375px and desktop, and 123 embedded PostgreSQL checks pass. TypeScript, changed-file ESLint, and diff checks pass; the team page's three existing image warnings are unchanged. Automated tests use isolated fixtures and send no real messages. The review middleware rewrites only the fixed fixture team's canonical routes and blocks live APIs; friend/guest actions cannot reach live data in review mode.
+Verification: 747 unit/route tests, 78 browser cases at 375px and desktop, 149 embedded PostgreSQL checks, and eight real PostgreSQL concurrency tests pass. TypeScript, changed-file ESLint, and diff checks pass; the team page's three existing image warnings are unchanged. Automated tests use isolated fixtures and send no real messages. The review middleware rewrites only the fixed fixture team's canonical routes and blocks live APIs; friend/guest actions cannot reach live data in review mode.
+
+### PR review corrections: manager revocation and expired drafts — November 18, 2026
+
+- Added follow-up `20261119031146_recheck_team_managers_and_recover_expired_drafts.sql`. It rechecks manager access after taking the team lock in shared-link management, request approval/rejection, scoped roster/registration edits, and invitation renewal. A request queued before manager removal/demotion cannot complete with stale authority. Existing applied migrations are unchanged.
+- Expired, unissued SMS/email invitations show an explicit Renew expired invitation action. Their Send controls return after renewal; the usual Manage invitation menu stays hidden until issuance/revocation. Renewal rotates the token and extends expiry for the same player/member, retaining contacts and USTA confirmation. Preparing a replacement link sends nothing. Any unresolved SMS or email delivery blocks renewal with a specific 409 response. Joined/removed players remain ineligible.
+- Renewal uses a private checked implementation with an empty search path and an authenticated-only public invoker wrapper. The migration changes function definitions/grants only and updates no business records during installation. It is **prepared and tested locally, not applied to production**. Apply it before releasing these fixes; no app deployment or live messages were performed.
+- Added real concurrent-transaction regressions using a temporary Unix-socket-only Postgres cluster: approval, rejection, contact visibility, shared-link replacement, registration edits, member removal, and renewal are denied after revocation while waiting. Authorized managers still succeed. The approval regression fails against the pre-fix code and passes with the follow-up. Denied actions preserve every affected record except the owner's intended revocation.
+- Added expired-draft recovery checks for stable player/member IDs, contacts, confirmations, token rotation/expiry, pending-delivery rejection, and duplicate-free acceptance. Six mobile/desktop browser regressions cover SMS/email recovery and unresolved delivery, alongside four route tests. Full verification: 747 unit/route tests, 78 browser cases (375px and desktop, clean runner exit), 149 embedded database checks, eight real concurrency tests, TypeScript, targeted ESLint, and diff checks pass. Automated provider calls remain intercepted. Catalog checks verify restricted execution, empty search paths, and the renewal invoker wrapper.
 
 ### Twilio configuration verification — November 18, 2026
 
@@ -160,7 +168,13 @@ Run database verification without touching hosted services:
 ONBOARDING_PGLITE_MODULE=/path/to/pglite/dist/index.js node scripts/test-team-onboarding-db.mjs
 ```
 
-PGlite is a test-only runtime and is not added to the application dependencies. The fixture does not reproduce every deployed trigger/policy, so staging verification remains required.
+PGlite is a test-only runtime and is not added to the application dependencies. For actual lock-wait regressions, install local PostgreSQL server programs (`initdb`, `pg_ctl`, `psql`) plus Node/Python on PATH and run:
+
+```sh
+python3 scripts/test-team-onboarding-concurrency.py
+```
+
+This creates and removes its own temporary database with TCP disabled, uses no environment files or hosted credentials, and requires no Python packages. Both runners load the same migrations and canonical merge helper through `scripts/team-onboarding-test-fixture.mjs`. The fixture does not reproduce every deployed trigger/policy, so staging verification remains required.
 
 ## Known boundaries
 

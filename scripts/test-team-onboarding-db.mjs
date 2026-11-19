@@ -1,6 +1,6 @@
 // Runs only in embedded PostgreSQL. No Supabase connection or credentials.
 // ONBOARDING_PGLITE_MODULE may point to a separately installed PGlite runtime.
-import { readFile } from 'node:fs/promises';
+import { teamOnboardingTestSql } from './team-onboarding-test-fixture.mjs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -13,14 +13,7 @@ let checks=0;
 const check=(condition,message)=>{assert.ok(condition,message);checks++;};
 async function rejects(work,pattern){await assert.rejects(work,pattern);checks++;}
 try {
- await db.exec(await readFile('tests/sql/team-onboarding-fixture.sql','utf8'));
- const canonical=await readFile('supabase/schema.sql','utf8');
- const start=canonical.indexOf('CREATE OR REPLACE FUNCTION public._merge_placeholder_into_user');
- const end=canonical.indexOf('-- Reworked to delegate',start);
- await db.exec(canonical.slice(start,end));
- const {readdir}=await import('node:fs/promises');
- const migrations=(await readdir('supabase/migrations')).filter(n=>n.endsWith('_team_onboarding.sql')||n.endsWith('_fix_team_onboarding_invitation_lifecycle.sql')||n.endsWith('_shared_team_join_approval.sql')||n.endsWith('_roster_first_team_management.sql')||n.endsWith('_guided_team_setup_details.sql')||n.endsWith('_automatic_sms_team_invitations.sql')||n.endsWith('_atomic_onboarding_deliveries.sql')||n.endsWith('_allow_acceptance_with_delivery_guards.sql')||n.endsWith('_reuse_unissued_sms_drafts.sql')).sort();
- for(const migration of migrations)await db.exec(await readFile(`supabase/migrations/${migration}`,'utf8'));
+ await db.exec(await teamOnboardingTestSql());
  const owner=randomUUID(),friend=randomUUID(),stranger=randomUUID(),group=randomUUID(),pid=randomUUID(),other=randomUUID();
  for(const [id,name] of [[owner,'Captain'],[friend,'Taylor'],[stranger,'Stranger']])await db.query('insert into profiles values($1,$2,$3)',[id,name,`${name}@example.com`]);
  await db.query("insert into friendships values($1,$2,'accepted')",[owner,friend]);
@@ -469,5 +462,69 @@ try {
  check(Number((await db.query('select count(*) from group_members where group_id=$1 and user_id=$2',[atomicGroup,stranger])).rows[0].count)===1,'Legacy delivered email acceptance remains idempotent');
 
 
+ // Regression: renew an expired, unissued invitation without replacing its roster/history.
+ const expiredGroup=randomUUID(), expiredId=randomUUID();
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[owner]);
+ await db.exec('SET ROLE authenticated');
+ await db.query('select save_team_onboarding($1,$2::jsonb,$3::jsonb)',[expiredGroup,JSON.stringify(config),JSON.stringify([{id:expiredId,name:'Expired unsent draft',phone:'+12065550130',email:'expired@example.com',confirmedAt:'2026-11-15T00:00:00Z'}])]);
+ await db.exec('RESET ROLE');
+ await db.query("update team_onboarding_players set expires_at=now()-interval '1 day' where id=$1",[expiredId]);
+ const expired=(await db.query('select * from team_onboarding_players where id=$1',[expiredId])).rows[0];
+ const expectedExpired={token:expired.token,phone:expired.phone,email:expired.email,associatedAccountId:null,address:expired.phone};
+ await db.exec('SET ROLE authenticated');
+ const expiredClaim=(await db.query("select claim_team_onboarding_delivery($1,$2,$3,'sms',false,$4::jsonb,$5::jsonb) as data",[expiredGroup,expiredId,randomUUID(),JSON.stringify(expectedExpired),JSON.stringify(optOut)])).rows[0].data;
+ check(expiredClaim.status==='unavailable','Expired unissued credentials still cannot be sent before renewal');
+ await db.query('select renew_team_onboarding_invitation($1,$2)',[expiredGroup,expiredId]);
+ await db.exec('RESET ROLE');
+ const recovered=(await db.query('select * from team_onboarding_players where id=$1',[expiredId])).rows[0];
+ for(const key of ['id','member_id','name','phone','email','confirmed_at','associated_account_id']) check(JSON.stringify(recovered[key])===JSON.stringify(expired[key]),`Renewal preserves expired draft ${key}`);
+ check(recovered.token!==expired.token&&recovered.sent_at===null&&recovered.revoked_at===null,'Renewal rotates the credential and keeps it unissued');
+ check(Date.parse(recovered.expires_at)>Date.now()+29*86400000,'Renewal gives the same player a fresh thirty-day expiry');
+ check((await db.query('select view_team_onboarding_invitation($1) as data',[expired.token])).rows[0].data===null,'The old expired credential is not reactivated');
+ const expectedRecovered={...expectedExpired,token:recovered.token};
+ await db.exec('SET ROLE authenticated');
+ const recoveredClaim=(await db.query("select claim_team_onboarding_delivery($1,$2,$3,'sms',false,$4::jsonb,$5::jsonb) as data",[expiredGroup,expiredId,randomUUID(),JSON.stringify(expectedRecovered),JSON.stringify(optOut)])).rows[0].data;
+ check(recoveredClaim.status==='claimed'&&recoveredClaim.recipient.token===recovered.token,'The recovered draft is claimable with its renewed personal link');
+ await rejects(()=>db.query('select renew_team_onboarding_invitation($1,$2)',[expiredGroup,expiredId]),/pending delivery/);
+ await db.exec('RESET ROLE');
+ check((await db.query('select token from team_onboarding_players where id=$1',[expiredId])).rows[0].token===recovered.token,'An unresolved SMS cannot be bypassed by renewal');
+ await db.query("update team_onboarding_deliveries set status='sent',provider_id='fixture-only' where id=$1",[recoveredClaim.deliveryId]);
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[stranger]);
+ await db.exec('SET ROLE authenticated');
+ await db.query('select accept_team_onboarding_invitation($1)',[recovered.token]);
+ await db.query('select accept_team_onboarding_invitation($1)',[recovered.token]);
+ await rejects(()=>db.query('select renew_team_onboarding_invitation($1,$2)',[expiredGroup,expiredId]),/manager access/);
+ await db.exec('RESET ROLE');
+ check(Number((await db.query('select count(*) from group_members where group_id=$1 and user_id=$2',[expiredGroup,stranger])).rows[0].count)===1,'A renewed draft still accepts and reopens with exactly one membership');
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[owner]);
+ await db.exec('SET ROLE authenticated');
+ await rejects(()=>db.query('select renew_team_onboarding_invitation($1,$2)',[expiredGroup,expiredId]),/cannot be renewed/);
+ await db.exec('RESET ROLE');
+ // Email drafts use the same recovery and cannot bypass uncertain provider acceptance.
+ const emailRecoveryGroup=randomUUID(),emailRecoveryId=randomUUID();
+ await db.exec('SET ROLE authenticated');
+ await db.query('select save_team_onboarding($1,$2::jsonb,$3::jsonb)',[emailRecoveryGroup,JSON.stringify({...config,includeUsta:false}),JSON.stringify([{id:emailRecoveryId,name:'Expired email',phone:'',email:'expired-email@example.com',confirmedAt:null}])]);
+ await db.exec('RESET ROLE');
+ await db.query("update team_onboarding_players set expires_at=now()-interval '1 day' where id=$1",[emailRecoveryId]);
+ await db.query("insert into team_onboarding_deliveries(player_id,batch_id,channel,status) values($1,$2,'email','sending')",[emailRecoveryId,randomUUID()]);
+ const beforePendingRenewal=(await db.query('select to_jsonb(p) as data from team_onboarding_players p where id=$1',[emailRecoveryId])).rows[0].data;
+ await db.exec('SET ROLE authenticated');
+ await rejects(()=>db.query('select renew_team_onboarding_invitation($1,$2)',[emailRecoveryGroup,emailRecoveryId]),/pending delivery/);
+ await db.exec('RESET ROLE');
+ check(JSON.stringify((await db.query('select to_jsonb(p) as data from team_onboarding_players p where id=$1',[emailRecoveryId])).rows[0].data)===JSON.stringify(beforePendingRenewal),'Rejected email renewal preserves the whole recipient record');
+ await db.query("update team_onboarding_deliveries set status='failed' where player_id=$1",[emailRecoveryId]);
+ await db.exec('SET ROLE authenticated');
+ await db.query('select renew_team_onboarding_invitation($1,$2)',[emailRecoveryGroup,emailRecoveryId]);
+ await db.exec('RESET ROLE');
+ const emailRecovered=(await db.query('select * from team_onboarding_players where id=$1',[emailRecoveryId])).rows[0];
+ check(emailRecovered.id===emailRecoveryId&&emailRecovered.email==='expired-email@example.com'&&emailRecovered.token!==beforePendingRenewal.token,'A definitely failed email permits in-place renewal');
+ check((await db.query("select prosecdef from pg_proc where oid='public.renew_team_onboarding_invitation(uuid,uuid)'::regprocedure")).rows[0].prosecdef===false,'Renewal public wrapper is an invoker');
+ await db.exec('SET ROLE anon');await rejects(()=>db.query('select renew_team_onboarding_invitation($1,$2)',[emailRecoveryGroup,emailRecoveryId]),/permission denied/);await db.exec('RESET ROLE');
+
+ // Catalog security checks on every changed private implementation.
+ for (const signature of ['manage_link(uuid,text)','review_request(uuid,uuid,text,uuid)','patch_team(uuid,jsonb)','renew_invitation(uuid,uuid)']) {
+  const row=(await db.query("select prosecdef,proconfig,has_function_privilege('anon',oid,'EXECUTE') as anon from pg_proc where oid=$1::regprocedure",['team_onboarding_private.'+signature])).rows[0];
+  check(row.prosecdef&&row.proconfig.includes('search_path=""')&&!row.anon,`Private ${signature} keeps its empty search path and denies anonymous execution`);
+ }
  console.log(`${checks} embedded PostgreSQL checks passed (migration + canonical merge helper).`);
 } finally {await db.close();}
