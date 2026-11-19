@@ -244,6 +244,8 @@ export default function AvailabilityGrid({
   const reservableCourts = onlineBooking ? courtRows.filter((c) => c.reservable) : [];
   const openWindows = reservableCourts.flatMap((c) => c.bars);
   const startTimes = bookingStartTimes(openWindows);
+  const showPartialBookingFallback =
+    !availabilityUnavailable && startTimes.length === 0 && reservableCourts.some((court) => court.error);
   const endTimes = selection ? bookingEndTimes(openWindows, selection.startMin) : [];
   const matchingCourts = selection
     ? reservableCourts.filter((c) =>
@@ -313,6 +315,17 @@ export default function AvailabilityGrid({
     if (el) el.scrollLeft = Math.max(0, hlLeft - 12);
   }, [showHighlight, loading, hlLeft]);
 
+  const directBookingLink = bookingUrl && (
+    <a
+      href={bookingUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="btn-secondary inline-flex min-h-11 items-center justify-center px-3 text-sm"
+    >
+      Book directly on Seattle Parks
+    </a>
+  );
+
   return (
     <div className="rounded-xl border border-gray-200 overflow-hidden">
       {/* Date selector */}
@@ -353,6 +366,12 @@ export default function AvailabilityGrid({
 
       {/* Body */}
       <div className="p-3">
+        {!loading && showPartialBookingFallback && (
+          <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
+            <p className="text-sm text-amber-900">Some court availability couldn&apos;t load.</p>
+            {directBookingLink}
+          </div>
+        )}
         {loading ? (
           <div className="space-y-2 animate-pulse">
             {[0, 1, 2].map((i) => (
@@ -375,16 +394,7 @@ export default function AvailabilityGrid({
               >
                 Try again
               </button>
-              {bookingUrl && (
-                <a
-                  href={bookingUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn-secondary inline-flex min-h-11 items-center justify-center px-3 text-sm"
-                >
-                  Book directly on Seattle Parks
-                </a>
-              )}
+              {directBookingLink}
             </div>
           </div>
         ) : viewOnly ? (
@@ -507,13 +517,14 @@ export default function AvailabilityGrid({
                 )}
               </fieldset>
             )}
-            {!hasWindows ? (
+            {!hasWindows && !showPartialBookingFallback && (
               <p className="py-6 text-center text-sm text-gray-400">
                 {isSnapshot
                   ? "No courts were open as of last night."
                   : "No open times on this day."}
               </p>
-            ) : (
+            )}
+            {hasWindows && (
               <div className="overflow-x-auto" ref={scrollRef}>
                 <div style={{ width: LABEL_W + trackWidth }}>
                   {/* Hour axis */}
