@@ -176,7 +176,7 @@ export default function BookingSheet({
               rel="noopener noreferrer"
               className="btn-primary flex w-full items-center justify-center py-2.5 text-sm"
             >
-              Open Seattle Parks
+              Open Seattle Parks<span className="sr-only"> (opens in a new tab)</span>
             </a>
             <button
               type="button"

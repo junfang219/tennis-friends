@@ -46,7 +46,7 @@ test("offers direct booking and keeps loaded walk-on windows during a partial fa
   await expect(page.getByRole("combobox", { name: "Start time" })).toHaveCount(0);
 });
 
-test("keeps the time picker when another reservable court is available", async ({ page }) => {
+test("opens Seattle Parks only from its link in the booking dialog", async ({ page, context }) => {
   const loadedCourt: CourtAvailability = {
     resourceId: 363,
     courtName: "Volunteer Park Court 03 - Lower",
@@ -57,9 +57,36 @@ test("keeps the time picker when another reservable court is available", async (
   await page.route("**/api/courts/availability?*", (route) =>
     route.fulfill({ json: { courts: [reservableCourt, loadedCourt], dayStatus: 0, source: "live" } })
   );
+  await context.route("https://anc.apm.activecommunities.com/**", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<h1>Seattle Parks test page</h1>" })
+  );
   await page.goto(`/courts/tf-42?date=${date}`);
 
   await page.getByRole("combobox", { name: "Start time" }).selectOption("420");
-  await expect(page.getByRole("link", { name: /Book on Seattle Parks/ })).toBeVisible();
   await expect(page.getByRole("link", { name: "Book directly on Seattle Parks" })).toHaveCount(0);
+  const picker = page.getByRole("group", { name: "Choose a time" });
+  await picker.getByText(/^Book on Seattle Parks/).click();
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Fri, Nov 20 · 7am–8am");
+  expect(context.pages()).toHaveLength(1);
+  await expect(page).toHaveURL((url) => url.pathname === "/courts/tf-42");
+
+  const [parks] = await Promise.all([
+    page.waitForEvent("popup"),
+    dialog.getByRole("link", { name: /Open Seattle Parks/ }).click(),
+  ]);
+  await expect(parks.getByRole("heading", { name: "Seattle Parks test page" })).toBeVisible();
+  const url = new URL(parks.url());
+  expect(url.searchParams.get("keyword")).toBe(loadedCourt.courtName);
+  expect(JSON.parse(decodeURI(url.searchParams.get("eventDateAndTime") ?? ""))).toMatchObject({
+    eventDates: [date],
+    startTime: "07:00:00",
+    endTime: "08:00:00",
+  });
+
+  await parks.close();
+  await dialog.getByRole("button", { name: "I completed my booking" }).click();
+  await expect(dialog.getByRole("heading", { name: "Save this booking?" })).toBeVisible();
 });

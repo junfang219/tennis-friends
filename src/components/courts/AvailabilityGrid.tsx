@@ -496,25 +496,17 @@ export default function AvailabilityGrid({
                 <p aria-live="polite" className={needsAnotherCourt ? "mt-2 text-sm text-amber-900" : undefined}>
                   {needsAnotherCourt && "Your selected court is unavailable for this time. Choose another court to book."}
                 </p>
-                {selectedBooking ? (
-                  <a
-                    href={selectedBooking.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() => setBookingSlot(selectedBooking)}
-                    className="btn-primary mt-3 inline-flex min-h-11 w-full items-center justify-center px-4 text-sm sm:w-auto"
-                  >
-                    Book on Seattle Parks<span className="sr-only"> (opens in a new tab)</span>
-                  </a>
-                ) : (
-                  <button
-                    type="button"
-                    disabled
-                    className="mt-3 min-h-11 w-full rounded-lg bg-gray-200 px-4 text-sm font-semibold text-gray-600 sm:w-auto"
-                  >
-                    Book on Seattle Parks
-                  </button>
-                )}
+                <button
+                  type="button"
+                  aria-haspopup="dialog"
+                  disabled={!selectedBooking}
+                  onClick={() => setBookingSlot(selectedBooking)}
+                  className={`mt-3 min-h-11 w-full px-4 text-sm sm:w-auto ${
+                    selectedBooking ? "btn-primary" : "rounded-lg bg-gray-200 font-semibold text-gray-600"
+                  }`}
+                >
+                  Book on Seattle Parks
+                </button>
               </fieldset>
             )}
             {!hasWindows && !showPartialBookingFallback && (
