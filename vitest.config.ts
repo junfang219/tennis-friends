@@ -2,6 +2,9 @@ import { defineConfig } from "vitest/config";
 import path from "node:path";
 
 export default defineConfig({
+  // Next preserves JSX for its own compiler; Vitest must compile imported pages
+  // and client components so integration tests can render their actual output.
+  oxc: { jsx: { runtime: "automatic" } },
   test: {
     environment: "node",
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
