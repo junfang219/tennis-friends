@@ -18,7 +18,7 @@ export default function CreateTeamForm({ groupId, initialDetails }: { groupId: s
         const body = createTeamSchema.parse({ name, description });
         const raw = await teamResponse(await fetch(`/api/team-onboarding/${groupId}/create`, { method: initialDetails ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
         const result = z.object({ groupId: z.uuid() }).parse(raw);
-        router.replace(`/groups/${result.groupId}/invite-players?setup=1`); router.refresh();
+        router.replace(`/groups/${result.groupId}/invite-players?setup=1`);
       } catch (e) { setError(e instanceof Error ? e.message : "Could not create team"); setBusy(false); }
     })(); }}>
       <fieldset disabled={busy} className="space-y-5 min-w-0">

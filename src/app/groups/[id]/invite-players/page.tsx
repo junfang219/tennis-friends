@@ -7,5 +7,5 @@ export default async function InvitePlayersPage({ params, searchParams }: { para
   const query = z.object({ setup: z.literal("1").optional() }).safeParse(await searchParams);
   if (!query.success) notFound();
   const data = await teamPage(id, "invite-players");
-  return <TeamInvitations group={data.group} currentUserName={data.currentUser.name} setup={query.data.setup === "1"} />;
+  return <TeamInvitations group={data.group} initialState={data.initialManagement} currentUserName={data.currentUser.name} setup={query.data.setup === "1"} />;
 }

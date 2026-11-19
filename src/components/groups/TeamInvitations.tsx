@@ -29,9 +29,12 @@ function RecipientEditor({ player, save }: { player: Player; save: (change: { na
     <button className="btn-secondary w-full" type="submit">Save recipient</button>
   </form>;
 }
-type InvitationsProps = { group: RosterGroup; currentUserName: string; review?: boolean; setup?: boolean };
+type InvitationsProps = { group: RosterGroup; currentUserName: string; review?: boolean; setup?: boolean; initialState?: TeamManagementState };
 export default function TeamInvitations(props: InvitationsProps) {
-  const management = useTeamManagement(props.group.id);
+  return <LoadedInvitations key={props.group.id} {...props} />;
+}
+function LoadedInvitations(props: InvitationsProps) {
+  const management = useTeamManagement(props.group.id, props.initialState);
   if (!management.state) return <main className="max-w-2xl mx-auto p-4 py-6 space-y-5"><h1 className="font-display text-3xl font-bold text-court-green">Invite players</h1>{props.setup && <TeamSetupProgress step={2} />}<p role={management.error ? "alert" : "status"}>{management.error || "Loading invitations…"}</p></main>;
   return <InvitationsEditor {...props} management={{ ...management, state: management.state }} />;
 }

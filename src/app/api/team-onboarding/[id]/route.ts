@@ -1,9 +1,8 @@
-import { smsReadiness } from "@/lib/onboarding/delivery";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { readTeamRoster } from "@/lib/onboarding/roster-data";
-import { teamManagementMutationSchema, teamManagementStateSchema } from "@/lib/onboarding/management";
+import { readTeamManagement, TeamManagementReadError } from "@/lib/onboarding/management-data";
+import { teamManagementMutationSchema } from "@/lib/onboarding/management";
 import { onboardingDb } from "@/lib/onboarding/db";
 import { saveOnboardingSchema } from "@/lib/onboarding/contracts";
 import type { Json } from "@/lib/database.types";
@@ -14,23 +13,13 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const db = await createSupabaseServerClient();
   const { data: auth } = await db.auth.getUser();
   if (!auth.user) return NextResponse.json({ error: "Sign in first" }, { status: 401 });
-  const { data, error } = await onboardingDb(db).rpc("read_team_onboarding", { p_group: id });
-  if (error) return NextResponse.json({ error: "Cannot load onboarding. Confirm the database migration is installed and you manage this team." }, { status: 403 });
-  const [group, legacy] = await Promise.all([
-    readTeamRoster(db, id),
-    db.from("group_invites").select("id,email,token,roles,member_type").eq("group_id", id).eq("status", "pending").gt("expires_at", new Date().toISOString()),
-  ]);
-  if (!group) return NextResponse.json({ error: "Team not found" }, { status: 404 });
-  const raw = z.object({ config: z.unknown(), players: z.array(z.unknown()) }).safeParse(data);
-  if (!raw.success) return NextResponse.json({ error: "Cannot load team invitations" }, { status: 500 });
-  const config = raw.data.config ?? { name: group.name, description: "", includeUsta: false, teamNumber: "", deadline: "" };
-  const parsed = teamManagementStateSchema.safeParse({ config: { ...z.record(z.string(),z.unknown()).parse(config), name: group.name }, players: raw.data.players,
-    delivery: { sms: smsReadiness() },
-    members: group.members.map(m => ({ id: m.id, userId: m.userId, name: m.user.name })),
-    legacyInvitations: (legacy.data ?? []).map(i => ({ id: i.id, email: i.email, token: i.token, roles: i.roles, memberType: i.member_type })),
-  });
-  if (!parsed.success) return NextResponse.json({ error: "Cannot load team invitations" }, { status: 500 });
-  return NextResponse.json(parsed.data, { headers: { "Cache-Control": "no-store" } });
+  try {
+    const state = await readTeamManagement(db, id);
+    return NextResponse.json(state, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    if (error instanceof TeamManagementReadError) return NextResponse.json({ error: error.message }, { status: error.status });
+    throw error;
+  }
 }
 export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;

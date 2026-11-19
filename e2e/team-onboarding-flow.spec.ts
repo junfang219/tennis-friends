@@ -406,3 +406,49 @@ test("expired draft renewal cannot bypass an unresolved SMS", async ({ context, 
   expect(fixture.messages).toHaveLength(0);
   await expect(page.getByRole("button", { name: "Renew expired invitation for Invited Player", exact: true })).toBeEnabled();
 });
+
+test("server-provided invitations render without waiting for a second browser read", async ({ context, page }) => {
+  await managementFixture(context);
+  let reads = 0;
+  await context.route(`**/api/team-onboarding/${groupId}`, async route => {
+    reads++;
+    await route.fulfill({ status: 503, json: { error: "A redundant read must not block the form" } });
+  });
+  const html = await (await page.request.get("/onboarding-preview?flow=invite-ready")).text();
+  expect(html).toContain("Text invitations");
+  expect(html).not.toContain("Loading invitations");
+  await page.goto("/onboarding-preview?flow=invite-ready");
+  await expect(page.getByRole("textbox", { name: "Phone number", exact: true })).toBeVisible();
+  await expect(page.getByText("Loading invitations…", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Send by email", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Email", exact: true })).toBeVisible();
+  expect(reads).toBe(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("server-seeded invitations still check fresh SMS readiness before saving recipients", async ({ context, page }) => {
+  const fixture = await managementFixture(context);
+  fixture.controls.smsConfigured = false;
+  await page.goto("/onboarding-preview?flow=invite-ready");
+  await page.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550101");
+  await page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
+  await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("Automatic SMS is not set up yet");
+  expect(fixture.writes).toHaveLength(0);
+  await expect(page.getByRole("textbox", { name: "Phone number", exact: true })).toHaveValue("2065550101");
+});
+
+test("creating a team navigates to step two once without refreshing it again", async ({ context, page }) => {
+  const fixture = await managementFixture(context);
+  const transitions: string[] = [];
+  page.on("request", request => {
+    if (new URL(request.url()).pathname === `/groups/${groupId}/invite-players` && request.headers()["rsc"] === "1") transitions.push(request.url());
+  });
+  await page.goto("/groups/new");
+  await page.getByRole("textbox", { name: "Team name", exact: true }).fill("No extra refresh");
+  await page.getByRole("button", { name: "Create team & continue", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Phone number", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/invite-players\\?setup=1$`));
+  expect(transitions).toHaveLength(1);
+  expect(fixture.writes.filter(write => write.path.endsWith("/create"))).toHaveLength(1);
+});
