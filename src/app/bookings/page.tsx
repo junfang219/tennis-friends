@@ -160,14 +160,6 @@ function BookingCard({
               </button>
             )
           )}
-          <a
-            href="/seattle/myaccount"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700 text-xs font-semibold hover:bg-gray-200"
-          >
-            Manage on Seattle Parks
-          </a>
           <button
             onClick={() => onCancel(b)}
             disabled={busy}
@@ -281,8 +273,7 @@ function BookingsContent() {
     <div className="max-w-2xl mx-auto px-4 py-6">
       <h1 className="font-display mb-2 text-2xl font-bold text-court-green">My bookings</h1>
       <p className="mb-4 text-sm text-gray-600">
-        Reservations you saved after booking on Seattle Parks. To cancel a reservation, use{" "}
-        <span className="font-medium">Manage on Seattle Parks</span>.
+        Reservations you saved after booking on Seattle Parks. Cancel reservations directly with Seattle Parks.
       </p>
 
       {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
