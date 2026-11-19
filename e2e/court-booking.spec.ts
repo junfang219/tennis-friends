@@ -24,6 +24,16 @@ test.beforeEach(async ({ page }) => {
   await page.clock.setFixedTime(new Date("2026-11-18T22:00:00Z"));
 });
 
+test("preserves My bookings as the sign-in destination from Courts", async ({ page }) => {
+  await page.goto("/courts");
+  const courtsNav = page.getByRole("navigation", { name: "Courts section" });
+  await courtsNav.getByRole("link", { name: "My bookings" }).click();
+
+  await expect(page).toHaveURL((url) =>
+    url.pathname === "/login" && url.searchParams.get("next") === "/bookings"
+  );
+});
+
 test("offers direct booking and keeps loaded walk-on windows during a partial failure", async ({ page }) => {
   await page.route("**/api/courts/availability?*", (route) =>
     route.fulfill({ json: { courts: [reservableCourt, walkOnCourt], dayStatus: 0, source: "live" } })

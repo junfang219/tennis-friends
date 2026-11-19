@@ -65,6 +65,9 @@ export default function Navbar() {
     if (path === "/groups" && (pathname.startsWith("/groups/") || pathname.startsWith("/events"))) {
       return true;
     }
+    if (path === "/courts" && (pathname.startsWith("/courts/") || pathname === "/bookings")) {
+      return true;
+    }
     return false;
   };
 
