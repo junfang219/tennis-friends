@@ -1,5 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { parseDailyAvailability, toProxyPath } from "./activenet";
+import { buildSlotBookingUrl, parseDailyAvailability, toProxyPath } from "./activenet";
+
+describe("buildSlotBookingUrl", () => {
+  it("passes the court, center, and exact time range through ActiveNet's search filters", () => {
+    const courtName = "Sam Smith (I90 Lid) Park Tennis Court 01";
+    const url = new URL(buildSlotBookingUrl({
+      courtName,
+      centerId: 429,
+      date: "2026-11-20",
+      startTime: "07:15",
+      endTime: "08:30",
+    }));
+
+    expect(url.origin).toBe("https://anc.apm.activecommunities.com");
+    expect(url.pathname).toBe("/seattle/reservation/search");
+    expect(url.searchParams.get("keyword")).toBe(courtName);
+    expect(url.searchParams.get("facilityCenterIds")).toBe("429");
+    expect(url.searchParams.get("locale")).toBe("en-US");
+    const slot = url.searchParams.get("eventDateAndTime") ?? "";
+    expect(slot).toContain("%7B");
+    expect(JSON.parse(decodeURI(slot))).toEqual({
+      fullDayBooking: false,
+      eventDates: ["2026-11-20"],
+      startTime: "07:15:00",
+      endTime: "08:30:00",
+      hoursPerDay: 1,
+      isHoursPerDay: false,
+      specifyTimeRange: false,
+    });
+  });
+});
 
 describe("toProxyPath", () => {
   it("strips the ActiveNet origin so the URL is served by the /seattle proxy", () => {

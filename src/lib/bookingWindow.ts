@@ -17,6 +17,46 @@ const MIN_DURATION_MIN = 30;
 const MAX_DURATION_MIN = 240;
 const MAX_DAYS_AHEAD = 30;
 
+export const SEATTLE_OUTDOOR_MIN_MINUTES = 60;
+const SEATTLE_OUTDOOR_MAX_MINUTES = 180;
+const SEATTLE_OUTDOOR_STEP_MINUTES = 30;
+
+interface OpenWindow {
+  start: number;
+  end: number;
+}
+
+// Keep exact availability boundaries alongside the regular half-hour choices.
+function clockOptions(earliest: number, latest: number): number[] {
+  if (latest < earliest) return [];
+  const options = [earliest];
+  const step = SEATTLE_OUTDOOR_STEP_MINUTES;
+  for (let time = Math.ceil((earliest + 1) / step) * step; time < latest; time += step) {
+    options.push(time);
+  }
+  if (latest > earliest) options.push(latest);
+  return options;
+}
+
+export function bookingStartTimes(windows: OpenWindow[]): number[] {
+  const times = windows.flatMap(({ start, end }) =>
+    clockOptions(start, end - SEATTLE_OUTDOOR_MIN_MINUTES)
+  );
+  return [...new Set(times)].sort((a, b) => a - b);
+}
+
+export function bookingEndTimes(windows: OpenWindow[], startTime: number): number[] {
+  const times = windows
+    .filter(({ start }) => start <= startTime)
+    .flatMap(({ end }) =>
+      clockOptions(
+        startTime + SEATTLE_OUTDOOR_MIN_MINUTES,
+        Math.min(end, startTime + SEATTLE_OUTDOOR_MAX_MINUTES)
+      )
+    );
+  return [...new Set(times)].sort((a, b) => a - b);
+}
+
 export interface BookingWindowInput {
   date: string; // 'YYYY-MM-DD'
   startTime: string; // 'HH:mm'
