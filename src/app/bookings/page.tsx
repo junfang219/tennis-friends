@@ -191,7 +191,7 @@ export default function BookingsPage() {
   const bookings = query.data;
 
   useEffect(() => {
-    if (status === "unauthenticated") router.replace("/login");
+    if (status === "unauthenticated") router.replace("/login?next=%2Fbookings");
   }, [status, router]);
 
   const { upcoming, past } = useMemo(() => {
