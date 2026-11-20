@@ -8789,10 +8789,10 @@ GRANT  EXECUTE ON FUNCTION public.set_expense_cells_settled(jsonb, boolean) TO a
 --
 -- A user subscribes to a Seattle Parks venue (catalog facility id "tf-N") for
 -- a specific day or repeating weekdays, optionally narrowed to a time-of-day
--- window, and is notified (push and/or email) when ANY reservable court at that
--- venue has an open bookable slot. The /api/cron/court-alerts job polls live
--- ActiveNet every ~15 min for just the venues/dates that have active alerts and
--- dispatches; court_alert_sent makes each (alert, date) fire at most once.
+-- window, and receives an in-app notification (with optional push and email)
+-- when ANY reservable court at that venue has an open bookable slot. The
+-- /api/cron/court-alerts job polls live ActiveNet every ~15 min for venues/dates
+-- with active alerts. court_alert_sent makes each (alert, date) fire at most once.
 -- =========================================================================
 
 -- court_id namespace matches court_reviews / court_availability_reports: the
@@ -8817,9 +8817,7 @@ create table if not exists public.court_alerts (
   constraint court_alerts_mode_shape check (
     (mode = 'once'   and target_date is not null and weekdays is null) or
     (mode = 'repeat' and weekdays is not null and array_length(weekdays, 1) > 0 and target_date is null)
-  ),
-  -- At least one delivery channel.
-  constraint court_alerts_has_channel check (notify_push or notify_email)
+  )
 );
 create index if not exists court_alerts_active_idx on public.court_alerts (active) where active;
 create index if not exists court_alerts_user_idx   on public.court_alerts (user_id, created_at desc);
