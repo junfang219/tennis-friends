@@ -56,7 +56,7 @@ beforeEach(() => {
   for (const name of ["select", "in", "update", "eq", "is", "insert"] as const) {
     query[name].mockReturnValue(query);
   }
-  query.single.mockResolvedValue({ data: { id: "delivery-id" }, error: null });
+  query.single.mockResolvedValue({ data: { id: "delivery-id", accepted_by: accountId }, error: null });
   mocks.from.mockReturnValue(query);
   setPlayers([player()]);
   mocks.claim.mockImplementation(async (_name: string, args: { p_player: string; p_expected: {address:string;token:string}; p_options: {message:string;includeUsta:boolean;registration?:{ustaTeamName:string;teamNumber:string;deadline:string;includeRegistrationLink:boolean}} | null; p_reminder:boolean }) => {
@@ -72,12 +72,31 @@ it("emails a USTA reminder to a joined player after join-link expiry", async () 
   expect(await response.json()).toMatchObject({ sent: 1, failed: 0, pending: 0 });
   expect(mocks.deliver).toHaveBeenCalledWith("email", "player@example.com",
     expect.stringContaining("Reminder: please register"), expect.any(String), deliveryId, expect.any(Object));
+  expect(mocks.deliver.mock.calls[0][2]).not.toContain("Join the team:");
 });
 
 it("prepares a shareable USTA reminder for a joined player after join-link expiry", async () => {
   const response = await request("prepare");
-  expect(await response.json()).toMatchObject({ invitations: [{ name: "Taylor", message: expect.stringContaining("Reminder: please register") }] });
+  const result = await response.json();
+  expect(result).toMatchObject({ invitations: [{ name: "Taylor", link: null, message: expect.stringContaining("Reminder: please register") }] });
+  expect(result.invitations[0].message).not.toContain("Join the team:");
   expect(mocks.deliver).not.toHaveBeenCalled();
+});
+
+it.each(["prepare", "email"] as const)("keeps the join link in %s reminders for a pending player", async mode => {
+  setPlayers([player({ accepted_by: null, accepted_at: null, expires_at: "2099-12-01T00:00:00Z" })]);
+  mocks.from("team_onboarding_players").single.mockResolvedValue({ data: { accepted_by: null }, error: null });
+  const response = await request(mode);
+  expect(response.status).toBe(200);
+  const body = mode === "prepare" ? (await response.json()).invitations[0].message : mocks.deliver.mock.calls[0][2];
+  expect(body).toContain(`Join the team: https://example.com/team-invitations/${"a".repeat(64)}`);
+});
+
+it("omits the join link if the player accepts while a reminder is being claimed", async () => {
+  setPlayers([player({ accepted_by: null, accepted_at: null, expires_at: "2099-12-01T00:00:00Z" })]);
+  const response = await request("email");
+  expect(await response.json()).toMatchObject({ sent: 1, failed: 0 });
+  expect(mocks.deliver.mock.calls[0][2]).not.toContain("Join the team:");
 });
 
 it.each(["prepare", "email"] as const)("includes a legacy draft's description in %s invitations", async mode => {
