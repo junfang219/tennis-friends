@@ -57,9 +57,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const invitations = [];
     for (const player of selected) {
       if (unavailable(player)) continue;
-      const link = `${config.origin.replace(/\/$/, "")}/team-invitations/${player.token}`;
-      const { error } = await admin.from("team_onboarding_players").update({ sent_at: player.sent_at ?? new Date().toISOString() }).eq("id", player.id).eq("token", player.token).is("revoked_at", null).select("id").single();
-      if (error) return NextResponse.json({ error: "Could not prepare invitation; refresh and try again" }, { status: 409 });
+      const { data: issued, error } = await admin.from("team_onboarding_players").update({ sent_at: player.sent_at ?? new Date().toISOString() }).eq("id", player.id).eq("token", player.token).is("revoked_at", null).select("accepted_by").single();
+      if (error || !issued) return NextResponse.json({ error: "Could not prepare invitation; refresh and try again" }, { status: 409 });
+      const link = body.reminder && issued.accepted_by !== null ? null : `${config.origin.replace(/\/$/, "")}/team-invitations/${player.token}`;
       invitations.push({ id: player.id, name: player.name, phone: player.phone, link, message: registrationMessage({ ...settings, players: [] }, link, body.reminder) });
     }
     return NextResponse.json({ invitations });
@@ -98,9 +98,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     }
     const { recipient } = claim;
     const address = body.mode === "sms" ? invitationPhoneSchema.safeParse(recipient.address) : z.email().safeParse(recipient.address);
-    const link = `${config.origin.replace(/\/$/, "")}/team-invitations/${recipient.token}`;
+    // A pending player can accept while the reminder is being claimed.
+    const membership = body.reminder && !player.accepted_by
+      ? await admin.from("team_onboarding_players").select("accepted_by").eq("id", recipient.id).eq("token", recipient.token).is("revoked_at", null).single()
+      : undefined;
+    const joined = player.accepted_by || membership?.data?.accepted_by;
+    const link = body.reminder && joined ? null : `${config.origin.replace(/\/$/, "")}/team-invitations/${recipient.token}`;
     const message = registrationMessage({ ...claim.settings, players: [] }, link, body.reminder);
-    if (!address.success || (body.mode === "sms" && smsText(message).length > 1600)) {
+    if ((membership && (membership.error || !membership.data)) || !address.success || (body.mode === "sms" && smsText(message).length > 1600)) {
       const { error } = await admin.from("team_onboarding_deliveries").update({ status: "failed" }).eq("id", claim.deliveryId);
       if (error) pending++; else failed++;
       continue;

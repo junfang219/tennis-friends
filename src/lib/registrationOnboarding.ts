@@ -46,14 +46,14 @@ export function parseRegistrationPlayers(text: string): RegistrationPlayer[] {
     return registrationPlayerSchema.parse({ id: phone.number, name, phone: phone.number });
   });
 }
-export function registrationMessage(draft: RegistrationDraft, teamLink: string, reminder = false) {
+export function registrationMessage(draft: RegistrationDraft, teamLink: string | null, reminder = false) {
   const lines = [reminder ? `Reminder: please register for ${draft.ustaTeamName || draft.name} on USTA.` : (draft.invitationMessage ?? `You're invited to join ${draft.name} on TennisFriends!`)];
   if (draft.description?.trim()) lines.push(draft.description.trim());
   if (draft.includeUsta !== false) {
     lines.push(`USTA team: ${draft.ustaTeamName || draft.name}`, `Team number: ${draft.teamNumber}`, `Register by: ${formatDeadline(draft.deadline)}`);
     if (draft.includeRegistrationLink !== false) lines.push(`Register: ${REGISTRATION_URL}`);
   }
-  lines.push(`Join the team: ${teamLink}`);
+  if (teamLink) lines.push(`Join the team: ${teamLink}`);
   return lines.join("\n\n");
 }
 export function invitationIssues(draft: RegistrationDraft): string[] {
