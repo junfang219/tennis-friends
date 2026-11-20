@@ -144,5 +144,59 @@ class TeamManagerLockTests(unittest.TestCase):
         self.assertEqual(self.sql(f"SELECT count(*) FROM group_members WHERE group_id='{self.group}' AND user_id='{self.player}'"), "1")
 
 
+    def test_member_departure_retires_reminder_record(self):
+        self.sql(f"""
+            SELECT set_config('request.jwt.claim.sub','{self.owner}',false);
+            SELECT review_team_join_request('{self.group}','{self.request}','approve',NULL);
+        """)
+        self.assertEqual(self.sql(f"SELECT count(*) FROM team_onboarding_players WHERE group_id='{self.group}' AND accepted_by='{self.player}' AND removed_at IS NULL"), "1")
+        self.sql(f"""
+            BEGIN;
+            GRANT SELECT, DELETE ON group_members TO authenticated;
+            SELECT set_config('request.jwt.claim.sub','{self.player}',false);
+            SET ROLE authenticated;
+            DELETE FROM group_members WHERE group_id='{self.group}' AND user_id=auth.uid();
+            RESET ROLE;
+            REVOKE SELECT, DELETE ON group_members FROM authenticated;
+            COMMIT;
+        """)
+        self.assertEqual(self.sql(f"""
+            SELECT count(*) FROM team_onboarding_players
+            WHERE group_id='{self.group}' AND accepted_by='{self.player}'
+            AND member_id IS NULL AND removed_at IS NOT NULL AND revoked_at IS NOT NULL
+        """), "1")
+        self.assertEqual(self.sql(f"""
+            SELECT set_config('request.jwt.claim.sub','{self.owner}',false) AS actor \\gset
+            SELECT count(*) FROM jsonb_array_elements(read_team_onboarding('{self.group}')->'players') AS player
+            WHERE player->>'accepted_by'='{self.player}'
+        """), "0")
+
+    def test_sms_quota_counts_new_claims_and_preserves_retry_results(self):
+        self.sql(f"""
+            INSERT INTO team_onboarding_deliveries(player_id,batch_id,channel,status)
+            SELECT '{self.invitee}',gen_random_uuid(),'sms','sent' FROM generate_series(1, 99);
+        """)
+        batch, other_batch = str(uuid4()), str(uuid4())
+
+        def status(batch_id):
+            return self.sql(f"""
+                SELECT set_config('request.jwt.claim.sub','{self.owner}',false) AS actor \\gset
+                SELECT claim_team_onboarding_delivery(
+                  '{self.group}','{self.invitee}','{batch_id}','sms',false,
+                  (SELECT jsonb_build_object('token',token,'phone',phone,'email',email,
+                   'associatedAccountId',associated_account_id,'address',phone)
+                   FROM team_onboarding_players WHERE id='{self.invitee}'),NULL
+                )->>'status';
+            """)
+
+        self.assertEqual(status(batch), "claimed")
+        self.assertEqual(status(batch), "sending")
+        self.assertEqual(status(other_batch), "sending")
+        self.sql(f"UPDATE team_onboarding_deliveries SET status='sent' WHERE batch_id='{batch}'")
+        self.assertEqual(status(batch), "sent")
+        self.assertEqual(status(other_batch), "rate_limited")
+        self.assertEqual(self.sql(f"SELECT count(*) FROM team_onboarding_deliveries WHERE player_id='{self.invitee}'"), "100")
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

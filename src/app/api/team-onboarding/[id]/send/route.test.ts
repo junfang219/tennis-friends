@@ -50,13 +50,12 @@ beforeEach(() => {
   mocks.getUser.mockResolvedValue({ data: { user: { id: accountId } } });
   mocks.deliver.mockResolvedValue("provider-id");
   const query = {
-    select: vi.fn(), in: vi.fn(), gte: vi.fn(), update: vi.fn(),
+    select: vi.fn(), in: vi.fn(), update: vi.fn(),
     eq: vi.fn(), is: vi.fn(), insert: vi.fn(), single: vi.fn(), maybeSingle: vi.fn(), error: null,
   };
   for (const name of ["select", "in", "update", "eq", "is", "insert"] as const) {
     query[name].mockReturnValue(query);
   }
-  query.gte.mockResolvedValue({ count: 0 });
   query.single.mockResolvedValue({ data: { id: "delivery-id" }, error: null });
   mocks.from.mockReturnValue(query);
   setPlayers([player()]);
@@ -181,7 +180,24 @@ it.each([{phone:null},{phone:"invalid"},{accepted_by:accountId},{revoked_at:"202
 });
 it("does not treat a foreign selected player ID as permission to send",async()=>{setPlayers([smsPlayer()]);expect((await smsRequest({playerIds:["99999999-9999-4999-8999-999999999999"]})).status).toBe(400);expect(mocks.deliver).not.toHaveBeenCalled();});
 it("does not send SMS USTA reminders under invitation consent",async()=>{expect((await smsRequest({reminder:true})).status).toBe(400);expect(mocks.deliver).not.toHaveBeenCalled();});
-it("caps SMS attempts before claiming another batch",async()=>{setPlayers([smsPlayer()]);mocks.from("team_onboarding_deliveries").gte.mockResolvedValue({count:100});expect((await smsRequest()).status).toBe(429);expect(mocks.deliver).not.toHaveBeenCalled();});
+it("returns the delivery limit when all SMS attempts in the request are new and blocked", async () => {
+  setPlayers([smsPlayer()]);
+  mocks.claim.mockResolvedValue({ data: { status: "rate_limited" }, error: null });
+  expect((await smsRequest()).status).toBe(429);
+  expect(mocks.deliver).not.toHaveBeenCalled();
+});
+
+it("reports prior attempts when a new SMS in a retry is rate limited", async () => {
+  const first = smsPlayer();
+  const second = { ...first, id: "66666666-6666-4666-8666-666666666666", phone: "+12065550103" };
+  setPlayers([first, second]);
+  mocks.claim.mockResolvedValueOnce({ data: { status: "sent" }, error: null })
+    .mockResolvedValueOnce({ data: { status: "rate_limited" }, error: null });
+  const response = await smsRequest();
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ sent: 1, failed: 1, pending: 0, message: expect.stringContaining("delivery limit") });
+  expect(mocks.deliver).not.toHaveBeenCalled();
+});
 it("rejects an oversized SMS before creating a delivery",async()=>{mocks.rpc.mockResolvedValue({data:{config:{name:"Team",description:"a".repeat(2000),includeUsta:false,teamNumber:"",deadline:""},players:[smsPlayer()]},error:null});expect((await smsRequest()).status).toBe(400);expect(mocks.deliver).not.toHaveBeenCalled();});
 
 it("does not text a localhost invitation URL that the receiving phone cannot open",async()=>{setPlayers([smsPlayer()]);mocks.config.mockReturnValue({...mocks.config(),origin:"http://127.0.0.1:3110"});expect((await smsRequest()).status).toBe(503);expect(mocks.deliver).not.toHaveBeenCalled();});

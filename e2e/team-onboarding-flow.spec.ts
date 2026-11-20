@@ -195,6 +195,7 @@ test("invalid and duplicate SMS numbers do not save or send",async({context,page
  await page.getByRole("textbox",{name:"Phone number",exact:true}).fill("123");await page.getByLabel("These players agreed to receive this team invitation by text.",{exact:true}).check();
  await page.getByRole("button",{name:"Send SMS invitations",exact:true}).click();await expect(page.getByRole("main").getByRole("alert")).toContainText("valid phone");expect(fixture.writes).toHaveLength(0);
  await page.getByRole("textbox",{name:"Phone number",exact:true}).fill("2065550101");await page.getByRole("button",{name:"Add another phone number",exact:true}).click();await page.getByRole("textbox",{name:"Phone number",exact:true}).nth(1).fill("+12065550101");
+ await page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
  await page.getByRole("button",{name:"Send SMS invitations",exact:true}).click();await expect(page.getByRole("main").getByRole("alert")).toContainText("different phone number");expect(fixture.writes).toHaveLength(0);
 });
 test("SMS and email keep separate drafts and shared links remain secondary",async({context,page})=>{
@@ -285,6 +286,7 @@ test("an unsent SMS draft can be corrected in the same form after a configuratio
   await page.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550102");
   await page.getByRole("textbox", { name: "Name (optional)", exact: true }).fill("Corrected player");
   fixture.controls.smsConfigured = true;
+  await page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
   await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
   expect(fixture.state.players).toHaveLength(1); expect(fixture.state.players[0]).toMatchObject({ id: originalId, name: "Corrected player", phone: "+12065550102" });
@@ -298,6 +300,7 @@ test("a pending SMS cannot be redirected by editing the retry form", async ({ co
   await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("1 pending");
   await page.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550102");
+  await page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
   await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
   await expect(page.getByRole("main").getByRole("alert")).toContainText("Review the pending SMS");
   expect(fixture.messages).toHaveLength(1); expect(fixture.state.players[0].phone).toBe("+12065550101");
@@ -384,7 +387,7 @@ for (const delivery of ["sms", "email"] as const) test(`renew an expired unissue
   expect(fixture.messages).toHaveLength(0);
   await expect(page.getByRole("button", { name: "Renew expired invitation for Invited Player", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Manage invitation for Invited Player", { exact: true })).toHaveCount(0);
-  if (delivery === "sms") await page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
+  if (delivery === "sms") await page.getByLabel("Invited Player agreed to receive this invitation by text.", { exact: true }).check();
   await page.getByRole("button", { name: `${delivery === "sms" ? "Send SMS" : "Send email"} to Invited Player`, exact: true }).click();
   await expect(page.getByRole("status")).toContainText("1 " + (delivery === "sms" ? "texts" : "emails") + " accepted");
   expect(fixture.messages).toHaveLength(1);
@@ -451,4 +454,31 @@ test("creating a team navigates to step two once without refreshing it again", a
   await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/invite-players\\?setup=1$`));
   expect(transitions).toHaveLength(1);
   expect(fixture.writes.filter(write => write.path.endsWith("/create"))).toHaveLength(1);
+});
+
+
+test("SMS consent resets for number changes and is separate for a pending player", async ({ context, page }) => {
+  const fixture = await managementFixture(context, [
+    player(undefined, { name: "Pending Player", phone: "+12065550199", email: null }),
+  ]);
+  await page.goto(`/groups/${groupId}/invite-players`);
+  const phone = page.getByRole("textbox", { name: "Phone number", exact: true });
+  const consent = page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true });
+  const sendPending = page.getByRole("button", { name: "Send SMS to Pending Player", exact: true });
+
+  await phone.fill("+12065550140");
+  await consent.check();
+  await expect(sendPending).toBeDisabled();
+
+  await phone.fill("+12065550141");
+  await expect(consent).not.toBeChecked();
+  await consent.check();
+  await page.getByRole("button", { name: "Add another phone number", exact: true }).click();
+  await expect(consent).not.toBeChecked();
+
+  await page.getByLabel("Pending Player agreed to receive this invitation by text.", { exact: true }).check();
+  await sendPending.click();
+  await expect(page.getByRole("status")).toContainText("1 texts accepted");
+  await expect(sendPending).toBeDisabled();
+  expect(fixture.messages.map(message => message.address)).toEqual(["+12065550199"]);
 });

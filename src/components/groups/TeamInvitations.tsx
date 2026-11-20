@@ -46,9 +46,13 @@ function InvitationsEditor({ group, review = false, setup = false, management }:
   const [mode, setMode] = useState<Channel | "link">("sms");
   const [drafts, setDrafts] = useState<Record<Channel, RecipientRow[]>>(() => ({ sms: [blankRow()], email: [blankRow()] }));
   const [smsConsent, setSmsConsent] = useState(false);
+  const [pendingSmsConsent, setPendingSmsConsent] = useState<Record<string, string>>({});
   const channel: Channel = mode === "email" ? "email" : "sms";
   const rows = drafts[channel];
-  function setRows(next: (all: RecipientRow[]) => RecipientRow[]) { setDrafts(all => ({ ...all, [channel]: next(all[channel]) })); }
+  function setRows(next: (all: RecipientRow[]) => RecipientRow[], recipientChanged = false) {
+    if (channel === "sms" && recipientChanged) setSmsConsent(false);
+    setDrafts(all => ({ ...all, [channel]: next(all[channel]) }));
+  }
   const [message, setMessage] = useState<string | null>(null); const [includeUsta, setIncludeUsta] = useState<boolean | null>(null);
   const [ustaDraft, setUstaDraft] = useState<{ ustaTeamName: string; teamNumber: string; deadline: string; includeRegistrationLink: boolean } | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
@@ -68,17 +72,30 @@ function InvitationsEditor({ group, review = false, setup = false, management }:
     if (!withUsta) return null;
     return teamManagementMutationSchema.parse({ action: "registration", includeUsta: true, ...usta });
   }
-  async function send(ids: string[], delivery: Channel, finish = false, source: TeamManagementState | null = null) {
-    if (delivery === "sms" && !smsConsent) throw new Error("In Send by SMS, confirm these players agreed to receive their invitation by text.");
-    source ??= await load();
-    if (delivery === "sms") { const setupError = smsSetupError(source); if (setupError) throw new Error(setupError); }
+  async function send(ids: string[], delivery: Channel, {
+    finish = false,
+    source,
+    consent,
+  }: { finish?: boolean; source?: TeamManagementState; consent?: ReadonlyMap<string, string> } = {}) {
+    const current = source ?? await load();
+    const recipients = [...ids].sort().map(id => {
+      const p = current.players.find(p => p.id === id);
+      if (!p) throw new Error("Refresh the team before sending this invitation");
+      return { id, phone: p.phone, email: p.email, token: p.token, associatedAccountId: p.associated_account_id };
+    });
+    if (delivery === "sms") {
+      const setupError = smsSetupError(current);
+      if (setupError) throw new Error(setupError);
+      if (recipients.some(p => !p.phone || consent?.get(p.id) !== p.phone)) {
+        throw new Error("Confirm permission to text the current numbers before sending.");
+      }
+    }
     const registration = registrationChange();
     if (registration && (!state?.config.includeUsta || ustaDraft !== null)) await mutate(registration);
     const invitation = invitationOptionsSchema.parse({ message: body, includeUsta: withUsta, ...(withUsta ? { registration: usta } : {}) });
-    const recipients = [...ids].sort().map(id => { const p = source?.players.find(p => p.id === id); if (!p) throw new Error("Refresh the team before sending this invitation"); return { id, phone: p.phone, email: p.email, token: p.token, associatedAccountId: p.associated_account_id }; });
     const batchKey = JSON.stringify({ ids: [...ids].sort(), delivery, body, withUsta, usta: withUsta ? usta : null, recipients });
     batches.current[batchKey] ??= crypto.randomUUID();
-    const report = z.object({ sent: z.number(), failed: z.number(), pending: z.number(), message: z.string() }).parse(await teamResponse(await fetch(`/api/team-onboarding/${group.id}/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: delivery, smsConsent: delivery === "sms" ? smsConsent : undefined, reminder: false, invitation, recipients, batchId: batches.current[batchKey], playerIds: ids }) })));
+    const report = z.object({ sent: z.number(), failed: z.number(), pending: z.number(), message: z.string() }).parse(await teamResponse(await fetch(`/api/team-onboarding/${group.id}/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: delivery, smsConsent: delivery === "sms" ? true : undefined, reminder: false, invitation, recipients, batchId: batches.current[batchKey], playerIds: ids }) })));
     setNotice(`${report.sent} ${delivery === "sms" ? "texts" : "emails"} accepted; ${report.failed} failed; ${report.pending} pending. ${report.message}`);
     if (!report.failed && !report.pending) {
       delete batches.current[batchKey];
@@ -87,6 +104,18 @@ function InvitationsEditor({ group, review = false, setup = false, management }:
     await load();
     if (setup && finish && !report.failed && !report.pending) { router.replace(`/groups/${group.id}/roster`); router.refresh(); }
   }
+  function setRecipientConsent(player: Player, checked: boolean) {
+    setPendingSmsConsent(previous => ({
+      ...previous, [player.id]: checked ? `${player.token}:${player.phone}` : "",
+    }));
+  }
+
+  async function sendPendingSms(player: Player) {
+    if (!player.phone || pendingSmsConsent[player.id] !== `${player.token}:${player.phone}`) return;
+    setRecipientConsent(player, false);
+    await send([player.id], "sms", { consent: new Map([[player.id, player.phone]]) });
+  }
+
   return <main className="max-w-2xl mx-auto p-4 py-6 space-y-5">{!setup && <Link href={`/groups/${group.id}/roster`} className="text-sm underline text-court-green">Back to roster</Link>}<header><p className="text-sm text-gray-600">{group.name}</p><h1 className="font-display text-3xl font-bold text-court-green">Invite players</h1></header>
     {setup && <><TeamSetupProgress step={2} /><p className="text-sm text-gray-600">Your team has been created. Invite players now, or choose Go to Roster to invite them later.</p></>}
     {(error || loadError) && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{error || loadError}</p>}{notice && <p role="status" className="rounded-xl bg-green-50 p-3 text-sm text-green-950">{notice}</p>}
@@ -113,15 +142,16 @@ function InvitationsEditor({ group, review = false, setup = false, management }:
             const next = await mutate({ action: "sms-recipients", recipients: prepared });
             const ids = prepared.map(r => { const p = next.players.find(p => p.phone === r.phone && !p.revoked_at && !p.accepted_by); if (!p) throw new Error("Refresh the team and review this contact before sending"); return p.id; });
             setRows(all => all.map((row, index) => ({ ...row, id: ids[index] })));
-            await send(ids, "sms", true, next);
+            const consent = new Map(ids.map((id, index) => [id, prepared[index].phone]));
+            await send(ids, "sms", { finish: true, source: next, consent });
           } else {
             const recipients = z.array(recipientSchema).min(1).parse(rows.map(row => ({ id: row.id, name: row.name.trim() || row.contact.split("@")[0].slice(0, 100), email: row.contact })));
             if (new Set(recipients.map(r => r.email)).size !== recipients.length) throw new Error("Use a different email for each recipient");
-            const next = await mutate({ action: "recipients", recipients }); await send(recipients.map(r => r.id), "email", true, next);
+            const next = await mutate({ action: "recipients", recipients }); await send(recipients.map(r => r.id), "email", { finish: true, source: next });
           }
         }); }}>
-          {rows.map((row, index) => <fieldset key={row.id} className="rounded-xl border border-gray-200 p-3 space-y-3"><legend className="px-1 text-sm font-semibold">Recipient {index + 1}</legend><label className="block text-sm">{channel === "sms" ? "Phone number" : "Email"}<input className={input} required type={channel === "sms" ? "tel" : "email"} autoComplete={channel === "sms" ? "tel" : "email"} value={row.contact} onChange={e => setRows(all => all.map(r => r.id === row.id ? { ...r, contact: e.target.value } : r))} /></label><label className="block text-sm">Name (optional)<input className={input} maxLength={100} value={row.name} onChange={e => setRows(all => all.map(r => r.id === row.id ? { ...r, name: e.target.value } : r))} /></label>{rows.length > 1 && <button type="button" className="text-sm underline text-red-800" onClick={() => setRows(all => all.filter(r => r.id !== row.id))}>Remove recipient {index + 1}</button>}</fieldset>)}
-          <button type="button" className="btn-secondary w-full" onClick={() => setRows(all => [...all, blankRow()])}>{channel === "sms" ? "Add another phone number" : "Add another email"}</button>
+          {rows.map((row, index) => <fieldset key={row.id} className="rounded-xl border border-gray-200 p-3 space-y-3"><legend className="px-1 text-sm font-semibold">Recipient {index + 1}</legend><label className="block text-sm">{channel === "sms" ? "Phone number" : "Email"}<input className={input} required type={channel === "sms" ? "tel" : "email"} autoComplete={channel === "sms" ? "tel" : "email"} value={row.contact} onChange={e => setRows(all => all.map(r => r.id === row.id ? { ...r, contact: e.target.value } : r), true)} /></label><label className="block text-sm">Name (optional)<input className={input} maxLength={100} value={row.name} onChange={e => setRows(all => all.map(r => r.id === row.id ? { ...r, name: e.target.value } : r))} /></label>{rows.length > 1 && <button type="button" className="text-sm underline text-red-800" onClick={() => setRows(all => all.filter(r => r.id !== row.id), true)}>Remove recipient {index + 1}</button>}</fieldset>)}
+          <button type="button" className="btn-secondary w-full" onClick={() => setRows(all => [...all, blankRow()], true)}>{channel === "sms" ? "Add another phone number" : "Add another email"}</button>
           <details className="rounded-xl border p-3"><summary className="cursor-pointer text-sm font-semibold text-court-green">Customize message</summary><label className="block text-sm mt-3">Invitation message<textarea className={input} rows={4} value={body} onChange={e => setMessage(e.target.value)} /></label></details>
           <fieldset className="rounded-xl border border-gray-200 p-4 space-y-4 min-w-0">
             <legend className="px-1 text-sm font-semibold">USTA registration (optional)</legend>
@@ -139,7 +169,10 @@ function InvitationsEditor({ group, review = false, setup = false, management }:
       </section>}
       {state && (state.players.some(p => !p.accepted_by) || state.legacyInvitations.length > 0) && <section className="rounded-2xl border bg-white p-5 space-y-4"><h2 className="text-xl font-bold">Pending invitations</h2><ul className="divide-y">{state.players.filter(p => !p.accepted_by).map(p => <li key={p.id} className="py-4 space-y-3"><strong className="break-words">{p.name}</strong><p className="text-sm break-all">{[p.phone, p.email].filter(Boolean).join(" · ")}</p><p className="text-sm text-gray-600">{p.revoked_at ? "Invitation revoked" : p.sent_at ? "Invitation issued" : "Invitation not issued"}</p>
         {!p.sent_at && !p.revoked_at && isExpired(p) && <div className="space-y-3"><p className="text-sm text-amber-900">This invitation expired before it was issued. Renew it before sending; the player and registration history will be kept.</p><button className="btn-secondary w-full" type="button" onClick={() => void action(() => renewInvitation(p.id))}>Renew expired invitation for {p.name}</button></div>}
-        {p.phone && !p.revoked_at && !isExpired(p) && <button className="btn-secondary w-full" type="button" onClick={() => void action(() => send([p.id], "sms"))}>Send SMS to {p.name}</button>}
+        {p.phone && !p.revoked_at && !isExpired(p) && <div className="space-y-2">
+          <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={pendingSmsConsent[p.id] === `${p.token}:${p.phone}`} onChange={e => setRecipientConsent(p, e.target.checked)} />{p.name} agreed to receive this invitation by text.</label>
+          <button className="btn-secondary w-full" type="button" disabled={pendingSmsConsent[p.id] !== `${p.token}:${p.phone}`} onClick={() => void action(() => sendPendingSms(p))}>Send SMS to {p.name}</button>
+        </div>}
         {p.email && !p.revoked_at && !isExpired(p) && <button className="btn-secondary w-full" type="button" onClick={() => void action(() => send([p.id], "email"))}>Send email to {p.name}</button>}
         {(p.sent_at || p.revoked_at) && <details className="rounded-xl border p-3"><summary className="cursor-pointer text-sm font-semibold text-court-green" aria-label={`Manage invitation for ${p.name}`}>Manage invitation</summary><div className="space-y-3 pt-3"><button className="btn-secondary w-full" type="button" onClick={() => void action(() => renewInvitation(p.id))}>Prepare new invitation link</button>{!p.revoked_at && <button type="button" className="text-sm underline text-red-800" onClick={() => void action(async () => { await teamResponse(await fetch(`/api/team-onboarding/${group.id}/revoke`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ playerId: p.id }) })); await load(); })}>Revoke invitation</button>}</div></details>}
         {(!p.sent_at || p.revoked_at) && <button className="text-sm underline text-court-green" type="button" onClick={() => setEditing(editing === p.id ? null : p.id)}>Edit recipient for {p.name}</button>}
