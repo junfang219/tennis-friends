@@ -102,7 +102,7 @@ export default function GroupSettingsPage() {
         imageUrl: g.image_url,
         ownerId: g.owner_id,
         memberTypes: Array.isArray(g.member_types) ? (g.member_types as string[]) : [],
-        reminderPrefs: g.reminder_prefs,
+        reminderPrefs: typeof g.reminder_prefs === "string" ? g.reminder_prefs : JSON.stringify(g.reminder_prefs ?? {}),
         members: members.map((m) => ({
           id: m.id,
           userId: m.user_id,
