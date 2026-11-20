@@ -15,7 +15,6 @@ export type CourtAlertEmailOptions = {
 /**
  * Send a single "court is open" alert email via Resend. Best-effort — the
  * caller never blocks on the result. No-op + warn when RESEND_API_KEY unset.
- * Mirrors src/lib/reminderEmail.ts.
  */
 export async function sendCourtAlertEmail(
   opts: CourtAlertEmailOptions

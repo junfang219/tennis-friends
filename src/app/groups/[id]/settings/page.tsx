@@ -748,7 +748,7 @@ function NotificationsTab({
   return (
     <div className="space-y-5">
       <p className="text-xs text-gray-500">
-        Members who haven&apos;t RSVPed get a push + email at each lead time you select.
+        Members who haven&apos;t RSVPed receive a push notification at each lead time you select.
         Reminders go out within about 15 minutes of each lead time (never early).
       </p>
 
