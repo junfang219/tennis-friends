@@ -13,7 +13,7 @@ export const maxDuration = 300;
 const requestSchema = z.object({ batchId: z.uuid(), reminder: z.boolean().default(false), mode: z.enum(["prepare", "email", "sms"]).default("prepare"), smsConsent: z.boolean().optional(), playerIds: z.array(z.uuid()).min(1).max(100).optional(), invitation: invitationOptionsSchema.optional(), recipients: z.array(deliveryRecipientVersionSchema).min(1).max(100).optional() });
 const claimSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("claimed"), deliveryId: z.uuid(), settings: storedOnboardingSchema.shape.config, recipient: z.object({ id: z.uuid(), name: z.string(), token: z.string().regex(/^[a-f0-9]{64}$/), address: z.string() }) }),
-  z.object({ status: z.enum(["sent", "sending", "failed", "changed", "unavailable", "skipped"]) }),
+  z.object({ status: z.enum(["sent", "sending", "failed", "changed", "unavailable", "skipped", "rate_limited"]) }),
 ]);
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -76,10 +76,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (!selected.some(p => addressOf(p))) return NextResponse.json({ error: "No email addresses available. Add email recipients in Invite players, or use the shared team link." }, { status: 400 });
     if (!config.emailKey || !config.emailFrom) return NextResponse.json({ error: "Email delivery is not configured" }, { status: 503 });
   }
-  const { count, error: limitError } = await admin.from("team_onboarding_deliveries").select("id", { count: "exact", head: true }).in("player_id", players.map(p => p.id)).gte("created_at", new Date(Date.now() - 3600000).toISOString());
-  if (limitError) return NextResponse.json({ error: "Could not check delivery limits. Please try again." }, { status: 503 });
-  if ((count ?? 0) + selected.length > (body.mode === "sms" ? 100 : 500)) return NextResponse.json({ error: "Too many invitations recently; try later" }, { status: 429 });
-  let sent = 0, failed = 0, pending = 0, changed = false;
+  let sent = 0, failed = 0, pending = 0, rateLimited = 0, changed = false;
   for (const player of selected) {
     if (unavailable(player)) { failed++; continue; }
     if (!addressOf(player)) continue;
@@ -92,7 +89,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (!parsed.success) { pending++; continue; }
     const claim = parsed.data;
     if (claim.status !== "claimed") {
-      if (claim.status === "sent") sent++; else if (claim.status === "sending") pending++; else if (claim.status !== "skipped") failed++;
+      if (claim.status === "sent") sent++;
+      else if (claim.status === "sending") pending++;
+      else if (claim.status === "rate_limited") rateLimited++;
+      else if (claim.status !== "skipped") failed++;
       if (claim.status === "changed") changed = true;
       continue;
     }
@@ -118,5 +118,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       if (updateError) pending++; else failed++;
     }
   }
-  return NextResponse.json({ sent, failed, pending, message: changed ? "A recipient changed. Refresh and review the invitation before sending again." : failed || pending ? "Some deliveries failed or have an unknown outcome. Review before starting another batch. Pending SMS must be reconciled with the provider before retrying." : "Invitations accepted by the delivery provider. This does not guarantee handset or inbox delivery." });
+  if (rateLimited && !sent && !failed && !pending) {
+    return NextResponse.json({ error: "Too many invitations recently. Try again later." }, { status: 429 });
+  }
+  const notices = [];
+  if (changed) notices.push("A recipient changed. Refresh and review the invitation before sending again.");
+  else if (failed || pending) notices.push("Some deliveries failed or have an unknown outcome. Review before starting another batch. Pending SMS must be reconciled with the provider before retrying.");
+  if (rateLimited) notices.push(`The delivery limit blocked ${rateLimited} new attempts. Try again later.`);
+  if (!notices.length) notices.push("Invitations accepted by the delivery provider. This does not guarantee handset or inbox delivery.");
+  return NextResponse.json({ sent, failed: failed + rateLimited, pending, message: notices.join(" ") });
 }
