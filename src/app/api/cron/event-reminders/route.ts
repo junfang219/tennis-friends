@@ -3,7 +3,6 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { postPushFanout } from "@/lib/pushFanout";
 import { parseReminderPrefs } from "@/lib/reminderPrefs";
 import { isInReminderWindow } from "@/lib/reminderWindow";
-import { sendReminderEmail } from "@/lib/reminderEmail";
 import { combineDateAndTime, formatWhenLabel } from "@/lib/wallClock";
 
 /**
@@ -12,7 +11,7 @@ import { combineDateAndTime, formatWhenLabel } from "@/lib/wallClock";
  * prod with the CRON_SECRET bearer. (vercel.json declares no crons.) For each
  * team, finds upcoming matches/practices that have reached a reminder lead
  * time (see isInReminderWindow: never early, ≤~15 min late, with catch-up),
- * and notifies non-RSVP'd members via push + email per the team's
+ * and sends push reminders to members who haven't RSVPed, using the team's
  * reminder_prefs.
  *
  * Idempotency: a `reminder_sent` row per (kind, refId, userId, hoursBefore)
@@ -30,7 +29,7 @@ export async function GET(request: Request) {
   // CRON_SECRET MUST be set in any environment that exposes this route
   // (Vercel injects it on its scheduled calls). Allowing the check to
   // be skipped when the env var is missing left the route as an
-  // unauthenticated trigger for service-role notifications/emails —
+  // unauthenticated trigger for push notifications —
   // refuse to run rather than silently fall open.
   const secret = process.env.CRON_SECRET;
   if (!secret) {
@@ -112,8 +111,6 @@ export async function GET(request: Request) {
         timezone: m.timezone,
         title: m.opponent ? `vs ${m.opponent}` : "Team match",
         location: m.location,
-        rsvpPath: `/groups/${m.group_id}/availability?focus=${m.id}`,
-        request,
       });
       dispatched += result.dispatched;
       if (result.error) errors.push(result.error);
@@ -179,8 +176,6 @@ export async function GET(request: Request) {
         timezone: p.timezone,
         title: p.series.name,
         location: p.series.location,
-        rsvpPath: `/groups/${group.id}/practice?focus=${p.id}`,
-        request,
       });
       dispatched += result.dispatched;
       if (result.error) errors.push(result.error);
@@ -238,8 +233,6 @@ type DispatchOpts = {
   timezone: string | null;
   title: string;
   location: string;
-  rsvpPath: string;
-  request: Request;
 };
 
 async function dispatch(
@@ -259,18 +252,11 @@ async function dispatch(
   const targets = opts.memberUserIds.filter((id) => !alreadySet.has(id));
   if (targets.length === 0) return { dispatched: 0 };
 
-  const origin = new URL(opts.request.url).origin;
-  const rsvpUrl = `${origin}${opts.rsvpPath}`;
   // Render in the event's zone, not the server's — the cron runs on
   // Vercel in UTC, which used to shift the label 7-8 hours.
   const whenLabel = formatWhenLabel(opts.target, opts.timezone);
   const kindLabel = opts.kind === "match" ? "Match" : "Practice";
 
-  // Single APN code path: push-fanout (Web Crypto ES256 + HTTP/2). We
-  // await the response so reminder_sent only gets written when delivery
-  // didn't outright fail — otherwise a 5xx push-fanout outage would
-  // permanently suppress the reminder for the (kind, ref_id, hoursBefore)
-  // tuple and the user would never hear about the match.
   const pushResult = await postPushFanout(targets, {
     title: `${opts.teamName}: ${kindLabel} reminder`,
     body: `${opts.title} — ${whenLabel} · ${opts.location}`,
@@ -278,34 +264,8 @@ async function dispatch(
     data: { kind: opts.kind, refId: opts.refId, teamId: opts.teamId },
   });
 
-  // Email to targets that have an address set.
-  const { data: users } = await admin
-    .from("profiles")
-    .select("id, email")
-    .in("id", targets)
-    .not("email", "is", null);
-  for (const u of users ?? []) {
-    if (!u.email) continue;
-    void sendReminderEmail({
-      to: u.email,
-      teamName: opts.teamName,
-      kind: opts.kind,
-      title: opts.title,
-      whenLabel,
-      location: opts.location,
-      hoursBefore: opts.hoursBefore,
-      rsvpUrl,
-    });
-  }
-
-  // Hard failures from push-fanout (network error or 5xx) should NOT
-  // mark these recipients as already-notified. push-fanout no-ops on
-  // missing config and returns ok:false / status:0 — we treat that as
-  // "delivered as far as this cron is concerned" so reminder_sent
-  // still advances and we don't re-spam on every hourly run.
-  const pushHardFail =
-    !pushResult.ok && pushResult.status >= 500;
-  if (pushHardFail) {
+  // Leave failed requests eligible for retry within the reminder window.
+  if (!pushResult.ok) {
     return {
       dispatched: 0,
       error: `push-fanout ${pushResult.status}: ${pushResult.error ?? "no detail"}`,

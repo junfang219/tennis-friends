@@ -57,8 +57,8 @@ export function combineDateAndTime(
 
 // Render a UTC instant back to the event's local wall clock for reminder
 // copy ("Sat, Sep 26, 12:30 PM"). Without an explicit timeZone the cron's
-// toLocaleString rendered in server time (Vercel = UTC), so push + email
-// bodies showed times 7-8 hours later than the actual match.
+// toLocaleString rendered in server time (Vercel = UTC), so the push
+// notification showed a time 7-8 hours later than the actual match.
 export function formatWhenLabel(
   target: Date,
   timezone: string | null | undefined
