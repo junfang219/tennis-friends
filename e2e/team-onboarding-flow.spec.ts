@@ -36,13 +36,35 @@ test("two-step setup defaults to SMS and can finish without sending invitations"
 });
 test("method switching and Back to roster never write a stale roster", async ({ context, page }) => {
   const fixture = await managementFixture(context, [player()]);
-  await page.goto(`/groups/${groupId}/invite-players`);
+  await page.goto(`/groups/${groupId}/roster`);
+  await page.getByRole("link", { name: "Invite players", exact: true }).click();
+  await expect(page).toHaveURL(`/groups/${groupId}/invite-players`);
   fixture.state.players.push(player("77777777-7777-4777-8777-777777777777", { name: "Added elsewhere", email: "other@example.com" }));
   await page.getByRole("button", { name: "Send by email", exact: true }).click();
   await page.getByRole("textbox", { name: "Email", exact: true }).fill("draft@example.com");
   await page.getByRole("link", { name: "Back to roster", exact: true }).click();
+  await expect(page).toHaveURL(`/groups/${groupId}/roster`);
   await expect(page.getByRole("heading", { name: "Roster", exact: true })).toBeVisible();
   expect(fixture.writes).toEqual([]); expect(fixture.state.players).toHaveLength(2);
+});
+
+test("Back to roster reopens the Roster tab for invitations started in Settings", async ({ context, page }) => {
+  const fixture = await managementFixture(context);
+  const teamPath = `/groups/${groupId}`;
+  await page.goto(`${teamPath}/settings`);
+  const roster = page.getByRole("tab", { name: "Roster", exact: true });
+  await roster.click();
+  await page.getByRole("link", { name: "Invite players", exact: true }).click();
+  await expect(page).toHaveURL(`${teamPath}/invite-players?from=settings`);
+  await expect(page.getByRole("heading", { name: "Invite players", exact: true })).toBeVisible();
+  await page.reload();
+  await page.getByRole("link", { name: "Back to roster", exact: true }).click();
+  await expect(page).toHaveURL(`${teamPath}/settings?tab=roster`);
+  await expect(roster).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tabpanel", { name: "Roster" })).toBeVisible();
+  await page.reload();
+  await expect(roster).toHaveAttribute("aria-selected", "true");
+  expect(fixture.writes).toEqual([]);
 });
 test("email contacts are requested only for email, and sending targets only the new recipients", async ({ context, page }) => {
   const fixture = await managementFixture(context, [player()]);
@@ -103,6 +125,37 @@ test("previous invitations remain visible with their roles and cancellation cont
   await expect(page.getByText("Existing invitation · captain · Sub", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Cancel existing invitation", exact: true }).click();
   await expect(page.getByText("legacy@example.com", { exact: true })).toHaveCount(0);
+});
+
+test("team settings switches to the managed roster without navigating", async ({ context, page }) => {
+  const fixture = await managementFixture(context);
+  fixture.state.config = { ...fixture.state.config, includeUsta: true, teamNumber: "0000000000", deadline: "2026-11-24" };
+  fixture.state.members.push({ id: "88888888-8888-4888-8888-888888888888", userId: "11111111-1111-4111-8111-111111111111", name: "Captain" });
+  const url = `/groups/${groupId}/settings`;
+  await page.goto(url);
+
+  const rosterTab = page.getByRole("tab", { name: "Roster", exact: true });
+  await rosterTab.click();
+  await expect(rosterTab).toHaveAttribute("aria-selected", "true");
+  const panel = page.getByRole("tabpanel", { name: "Roster" });
+  await panel.getByRole("button", { name: "Confirm registration for Captain", exact: true }).click();
+  await panel.getByText("USTA registration · 1 of 1 confirmed", { exact: true }).click();
+  await expect(panel.getByLabel("USTA team number", { exact: true })).toHaveValue("0000000000");
+  await expect(page).toHaveURL(new RegExp(`${url}$`));
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  for (const tab of ["Seasons", "Notifications", "Team"]) {
+    const control = page.getByRole("tab", { name: tab, exact: true });
+    await control.click();
+    await expect(control).toHaveAttribute("aria-selected", "true");
+    await expect(panel).toBeHidden();
+    await expect(page).toHaveURL(new RegExp(`${url}$`));
+  }
+  await page.getByRole("tab", { name: "Team", exact: true }).press("ArrowRight");
+  await expect(rosterTab).toBeFocused();
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Undo confirmation for Captain", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`${url}$`));
 });
 
 test("captains check and confirm USTA registration directly in the roster", async ({ context, page }) => {
