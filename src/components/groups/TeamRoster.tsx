@@ -21,6 +21,7 @@ export default function TeamRoster({
   currentUserId,
   currentUserName,
   onSaved,
+  inviteFromSettings = false,
   registration,
 }: {
   group: RosterGroup;
@@ -28,6 +29,7 @@ export default function TeamRoster({
   currentUserId: string;
   currentUserName: string;
   onSaved: () => void;
+  inviteFromSettings?: boolean;
   registration?: { players: { id: string; member_id: string | null; accepted_by: string | null; confirmed_at: string | null }[]; members: { id: string }[]; confirm: (playerId: string, confirmed: boolean) => Promise<void> };
 }) {
   const types = parseMemberTypes(group.memberTypes);
@@ -89,7 +91,7 @@ export default function TeamRoster({
 
   return (
     <div>
-      {canManage && (process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" ? <Link href={`/groups/${group.id}/invite-players`} className="btn-primary inline-flex items-center justify-center min-h-12 mb-4">Invite players</Link> :
+      {canManage && (process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" ? <Link href={`/groups/${group.id}/invite-players${inviteFromSettings ? "?from=settings" : ""}`} className="btn-primary inline-flex items-center justify-center min-h-12 mb-4">Invite players</Link> :
         <button
           onClick={() => setShowAddPeople(true)}
           className="btn-primary btn-sm inline-flex items-center gap-1.5 mb-4"

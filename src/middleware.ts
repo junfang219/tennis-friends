@@ -54,6 +54,8 @@ export async function middleware(req: NextRequest) {
       url.search = "";
       url.searchParams.set("flow", flow);
       if (req.nextUrl.searchParams.get("setup") === "1") url.searchParams.set("setup", "1");
+      if (flow === "invite" && req.nextUrl.searchParams.get("from") === "settings") url.searchParams.set("from", "settings");
+      if (flow === "settings" && req.nextUrl.searchParams.get("tab") === "roster") url.searchParams.set("tab", "roster");
       return NextResponse.rewrite(url);
     }
     if (req.method === "GET") {

@@ -54,7 +54,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "notifications", label: "Notifications" },
 ];
 
-export default function GroupSettings() {
+export default function GroupSettings({ initialTab }: { initialTab: TabKey }) {
   const params = useParams();
   const { data: session } = useSession();
   const groupId = params.id as string;
@@ -156,23 +156,28 @@ export default function GroupSettings() {
     );
   }
 
-  return <SettingsTabs group={group} seasons={seasons} currentUser={session?.user} onGroupChanged={loadGroup} onSeasonsChanged={loadSeasons} />;
+  return <SettingsTabs key={initialTab} initialTab={initialTab} group={group} seasons={seasons} currentUser={session?.user} onGroupChanged={loadGroup} onSeasonsChanged={loadSeasons} />;
 }
 
-export function GroupSettingsPreview({ group, currentUser }: { group: RosterGroup; currentUser: { id: string; name: string } }) {
+export function GroupSettingsPreview({ group, currentUser, initialTab }: {
+  group: RosterGroup;
+  currentUser: { id: string; name: string };
+  initialTab: TabKey;
+}) {
   const router = useRouter();
-  return <SettingsTabs group={{ ...group, reminderPrefs: "{}" }} seasons={[]} currentUser={currentUser} onGroupChanged={() => router.refresh()} onSeasonsChanged={() => {}} preview />;
+  return <SettingsTabs key={initialTab} initialTab={initialTab} group={{ ...group, reminderPrefs: "{}" }} seasons={[]} currentUser={currentUser} onGroupChanged={() => router.refresh()} onSeasonsChanged={() => {}} preview />;
 }
 
-function SettingsTabs({ group, seasons, currentUser, onGroupChanged, onSeasonsChanged, preview = false }: {
+function SettingsTabs({ group, seasons, currentUser, onGroupChanged, onSeasonsChanged, initialTab, preview = false }: {
   group: Group;
   seasons: Season[];
   currentUser?: { id: string; name: string };
   onGroupChanged: () => void;
   onSeasonsChanged: () => void;
+  initialTab: TabKey;
   preview?: boolean;
 }) {
-  const [tab, setTab] = useState<TabKey>("team");
+  const [tab, setTab] = useState(initialTab);
   const groupId = group.id;
   const isOwner = currentUser?.id === group.ownerId;
   const myRoles = group.members.find((member) => member.userId === currentUser?.id)?.roles ?? [];

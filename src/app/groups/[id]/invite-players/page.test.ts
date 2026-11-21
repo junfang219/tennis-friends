@@ -71,6 +71,15 @@ it("renders the ready form for a non-owner manager through the real permission c
   expect(mocks.fetch).not.toHaveBeenCalled();
 });
 
+it.each([
+  { from: "settings", destination: "settings?tab=roster" },
+  { from: "https://example.test", destination: "roster" },
+])("uses the expected return link for invitation origin $from", async ({ from, destination }) => {
+  const html = renderToString(await InvitePlayersPage({ params: Promise.resolve({ id }), searchParams: Promise.resolve({ from }) }));
+  expect(html).toContain(`href="/groups/${id}/${destination}"`);
+  expect(html).toContain("Back to roster");
+});
+
 it("does not return invitation content when the server RPC denies current manager access", async () => {
   mocks.rpc.mockResolvedValue({ data: null, error: { code: "42501" } });
   await expect(openPage()).rejects.toThrow("not-found");

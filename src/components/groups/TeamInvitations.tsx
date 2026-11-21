@@ -29,14 +29,22 @@ function RecipientEditor({ player, save }: { player: Player; save: (change: { na
     <button className="btn-secondary w-full" type="submit">Save recipient</button>
   </form>;
 }
-type InvitationsProps = { group: RosterGroup; currentUserName: string; review?: boolean; setup?: boolean; initialState?: TeamManagementState };
+type InvitationsProps = { group: RosterGroup; currentUserName: string; review?: boolean; setup?: boolean; fromSettings?: boolean; initialState?: TeamManagementState };
 export default function TeamInvitations(props: InvitationsProps) {
   return <LoadedInvitations key={props.group.id} {...props} />;
 }
 function LoadedInvitations(props: InvitationsProps) {
   const management = useTeamManagement(props.group.id, props.initialState);
-  if (!management.state) return <main className="max-w-2xl mx-auto p-4 py-6 space-y-5"><h1 className="font-display text-3xl font-bold text-court-green">Invite players</h1>{props.setup && <TeamSetupProgress step={2} />}<p role={management.error ? "alert" : "status"}>{management.error || "Loading invitations…"}</p></main>;
-  return <InvitationsEditor {...props} management={{ ...management, state: management.state }} />;
+  const teamHref = `/groups/${props.group.id}`;
+  const rosterHref = props.fromSettings ? `${teamHref}/settings?tab=roster` : `${teamHref}/roster`;
+  return <main className="max-w-2xl mx-auto p-4 py-6 space-y-5">
+    {!props.setup && <Link href={rosterHref} className="text-sm underline text-court-green">Back to roster</Link>}
+    <header><p className="text-sm text-gray-600">{props.group.name}</p><h1 className="font-display text-3xl font-bold text-court-green">Invite players</h1></header>
+    {management.state ? <InvitationsEditor {...props} management={{ ...management, state: management.state }} /> : <>
+      {props.setup && <TeamSetupProgress step={2} />}
+      <p role={management.error ? "alert" : "status"}>{management.error || "Loading invitations…"}</p>
+    </>}
+  </main>;
 }
 function InvitationsEditor({ group, review = false, setup = false, management }: InvitationsProps & { management: ReturnType<typeof useTeamManagement> & { state: TeamManagementState } }) {
   const router = useRouter();
@@ -116,7 +124,7 @@ function InvitationsEditor({ group, review = false, setup = false, management }:
     await send([player.id], "sms", { consent: new Map([[player.id, player.phone]]) });
   }
 
-  return <main className="max-w-2xl mx-auto p-4 py-6 space-y-5">{!setup && <Link href={`/groups/${group.id}/roster`} className="text-sm underline text-court-green">Back to roster</Link>}<header><p className="text-sm text-gray-600">{group.name}</p><h1 className="font-display text-3xl font-bold text-court-green">Invite players</h1></header>
+  return <>
     {setup && <><TeamSetupProgress step={2} /><p className="text-sm text-gray-600">Your team has been created. Invite players now, or choose Go to Roster to invite them later.</p></>}
     {(error || loadError) && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{error || loadError}</p>}{notice && <p role="status" className="rounded-xl bg-green-50 p-3 text-sm text-green-950">{notice}</p>}
     <fieldset disabled={busy} className="min-w-0 space-y-5">
@@ -181,5 +189,5 @@ function InvitationsEditor({ group, review = false, setup = false, management }:
       <details className="rounded-xl border bg-white p-4"><summary className="cursor-pointer text-sm font-semibold text-court-green">More ways to add people</summary><div className="space-y-4 pt-4"><div className="grid gap-3"><button type="button" className="btn-secondary" onClick={() => setMore(more === "friends" ? null : "friends")}>Add an existing friend</button><button type="button" className="btn-secondary" onClick={() => setMore(more === "availability" ? null : "availability")}>Track availability without an account</button></div>{more && review && <p className="text-sm text-gray-600">Friend and guest actions are disabled in this isolated preview.</p>}{more === "friends" && !review && <AddFriendsPanel groupId={group.id} existingMemberUserIds={(state?.members ?? group.members).map(m => m.userId).filter((id): id is string => Boolean(id))} onAdded={() => { void load(); }} />}{more === "availability" && !review && <InvitePlayersPanel groupId={group.id} groupName={group.name} scope="all" onChanged={() => { void load(); }} />}</div></details>
     </fieldset>
     {setup && <nav aria-label="Setup navigation" className="grid grid-cols-2 gap-3">{busy ? <><button disabled className="btn-secondary h-12 w-full">Back</button><button disabled className="btn-primary h-12 w-full">Go to Roster</button></> : <><Link href={`/groups/${group.id}/setup-details`} className="btn-secondary h-12 w-full text-center">Back</Link><Link href={`/groups/${group.id}/roster`} className="btn-primary h-12 w-full text-center">Go to Roster</Link></>}</nav>}
-  </main>;
+  </>;
 }

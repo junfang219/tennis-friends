@@ -19,7 +19,7 @@ export function ManagedRoster({ group, currentUser, onRosterChanged, embedded = 
   return <>{error && <p role="alert" className="text-sm text-red-800">{error}</p>}
     <section aria-label="Team members" className={embedded ? undefined : "rounded-2xl border border-gray-200 bg-white p-5"}>
       {state?.config.includeUsta && <p className="mb-4 text-sm text-gray-600">Check the TennisLink roster before confirming each player’s registration.</p>}
-      <TeamRoster group={group} canManage currentUserId={currentUser.id} currentUserName={currentUser.name} onSaved={() => { void load().catch(() => {}); void onRosterChanged(); }} registration={state?.config.includeUsta ? { players: state.players, members: state.members, confirm: async (playerId, confirmed) => { await mutate({ action: "confirmation", playerId, confirmed }); } } : undefined} />
+      <TeamRoster group={group} canManage currentUserId={currentUser.id} currentUserName={currentUser.name} onSaved={() => { void load().catch(() => {}); void onRosterChanged(); }} inviteFromSettings={embedded} registration={state?.config.includeUsta ? { players: state.players, members: state.members, confirm: async (playerId, confirmed) => { await mutate({ action: "confirmation", playerId, confirmed }); } } : undefined} />
       {group.members.length <= 1 && <p className="text-sm text-gray-600">Your team is ready. Use Invite players to share a link or send personal email invitations.</p>}
     </section>
     {state && <>

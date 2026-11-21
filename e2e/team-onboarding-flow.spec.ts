@@ -36,13 +36,35 @@ test("two-step setup defaults to SMS and can finish without sending invitations"
 });
 test("method switching and Back to roster never write a stale roster", async ({ context, page }) => {
   const fixture = await managementFixture(context, [player()]);
-  await page.goto(`/groups/${groupId}/invite-players`);
+  await page.goto(`/groups/${groupId}/roster`);
+  await page.getByRole("link", { name: "Invite players", exact: true }).click();
+  await expect(page).toHaveURL(`/groups/${groupId}/invite-players`);
   fixture.state.players.push(player("77777777-7777-4777-8777-777777777777", { name: "Added elsewhere", email: "other@example.com" }));
   await page.getByRole("button", { name: "Send by email", exact: true }).click();
   await page.getByRole("textbox", { name: "Email", exact: true }).fill("draft@example.com");
   await page.getByRole("link", { name: "Back to roster", exact: true }).click();
+  await expect(page).toHaveURL(`/groups/${groupId}/roster`);
   await expect(page.getByRole("heading", { name: "Roster", exact: true })).toBeVisible();
   expect(fixture.writes).toEqual([]); expect(fixture.state.players).toHaveLength(2);
+});
+
+test("Back to roster reopens the Roster tab for invitations started in Settings", async ({ context, page }) => {
+  const fixture = await managementFixture(context);
+  const teamPath = `/groups/${groupId}`;
+  await page.goto(`${teamPath}/settings`);
+  const roster = page.getByRole("tab", { name: "Roster", exact: true });
+  await roster.click();
+  await page.getByRole("link", { name: "Invite players", exact: true }).click();
+  await expect(page).toHaveURL(`${teamPath}/invite-players?from=settings`);
+  await expect(page.getByRole("heading", { name: "Invite players", exact: true })).toBeVisible();
+  await page.reload();
+  await page.getByRole("link", { name: "Back to roster", exact: true }).click();
+  await expect(page).toHaveURL(`${teamPath}/settings?tab=roster`);
+  await expect(roster).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tabpanel", { name: "Roster" })).toBeVisible();
+  await page.reload();
+  await expect(roster).toHaveAttribute("aria-selected", "true");
+  expect(fixture.writes).toEqual([]);
 });
 test("email contacts are requested only for email, and sending targets only the new recipients", async ({ context, page }) => {
   const fixture = await managementFixture(context, [player()]);
