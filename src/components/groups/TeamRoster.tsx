@@ -9,6 +9,7 @@ import LinkMemberModal from "./LinkMemberModal";
 import AddPeopleChooser from "./AddPeopleChooser";
 export type RosterMember = { id: string; userId: string | null; roles: TeamRole[]; memberType: string; isPlaceholder: boolean; user: { id: string; name: string; profileImageUrl: string } };
 export type RosterGroup = { id: string; name: string; ownerId: string; memberTypes: string[]; members: RosterMember[] };
+type MemberEdit = Partial<Pick<RosterMember, "roles" | "memberType">>;
 // Human label for a role set: "Manager · Captain", or "Member" when empty.
 function rolesLabel(roles: TeamRole[]): string {
   if (roles.length === 0) return "Member";
@@ -28,14 +29,16 @@ export default function TeamRoster({
   canManage: boolean;
   currentUserId: string;
   currentUserName: string;
-  onSaved: () => void;
+  onSaved: (memberEdit?: MemberEdit) => void | Promise<void>;
   inviteFromSettings?: boolean;
   registration?: { players: { id: string; member_id: string | null; accepted_by: string | null; confirmed_at: string | null }[]; members: { id: string }[]; confirm: (playerId: string, confirmed: boolean) => Promise<void> };
 }) {
   const types = parseMemberTypes(group.memberTypes);
   const callerIsOwner = currentUserId === group.ownerId;
-  const [busyId, setBusyId] = useState("");
+  const [roster, setRoster] = useState({ source: group.members, members: group.members });
+  const [pendingChanges, setPendingChanges] = useState<Record<string, { patch?: MemberEdit }>>({});
   const [err, setErr] = useState("");
+  const [pendingConfirmation, setPendingConfirmation] = useState<{ memberId: string; confirmed: boolean } | null>(null);
   // Placeholder row whose "Link to account" picker is open, if any.
   const [linkTarget, setLinkTarget] = useState<{ id: string; name: string } | null>(null);
   // Per-row "⋯" actions menu (Link / Make owner / Remove), anchored to the button.
@@ -44,23 +47,49 @@ export default function TeamRoster({
   // "Add people" chooser (forks invite-to-team vs availability-only).
   const [showAddPeople, setShowAddPeople] = useState(false);
 
-
-  async function changeRoster(memberId: string, change: Record<string, unknown>) {
-    setBusyId(memberId); setErr("");
-    try {
-      await teamResponse(await fetch(`/api/team-roster/${group.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...change, memberId }) }));
-      onSaved();
-    } catch (e) { setErr(e instanceof Error ? e.message : "Could not update roster"); }
-    finally { setBusyId(""); }
+  if (roster.source !== group.members) {
+    setRoster({ source: group.members, members: group.members });
   }
-  const updateMember = (memberId: string, patch: { roles?: TeamRole[]; memberType?: string }) => changeRoster(memberId, { action: "member", ...patch });
+
+  async function changeRoster(memberId: string, action: "member" | "remove" | "transfer-owner", patch?: MemberEdit) {
+    if (pendingChanges[memberId]) return;
+    setPendingChanges(previous => ({ ...previous, [memberId]: { patch } }));
+    setErr("");
+    try {
+      await teamResponse(await fetch(`/api/team-roster/${group.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, memberId, ...patch }) }));
+      if (patch) {
+        setRoster(previous => ({ ...previous, members: previous.members.map(member => member.id === memberId ? { ...member, ...patch } : member) }));
+      }
+      await onSaved(patch);
+    } catch (e) { setErr(e instanceof Error ? e.message : "Could not update roster"); }
+    finally {
+      setPendingChanges(previous => {
+        const next = { ...previous };
+        delete next[memberId];
+        return next;
+      });
+    }
+  }
+
+  async function changeConfirmation(memberId: string, playerId: string, confirmed: boolean) {
+    if (!registration || pendingConfirmation) return;
+    setPendingConfirmation({ memberId, confirmed });
+    setErr("");
+    try {
+      await registration.confirm(playerId, confirmed);
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Could not save registration confirmation");
+    } finally {
+      setPendingConfirmation(null);
+    }
+  }
 
   // Add/remove one role from a member's set. Manager is owner-gated below.
   const toggleRole = (m: RosterMember, role: TeamRole) => {
     const next = m.roles.includes(role)
       ? m.roles.filter((r) => r !== role)
       : [...m.roles, role];
-    void updateMember(m.id, { roles: next });
+    void changeRoster(m.id, "member", { roles: next });
   };
 
   const transferOwnership = async (m: RosterMember) => {
@@ -71,7 +100,7 @@ export default function TeamRoster({
       )
     )
       return;
-    await changeRoster(m.id, { action: "transfer-owner" });
+    await changeRoster(m.id, "transfer-owner");
   };
 
   // Remove a member (or placeholder) from the roster. Hard-deletes the
@@ -86,7 +115,7 @@ export default function TeamRoster({
       )
     )
       return;
-    await changeRoster(m.id, { action: "remove" });
+    await changeRoster(m.id, "remove");
   };
 
   return (
@@ -109,10 +138,14 @@ export default function TeamRoster({
         Promote managers and captains, or label members by type.
       </p>
       <div className="divide-y divide-gray-100">
-        {group.members.map((m) => {
+        {roster.members.map((member) => {
+          const pending = pendingChanges[member.id];
+          const m = pending?.patch ? { ...member, ...pending.patch } : member;
           const isOwnerRow = m.userId === group.ownerId;
           const tracked = registration?.players.find(p => p.member_id === m.id || (m.userId && p.accepted_by === m.userId));
           const registrationEligible = Boolean(tracked || (m.userId && registration?.members.some(member => member.id === m.id)));
+          const isSavingConfirmation = pendingConfirmation?.memberId === m.id;
+          const confirmed = isSavingConfirmation ? pendingConfirmation.confirmed : Boolean(tracked?.confirmed_at);
           // Row actions collapsed into the "⋯" menu (owner/manager only).
           const canRemoveRow = !isOwnerRow && m.userId !== currentUserId;
           const canMakeOwnerRow = callerIsOwner && !isOwnerRow && !m.isPlaceholder;
@@ -155,10 +188,10 @@ export default function TeamRoster({
                             key={r.value}
                             type="button"
                             onClick={() => toggleRole(m, r.value)}
-                            disabled={busyId === m.id || lockedManager}
+                            disabled={Boolean(pending) || lockedManager}
                             title={lockedManager ? "Only the team owner can assign Manager" : undefined}
                             aria-pressed={on}
-                            className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border transition-colors ${
+                            className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${
                               on
                                 ? "bg-court-green text-white border-court-green"
                                 : "bg-white text-gray-500 border-gray-200 hover:border-court-green"
@@ -170,8 +203,9 @@ export default function TeamRoster({
                       })}
                       <select
                         value={m.memberType}
-                        onChange={(e) => updateMember(m.id, { memberType: e.target.value })}
-                        disabled={busyId === m.id || types.length === 0}
+                        aria-label={`Member type for ${m.user.name}`}
+                        onChange={(e) => void changeRoster(m.id, "member", { memberType: e.currentTarget.value })}
+                        disabled={Boolean(pending) || types.length === 0}
                         className="text-xs px-2 py-1 border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-court-green"
                       >
                         <option value="">—</option>
@@ -192,10 +226,22 @@ export default function TeamRoster({
                     {m.memberType ? ` · ${m.memberType}` : ""}
                   </p>
                 )}
-                {registration && registrationEligible && <div className="mt-3 space-y-2">
-                  <p className={`text-sm font-semibold ${tracked?.confirmed_at ? "text-green-900" : "text-gray-700"}`}>USTA: {tracked?.confirmed_at ? "Confirmed by captain" : "Unconfirmed"}</p>
-                  {canManage && <button type="button" disabled={busyId === m.id} className="btn-secondary w-full text-sm" aria-label={`${tracked?.confirmed_at ? "Undo confirmation for" : "Confirm registration for"} ${m.user.name}`} onClick={() => { setBusyId(m.id); setErr(""); void registration.confirm(tracked?.id ?? m.id, !tracked?.confirmed_at).catch(e => setErr(e instanceof Error ? e.message : "Could not save registration confirmation")).finally(() => setBusyId("")); }}>{tracked?.confirmed_at ? "Undo confirmation" : "Confirm from TennisLink"}</button>}
-                </div>}
+                {registrationEligible && (canManage ? (
+                  <label className="mt-1 inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium text-gray-700">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 shrink-0 accent-court-green"
+                      checked={confirmed}
+                      disabled={pendingConfirmation !== null || Boolean(pending)}
+                      aria-label={`USTA registration confirmed for ${m.user.name}`}
+                      onChange={(event) => void changeConfirmation(m.id, tracked?.id ?? m.id, event.currentTarget.checked)}
+                    />
+                    <span>USTA registration confirmed</span>
+                    {isSavingConfirmation && <span role="status">Saving…</span>}
+                  </label>
+                ) : (
+                  <p className="mt-3 text-sm font-semibold text-gray-700">USTA: {confirmed ? "Confirmed by captain" : "Unconfirmed"}</p>
+                ))}
               </div>
               {showRowMenu && (
                 <button
@@ -204,7 +250,7 @@ export default function TeamRoster({
                     const r = e.currentTarget.getBoundingClientRect();
                     setRowMenu({ memberId: m.id, top: r.bottom + 6, left: Math.max(8, r.right - 180) });
                   }}
-                  disabled={busyId === m.id}
+                  disabled={Boolean(pending)}
                   className="shrink-0 -mr-1 p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-50"
                   aria-label={`Manage ${m.user.name}`}
                 >
@@ -276,7 +322,7 @@ export default function TeamRoster({
         );
       })()}
 
-      {err && <p className="text-xs text-red-600 mt-3">{err}</p>}
+      {err && <p role="alert" className="mt-3 text-sm text-red-800">{err}</p>}
 
       {linkTarget && (
         <LinkMemberModal

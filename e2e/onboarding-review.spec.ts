@@ -1,5 +1,52 @@
 import { test, expect } from "@playwright/test";
-import { reviewTeamApi, reviewTeamPath } from "../src/lib/onboarding/review-fixture";
+import { reviewGroup, reviewRosterMemberCookie, reviewTeamApi, reviewTeamPath } from "../src/lib/onboarding/review-fixture";
+
+test("roles and member types update before the roster save responds", async ({ page }) => {
+  const roleSave = Promise.withResolvers<void>();
+  const typeSave = Promise.withResolvers<void>();
+  const rosterApi = `**/api/team-roster/${reviewGroup.id}`;
+  const memberId = reviewGroup.members[0].id;
+  await page.route(rosterApi, async route => {
+    const change: unknown = route.request().postDataJSON();
+    if (change && typeof change === "object" && "roles" in change) {
+      expect(change).toEqual({ action: "member", memberId, roles: ["captain"] });
+      await roleSave.promise;
+      const cookie = encodeURIComponent(JSON.stringify({ roles: ["captain"] }));
+      await route.fulfill({ json: { ok: true }, headers: { "Set-Cookie": `${reviewRosterMemberCookie}=${cookie}; Path=/; HttpOnly; SameSite=Strict` } });
+      return;
+    }
+    expect(change).toEqual({ action: "member", memberId, memberType: "Sub" });
+    await typeSave.promise;
+    await route.fulfill({ status: 400, json: { error: "Could not save roster change" } });
+  });
+
+  await page.goto(`${reviewTeamPath}/settings?tab=roster`);
+  const captain = page.getByRole("button", { name: "Captain", exact: true });
+  const type = page.getByRole("combobox", { name: "Member type for Captain", exact: true });
+  await expect(captain).toHaveAttribute("aria-pressed", "false");
+  try {
+    await captain.click();
+    await expect(captain).toHaveAttribute("aria-pressed", "true");
+    await expect(captain).toBeDisabled();
+  } finally {
+    roleSave.resolve();
+  }
+  await expect(captain).toBeEnabled();
+  await page.reload();
+  await expect(captain).toHaveAttribute("aria-pressed", "true");
+
+  try {
+    await type.selectOption("Sub");
+    await expect(type).toHaveValue("Sub");
+    await expect(type).toBeDisabled();
+  } finally {
+    typeSave.resolve();
+  }
+  await expect(page.getByRole("region", { name: "Team members" }).getByRole("alert")).toHaveText("Could not save roster change");
+  await expect(type).toHaveValue("");
+  await expect(captain).toHaveAttribute("aria-pressed", "true");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
 
 test("Back to team returns to the sample team from its roster", async ({ page }) => {
   await page.goto(reviewTeamPath);

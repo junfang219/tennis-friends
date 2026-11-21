@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
@@ -63,14 +63,17 @@ export default function GroupSettings({ initialTab }: { initialTab: TabKey }) {
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const groupLoadVersion = useRef(0);
 
   const loadGroup = useCallback(async () => {
+    const version = ++groupLoadVersion.current;
     try {
       const supabase = createSupabaseBrowserClient();
       const [g, members] = await Promise.all([
         getGroup(supabase, groupId),
         listGroupMembers(supabase, groupId),
       ]);
+      if (version !== groupLoadVersion.current) return;
       if (!g) {
         setError("You are not a member of this team.");
         setLoading(false);
@@ -96,6 +99,7 @@ export default function GroupSettings({ initialTab }: { initialTab: TabKey }) {
         })),
       });
     } catch {
+      if (version !== groupLoadVersion.current) return;
       setError("Failed to load team.");
     }
     setLoading(false);
