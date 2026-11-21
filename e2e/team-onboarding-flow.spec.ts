@@ -105,6 +105,37 @@ test("previous invitations remain visible with their roles and cancellation cont
   await expect(page.getByText("legacy@example.com", { exact: true })).toHaveCount(0);
 });
 
+test("team settings switches to the managed roster without navigating", async ({ context, page }) => {
+  const fixture = await managementFixture(context);
+  fixture.state.config = { ...fixture.state.config, includeUsta: true, teamNumber: "0000000000", deadline: "2026-11-24" };
+  fixture.state.members.push({ id: "88888888-8888-4888-8888-888888888888", userId: "11111111-1111-4111-8111-111111111111", name: "Captain" });
+  const url = `/groups/${groupId}/settings`;
+  await page.goto(url);
+
+  const rosterTab = page.getByRole("tab", { name: "Roster", exact: true });
+  await rosterTab.click();
+  await expect(rosterTab).toHaveAttribute("aria-selected", "true");
+  const panel = page.getByRole("tabpanel", { name: "Roster" });
+  await panel.getByRole("button", { name: "Confirm registration for Captain", exact: true }).click();
+  await panel.getByText("USTA registration · 1 of 1 confirmed", { exact: true }).click();
+  await expect(panel.getByLabel("USTA team number", { exact: true })).toHaveValue("0000000000");
+  await expect(page).toHaveURL(new RegExp(`${url}$`));
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  for (const tab of ["Seasons", "Notifications", "Team"]) {
+    const control = page.getByRole("tab", { name: tab, exact: true });
+    await control.click();
+    await expect(control).toHaveAttribute("aria-selected", "true");
+    await expect(panel).toBeHidden();
+    await expect(page).toHaveURL(new RegExp(`${url}$`));
+  }
+  await page.getByRole("tab", { name: "Team", exact: true }).press("ArrowRight");
+  await expect(rosterTab).toBeFocused();
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Undo confirmation for Captain", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`${url}$`));
+});
+
 test("captains check and confirm USTA registration directly in the roster", async ({ context, page }) => {
   const fixture = await managementFixture(context);
   const ownerMember = "88888888-8888-4888-8888-888888888888", owner = "11111111-1111-4111-8111-111111111111";

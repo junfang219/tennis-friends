@@ -1,4 +1,20 @@
 import { test, expect } from "@playwright/test";
+import { reviewTeamApi, reviewTeamPath } from "../src/lib/onboarding/review-fixture";
+
+test("Back to team returns to the sample team from its roster", async ({ page }) => {
+  await page.goto(reviewTeamPath);
+  const team = page.getByRole("heading", { name: "Shared review", exact: true });
+  await expect(team).toBeVisible();
+  await page.getByRole("link", { name: "View roster", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Roster", exact: true })).toBeVisible();
+  await expect(page.getByText("USTA registration · Not enabled", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Back to team", exact: true }).click();
+  await expect(team).toBeVisible();
+  await page.getByRole("link", { name: "Team settings", exact: true }).click();
+  await expect(page.getByRole("tablist", { name: "Team settings" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect((await page.request.patch(reviewTeamApi, { data: { action: "registration" } })).status()).toBe(404);
+});
 
 test("invite to the app, add USTA later, then remind only unconfirmed players", async ({ page, request }) => {
   const mutations: string[] = [];
