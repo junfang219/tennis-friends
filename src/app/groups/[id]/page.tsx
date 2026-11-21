@@ -210,7 +210,7 @@ export default function GroupPage() {
                   </div>
                 )}
               </div>
-              {process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" ? <Link href={`/groups/${group.id}/roster`} className="text-sm font-semibold text-court-green underline underline-offset-4">Rosters</Link> : (
+              {process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" ? <Link href={`/groups/${group.id}/roster`} className="text-sm font-semibold text-court-green underline underline-offset-4">Roster</Link> : (
               <MembersButton
                 groupId={group.id}
                 ownerId={group.ownerId}
