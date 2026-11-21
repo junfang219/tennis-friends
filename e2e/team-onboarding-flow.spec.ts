@@ -138,7 +138,8 @@ test("team settings switches to the managed roster without navigating", async ({
   await rosterTab.click();
   await expect(rosterTab).toHaveAttribute("aria-selected", "true");
   const panel = page.getByRole("tabpanel", { name: "Roster" });
-  await panel.getByRole("button", { name: "Confirm registration for Captain", exact: true }).click();
+  const confirmation = panel.getByRole("checkbox", { name: "USTA registration confirmed for Captain", exact: true });
+  await confirmation.check();
   await panel.getByText("USTA registration · 1 of 1 confirmed", { exact: true }).click();
   await expect(panel.getByLabel("USTA team number", { exact: true })).toHaveValue("0000000000");
   await expect(page).toHaveURL(new RegExp(`${url}$`));
@@ -154,11 +155,11 @@ test("team settings switches to the managed roster without navigating", async ({
   await page.getByRole("tab", { name: "Team", exact: true }).press("ArrowRight");
   await expect(rosterTab).toBeFocused();
   await expect(panel).toBeVisible();
-  await expect(panel.getByRole("button", { name: "Undo confirmation for Captain", exact: true })).toBeVisible();
+  await expect(confirmation).toBeChecked();
   await expect(page).toHaveURL(new RegExp(`${url}$`));
 });
 
-test("captains check and confirm USTA registration directly in the roster", async ({ context, page }) => {
+test("captains can check and uncheck USTA registration directly in the roster", async ({ context, page }) => {
   const fixture = await managementFixture(context);
   const ownerMember = "88888888-8888-4888-8888-888888888888", owner = "11111111-1111-4111-8111-111111111111";
   fixture.state.config = { ...fixture.state.config, includeUsta: true, teamNumber: "0000000000", deadline: "2026-11-24" };
@@ -166,22 +167,29 @@ test("captains check and confirm USTA registration directly in the roster", asyn
   fixture.state.players.push(player(playerId, { member_id: ownerMember, name: "Captain", accepted_by: owner, associated_account_id: owner }));
   await page.goto(`/groups/${groupId}/roster`);
   const members = page.getByRole("region", { name: "Team members", exact: true });
-  await expect(members.getByText("USTA: Unconfirmed", { exact: true })).toBeVisible();
-  await members.getByRole("button", { name: "Confirm registration for Captain", exact: true }).click();
-  await expect(members.getByText("USTA: Confirmed by captain", { exact: true })).toBeVisible();
+  const confirmation = members.getByRole("checkbox", { name: "USTA registration confirmed for Captain", exact: true });
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation).not.toBeChecked();
+  await confirmation.check();
   await expect(page.getByText("USTA registration · 1 of 1 confirmed", { exact: true })).toBeVisible();
-  await members.getByRole("button", { name: "Undo confirmation for Captain", exact: true }).click();
-  await expect(members.getByText("USTA: Unconfirmed", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(confirmation).toBeChecked();
+  await confirmation.uncheck();
   await page.getByText("USTA registration · 0 of 1 confirmed", { exact: true }).click();
   await expect(page.getByRole("heading", { name: "Registration details", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Registration confirmations", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Prepare reminders to share", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Reminder for Captain", exact: true })).toBeVisible();
   expect(fixture.writes.filter(w => w.path.endsWith("/send")).map(w => w.body)).toEqual([expect.objectContaining({ reminder: true, mode: "prepare" })]);
-  await members.getByRole("button", { name: "Confirm registration for Captain", exact: true }).click();
+  await confirmation.check();
   await expect(page.getByRole("textbox", { name: "Reminder for Captain", exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: `/tmp/tennis-rosters-registration-${test.info().project.name}.png`, fullPage: true, animations: "disabled" });
+
+  await page.route(`**/api/team-onboarding/${groupId}`, route => route.fulfill({ status: 403, json: { error: "Could not save confirmation" } }), { times: 1 });
+  await confirmation.click();
+  await expect(members.getByRole("alert")).toHaveText("Could not save confirmation");
+  await expect(confirmation).toBeChecked();
 });
 
 test("Back edits the same team's details without replacing roster, USTA settings, or shared link", async ({ context, page }) => {

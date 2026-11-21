@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import { z } from "zod";
 import RegistrationOnboarding from "@/components/groups/RegistrationOnboarding";
@@ -9,7 +10,21 @@ import TeamInvitations from "@/components/groups/TeamInvitations";
 import TeamRegistration from "@/components/groups/TeamRegistration";
 import SetupDetailsPreview from "@/components/groups/SetupDetailsPreview";
 import SharedTeamInvitation from "@/components/groups/SharedTeamInvitation";
-import { reviewGroup as group, reviewTeamPath, reviewUser } from "@/lib/onboarding/review-fixture";
+import { reviewGroup, reviewRosterMemberCookie, reviewTeamPath, reviewUser } from "@/lib/onboarding/review-fixture";
+
+const previewMemberEdits = z.object({
+  roles: z.array(z.enum(["manager", "captain"])).max(2).optional(),
+  memberType: z.string().max(32).optional(),
+});
+
+function readMemberEdits(value: string) {
+  try {
+    const raw: unknown = JSON.parse(value);
+    return previewMemberEdits.safeParse(raw).data ?? {};
+  } catch {
+    return {};
+  }
+}
 
 export default async function OnboardingPreviewPage({ searchParams }: {
   searchParams: Promise<{ flow?: string | string[]; account?: string | string[]; setup?: string | string[]; from?: string | string[]; tab?: string | string[] }>;
@@ -23,10 +38,17 @@ export default async function OnboardingPreviewPage({ searchParams }: {
     tab: z.literal("roster").optional().catch(undefined),
   }).safeParse(await searchParams);
   if (!query.success) notFound();
+  const group = reviewGroup;
   if (query.data.flow === "create") return <CreateTeamForm groupId={group.id} />;
   if (query.data.flow === "details") return <SetupDetailsPreview groupId={group.id} />;
-  if (query.data.flow === "roster") return <TeamRosterScreen group={group} currentUser={reviewUser} />;
-  if (query.data.flow === "settings") return <GroupSettingsPreview group={group} currentUser={reviewUser} initialTab={query.data.tab ?? "team"} />;
+  if (query.data.flow === "roster" || query.data.flow === "settings") {
+    const savedMember = (await cookies()).get(reviewRosterMemberCookie)?.value;
+    const edits = savedMember ? readMemberEdits(savedMember) : {};
+    const rosterGroup = { ...group, members: group.members.map(member => ({ ...member, ...edits })) };
+    return query.data.flow === "roster"
+      ? <TeamRosterScreen group={rosterGroup} currentUser={reviewUser} />
+      : <GroupSettingsPreview group={rosterGroup} currentUser={reviewUser} initialTab={query.data.tab ?? "team"} />;
+  }
   if (query.data.flow === "team") return (
     <main className="mx-auto max-w-lg p-4 py-8">
       <section className="space-y-4 rounded-2xl border border-gray-200 bg-white p-5">

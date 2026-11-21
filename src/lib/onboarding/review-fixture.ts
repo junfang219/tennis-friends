@@ -20,6 +20,7 @@ export const reviewGroup = {
 
 export const reviewTeamPath = `/groups/${reviewGroup.id}`;
 export const reviewTeamApi = `/api/team-onboarding/${reviewGroup.id}`;
+export const reviewRosterMemberCookie = "tennisfriends-review-roster-member";
 export const reviewRosterState: TeamManagementState = {
   config: { name: reviewGroup.name, includeUsta: false, teamNumber: "", deadline: "" },
   members: [{ id: reviewMemberId, userId: reviewUser.id, name: reviewUser.name }],
