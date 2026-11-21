@@ -5,7 +5,7 @@ import type { InboxItem } from "@/components/ConversationRow";
 // Minimal factory helpers — only the fields buildInboxSections reads matter.
 function group(
   id: string,
-  kind: "session" | "club" | "circle",
+  kind: "session" | "friendGroup",
   sessionEndAt: string | null = null,
 ): InboxItem {
   return {
@@ -52,11 +52,11 @@ function direct(id: string): InboxItem {
 }
 
 describe("buildInboxSections", () => {
-  it("splits clubs and circles into their own sections, separate from games", () => {
+  it("shows friend group chats together in inbox order", () => {
     const items = [
       group("g1", "session"),
-      group("club1", "club"),
-      group("circle1", "circle"),
+      group("group1", "friendGroup"),
+      group("group2", "friendGroup"),
       team("t1"),
       direct("d1"),
     ];
@@ -64,27 +64,24 @@ describe("buildInboxSections", () => {
     const byKey = Object.fromEntries(sections.map((s) => [s.key, s.items.map((i) => i.id)]));
 
     expect(byKey.games).toEqual(["g1"]);
-    expect(byKey.clubs).toEqual(["club1"]);
-    expect(byKey.circles).toEqual(["circle1"]);
+    expect(byKey.friendGroups).toEqual(["group1", "group2"]);
     expect(byKey.teams).toEqual(["t1"]);
     expect(byKey.direct).toEqual(["d1"]);
+    expect(sections.find((section) => section.key === "friendGroups")?.header).toBe("Friend Groups");
   });
 
-  it("does NOT lump club/circle chats under the games section (the bug)", () => {
-    const sections = buildInboxSections([group("club1", "club"), group("circle1", "circle")]);
-    const games = sections.find((s) => s.key === "games");
-    expect(games).toBeUndefined();
-    expect(sections.map((s) => s.key)).toEqual(["clubs", "circles"]);
+  it("omits the games section when only friend groups have chats", () => {
+    const sections = buildInboxSections([group("group2", "friendGroup"), group("group1", "friendGroup")]);
+    expect(sections.map((s) => s.key)).toEqual(["friendGroups"]);
   });
 
-  it("orders sections games → teams → clubs → circles → direct and drops empties", () => {
+  it("orders sections and drops empty ones", () => {
     const sections = buildInboxSections([
       direct("d1"),
-      group("circle1", "circle"),
+      group("group1", "friendGroup"),
       group("g1", "session"),
     ]);
-    // Empty teams/clubs sections are omitted; present ones keep canonical order.
-    expect(sections.map((s) => s.key)).toEqual(["games", "circles", "direct"]);
+    expect(sections.map((s) => s.key)).toEqual(["games", "friendGroups", "direct"]);
   });
 
   it("sorts games by soonest session end, null end last", () => {

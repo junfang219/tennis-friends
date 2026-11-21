@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   adminClient,
+  befriend,
   deleteTestUsers,
   integrationEnvReady,
   makeTestUser,
@@ -287,15 +288,13 @@ describe.skipIf(!integrationEnvReady)("consolidated schemas (migrations 0010 / 0
         { group_id: groupId, user_id: bob.id, roles: [] },
       ]);
 
-      const { data: fg } = await alice.client
-        .from("friend_groups")
-        .insert({ name: "Doubles partners", owner_id: alice.id })
-        .select("id")
-        .single();
-      friendGroupId = fg!.id;
-      await alice.client.from("friend_group_members").insert([
-        { friend_group_id: friendGroupId, user_id: bob.id },
-      ]);
+      await befriend(alice, bob);
+      const { data: fg, error: createError } = await alice.client.rpc("create_friend_group", {
+        p_name: "Doubles partners",
+        p_member_ids: [bob.id],
+      });
+      expect(createError).toBeNull();
+      friendGroupId = fg!;
 
       // Group-targeted post.
       const { data: gp } = await alice.client

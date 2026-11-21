@@ -202,10 +202,9 @@ export default function GroupsPage() {
       <CommunitiesTabs />
       <div className="animate-fade-in-up flex items-start justify-between mb-6 gap-3">
         <div className="min-w-0">
-          <h1 className="font-display text-2xl font-bold text-court-green mb-1">
+          <h1 className="font-display text-2xl font-bold text-court-green">
             Your Teams
           </h1>
-          <p className="text-gray-500 text-sm">Organize your tennis circles</p>
         </div>
         {!showCreate && (
           <button

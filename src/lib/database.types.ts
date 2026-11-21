@@ -1727,6 +1727,7 @@ export type Database = {
           created_at: string
           id: string
           kind: Database["public"]["Enums"]["friend_group_kind"]
+          members_can_add: boolean
           name: string
           owner_id: string
           updated_at: string
@@ -1735,6 +1736,7 @@ export type Database = {
           created_at?: string
           id?: string
           kind?: Database["public"]["Enums"]["friend_group_kind"]
+          members_can_add?: boolean
           name: string
           owner_id: string
           updated_at?: string
@@ -1743,6 +1745,7 @@ export type Database = {
           created_at?: string
           id?: string
           kind?: Database["public"]["Enums"]["friend_group_kind"]
+          members_can_add?: boolean
           name?: string
           owner_id?: string
           updated_at?: string
@@ -3553,8 +3556,20 @@ export type Database = {
     }
     Functions: {
       _delete_user_owned_rows: { Args: { uid: string }; Returns: undefined }
+      add_friend_group_members: {
+        Args: { p_friend_group_id: string; p_member_ids: string[] }
+        Returns: undefined
+      }
       add_roster_placeholders: { Args: { p_group_id: string; p_people: Json; p_scope?: string }; Returns: Json }
       claim_roster_placeholder: { Args: { p_token: string }; Returns: Json }
+      create_friend_group: {
+        Args: { p_member_ids?: string[]; p_name: string }
+        Returns: string
+      }
+      create_standalone_chat: {
+        Args: { p_member_ids: string[]; p_name: string }
+        Returns: string
+      }
       get_roster_placeholder_links: { Args: { p_group_id: string }; Returns: Json }
       link_roster_placeholder: { Args: { p_member_id: string; p_user_id: string }; Returns: Json }
       guest_create_placeholder: { Args: { p_group_token: string; p_name: string }; Returns: Json }
@@ -3576,7 +3591,6 @@ export type Database = {
       mint_roster_link: { Args: { p_group_id: string }; Returns: string }
       revoke_roster_link: { Args: { p_group_id: string }; Returns: undefined }
       accept_club_invite: { Args: { p_invite_id: string }; Returns: Json }
-      accept_club_invite_link: { Args: { p_token: string }; Returns: Json }
       accept_group_invite: { Args: { p_token: string }; Returns: Json }
       active_season_id: { Args: { g: string }; Returns: string }
       advance_event_match_to_next_round: {
@@ -3595,22 +3609,13 @@ export type Database = {
       }
       cleanup_user_for_test: { Args: { uid: string }; Returns: undefined }
       count_user_friends: { Args: { user_id: string }; Returns: number }
-      create_club: {
-        Args: { p_invitee_ids?: string[]; p_name: string }
-        Returns: Json
-      }
       delete_my_account: { Args: never; Returns: undefined }
       email_exists: { Args: { p_email: string }; Returns: boolean }
       generate_round_robin_schedule: {
         Args: { p_event_id: string; p_schedule: Json }
         Returns: Json
       }
-      get_club_invite_link: { Args: { p_token: string }; Returns: Json }
       get_invite_by_token: { Args: { p_token: string }; Returns: Json }
-      get_or_create_club_invite_link: {
-        Args: { p_friend_group_id: string }
-        Returns: Json
-      }
       has_pending_club_invite: { Args: { fg: string }; Returns: boolean }
       invite_to_event: {
         Args: { p_event_id: string; p_user_ids: string[] }
@@ -3622,7 +3627,6 @@ export type Database = {
       }
       is_blocked: { Args: { a: string; b: string }; Returns: boolean }
       is_chat_participant: { Args: { c: string }; Returns: boolean }
-      is_club: { Args: { fg: string }; Returns: boolean }
       is_friend: { Args: { other_user: string }; Returns: boolean }
       is_friend_group_member: { Args: { fg: string }; Returns: boolean }
       is_group_member: { Args: { g: string }; Returns: boolean }
@@ -3656,10 +3660,6 @@ export type Database = {
         Args: { p_court_id: string; p_has_empty: boolean; p_post_id?: string }
         Returns: Json
       }
-      rotate_club_invite_link: {
-        Args: { p_friend_group_id: string }
-        Returns: Json
-      }
       seed_event_bracket: {
         Args: { p_event_id: string; p_pairs: Json }
         Returns: Json
@@ -3671,6 +3671,10 @@ export type Database = {
       }
       transfer_group_ownership: {
         Args: { p_group_id: string; p_new_owner_id: string }
+        Returns: undefined
+      }
+      update_standalone_chat: {
+        Args: { p_add_ids: string[]; p_chat_id: string; p_name: string; p_remove_ids: string[] }
         Returns: undefined
       }
     }
@@ -3717,6 +3721,7 @@ export type Database = {
         | "availability_poll"
         | "club_invite"
         | "club_invite_accepted"
+        | "friend_group_added"
         | "court_available"
         | "team_linked"
       play_request_status:
@@ -3900,6 +3905,7 @@ export const Constants = {
         "availability_poll",
         "club_invite",
         "club_invite_accepted",
+        "friend_group_added",
         "court_available",
         "team_linked",
       ],

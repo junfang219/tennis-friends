@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   adminClient,
+  befriend,
   deleteTestUsers,
   integrationEnvReady,
   makeTestUser,
@@ -142,16 +143,16 @@ describe.skipIf(!integrationEnvReady)("extended query helpers (live Supabase)", 
   });
 
   describe("friend groups", () => {
-    it("createFriendGroup + listMyFriendGroups + members + delete", async () => {
-      const fg = await createFriendGroup(alice.client, "Closer Friends", [bob.id]);
-      expect(fg.name).toBe("Closer Friends");
+    it("creates a private group and immediately adds selected friends", async () => {
+      await befriend(alice, bob);
+      const groupId = await createFriendGroup(alice.client, "Closer Friends", [bob.id]);
       const mine = await listMyFriendGroups(alice.client);
-      expect(mine.some((g) => g.id === fg.id)).toBe(true);
-      const members = await listFriendGroupMembers(alice.client, fg.id);
+      expect(mine.find((g) => g.id === groupId)?.name).toBe("Closer Friends");
+      const members = await listFriendGroupMembers(alice.client, groupId);
       expect(members.some((m) => m.user_id === bob.id)).toBe(true);
-      await deleteFriendGroup(alice.client, fg.id);
+      await deleteFriendGroup(alice.client, groupId);
       const after = await listMyFriendGroups(alice.client);
-      expect(after.some((g) => g.id === fg.id)).toBe(false);
+      expect(after.some((g) => g.id === groupId)).toBe(false);
     });
   });
 

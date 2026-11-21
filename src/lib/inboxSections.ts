@@ -1,12 +1,11 @@
 // Buckets inbox items into the ordered, labeled sections the Messages list
 // renders (mobile /chat page and the desktop ConversationSidebar). Centralized
-// so both surfaces categorize chats identically — game sessions, team chats,
-// clubs, circles, and direct messages each get their own section with a
-// matching accent color (see ConversationRow for the per-kind row styling).
+// so both surfaces use the same sections for games, teams, friend groups,
+// and direct messages.
 
 import type { InboxItem } from "@/components/ConversationRow";
 
-export type InboxSectionKey = "games" | "teams" | "clubs" | "circles" | "direct";
+export type InboxSectionKey = "games" | "teams" | "friendGroups" | "direct";
 
 export interface InboxSection {
   key: InboxSectionKey;
@@ -21,8 +20,7 @@ export interface InboxSection {
 function sectionKeyFor(item: InboxItem): InboxSectionKey {
   if (item.type === "team") return "teams";
   if (item.type === "group") {
-    if (item.kind === "club") return "clubs";
-    if (item.kind === "circle") return "circles";
+    if (item.kind === "friendGroup") return "friendGroups";
     return "games"; // session/game chats
   }
   return "direct";
@@ -38,9 +36,7 @@ const SECTION_META: Omit<InboxSection, "items">[] = [
     headerClass: "text-court-green",
   },
   { key: "teams", header: "Team chats", headerClass: "text-clay" },
-  { key: "clubs", header: "Clubs", headerClass: "text-club-purple" },
-  // The lime DEFAULT is too light on white — use the deep variant for the header.
-  { key: "circles", header: "Circles", headerClass: "text-circle-lime-deep" },
+  { key: "friendGroups", header: "Friend Groups", headerClass: "text-friend-group-purple-deep" },
   { key: "direct", header: "Direct messages", headerClass: "text-gray-500" },
 ];
 

@@ -1,6 +1,7 @@
 "use client";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { z } from "zod";
 import type { Database } from "../types";
 import { getMyIdFast } from "./_authFast";
 import { isGameChatVisible } from "@/lib/gameChatExpiry";
@@ -48,6 +49,35 @@ export interface ChatParticipant {
 const CHAT_COLS =
   "id, name, creator_id, post_id, friend_group_id, session_end_at, manual_player_names, created_at, updated_at";
 
+const chatMemberIdsSchema = z.array(z.uuid());
+
+export async function createStandaloneChat(
+  supabase: SupabaseClient<Database>,
+  name: string,
+  memberIds: string[],
+): Promise<string> {
+  const { data, error } = await supabase.rpc("create_standalone_chat", {
+    p_name: z.string().trim().parse(name),
+    p_member_ids: chatMemberIdsSchema.parse(memberIds),
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function updateStandaloneChat(
+  supabase: SupabaseClient<Database>,
+  chatId: string,
+  changes: { name: string; addIds: string[]; removeIds: string[] },
+): Promise<void> {
+  const { error } = await supabase.rpc("update_standalone_chat", {
+    p_chat_id: z.uuid().parse(chatId),
+    p_name: z.string().parse(changes.name),
+    p_add_ids: chatMemberIdsSchema.parse(changes.addIds),
+    p_remove_ids: chatMemberIdsSchema.parse(changes.removeIds),
+  });
+  if (error) throw error;
+}
+
 export async function listMyChats(supabase: SupabaseClient<Database>): Promise<Chat[]> {
   const me = await getMyIdFast(supabase);
   if (!me) return [];
@@ -84,11 +114,6 @@ export interface ChatThread {
   unread_count: number;
   muted: boolean;
   pinned_at: string | null;
-  // For chats backed by a friend group (chats.friend_group_id), the group's
-  // kind — so the inbox can bucket club vs circle chats into their own
-  // sections instead of lumping them with game/session chats. Null for
-  // game chats (post_id-backed) and any chat without a friend group.
-  friend_group_kind: "circle" | "club" | null;
 }
 
 export async function listMyChatThreads(
@@ -141,28 +166,6 @@ export async function listMyChatThreads(
   if (chatsRes.error) throw chatsRes.error;
   if (msgsRes.error) throw msgsRes.error;
 
-  // Resolve the kind (circle vs club) of any friend-group-backed chats so the
-  // inbox can give them their own sections. Game chats (post_id-backed) have
-  // no friend_group_id and stay null.
-  const fgIds = [
-    ...new Set(
-      ((chatsRes.data ?? []) as Chat[])
-        .map((c) => c.friend_group_id)
-        .filter((id): id is string => !!id)
-    ),
-  ];
-  const fgKindById = new Map<string, "circle" | "club">();
-  if (fgIds.length > 0) {
-    const { data: fgRows, error: fgErr } = await supabase
-      .from("friend_groups")
-      .select("id, kind")
-      .in("id", fgIds);
-    if (fgErr) throw fgErr;
-    for (const row of (fgRows ?? []) as { id: string; kind: "circle" | "club" }[]) {
-      fgKindById.set(row.id, row.kind);
-    }
-  }
-
   type MsgRow = {
     id: string;
     chat_id: string;
@@ -211,9 +214,6 @@ export async function listMyChatThreads(
       unread_count: unread,
       muted: state.muted,
       pinned_at: state.pinned_at,
-      friend_group_kind: chat.friend_group_id
-        ? fgKindById.get(chat.friend_group_id) ?? null
-        : null,
     });
   }
 
