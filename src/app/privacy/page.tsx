@@ -74,7 +74,7 @@ export default function PrivacyPolicyPage() {
           </li>
           <li>
             <strong>Content you create.</strong> Posts, match results, sessions
-            and events you organize or RSVP to, clubs and groups you join, and
+            and events you organize or RSVP to, teams and friend groups you join, and
             messages you send in direct chats and group chats.
           </li>
         </ul>
@@ -111,7 +111,7 @@ export default function PrivacyPolicyPage() {
         <ul className="list-disc space-y-2 pl-5">
           <li>To create and manage your account and profile.</li>
           <li>
-            To match you with players and courts and to power scheduling, clubs,
+            To match you with players and courts and to power scheduling, friend groups,
             messaging, and match tracking.
           </li>
           <li>To send notifications you have opted into.</li>

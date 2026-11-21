@@ -51,24 +51,12 @@ export async function loadInbox(
   const chatItems: InboxItem[] = chats.map((t) => ({
     type: "group" as const,
     id: t.chat.id,
-    // Friend-group-backed chats are clubs/circles; the rest are game sessions.
-    title:
-      t.chat.name ||
-      (t.friend_group_kind === "club"
-        ? "Club chat"
-        : t.friend_group_kind === "circle"
-        ? "Circle chat"
-        : "Session chat"),
+    title: t.chat.name || (t.chat.friend_group_id ? "Friend group chat" : "Session chat"),
     href: `/chat/group/${t.chat.id}`,
     unreadCount: t.unread_count,
     muted: t.muted,
     pinnedAt: t.pinned_at,
-    kind:
-      t.friend_group_kind === "club"
-        ? ("club" as const)
-        : t.friend_group_kind === "circle"
-        ? ("circle" as const)
-        : ("session" as const),
+    kind: t.chat.friend_group_id ? "friendGroup" : "session",
     sessionEndAt: t.chat.session_end_at,
     lastMessage: t.last_message
       ? {

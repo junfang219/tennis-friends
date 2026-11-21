@@ -9,7 +9,6 @@ import EmojiPicker from "@/components/EmojiPicker";
 import SplitCostSheet from "@/components/SplitCostSheet";
 import SharedPostCard, { type SharedPost } from "@/components/SharedPostCard";
 import ChatFindPlayerButton from "@/components/chat/ChatFindPlayerButton";
-import { ClubQRModal } from "@/components/clubs/ClubQRModal";
 import MessageReactionBar from "@/components/MessageReactionBar";
 import MessageReactions, { type MessageReaction as MsgReaction } from "@/components/MessageReactions";
 import { useLongPress } from "@/hooks/useLongPress";
@@ -50,9 +49,6 @@ type ChatInfo = {
   name: string;
   creatorId: string;
   friendGroupId: string | null;
-  /** For friend-group-backed chats (clubs/circles), the group kind — drives the
-   *  "Leave club"/"Leave circle" menu wording. Null for session/game chats. */
-  friendGroupKind: "club" | "circle" | null;
   /** Authoritative owner of the backing friend group; the owner can't leave
    *  (deleting the group is their exit). Null for session/game chats. */
   friendGroupOwnerId: string | null;
@@ -105,7 +101,6 @@ export default function GroupChatThreadPage() {
   // when the user taps an expense announcement to go pay.
   const [splitInitialTab, setSplitInitialTab] = useState<"add" | "balances">("add");
   const [showMenu, setShowMenu] = useState(false);
-  const [showQr, setShowQr] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<{ url: string; type: string } | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -272,17 +267,14 @@ export default function GroupChatThreadPage() {
           return;
         }
         const { chat: c, participants, messages: msgs } = bundle;
-        // Resolve club vs circle for friend-group-backed chats so "Leave"
-        // can be worded correctly. Cheap single-row read; only group chats.
-        let friendGroupKind: "club" | "circle" | null = null;
+        // The owner can remove members and manages the group from Friends.
         let friendGroupOwnerId: string | null = null;
         if (c.friend_group_id) {
           const { data: fg } = await supabase
             .from("friend_groups")
-            .select("kind, owner_id")
+            .select("owner_id")
             .eq("id", c.friend_group_id)
             .maybeSingle();
-          friendGroupKind = (fg?.kind as "club" | "circle" | null) ?? null;
           friendGroupOwnerId = fg?.owner_id ?? null;
         }
         setChatInfo({
@@ -290,7 +282,6 @@ export default function GroupChatThreadPage() {
           name: c.name,
           creatorId: c.creator_id,
           friendGroupId: c.friend_group_id,
-          friendGroupKind,
           friendGroupOwnerId,
           participants: participants.map((p) => ({
             id: p.user.id,
@@ -587,8 +578,7 @@ export default function GroupChatThreadPage() {
     // re-surface on the next message the way a soft-hide does). The owner is
     // gated out in the menu; deleting the group is their exit (from /friends).
     if (chatInfo?.friendGroupId) {
-      const noun = chatInfo.friendGroupKind === "circle" ? "circle" : "club";
-      if (!confirm(`Leave ${chatInfo.name}? You'll be removed from the ${noun} and its chat.`)) return;
+      if (!confirm(`Leave ${chatInfo.name || "this group"}? You'll be removed from the group and its chat.`)) return;
       try {
         await leaveClub(supabase, chatInfo.friendGroupId);
         router.push("/friends");
@@ -615,8 +605,7 @@ export default function GroupChatThreadPage() {
   // Remove control is only surfaced to the creator below.
   const removeMember = async (userId: string, name: string) => {
     if (!chatInfo?.friendGroupId || removingMemberId) return;
-    const noun = chatInfo.friendGroupKind === "circle" ? "circle" : "club";
-    if (!confirm(`Remove ${name} from ${chatInfo.name || `this ${noun}`}? They'll lose access to the ${noun} and its chat.`)) return;
+    if (!confirm(`Remove ${name} from ${chatInfo.name || "this group"}? They'll lose access to the group and its chat.`)) return;
     setRemovingMemberId(userId);
     try {
       const supabase = createSupabaseBrowserClient();
@@ -714,12 +703,8 @@ export default function GroupChatThreadPage() {
     : "";
   const others = chatInfo ? chatInfo.participants.filter((p) => p.id !== myId) : [];
 
-  // Club/circle chats are kept minimal like team chats: no cost-split, rename,
-  // or clear-history. Only session/game chats (no friend group) keep those.
-  // QR invite is club-only; circles are invite-by-friendship. The overflow menu
-  // is hidden entirely when it would have no items (e.g. a club/circle owner,
-  // who can't leave their own group).
-  const isClubChat = chatInfo?.friendGroupKind === "club";
+  // Session chats expose chat utilities. Friend group owners manage their
+  // group in Friends, and members can leave from the chat.
   const showChatUtilities = !!chatInfo && !chatInfo.friendGroupId;
   const canLeaveChat =
     !!chatInfo && !(chatInfo.friendGroupId && myId === chatInfo.friendGroupOwnerId);
@@ -808,27 +793,6 @@ export default function GroupChatThreadPage() {
                 </button>
               )}
             </div>
-            {/* Club chats only: surface the reusable QR invite so any member can
-                bring a non-user straight into this chat. Circles are
-                invite-by-friendship only, so they get no QR. */}
-            {!showRename && isClubChat && (
-              <button
-                onClick={() => setShowQr(true)}
-                className="p-1.5 rounded-lg hover:bg-court-green-pale/30 transition-colors text-court-green shrink-0"
-                title="Invite by QR code"
-                aria-label="Invite by QR code"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="7" height="7" rx="1" />
-                  <rect x="14" y="3" width="7" height="7" rx="1" />
-                  <rect x="3" y="14" width="7" height="7" rx="1" />
-                  <line x1="14" y1="14" x2="14" y2="17" />
-                  <line x1="17" y1="14" x2="21" y2="14" />
-                  <line x1="21" y1="17" x2="21" y2="21" />
-                  <line x1="14" y1="21" x2="17" y2="21" />
-                </svg>
-              </button>
-            )}
             {/* Overflow menu hides while the rename input is up so the
                 input + Save/Cancel don't collide with it. It also hides when
                 there are no actions to show (e.g. a club/circle owner, whose
@@ -855,15 +819,6 @@ export default function GroupChatThreadPage() {
           </div>
         )}
       </div>
-
-      {showQr && chatInfo?.friendGroupId && (
-        <ClubQRModal
-          clubId={chatInfo.friendGroupId}
-          clubName={chatInfo.name || title}
-          inviterName={session?.user?.name ?? ""}
-          onClose={() => setShowQr(false)}
-        />
-      )}
 
       {/*
         Messages — the only scrolling region. min-h-0 lets flex shrink
@@ -1107,7 +1062,7 @@ export default function GroupChatThreadPage() {
                       kind: "club",
                       chatId,
                       friendGroupId: chatInfo.friendGroupId,
-                      name: chatInfo.name || "this club",
+                      name: chatInfo.name || "this group",
                     }
                   : { kind: "session", chatId, name: chatInfo.name || "this chat" }
               }
@@ -1215,8 +1170,8 @@ export default function GroupChatThreadPage() {
                 const isCreator = p.id === chatInfo.creatorId;
                 // Club chats: the creator can remove anyone but themselves.
                 const canRemove =
-                  chatInfo.friendGroupKind === "club" &&
-                  myId === chatInfo.creatorId &&
+                  chatInfo.friendGroupId &&
+                  myId === chatInfo.friendGroupOwnerId &&
                   !isMe &&
                   !isCreator;
                 return (
@@ -1350,7 +1305,7 @@ export default function GroupChatThreadPage() {
                   <span className="text-base">🚪</span>
                   <span>
                     {chatInfo.friendGroupId
-                      ? `Leave ${chatInfo.friendGroupKind === "circle" ? "circle" : "club"}`
+                      ? "Leave group"
                       : "Leave chat"}
                   </span>
                 </button>

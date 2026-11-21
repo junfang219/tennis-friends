@@ -9,6 +9,7 @@ import { emojiFor } from "@/lib/reactions";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
   deleteNotification,
+  getClubChatId,
   listNotifications,
   markAllNotificationsRead,
 } from "@/lib/supabase/queries";
@@ -75,8 +76,9 @@ function notificationText(n: { type: string; emoji?: string }) {
     case "event_challenge_accepted": return "accepted your ladder challenge";
     case "event_challenge_declined": return "declined your ladder challenge";
     case "group_invite_accepted": return "accepted your team invitation";
-    case "club_invite": return "invited you to join a club";
-    case "club_invite_accepted": return "accepted your club invitation";
+    case "club_invite": return "invited you to join a friend group";
+    case "club_invite_accepted": return "accepted your group invitation";
+    case "friend_group_added": return "added you to a friend group";
     case "availability_poll": return "started an availability poll — mark your free times";
     case "court_available": return "has an open court — tap to book";
     case "team_linked": return "added you to their team — tap to RSVP";
@@ -166,6 +168,7 @@ function notificationIcon(type: string) {
           </svg>
         </div>
       );
+    case "friend_group_added":
     case "club_invite_accepted":
       return (
         <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
@@ -331,6 +334,13 @@ export default function NotificationsPage() {
     if (n.type === "club_invite") {
       // Accept/Decline lives on the requests page (same as friend requests).
       router.push("/friends/requests");
+      return;
+    }
+    if (n.type === "friend_group_added") {
+      const chatId = n.friendGroupId
+        ? await getClubChatId(createSupabaseBrowserClient(), n.friendGroupId).catch(() => null)
+        : null;
+      router.push(chatId ? `/chat/group/${chatId}` : "/friends");
       return;
     }
     if (n.type === "club_invite_accepted") {

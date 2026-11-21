@@ -22,6 +22,7 @@ export interface Notification {
     | "availability_poll"
     | "club_invite"
     | "club_invite_accepted"
+    | "friend_group_added"
     | "court_available"
     | "team_linked";
   post_id: string | null;

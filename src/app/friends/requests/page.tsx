@@ -82,7 +82,7 @@ export default function FriendRequestsPage() {
       setClubInvites(
         invites.map((i) => ({
           inviteId: i.id,
-          clubName: i.club?.name ?? "a club",
+          clubName: i.club?.name ?? "a friend group",
           createdAt: i.created_at,
           inviter: {
             id: i.inviter?.id ?? "",
@@ -236,16 +236,16 @@ export default function FriendRequestsPage() {
           </div>
           <h3 className="font-semibold text-gray-700 mb-1">All caught up!</h3>
           <p className="text-sm text-gray-500">
-            No pending friend requests or club invitations right now.
+            No pending friend requests or group invitations right now.
           </p>
         </div>
       )}
 
-      {/* Club invitations */}
+      {/* Group invitations */}
       {!loading && clubInvites.length > 0 && (
         <div className="space-y-3 mb-6">
           <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-1">
-            Club Invitations
+            Group Invitations
           </h2>
           {clubInvites.map((i) => (
             <div

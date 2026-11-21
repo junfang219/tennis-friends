@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Link from "next/link";
+import { z } from "zod";
 import Avatar from "@/components/Avatar";
-import { ClubQRModal } from "@/components/clubs/ClubQRModal";
 import { formatRating } from "@/lib/profileLabels";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
@@ -20,14 +20,13 @@ import {
   listMyFriendGroups,
   listFriendGroupMembers,
   createFriendGroup as sbCreateFriendGroup,
-  deleteFriendGroup as sbDeleteFriendGroup,
-  listMyClubs,
-  listPendingClubInvitees,
-  createClub as sbCreateClub,
-  inviteToClub as sbInviteToClub,
+  addFriendGroupMembers,
+  createStandaloneChat,
+  updateStandaloneChat,
   leaveClub as sbLeaveClub,
   deleteClub as sbDeleteClub,
   getClubChatId,
+  updateFriendGroupSettings,
   getChat,
   listChatParticipants,
   markDmRead,
@@ -37,7 +36,8 @@ import {
 import { useCachedQuery } from "@/lib/useCachedQuery";
 import { loadInbox } from "@/lib/inboxLoader";
 import { errorMessage } from "@/lib/errorMessage";
-import { filterInvitableFriends } from "@/lib/clubInvitePicker";
+import { GROUP_CHAT_MEMBER_LIMIT, isGroupChatCapacityError } from "@/lib/groupChatCapacity";
+import { filterNonmemberFriends } from "@/lib/friendGroupMemberPicker";
 
 type FriendUser = {
   id: string;
@@ -62,21 +62,12 @@ type FriendsData = {
   outgoingRequests: FriendEntry[];
 };
 
-type FriendGroup = {
-  id: string;
-  name: string;
-  members: { user: { id: string; name: string; profileImageUrl: string } }[];
-  _count: { members: number };
-};
-
-// Club = invite-grown friend group (kind='club'): any member can invite
-// their own friends; invitees join via the requests page.
-type ClubView = {
+type FriendGroupView = {
   id: string;
   name: string;
   ownerId: string;
+  membersCanAdd: boolean;
   members: { user: { id: string; name: string; profileImageUrl: string } }[];
-  pendingInvitees: { inviteId: string; user: { id: string; name: string; profileImageUrl: string } }[];
   _count: { members: number };
 };
 
@@ -85,6 +76,11 @@ type BlockedEntry = {
   createdAt: string;
   user: FriendUser;
 };
+
+const newFriendGroupSchema = z.object({
+  name: z.string().trim().min(1),
+  memberIds: z.array(z.uuid()),
+});
 
 type InboxItem = {
   type: "direct" | "group" | "team";
@@ -95,8 +91,8 @@ type InboxItem = {
   muted: boolean;
   pinnedAt: string | null;
   // group-only: "session" when auto-created from a filled find-players post;
-  // "club"/"circle" for friend-group-backed chats.
-  kind?: "session" | "group" | "club" | "circle";
+  // "friendGroup" when the chat belongs to a friend group.
+  kind?: "session" | "group" | "friendGroup";
   // direct only
   avatarUser?: { id: string; name: string; profileImageUrl: string };
   // group / team
@@ -115,25 +111,23 @@ export default function FriendsPage() {
   const router = useRouter();
   const { data: session } = useSession();
   const myId = session?.user?.id || "";
-  const myName = session?.user?.name || "";
-  const [qrClub, setQrClub] = useState<ClubView | null>(null);
+  const chatCapacityDialog = useRef<HTMLDialogElement>(null);
   const [tab, setTab] = useState<"friends" | "groups" | "chats">("friends");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupMembers, setNewGroupMembers] = useState<string[]>([]);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [createGroupError, setCreateGroupError] = useState("");
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editGroupName, setEditGroupName] = useState("");
-  const [editGroupMembers, setEditGroupMembers] = useState<string[]>([]);
+  const [editMembersCanAdd, setEditMembersCanAdd] = useState(false);
   const [groupSaving, setGroupSaving] = useState(false);
 
   // Clubs
-  const [showCreateClubForm, setShowCreateClubForm] = useState(false);
-  const [newClubName, setNewClubName] = useState("");
-  const [newClubInvites, setNewClubInvites] = useState<string[]>([]);
-  const [clubSaving, setClubSaving] = useState(false);
-  const [invitingClubId, setInvitingClubId] = useState<string | null>(null);
-  const [clubInviteSelection, setClubInviteSelection] = useState<string[]>([]);
+  const [addingMembers, setAddingMembers] = useState(false);
+  const [addingToGroupId, setAddingToGroupId] = useState<string | null>(null);
+  const [addMemberSelection, setAddMemberSelection] = useState<string[]>([]);
   const [clubError, setClubError] = useState<{ id: string; message: string } | null>(null);
 
   // Chats (combined inbox: 1:1 + group). Shares the "chat:inbox" cache key
@@ -144,9 +138,9 @@ export default function FriendsPage() {
   const [newChatMembers, setNewChatMembers] = useState<string[]>([]);
   const [showFriendGroupShortcut, setShowFriendGroupShortcut] = useState(false);
   const [creatingChat, setCreatingChat] = useState(false);
+  const [chatWriteError, setChatWriteError] = useState("");
   const [swipedChatKey, setSwipedChatKey] = useState<string | null>(null);
   const [openingChatId, setOpeningChatId] = useState<string | null>(null);
-  const [openChatError, setOpenChatError] = useState<{ id: string; message: string } | null>(null);
 
   // Friend search (Friends list tab)
   const [friendSearch, setFriendSearch] = useState("");
@@ -171,6 +165,7 @@ export default function FriendsPage() {
   const [editChatName, setEditChatName] = useState("");
   const [editChatMembers, setEditChatMembers] = useState<string[]>([]);
   const [originalEditMembers, setOriginalEditMembers] = useState<string[]>([]);
+  const [originalChatSize, setOriginalChatSize] = useState(0);
   const [editChatCreatorId, setEditChatCreatorId] = useState<string>("");
   const [savingEditChat, setSavingEditChat] = useState(false);
 
@@ -232,48 +227,17 @@ export default function FriendsPage() {
   const data = friendsQuery.data ?? null;
   const loadFriends = friendsQuery.refetch;
 
-  const friendGroupsQuery = useCachedQuery<FriendGroup[]>(
-    "friends:friend-groups",
-    async () => {
-      const supabase = createSupabaseBrowserClient();
-      const groups = await listMyFriendGroups(supabase);
-      // Fetch members for each. Small N so a sequential fan-out is fine.
-      return Promise.all(
-        groups.map(async (g) => {
-          const members = await listFriendGroupMembers(supabase, g.id);
-          return {
-            id: g.id,
-            name: g.name,
-            members: members.map((m) => ({
-              user: {
-                id: m.user.id,
-                name: m.user.name,
-                profileImageUrl: m.user.profile_image_url,
-              },
-            })),
-            _count: { members: members.length },
-          };
-        })
-      );
-    }
-  );
-  const friendGroups = friendGroupsQuery.data ?? [];
-  const loadFriendGroups = friendGroupsQuery.refetch;
-
-  // Clubs I'm a member of (not just owner — clubs grow by member invites).
-  const clubsQuery = useCachedQuery<ClubView[]>("friends:clubs", async () => {
+  const friendGroupsQuery = useCachedQuery<FriendGroupView[]>("friends:friend-groups", async () => {
     const supabase = createSupabaseBrowserClient();
-    const clubs = await listMyClubs(supabase);
+    const groups = await listMyFriendGroups(supabase);
     return Promise.all(
-      clubs.map(async (c) => {
-        const [members, pending] = await Promise.all([
-          listFriendGroupMembers(supabase, c.id),
-          listPendingClubInvitees(supabase, c.id),
-        ]);
+      groups.map(async (c) => {
+        const members = await listFriendGroupMembers(supabase, c.id);
         return {
           id: c.id,
           name: c.name,
           ownerId: c.owner_id,
+          membersCanAdd: c.members_can_add,
           members: members.map((m) => ({
             user: {
               id: m.user.id,
@@ -281,23 +245,13 @@ export default function FriendsPage() {
               profileImageUrl: m.user.profile_image_url,
             },
           })),
-          pendingInvitees: pending
-            .filter((p) => p.invitee)
-            .map((p) => ({
-              inviteId: p.id,
-              user: {
-                id: p.invitee!.id,
-                name: p.invitee!.name,
-                profileImageUrl: p.invitee!.profile_image_url,
-              },
-            })),
           _count: { members: members.length },
         };
       })
     );
   });
-  const clubs = clubsQuery.data ?? [];
-  const loadClubs = clubsQuery.refetch;
+  const friendGroups = friendGroupsQuery.data ?? [];
+  const loadFriendGroups = friendGroupsQuery.refetch;
 
   // Reuses the "chat:inbox" cache populated by src/app/chat/page.tsx, so
   // bouncing between Friends and Chat doesn't refetch the same data.
@@ -393,6 +347,8 @@ export default function FriendsPage() {
     setEditChatName(chat.name || "");
     setEditChatMembers(memberIds);
     setOriginalEditMembers(memberIds);
+    setOriginalChatSize(parts.length);
+    setChatWriteError("");
     setEditChatCreatorId(chat.creator_id || "");
     setChatFormSearch("");
   };
@@ -405,28 +361,36 @@ export default function FriendsPage() {
     setEditChatMembers((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
+  const showChatCapacityAlert = () => {
+    const dialog = chatCapacityDialog.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  };
+
   const saveEditChat = async () => {
     if (!editChatId || savingEditChat) return;
+    const addIds = editChatMembers.filter((id) => !originalEditMembers.includes(id));
+    const removeIds = originalEditMembers.filter((id) => !editChatMembers.includes(id));
+    if (addIds.length > 0 && originalChatSize + addIds.length - removeIds.length > GROUP_CHAT_MEMBER_LIMIT) {
+      showChatCapacityAlert();
+      return;
+    }
+
+    setChatWriteError("");
     setSavingEditChat(true);
-    const addMemberIds = editChatMembers.filter((id) => !originalEditMembers.includes(id));
-    const removeMemberIds = originalEditMembers.filter((id) => !editChatMembers.includes(id));
-    const supabase = createSupabaseBrowserClient();
-    await supabase.from("chats").update({ name: editChatName }).eq("id", editChatId);
-    if (addMemberIds.length > 0) {
-      await supabase.from("chat_participants").insert(
-        addMemberIds.map((uid) => ({ chat_id: editChatId, user_id: uid }))
-      );
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await updateStandaloneChat(supabase, editChatId, { name: editChatName, addIds, removeIds });
+      setEditChatId(null);
+      loadChats();
+    } catch (err) {
+      if (isGroupChatCapacityError(err)) {
+        showChatCapacityAlert();
+      } else {
+        setChatWriteError(errorMessage(err, "Couldn't save chat changes."));
+      }
+    } finally {
+      setSavingEditChat(false);
     }
-    if (removeMemberIds.length > 0) {
-      await supabase
-        .from("chat_participants")
-        .delete()
-        .eq("chat_id", editChatId)
-        .in("user_id", removeMemberIds);
-    }
-    setEditChatId(null);
-    loadChats();
-    setSavingEditChat(false);
   };
 
   // Initial fetches are owned by the four useCachedQuery hooks above —
@@ -436,155 +400,116 @@ export default function FriendsPage() {
     setNewChatMembers((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
-  const useFriendGroupForChat = (g: FriendGroup) => {
-    const ids = g.members.map((m) => m.user.id);
+  const useFriendGroupForChat = (group: FriendGroupView) => {
+    const members = new Set(group.members.map(({ user }) => user.id));
+    const ids = (data?.friends ?? []).map(({ user }) => user.id).filter((id) => members.has(id));
     setNewChatMembers(Array.from(new Set([...newChatMembers, ...ids])));
     setShowFriendGroupShortcut(false);
   };
 
-  const openFriendGroupChat = async (g: FriendGroup) => {
-    if (g._count.members < 1 || openingChatId) return;
-    setOpenChatError(null);
-    setOpeningChatId(g.id);
-    try {
-      const supabase = createSupabaseBrowserClient();
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) {
-        setOpenChatError({ id: g.id, message: "Not signed in." });
-        return;
-      }
-      // Look for an existing chat backing this friend group; create if none.
-      const { data: existing } = await supabase
-        .from("chats")
-        .select("id")
-        .eq("friend_group_id", g.id)
-        .maybeSingle();
-      let chatId = existing?.id;
-      if (!chatId) {
-        const { data: created, error: createErr } = await supabase
-          .from("chats")
-          .insert({
-            name: g.name,
-            creator_id: auth.user.id,
-            friend_group_id: g.id,
-          })
-          .select("id")
-          .single();
-        if (createErr || !created) {
-          setOpenChatError({ id: g.id, message: createErr?.message ?? "Could not open chat." });
-          return;
-        }
-        chatId = created.id;
-        const participantIds = Array.from(new Set([auth.user.id, ...g.members.map((m) => m.user.id)]));
-        await supabase.from("chat_participants").insert(
-          participantIds.map((uid) => ({ chat_id: chatId!, user_id: uid }))
-        );
-      }
-      router.push(`/chat/group/${chatId}`);
-    } catch (err) {
-      setOpenChatError({
-        id: g.id,
-        message: errorMessage(err, "Network error"),
-      });
-    } finally {
-      setOpeningChatId(null);
-    }
-  };
-
   const createChat = async () => {
     if (newChatMembers.length < 1 || creatingChat) return;
+    if (newChatMembers.length + 1 > GROUP_CHAT_MEMBER_LIMIT) {
+      showChatCapacityAlert();
+      return;
+    }
+
+    setChatWriteError("");
     setCreatingChat(true);
     try {
       const supabase = createSupabaseBrowserClient();
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) {
-        setCreatingChat(false);
-        return;
-      }
-      const { data: chat, error: createErr } = await supabase
-        .from("chats")
-        .insert({ creator_id: auth.user.id, name: newChatName.trim() })
-        .select("id")
-        .single();
-      if (!createErr && chat) {
-        const participantIds = Array.from(new Set([auth.user.id, ...newChatMembers]));
-        await supabase.from("chat_participants").insert(
-          participantIds.map((uid) => ({ chat_id: chat.id, user_id: uid }))
-        );
-        setShowNewChatModal(false);
-        setNewChatName("");
-        setNewChatMembers([]);
-        router.push(`/chat/group/${chat.id}`);
-      }
-    } catch {
-      // ignore
-    }
-    setCreatingChat(false);
-  };
-
-  const createFriendGroup = async () => {
-    if (!newGroupName.trim()) return;
-    setGroupSaving(true);
-    try {
-      const supabase = createSupabaseBrowserClient();
-      await sbCreateFriendGroup(supabase, newGroupName.trim(), newGroupMembers);
-    } catch {
-      // ignore
-    }
-    setNewGroupName("");
-    setNewGroupMembers([]);
-    setShowCreateForm(false);
-    loadFriendGroups();
-    setGroupSaving(false);
-  };
-
-  const createClub = async () => {
-    if (!newClubName.trim() || clubSaving) return;
-    setClubSaving(true);
-    setClubError(null);
-    try {
-      const supabase = createSupabaseBrowserClient();
-      await sbCreateClub(supabase, newClubName.trim(), newClubInvites);
-      setNewClubName("");
-      setNewClubInvites([]);
-      setShowCreateClubForm(false);
-      loadClubs();
-      loadChats(); // club chat is created with the club
+      const chatId = await createStandaloneChat(supabase, newChatName, newChatMembers);
+      setShowNewChatModal(false);
+      setNewChatName("");
+      setNewChatMembers([]);
+      router.push(`/chat/group/${chatId}`);
     } catch (err) {
-      setClubError({ id: "create", message: errorMessage(err, "Couldn't create the club.") });
+      if (isGroupChatCapacityError(err)) {
+        showChatCapacityAlert();
+      } else {
+        setChatWriteError(errorMessage(err, "Couldn't start the chat."));
+      }
+    } finally {
+      setCreatingChat(false);
     }
-    setClubSaving(false);
   };
 
-  const toggleNewClubInvite = (id: string) => {
-    setNewClubInvites((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const createFriendGroup = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (creatingGroup) return;
+
+    const result = newFriendGroupSchema.safeParse({
+      name: newGroupName,
+      memberIds: newGroupMembers,
+    });
+    if (!result.success) {
+      setCreateGroupError("Check the group name and selected friends.");
+      return;
+    }
+
+    const { name, memberIds } = result.data;
+    if (memberIds.length + 1 > GROUP_CHAT_MEMBER_LIMIT) {
+      showChatCapacityAlert();
+      return;
+    }
+
+    setCreatingGroup(true);
+    setCreateGroupError("");
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await sbCreateFriendGroup(supabase, name, memberIds);
+      await loadFriendGroups();
+      setNewGroupName("");
+      setNewGroupMembers([]);
+      setShowCreateForm(false);
+      loadChats();
+    } catch (err) {
+      if (isGroupChatCapacityError(err)) {
+        showChatCapacityAlert();
+      } else {
+        setCreateGroupError(errorMessage(err, "Couldn't create the group."));
+      }
+    } finally {
+      setCreatingGroup(false);
+    }
   };
 
-  const toggleClubInviteSelection = (id: string) => {
-    setClubInviteSelection((prev) =>
+  const toggleAddMemberSelection = (id: string) => {
+    setAddMemberSelection((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
   };
 
-  const sendClubInvites = async (clubId: string) => {
-    if (clubInviteSelection.length === 0 || clubSaving) return;
-    setClubSaving(true);
+  const addSelectedFriends = async (group: FriendGroupView) => {
+    if (addMemberSelection.length === 0 || addingMembers) return;
+    const currentMembers = new Set(group.members.map(({ user }) => user.id));
+    const newMembers = addMemberSelection.filter((id) => !currentMembers.has(id));
+    if (newMembers.length > 0 && group._count.members + newMembers.length > GROUP_CHAT_MEMBER_LIMIT) {
+      showChatCapacityAlert();
+      return;
+    }
+
+    setAddingMembers(true);
     setClubError(null);
     try {
       const supabase = createSupabaseBrowserClient();
-      for (const uid of clubInviteSelection) {
-        await sbInviteToClub(supabase, clubId, uid);
-      }
-      setInvitingClubId(null);
-      setClubInviteSelection([]);
-      loadClubs();
+      await addFriendGroupMembers(supabase, group.id, newMembers);
+      await loadFriendGroups();
+      setAddingToGroupId(null);
+      setAddMemberSelection([]);
     } catch (err) {
-      setClubError({ id: clubId, message: errorMessage(err, "Couldn't send invites.") });
+      if (isGroupChatCapacityError(err)) {
+        showChatCapacityAlert();
+        loadFriendGroups();
+      } else {
+        setClubError({ id: group.id, message: errorMessage(err, "Couldn't add friends to the group.") });
+      }
+    } finally {
+      setAddingMembers(false);
     }
-    setClubSaving(false);
   };
 
-  const openClubChat = async (club: ClubView) => {
+  const openClubChat = async (club: FriendGroupView) => {
     if (openingChatId) return;
     setClubError(null);
     setOpeningChatId(club.id);
@@ -592,7 +517,7 @@ export default function FriendsPage() {
       const supabase = createSupabaseBrowserClient();
       const chatId = await getClubChatId(supabase, club.id);
       if (!chatId) {
-        setClubError({ id: club.id, message: "This club has no chat yet." });
+        setClubError({ id: club.id, message: "This group has no chat yet." });
         return;
       }
       router.push(`/chat/group/${chatId}`);
@@ -603,149 +528,63 @@ export default function FriendsPage() {
     }
   };
 
-  const handleLeaveClub = async (club: ClubView) => {
+  const handleLeaveClub = async (club: FriendGroupView) => {
     if (!confirm(`Leave ${club.name}? You'll also leave its group chat.`)) return;
     setClubError(null);
     try {
       const supabase = createSupabaseBrowserClient();
       await sbLeaveClub(supabase, club.id);
-      loadClubs();
+      loadFriendGroups();
       loadChats();
     } catch (err) {
-      setClubError({ id: club.id, message: errorMessage(err, "Couldn't leave the club.") });
+      setClubError({ id: club.id, message: errorMessage(err, "Couldn't leave the group.") });
     }
   };
 
-  const handleDeleteClub = async (club: ClubView) => {
-    if (!confirm(`Delete ${club.name}? This removes the club and its chat for all members.`)) return;
+  const handleDeleteClub = async (club: FriendGroupView) => {
+    if (!confirm(`Delete ${club.name}? This removes the group and its chat for all members.`)) return;
     setClubError(null);
     try {
       const supabase = createSupabaseBrowserClient();
       await sbDeleteClub(supabase, club.id);
-      loadClubs();
-      loadChats();
-    } catch (err) {
-      setClubError({ id: club.id, message: errorMessage(err, "Couldn't delete the club.") });
-    }
-  };
-
-  const startEditGroup = (g: FriendGroup) => {
-    setEditingGroupId(g.id);
-    setEditGroupName(g.name);
-    setEditGroupMembers(g.members.map((m) => m.user.id));
-    setGroupFormSearch("");
-  };
-
-  const saveEditGroup = async () => {
-    if (!editingGroupId) return;
-    const original = friendGroups.find((g) => g.id === editingGroupId);
-    const originalIds = original?.members.map((m) => m.user.id) || [];
-    const addMemberIds = editGroupMembers.filter((id) => !originalIds.includes(id));
-    const removeMemberIds = originalIds.filter((id) => !editGroupMembers.includes(id));
-
-    // A circle with zero members is a degenerate state — its group chat would be
-    // left with only the owner. Rather than save an empty circle, offer to delete
-    // it outright. Deleting the circle cascade-deletes its group chat (chats
-    // .friend_group_id ON DELETE CASCADE), so both go together.
-    if (editGroupMembers.length === 0) {
-      const del = confirm(
-        "A circle needs at least one member. Removing everyone would leave an empty circle and group chat.\n\nDelete this circle instead? This also deletes its group chat for everyone."
-      );
-      if (!del) return; // keep them in the editor so they can re-add someone
-      setGroupSaving(true);
-      const supabase = createSupabaseBrowserClient();
-      await sbDeleteFriendGroup(supabase, editingGroupId);
-      setEditingGroupId(null);
       loadFriendGroups();
       loadChats();
-      setGroupSaving(false);
-      return;
+    } catch (err) {
+      setClubError({ id: club.id, message: errorMessage(err, "Couldn't delete the group.") });
     }
-
-    // When membership changes, confirm — and remind that the same people are
-    // added to / removed from this circle's group chat, which is kept in sync.
-    if (addMemberIds.length > 0 || removeMemberIds.length > 0) {
-      const nameOf = (id: string) =>
-        original?.members.find((m) => m.user.id === id)?.user.name ??
-        data?.friends.find((f) => f.user.id === id)?.user.name ??
-        "this member";
-      const lines: string[] = [];
-      if (addMemberIds.length > 0) {
-        lines.push(
-          `Add ${addMemberIds.map(nameOf).join(", ")} — they'll also be added to the circle group chat.`
-        );
-      }
-      if (removeMemberIds.length > 0) {
-        lines.push(
-          `Remove ${removeMemberIds.map(nameOf).join(", ")} — they'll also be removed from the circle group chat.`
-        );
-      }
-      if (!confirm(`${lines.join("\n")}\n\nContinue?`)) return;
-    }
-
-    setGroupSaving(true);
-    const supabase = createSupabaseBrowserClient();
-    await supabase
-      .from("friend_groups")
-      .update({ name: editGroupName.trim() })
-      .eq("id", editingGroupId);
-    if (addMemberIds.length > 0) {
-      await supabase.from("friend_group_members").insert(
-        addMemberIds.map((uid) => ({ friend_group_id: editingGroupId, user_id: uid }))
-      );
-    }
-    if (removeMemberIds.length > 0) {
-      await supabase
-        .from("friend_group_members")
-        .delete()
-        .eq("friend_group_id", editingGroupId)
-        .in("user_id", removeMemberIds);
-    }
-
-    // Keep the circle's group chat membership in sync with the circle itself.
-    // The chat is created lazily (see openFriendGroupChat), so only sync if one
-    // already backs this circle.
-    if (addMemberIds.length > 0 || removeMemberIds.length > 0) {
-      const { data: chat } = await supabase
-        .from("chats")
-        .select("id")
-        .eq("friend_group_id", editingGroupId)
-        .maybeSingle();
-      if (chat?.id) {
-        if (addMemberIds.length > 0) {
-          await supabase.from("chat_participants").insert(
-            addMemberIds.map((uid) => ({ chat_id: chat.id, user_id: uid }))
-          );
-        }
-        if (removeMemberIds.length > 0) {
-          await supabase
-            .from("chat_participants")
-            .delete()
-            .eq("chat_id", chat.id)
-            .in("user_id", removeMemberIds);
-        }
-      }
-    }
-
-    setEditingGroupId(null);
-    loadFriendGroups();
-    loadChats();
-    setGroupSaving(false);
   };
 
-  const deleteFriendGroup = async (friendGroupId: string) => {
-    if (!confirm("Delete this circle?")) return;
-    const supabase = createSupabaseBrowserClient();
-    await sbDeleteFriendGroup(supabase, friendGroupId);
-    loadFriendGroups();
+  const startEditGroup = (group: FriendGroupView) => {
+    setClubError(null);
+    setAddingToGroupId(null);
+    setEditingGroupId(group.id);
+    setEditGroupName(group.name);
+    setEditMembersCanAdd(group.membersCanAdd);
+  };
+
+  const saveEditGroup = async (event: FormEvent<HTMLFormElement>, groupId: string) => {
+    event.preventDefault();
+    if (groupSaving) return;
+    setGroupSaving(true);
+    setClubError(null);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await updateFriendGroupSettings(supabase, groupId, {
+        name: editGroupName,
+        membersCanAdd: editMembersCanAdd,
+      });
+      await loadFriendGroups();
+      setEditingGroupId(null);
+      loadChats();
+    } catch (err) {
+      setClubError({ id: groupId, message: errorMessage(err, "Couldn't save group settings.") });
+    } finally {
+      setGroupSaving(false);
+    }
   };
 
   const toggleNewMember = (id: string) => {
     setNewGroupMembers((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  };
-
-  const toggleEditMember = (id: string) => {
-    setEditGroupMembers((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
   const acceptRequest = async (friendshipId: string) => {
@@ -792,7 +631,7 @@ export default function FriendsPage() {
 
   const tabs = [
     { key: "friends" as const, label: "Friends", count: data.friends.length },
-    { key: "groups" as const, label: "Groups", count: friendGroups.length + clubs.length },
+    { key: "groups" as const, label: "Friend Groups", count: friendGroups.length },
     { key: "chats" as const, label: "Chats", count: chats.length },
   ];
 
@@ -830,7 +669,8 @@ export default function FriendsPage() {
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+            aria-pressed={tab === t.key}
+            className={`flex-1 flex items-center justify-center gap-1 px-2 py-2.5 rounded-xl text-sm font-semibold whitespace-nowrap transition-all sm:gap-2 sm:px-3 ${
               tab === t.key
                 ? "bg-court-green text-white shadow-md"
                 : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
@@ -852,62 +692,68 @@ export default function FriendsPage() {
         ))}
       </div>
 
-      {/* Groups tab: Circles (private lists) + Clubs (invite-grown) */}
+      {/* Friend Groups tab */}
       {tab === "groups" && (
         <div className="space-y-3">
-          <div className="px-1">
-            <h2 className="font-display text-lg font-bold text-gray-800">Circles</h2>
-            <p className="text-xs text-gray-500">
-              Private friend lists you manage — for sharing posts and starting chats.
-            </p>
-          </div>
           <button
             onClick={() => {
               setShowCreateForm(!showCreateForm);
               setEditingGroupId(null);
+              setAddingToGroupId(null);
+              setCreateGroupError("");
               setGroupFormSearch("");
             }}
-            className="btn-primary w-full flex items-center justify-center gap-2"
+            aria-expanded={showCreateForm}
+            disabled={creatingGroup}
+            className={`${showCreateForm ? "btn-secondary" : "btn-primary"} w-full flex items-center justify-center gap-2`}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            {showCreateForm ? "Cancel" : "New Circle"}
+            {!showCreateForm && (
+              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            )}
+            {showCreateForm ? "Cancel" : "New group"}
           </button>
 
           {showCreateForm && (
-            <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 space-y-4">
+            <form onSubmit={createFriendGroup} className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
-                  Circle Name
+                <label htmlFor="new-friend-group-name" className="block text-sm font-semibold text-gray-700 mb-2">
+                  Group name
                 </label>
                 <input
+                  id="new-friend-group-name"
                   type="text"
                   value={newGroupName}
                   onChange={(e) => setNewGroupName(e.target.value)}
-                  placeholder="e.g. Close Friends, Coworkers"
-                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:border-court-green text-sm"
+                  placeholder="e.g. Green Lake Weekend Hitters"
+                  required
+                  disabled={creatingGroup}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:border-court-green text-sm placeholder:text-gray-600"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
-                  Add Friends ({newGroupMembers.length} selected)
+                <label htmlFor="new-friend-group-search" className="block text-sm font-semibold text-gray-700 mb-1">
+                  Add friends ({newGroupMembers.length} selected)
                 </label>
+                <p className="text-xs text-gray-600 mb-2">Selected friends join this private group immediately.</p>
                 <div className="relative mb-2">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
                     <circle cx="11" cy="11" r="8" />
                     <path d="M21 21l-4.35-4.35" />
                   </svg>
                   <input
+                    id="new-friend-group-search"
                     type="text"
                     value={groupFormSearch}
                     onChange={(e) => setGroupFormSearch(e.target.value)}
                     placeholder="Search friends..."
-                    className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-court-green"
+                    className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-xl text-sm placeholder:text-gray-600 focus:outline-none focus:border-court-green"
                   />
                   {groupFormSearch && (
                     <button
+                      type="button"
                       onClick={() => setGroupFormSearch("")}
                       className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-gray-500"
                       aria-label="Clear search"
@@ -921,13 +767,13 @@ export default function FriendsPage() {
                 </div>
                 <div className="max-h-60 overflow-y-auto space-y-1.5 border border-gray-100 rounded-xl p-2">
                   {data.friends.length === 0 ? (
-                    <p className="text-sm text-gray-400 text-center py-4">No friends to add yet</p>
+                    <p className="text-sm text-gray-600 text-center py-4">No friends to select yet</p>
                   ) : (() => {
                     const filtered = data.friends.filter((f) =>
                       f.user.name.toLowerCase().includes(groupFormSearch.trim().toLowerCase())
                     );
                     if (filtered.length === 0) {
-                      return <p className="text-sm text-gray-400 text-center py-4">No matches for &quot;{groupFormSearch}&quot;</p>;
+                      return <p className="text-sm text-gray-600 text-center py-4">No matches for &quot;{groupFormSearch}&quot;</p>;
                     }
                     return filtered.map((f) => (
                       <label
@@ -938,6 +784,7 @@ export default function FriendsPage() {
                           type="checkbox"
                           checked={newGroupMembers.includes(f.user.id)}
                           onChange={() => toggleNewMember(f.user.id)}
+                          disabled={creatingGroup}
                           className="w-4 h-4 accent-court-green"
                         />
                         <Avatar name={f.user.name} image={f.user.profileImageUrl} size="sm" />
@@ -948,16 +795,18 @@ export default function FriendsPage() {
                 </div>
               </div>
               <button
-                onClick={createFriendGroup}
-                disabled={groupSaving || !newGroupName.trim()}
+                type="submit"
+                disabled={creatingGroup || !newGroupName.trim()}
                 className="btn-primary w-full"
               >
-                {groupSaving ? "Creating..." : "Create Circle"}
+                {creatingGroup ? "Creating..." : "Create group"}
               </button>
-            </div>
+            </form>
           )}
 
-          {friendGroups.length === 0 && !showCreateForm ? (
+          {createGroupError && <p role="alert" className="text-sm text-red-700">{createGroupError}</p>}
+
+          {friendGroups.length === 0 && !showCreateForm && (
             <div className="text-center py-16 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
               <div className="w-14 h-14 bg-court-green-pale/20 rounded-full flex items-center justify-center mx-auto mb-4">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-court-green-soft">
@@ -966,271 +815,16 @@ export default function FriendsPage() {
                   <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" strokeLinecap="round" />
                 </svg>
               </div>
-              <h3 className="font-display text-lg font-bold text-gray-800 mb-2">No circles yet</h3>
-              <p className="text-gray-500 text-sm max-w-xs mx-auto">
-                Create friend lists like &quot;Close Friends&quot; or &quot;Coworkers&quot; to share posts with specific people.
+              <h2 className="font-display text-lg font-bold text-gray-800 mb-2">No friend groups yet</h2>
+              <p className="text-gray-600 text-sm max-w-xs mx-auto px-4">
+                Create a group to plan games, chat, and share posts with friends.
               </p>
             </div>
-          ) : (
-            friendGroups.map((g) => (
-              <div
-                key={g.id}
-                className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5"
-              >
-                {editingGroupId === g.id ? (
-                  <div className="space-y-4">
-                    <input
-                      type="text"
-                      value={editGroupName}
-                      onChange={(e) => setEditGroupName(e.target.value)}
-                      className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:border-court-green text-sm font-semibold"
-                    />
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
-                        Members ({editGroupMembers.length})
-                      </label>
-                      <div className="relative mb-2">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
-                          <circle cx="11" cy="11" r="8" />
-                          <path d="M21 21l-4.35-4.35" />
-                        </svg>
-                        <input
-                          type="text"
-                          value={groupFormSearch}
-                          onChange={(e) => setGroupFormSearch(e.target.value)}
-                          placeholder="Search friends..."
-                          className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-court-green"
-                        />
-                        {groupFormSearch && (
-                          <button
-                            onClick={() => setGroupFormSearch("")}
-                            className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-gray-500"
-                            aria-label="Clear search"
-                          >
-                            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-                              <line x1="18" y1="6" x2="6" y2="18" />
-                              <line x1="6" y1="6" x2="18" y2="18" />
-                            </svg>
-                          </button>
-                        )}
-                      </div>
-                      <div className="max-h-60 overflow-y-auto space-y-1.5 border border-gray-100 rounded-xl p-2">
-                        {(() => {
-                          const filtered = data.friends.filter((f) =>
-                            f.user.name.toLowerCase().includes(groupFormSearch.trim().toLowerCase())
-                          );
-                          if (filtered.length === 0) {
-                            return <p className="text-sm text-gray-400 text-center py-4">No matches for &quot;{groupFormSearch}&quot;</p>;
-                          }
-                          return filtered.map((f) => (
-                            <label
-                              key={f.user.id}
-                              className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={editGroupMembers.includes(f.user.id)}
-                                onChange={() => toggleEditMember(f.user.id)}
-                                className="w-4 h-4 accent-court-green"
-                              />
-                              <Avatar name={f.user.name} image={f.user.profileImageUrl} size="sm" />
-                              <span className="text-sm font-medium text-gray-800">{f.user.name}</span>
-                            </label>
-                          ));
-                        })()}
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={saveEditGroup}
-                        disabled={groupSaving}
-                        className="btn-primary flex-1"
-                      >
-                        {groupSaving ? "Saving..." : "Save"}
-                      </button>
-                      <button
-                        onClick={() => setEditingGroupId(null)}
-                        className="btn-secondary flex-1"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-display text-lg font-bold text-gray-900 truncate">
-                          {g.name}
-                        </h3>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                          {g._count.members} {g._count.members === 1 ? "member" : "members"}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        {g._count.members > 0 && (
-                          <button
-                            onClick={() => openFriendGroupChat(g)}
-                            disabled={openingChatId === g.id}
-                            className="p-2 rounded-lg hover:bg-court-green-pale/30 text-court-green disabled:opacity-60"
-                            title="Open group chat"
-                          >
-                            {openingChatId === g.id ? (
-                              <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none">
-                                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
-                                <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                              </svg>
-                            ) : (
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-                              </svg>
-                            )}
-                          </button>
-                        )}
-                        <button
-                          onClick={() => startEditGroup(g)}
-                          className="p-2 rounded-lg hover:bg-gray-100 text-gray-500"
-                          title="Edit circle"
-                        >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
-                            <path d="M18.5 2.5a2.121 2.121 0 113 3L12 15l-4 1 1-4 9.5-9.5z" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => deleteFriendGroup(g.id)}
-                          className="p-2 rounded-lg hover:bg-red-50 text-red-500"
-                          title="Delete circle"
-                        >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="3 6 5 6 21 6" />
-                            <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                    {openChatError?.id === g.id && (
-                      <p className="text-xs text-red-600 mb-2">{openChatError.message}</p>
-                    )}
-                    {g.members.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {g.members.slice(0, 8).map((m) => (
-                          <div
-                            key={m.user.id}
-                            className="flex items-center gap-1.5 bg-court-green-pale/20 rounded-full pl-1 pr-2.5 py-1"
-                          >
-                            <Avatar name={m.user.name} image={m.user.profileImageUrl} size="sm" />
-                            <span className="text-xs font-medium text-gray-700">
-                              {m.user.name.split(" ")[0]}
-                            </span>
-                          </div>
-                        ))}
-                        {g.members.length > 8 && (
-                          <span className="text-xs text-gray-500 self-center">
-                            +{g.members.length - 8} more
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            ))
           )}
-
-          {/* Clubs section */}
-          <div className="px-1 pt-4">
-            <h2 className="font-display text-lg font-bold text-gray-800">Clubs</h2>
-            <p className="text-xs text-gray-500">
-              Communities that grow by invitation — every member can invite their own friends.
-            </p>
-          </div>
-          <button
-            onClick={() => {
-              setShowCreateClubForm(!showCreateClubForm);
-              setInvitingClubId(null);
-              setClubError(null);
-            }}
-            className="btn-primary w-full flex items-center justify-center gap-2"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            {showCreateClubForm ? "Cancel" : "New Club"}
-          </button>
-
-          {showCreateClubForm && (
-            <div className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 p-5 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
-                  Club Name
-                </label>
-                <input
-                  type="text"
-                  value={newClubName}
-                  onChange={(e) => setNewClubName(e.target.value)}
-                  placeholder="e.g. Greenlake Weekend Hitters"
-                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:border-court-green text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
-                  Invite Friends ({newClubInvites.length} selected)
-                </label>
-                <p className="text-xs text-gray-400 mb-2">
-                  They&apos;ll get an invitation to accept — and can invite their own friends once they join.
-                </p>
-                <div className="max-h-60 overflow-y-auto space-y-1.5 border border-gray-100 rounded-xl p-2">
-                  {data.friends.length === 0 ? (
-                    <p className="text-sm text-gray-400 text-center py-4">No friends to invite yet</p>
-                  ) : (
-                    data.friends.map((f) => (
-                      <label
-                        key={f.user.id}
-                        className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={newClubInvites.includes(f.user.id)}
-                          onChange={() => toggleNewClubInvite(f.user.id)}
-                          className="w-4 h-4 accent-court-green"
-                        />
-                        <Avatar name={f.user.name} image={f.user.profileImageUrl} size="sm" />
-                        <span className="text-sm font-medium text-gray-800">{f.user.name}</span>
-                      </label>
-                    ))
-                  )}
-                </div>
-              </div>
-              {clubError?.id === "create" && (
-                <p className="text-xs text-red-600">{clubError.message}</p>
-              )}
-              <button
-                onClick={createClub}
-                disabled={clubSaving || !newClubName.trim()}
-                className="btn-primary w-full"
-              >
-                {clubSaving ? "Creating..." : "Create Club"}
-              </button>
-            </div>
-          )}
-
-          {clubs.length === 0 && !showCreateClubForm ? (
-            <div className="text-center py-10 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
-              <h3 className="font-display text-lg font-bold text-gray-800 mb-2">No clubs yet</h3>
-              <p className="text-gray-500 text-sm max-w-xs mx-auto">
-                Start a club and invite friends — they can bring their own friends, and everyone can post and look for players together.
-              </p>
-            </div>
-          ) : (
-            clubs.map((club) => {
+          {friendGroups.map((club) => {
               const isOwner = club.ownerId === myId;
-              const invitableFriends = filterInvitableFriends(
-                data.friends,
-                club.members.map((m) => m.user.id),
-                club.pendingInvitees.map((p) => p.user.id)
-              );
+              const canAddFriends = isOwner || club.membersCanAdd;
+              const availableFriends = filterNonmemberFriends(data.friends, club.members.map((m) => m.user.id));
               return (
                 <div
                   key={club.id}
@@ -1243,8 +837,7 @@ export default function FriendsPage() {
                       </h3>
                       <p className="text-xs text-gray-500 mt-0.5">
                         {club._count.members} {club._count.members === 1 ? "member" : "members"}
-                        {club.pendingInvitees.length > 0 && ` · ${club.pendingInvitees.length} invited`}
-                        {isOwner && " · You created this club"}
+                        {isOwner && " · You created this group"}
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5">
@@ -1252,7 +845,7 @@ export default function FriendsPage() {
                         onClick={() => openClubChat(club)}
                         disabled={openingChatId === club.id}
                         className="p-2 rounded-lg hover:bg-court-green-pale/30 text-court-green disabled:opacity-60"
-                        title="Open club chat"
+                        title="Open group chat"
                       >
                         {openingChatId === club.id ? (
                           <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none">
@@ -1265,43 +858,34 @@ export default function FriendsPage() {
                           </svg>
                         )}
                       </button>
-                      <button
-                        onClick={() => {
-                          setInvitingClubId(invitingClubId === club.id ? null : club.id);
-                          setClubInviteSelection([]);
-                          setClubError(null);
-                        }}
-                        className="p-2 rounded-lg hover:bg-court-green-pale/30 text-court-green"
-                        title="Invite friends"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-                          <circle cx="8.5" cy="7" r="4" />
-                          <line x1="20" y1="8" x2="20" y2="14" />
-                          <line x1="23" y1="11" x2="17" y2="11" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={() => setQrClub(club)}
-                        className="p-2 rounded-lg hover:bg-court-green-pale/30 text-court-green"
-                        title="Invite by QR code"
-                      >
-                        {/* qr-code */}
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="3" y="3" width="7" height="7" rx="1" />
-                          <rect x="14" y="3" width="7" height="7" rx="1" />
-                          <rect x="3" y="14" width="7" height="7" rx="1" />
-                          <line x1="14" y1="14" x2="14" y2="17" />
-                          <line x1="17" y1="14" x2="21" y2="14" />
-                          <line x1="21" y1="17" x2="21" y2="21" />
-                          <line x1="14" y1="21" x2="17" y2="21" />
-                        </svg>
-                      </button>
+                      {canAddFriends && (
+                        <button
+                          onClick={() => {
+                            if (addingToGroupId !== club.id && club._count.members >= GROUP_CHAT_MEMBER_LIMIT) {
+                              showChatCapacityAlert();
+                              return;
+                            }
+                            setAddingToGroupId(addingToGroupId === club.id ? null : club.id);
+                            setAddMemberSelection([]);
+                            setEditingGroupId(null);
+                            setClubError(null);
+                          }}
+                          className="p-2 rounded-lg hover:bg-court-green-pale/30 text-court-green"
+                          title="Add friends"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+                            <circle cx="8.5" cy="7" r="4" />
+                            <line x1="20" y1="8" x2="20" y2="14" />
+                            <line x1="23" y1="11" x2="17" y2="11" />
+                          </svg>
+                        </button>
+                      )}
                       {isOwner ? (
                         <button
                           onClick={() => handleDeleteClub(club)}
                           className="p-2 rounded-lg hover:bg-red-50 text-red-500"
-                          title="Delete club"
+                          title="Delete group"
                         >
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <polyline points="3 6 5 6 21 6" />
@@ -1312,7 +896,7 @@ export default function FriendsPage() {
                         <button
                           onClick={() => handleLeaveClub(club)}
                           className="p-2 rounded-lg hover:bg-red-50 text-red-500"
-                          title="Leave club"
+                          title="Leave group"
                         >
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
@@ -1323,8 +907,50 @@ export default function FriendsPage() {
                       )}
                     </div>
                   </div>
+                  {isOwner && (
+                    <button
+                      type="button"
+                      onClick={() => editingGroupId === club.id ? setEditingGroupId(null) : startEditGroup(club)}
+                      aria-expanded={editingGroupId === club.id}
+                      className="text-sm font-semibold text-court-green hover:underline mb-3"
+                    >
+                      Group settings
+                    </button>
+                  )}
+                  {isOwner && editingGroupId === club.id && (
+                    <form onSubmit={(event) => void saveEditGroup(event, club.id)} className="space-y-3 mb-3 rounded-xl border border-gray-200 p-3">
+                      <label className="block text-sm font-semibold text-gray-800">
+                        Group name
+                        <input
+                          value={editGroupName}
+                          onChange={(event) => setEditGroupName(event.target.value)}
+                          disabled={groupSaving}
+                          required
+                          className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal"
+                        />
+                      </label>
+                      <label className="flex items-start gap-3 text-sm text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={editMembersCanAdd}
+                          onChange={(event) => setEditMembersCanAdd(event.target.checked)}
+                          disabled={groupSaving}
+                          className="mt-0.5 h-4 w-4 shrink-0 accent-court-green"
+                        />
+                        <span>
+                          <span className="font-semibold">Allow members to add friends</span>
+                          <span className="mt-1 block text-xs text-gray-600">
+                            Members can add people from their own friends list.
+                          </span>
+                        </span>
+                      </label>
+                      <button type="submit" disabled={groupSaving || !editGroupName.trim()} className="btn-primary w-full">
+                        {groupSaving ? "Saving..." : "Save settings"}
+                      </button>
+                    </form>
+                  )}
                   {clubError?.id === club.id && (
-                    <p className="text-xs text-red-600 mb-2">{clubError.message}</p>
+                    <p role="alert" className="text-xs text-red-600 mb-2">{clubError.message}</p>
                   )}
                   {club.members.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
@@ -1344,40 +970,29 @@ export default function FriendsPage() {
                           +{club.members.length - 8} more
                         </span>
                       )}
-                      {club.pendingInvitees.map((p) => (
-                        <div
-                          key={p.user.id}
-                          className="flex items-center gap-1.5 bg-gray-100 rounded-full pl-1 pr-2.5 py-1 opacity-70"
-                          title="Invitation pending"
-                        >
-                          <Avatar name={p.user.name} image={p.user.profileImageUrl} size="sm" />
-                          <span className="text-xs font-medium text-gray-500">
-                            {p.user.name.split(" ")[0]} · invited
-                          </span>
-                        </div>
-                      ))}
                     </div>
                   )}
-                  {invitingClubId === club.id && (
+                  {canAddFriends && addingToGroupId === club.id && (
                     <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
-                      <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide">
-                        Invite Your Friends ({clubInviteSelection.length} selected)
-                      </label>
+                      <p className="text-sm font-semibold text-gray-800">
+                        Add friends ({addMemberSelection.length} selected)
+                      </p>
                       <div className="max-h-48 overflow-y-auto space-y-1.5 border border-gray-100 rounded-xl p-2">
-                        {invitableFriends.length === 0 ? (
+                        {availableFriends.length === 0 ? (
                           <p className="text-sm text-gray-400 text-center py-4">
-                            All your friends are already in this club or invited.
+                            No other friends to add.
                           </p>
                         ) : (
-                          invitableFriends.map((f) => (
+                          availableFriends.map((f) => (
                             <label
                               key={f.user.id}
                               className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer"
                             >
                               <input
                                 type="checkbox"
-                                checked={clubInviteSelection.includes(f.user.id)}
-                                onChange={() => toggleClubInviteSelection(f.user.id)}
+                                checked={addMemberSelection.includes(f.user.id)}
+                                onChange={() => toggleAddMemberSelection(f.user.id)}
+                                disabled={addingMembers}
                                 className="w-4 h-4 accent-court-green"
                               />
                               <Avatar name={f.user.name} image={f.user.profileImageUrl} size="sm" />
@@ -1388,14 +1003,14 @@ export default function FriendsPage() {
                       </div>
                       <div className="flex gap-2">
                         <button
-                          onClick={() => sendClubInvites(club.id)}
-                          disabled={clubSaving || clubInviteSelection.length === 0}
+                          onClick={() => addSelectedFriends(club)}
+                          disabled={addingMembers || addMemberSelection.length === 0}
                           className="btn-primary flex-1"
                         >
-                          {clubSaving ? "Sending..." : "Send Invites"}
+                          {addingMembers ? "Adding..." : "Add to group"}
                         </button>
                         <button
-                          onClick={() => setInvitingClubId(null)}
+                          onClick={() => setAddingToGroupId(null)}
                           className="btn-secondary flex-1"
                         >
                           Cancel
@@ -1405,8 +1020,7 @@ export default function FriendsPage() {
                   )}
                 </div>
               );
-            })
-          )}
+          })}
         </div>
       )}
 
@@ -1416,6 +1030,7 @@ export default function FriendsPage() {
           <button
             onClick={() => {
               setShowNewChatModal(true);
+              setChatWriteError("");
               setNewChatName("");
               setNewChatMembers([]);
               setChatFormSearch("");
@@ -1450,6 +1065,7 @@ export default function FriendsPage() {
               const key = `${chat.type}-${chat.id}`;
               const isPinned = !!chat.pinnedAt;
               const isMuted = chat.muted;
+              const isFriendGroup = chat.type === "group" && chat.kind === "friendGroup";
               return (
                 <SwipeChatRow
                   key={key}
@@ -1459,7 +1075,7 @@ export default function FriendsPage() {
                   onTap={() => router.push(chat.href)}
                   onPin={() => chatActionState(chat, isPinned ? "unpin" : "pin")}
                   onMute={() => chatActionState(chat, isMuted ? "unmute" : "mute")}
-                  onEdit={chat.type === "group" ? () => openEditChat(chat.id) : undefined}
+                  onEdit={chat.type === "group" && !isFriendGroup ? () => openEditChat(chat.id) : undefined}
                   onDelete={() => {
                     // Hide from this user's inbox only. For 1:1 the API maps "hide" to setting hiddenAt.
                     // For groups, "hide" sets hiddenAt on the user's ChatParticipant — others are unaffected,
@@ -1473,10 +1089,8 @@ export default function FriendsPage() {
                   <div className={`p-4 flex items-center gap-3 ${
                     chat.type === "group" && chat.kind === "session"
                       ? "bg-gradient-to-r from-court-green-pale/25 to-white border-l-4 border-l-court-green"
-                      : chat.type === "group" && chat.kind === "club"
-                      ? "bg-gradient-to-r from-club-purple-tint to-white border-l-4 border-l-club-purple"
-                      : chat.type === "group" && chat.kind === "circle"
-                      ? "bg-gradient-to-r from-circle-lime-tint to-white border-l-4 border-l-circle-lime"
+                      : isFriendGroup
+                      ? "bg-gradient-to-r from-friend-group-purple-tint to-white border-l-4 border-l-friend-group-purple"
                       : chat.type === "team" && chat.eventId
                       ? "bg-gradient-to-r from-ball-yellow/20 to-white border-l-4 border-l-ball-yellow"
                       : chat.type === "team"
@@ -1530,28 +1144,17 @@ export default function FriendsPage() {
                             </span>
                           )}
                         </div>
-                      ) : chat.type === "group" && chat.kind === "club" ? (
+                      ) : isFriendGroup ? (
                         <div className="relative">
-                          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-club-purple-soft to-club-purple flex items-center justify-center text-white font-bold text-base shadow-md ring-2 ring-white">
+                          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-friend-group-purple to-friend-group-purple-deep flex items-center justify-center text-white font-bold text-base shadow-md ring-2 ring-white">
                             {chat.title.charAt(0).toUpperCase()}
                           </div>
-                          <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-club-purple flex items-center justify-center shadow-sm ring-2 ring-white">
+                          <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-friend-group-purple flex items-center justify-center shadow-sm ring-2 ring-white">
                             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
                               <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
                               <circle cx="9" cy="7" r="4" />
                               <path d="M23 21v-2a4 4 0 00-3-3.87" />
                               <path d="M16 3.13a4 4 0 010 7.75" />
-                            </svg>
-                          </span>
-                        </div>
-                      ) : chat.type === "group" && chat.kind === "circle" ? (
-                        <div className="relative">
-                          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-[#8FAE2C] to-circle-lime-deep flex items-center justify-center text-white font-bold text-base shadow-md ring-2 ring-white">
-                            {chat.title.charAt(0).toUpperCase()}
-                          </div>
-                          <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-circle-lime-deep flex items-center justify-center shadow-sm ring-2 ring-white">
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white">
-                              <circle cx="12" cy="12" r="9" />
                             </svg>
                           </span>
                         </div>
@@ -1588,14 +1191,9 @@ export default function FriendsPage() {
                               🎾 Game
                             </span>
                           )}
-                          {chat.type === "group" && chat.kind === "club" && (
-                            <span className="text-[9px] font-bold tracking-wider text-club-purple-deep bg-club-purple-tint px-1.5 py-0.5 rounded uppercase shrink-0">
-                              Club
-                            </span>
-                          )}
-                          {chat.type === "group" && chat.kind === "circle" && (
-                            <span className="text-[9px] font-bold tracking-wider text-circle-lime-deep bg-circle-lime-tint px-1.5 py-0.5 rounded uppercase shrink-0">
-                              Circle
+                          {isFriendGroup && (
+                            <span className="text-[9px] font-bold tracking-wider text-friend-group-purple-deep bg-friend-group-purple-tint px-1.5 py-0.5 rounded uppercase shrink-0">
+                              Group
                             </span>
                           )}
                           {isMuted && (
@@ -1759,6 +1357,7 @@ export default function FriendsPage() {
             </div>
 
             <div className="px-5 py-4 border-t border-gray-100">
+              {chatWriteError && <p role="alert" className="mb-3 text-sm text-red-700">{chatWriteError}</p>}
               <button
                 onClick={createChat}
                 disabled={creatingChat || newChatMembers.length < 1}
@@ -1769,16 +1368,6 @@ export default function FriendsPage() {
             </div>
           </div>
         </div>
-      )}
-
-      {/* Club QR invite modal */}
-      {qrClub && (
-        <ClubQRModal
-          clubId={qrClub.id}
-          clubName={qrClub.name}
-          inviterName={myName}
-          onClose={() => setQrClub(null)}
-        />
       )}
 
       {/* Edit Chat Members modal */}
@@ -1894,6 +1483,7 @@ export default function FriendsPage() {
               </div>
             </div>
 
+            {chatWriteError && <p role="alert" className="px-5 pb-3 text-sm text-red-700">{chatWriteError}</p>}
             <div className="px-5 py-4 border-t border-gray-100 flex gap-2">
               <button
                 onClick={() => setEditChatId(null)}
@@ -2041,6 +1631,24 @@ export default function FriendsPage() {
           )}
         </div>
       )}
+
+      <dialog
+        ref={chatCapacityDialog}
+        role="alertdialog"
+        aria-labelledby="group-chat-limit-title"
+        aria-describedby="group-chat-limit-description"
+        className="m-auto w-11/12 max-w-sm rounded-2xl border border-gray-200 bg-white p-5 shadow-xl backdrop:bg-gray-900/50 sm:p-6"
+      >
+        <h2 id="group-chat-limit-title" className="font-display text-xl font-bold text-gray-900">
+          Group chat limit reached
+        </h2>
+        <p id="group-chat-limit-description" className="mt-2 text-sm text-gray-700">
+          Group chats can have up to {GROUP_CHAT_MEMBER_LIMIT} people. Choose fewer people or try again when there’s room.
+        </p>
+        <form method="dialog" className="mt-5">
+          <button className="btn-primary w-full">OK</button>
+        </form>
+      </dialog>
 
       {/* Portal-rendered kebab dropdown — escapes all parent stacking contexts */}
       {openMenu && typeof document !== "undefined" && createPortal(
