@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
-import { type ExportEvent } from "@/lib/calendarExport";
+import { downloadIcsBundle, type ExportEvent } from "@/lib/calendarExport";
 import CalendarExportButtons from "@/components/calendar/CalendarExportButtons";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useCachedQuery } from "@/lib/useCachedQuery";
@@ -11,6 +11,7 @@ import { listMyPersonalEvents, type PersonalEvent } from "@/lib/supabase/queries
 import { PersonalEventModal } from "@/components/calendar/PersonalEventModal";
 import { DirectionsButton } from "@/components/courts/DirectionsButton";
 import { getFacilityByCourtId } from "@/lib/facilities";
+import { LocationDirections } from "@/components/courts/LocationDirections";
 
 type CalendarEvent = {
   id: string;
@@ -44,6 +45,7 @@ type TeamMatchEvent = {
   teamName: string;
   matchDate: string;
   matchTime: string;
+  timezone: string | null;
   location: string;
   notes: string;
   inLineup: boolean;
@@ -58,6 +60,7 @@ type TeamPracticeEvent = {
   seriesName: string;
   practiceDate: string;
   practiceTime: string;
+  timezone: string | null;
   location: string;
   notes: string;
 };
@@ -302,7 +305,7 @@ export default function CalendarPage() {
       ? supabase
           .from("team_matches")
           .select(
-            `id, group_id, match_date, match_time, location, notes,
+            `id, group_id, match_date, match_time, timezone, location, notes,
              group:groups!team_matches_group_id_fkey ( id, name ),
              availabilities ( user_id, lineup_slot )`
           )
@@ -316,7 +319,7 @@ export default function CalendarPage() {
       ? supabase
           .from("team_practices")
           .select(
-            `id, practice_date,
+            `id, practice_date, timezone,
              series:practice_series!team_practices_series_id_fkey (
                id, name, location, practice_time, notes, group_id,
                group:groups!practice_series_group_id_fkey ( id, name )
@@ -371,6 +374,7 @@ export default function CalendarPage() {
       group_id: string;
       match_date: string;
       match_time: string;
+      timezone: string | null;
       location: string;
       notes: string;
       group: { id: string; name: string } | null;
@@ -386,6 +390,7 @@ export default function CalendarPage() {
           teamName: m.group?.name ?? "",
           matchDate: m.match_date,
           matchTime: m.match_time,
+          timezone: m.timezone,
           location: m.location,
           notes: m.notes,
           inLineup: slot !== "",
@@ -399,6 +404,7 @@ export default function CalendarPage() {
     type PracticeRow = {
       id: string;
       practice_date: string;
+      timezone: string | null;
       series: {
         id: string;
         name: string;
@@ -422,6 +428,7 @@ export default function CalendarPage() {
           seriesName: s.name,
           practiceDate: p.practice_date,
           practiceTime: s.practice_time,
+          timezone: p.timezone,
           location: s.location,
           notes: s.notes,
         } satisfies TeamPracticeEvent;
@@ -539,14 +546,44 @@ export default function CalendarPage() {
   const sortedTotal =
     sortedEvents.length + sortedMatches.length + sortedPractices.length + sortedPersonal.length;
 
+  // Everything upcoming in one .ics; import support varies by calendar app.
+  const exportAllUpcoming = () => {
+    downloadIcsBundle(
+      [
+        ...sortedEvents.map(gameToExport),
+        ...sortedMatches.map(matchToExport),
+        ...sortedPractices.map(practiceToExport),
+        ...sortedPersonal.map(personalToExport),
+      ],
+      "tennis-events.ics"
+    );
+  };
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <div className="animate-fade-in-up">
-        <div className="flex items-center justify-between mb-1">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
           <h1 className="font-display text-2xl font-bold text-court-green">
             My Calendar
           </h1>
           <div className="flex items-center gap-2">
+            {sortedTotal > 0 && (
+              <button
+                onClick={exportAllUpcoming}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white text-gray-700 text-xs font-semibold shadow-sm border border-court-green-pale/20 hover:bg-gray-50 transition-colors"
+                title="Export upcoming events as an .ics file. Import support varies by calendar app."
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                  <path d="M12 13v4" />
+                  <path d="M10 15l2 2 2-2" />
+                </svg>
+                Export schedule (.ics)
+              </button>
+            )}
             <button
               onClick={() => setEventModal({ event: null })}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-court-green text-white text-xs font-semibold shadow-sm hover:bg-court-green-light transition-colors"
@@ -782,6 +819,7 @@ function matchToExport(m: TeamMatchEvent): ExportEvent {
     description: desc.join("\n"),
     date: m.matchDate,
     time: m.matchTime,
+    timezone: m.timezone,
     location: m.location,
   };
 }
@@ -795,6 +833,7 @@ function practiceToExport(p: TeamPracticeEvent): ExportEvent {
     description: desc.join("\n"),
     date: p.practiceDate,
     time: p.practiceTime,
+    timezone: p.timezone,
     location: p.location,
   };
 }
@@ -943,15 +982,12 @@ function TeamMatchCard({ match }: { match: TeamMatchEvent }) {
                 {match.matchTime}
               </span>
             )}
-            <span className="flex items-center gap-1 truncate">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg>
-              {match.location}
-            </span>
+            {match.location && <LocationDirections location={match.location} />}
           </div>
           {match.notes && (
             <p className="text-[11px] text-gray-400 italic truncate">{match.notes}</p>
           )}
-          <CalendarExportButtons event={matchToExport(match)} />
+          <CalendarExportButtons event={matchToExport(match)} teamId={match.teamId} />
         </div>
       </div>
     </Link>
@@ -1067,10 +1103,7 @@ function TeamPracticeCard({ practice }: { practice: TeamPracticeEvent }) {
                 {practice.practiceTime}
               </span>
             )}
-            <span className="flex items-center gap-1 truncate">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg>
-              {practice.location}
-            </span>
+            {practice.location && <LocationDirections location={practice.location} />}
           </div>
           {practice.notes && (
             <p className="text-[11px] text-gray-400 italic truncate">{practice.notes}</p>

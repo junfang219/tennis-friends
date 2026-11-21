@@ -38,6 +38,11 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Isolated review server: do not mount authenticated components that can
+  // register push tokens or update last-active timestamps in the live service.
+  if (process.env.NODE_ENV === "development" && process.env.TEAM_ONBOARDING_REVIEW === "1") {
+    return <html lang="en"><body>{children}</body></html>;
+  }
   return (
     <html lang="en" className="h-full">
       <body className="min-h-full flex flex-col bg-surface" suppressHydrationWarning>

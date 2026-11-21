@@ -26,6 +26,12 @@ type Snapshot = {
 let snapshot: Snapshot = { user: null, loaded: false };
 const listeners = new Set<() => void>();
 let started = false;
+// Live auth events invalidate in-flight user reads. Within the same auth
+// state, the most recently started read owns the result.
+let authRevision = 0;
+let eventAccessToken: string | null = null;
+let latestUserRequest = 0;
+let hasAppliedUserRequest = false;
 
 // --- Temporary auth-logout diagnostics (see auth_debug_events migration) ---
 // Records every auth state transition to a write-only Postgres table so we can
@@ -56,25 +62,30 @@ function recordAuthEvent(
 ): void {
   const userInitiated = event === "SIGNED_OUT" && pendingUserInitiatedSignOut;
   if (event === "SIGNED_OUT") pendingUserInitiatedSignOut = false;
-  try {
-    void supabase
-      .from("auth_debug_events")
-      .insert({
-        event,
-        prior_user_id: priorUserId,
-        has_session: !!session,
-        user_initiated: userInitiated,
-        platform: detectedPlatform,
-        details: {
-          path: window.location?.pathname ?? null,
-          visibility:
-            typeof document !== "undefined" ? document.visibilityState : null,
-        },
-      })
-      .then(() => {}, () => {}); // swallow — diagnostics must never surface errors
-  } catch {
-    // best-effort
-  }
+  // Keep diagnostic I/O outside auth-state dispatch. Database requests ask
+  // this client for an access token and may need session recovery; callbacks
+  // must stay synchronous so diagnostics cannot block auth transitions.
+  const details = {
+    path: window.location?.pathname ?? null,
+    visibility: typeof document !== "undefined" ? document.visibilityState : null,
+  };
+  setTimeout(() => {
+    try {
+      void supabase
+        .from("auth_debug_events")
+        .insert({
+          event,
+          prior_user_id: priorUserId,
+          has_session: !!session,
+          user_initiated: userInitiated,
+          platform: detectedPlatform,
+          details,
+        })
+        .then(() => {}, () => {}); // swallow — diagnostics must never surface errors
+    } catch {
+      // best-effort
+    }
+  }, 0);
 }
 
 function setSnapshot(next: Snapshot) {
@@ -82,17 +93,54 @@ function setSnapshot(next: Snapshot) {
   for (const fn of listeners) fn();
 }
 
+async function readAuthSnapshot(supabase: SupabaseClient): Promise<void> {
+  let revision = authRevision;
+  const request = ++latestUserRequest;
+  const isCurrent = () => revision === authRevision && request === latestUserRequest;
+  try {
+    // Finish recovery and refresh before validating an explicit token. Calling
+    // getUser() without a token can refresh internally and invalidate itself.
+    await supabase.auth.initialize();
+    revision = authRevision;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (request !== latestUserRequest) return;
+    // Session preparation may publish a refresh or race an account change.
+    // Continue only if it returned the session now published by that event.
+    if (revision !== authRevision && (session?.access_token ?? null) !== eventAccessToken) return;
+    revision = authRevision;
+    const user = session ? (await supabase.auth.getUser(session.access_token)).data.user : null;
+    if (!isCurrent()) return;
+    hasAppliedUserRequest = true;
+    setSnapshot({ user: user ?? null, loaded: true });
+  } catch (error) {
+    // Even a newer failed refresh must settle initial loading. A stale
+    // failure must leave a newer event or lookup untouched.
+    if (isCurrent()) setSnapshot({ user: snapshot.user, loaded: true });
+    throw error;
+  }
+}
+
 function start() {
   if (started || typeof window === "undefined") return;
   started = true;
   void detectPlatform();
   const supabase = createSupabaseBrowserClient();
-  supabase.auth.getUser().then(({ data }) => {
-    setSnapshot({ user: data.user ?? null, loaded: true });
-  });
+  // The helper settles loading on failure; startup errors are best-effort.
+  void readAuthSnapshot(supabase).catch(() => {});
   supabase.auth.onAuthStateChange((event, session) => {
     const priorUserId = snapshot.user?.id ?? null;
-    setSnapshot({ user: session?.user ?? null, loaded: true });
+    if (event === "INITIAL_SESSION") {
+      // This is a bootstrap read, not a new sign-in. It must neither cancel
+      // user validation nor overwrite an already resolved auth state.
+      if (authRevision === 0 && !hasAppliedUserRequest) {
+        eventAccessToken = session?.access_token ?? null;
+        setSnapshot({ user: session?.user ?? null, loaded: true });
+      }
+    } else {
+      authRevision++;
+      eventAccessToken = session?.access_token ?? null;
+      setSnapshot({ user: session?.user ?? null, loaded: true });
+    }
     recordAuthEvent(supabase, event, session, priorUserId);
   });
 }
@@ -121,8 +169,7 @@ export function useAuthSnapshot(): Snapshot {
 
 export async function refreshAuthSnapshot(): Promise<void> {
   const supabase = createSupabaseBrowserClient();
-  const { data } = await supabase.auth.getUser();
-  setSnapshot({ user: data.user ?? null, loaded: true });
+  await readAuthSnapshot(supabase);
 }
 
 // Non-hook synchronous accessor for query helpers that run outside a

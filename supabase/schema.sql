@@ -83,8 +83,6 @@ create type public.event_participant_status  as enum ('registered', 'waitlist', 
 create type public.message_kind              as enum ('chat', 'announcement');
 create type public.reaction_target           as enum ('dm', 'group', 'chat');
 create type public.device_platform           as enum ('ios', 'android');
-create type public.booking_status            as enum ('pending', 'confirmed', 'cancelled');
-create type public.booking_player_status     as enum ('invited', 'accepted', 'declined');
 create type public.notification_type         as enum (
   'comment',
   'like',
@@ -1024,7 +1022,7 @@ create table public.guest_expense_shares (
 create index guest_expense_shares_expense_idx on public.guest_expense_shares (expense_id);
 
 -- =========================================================================
--- Courts, venues, bookings, reviews
+-- Courts, bookings, reviews
 -- =========================================================================
 
 create table public.courts (
@@ -1042,68 +1040,47 @@ create table public.courts (
 create index courts_added_by_idx on public.courts (added_by_id);
 create index courts_location_idx on public.courts using gist (location);
 
-create table public.venues (
-  id            uuid primary key default gen_random_uuid(),
-  name          text not null,
-  address       text not null,
-  latitude      double precision not null,
-  longitude     double precision not null,
-  location      geography(Point, 4326) generated always as (
-    st_setsrid(st_makepoint(longitude, latitude), 4326)::geography
-  ) stored,
-  neighborhood  text not null default '',
-  amenities     jsonb not null default '[]'::jsonb,
-  image_url     text not null default '',
-  active_net_id text not null default '',
-  created_at    timestamptz not null default now(),
-  updated_at    timestamptz not null default now()
-);
-create index venues_location_idx on public.venues using gist (location);
-
-create table public.venue_courts (
-  id            uuid primary key default gen_random_uuid(),
-  venue_id      uuid not null references public.venues (id) on delete cascade,
-  court_number  integer not null,
-  surface       text not null default 'hard',
-  is_lighted    boolean not null default false,
-  active_net_id text not null default '',
-  created_at    timestamptz not null default now(),
-  updated_at    timestamptz not null default now(),
-  constraint venue_courts_unique unique (venue_id, court_number)
-);
-
-create table public.bookings (
+-- Court reservations the user completed on Seattle Parks (ActiveNet) through
+-- the embedded in-app checkout. We only RECORD what was booked — ActiveNet
+-- owns the actual inventory, payment, and cancellation, so there is no
+-- overlap/exclusion constraint here. facility_id shares the mixed text
+-- namespace of court_reviews.court_id ("tf-N" catalog ids); center_id /
+-- resource_id are the authoritative ActiveNet identifiers from
+-- data/activenet-seattle.json (no FK — they live in a JSON seed).
+create table public.court_bookings (
   id              uuid primary key default gen_random_uuid(),
-  court_id        uuid not null references public.venue_courts (id) on delete restrict,
-  organizer_id    uuid not null references public.profiles (id) on delete restrict,
+  user_id         uuid not null references public.profiles (id) on delete cascade,
+  facility_id     text,
+  venue_name      text not null,
+  court_name      text not null,
+  center_id       integer not null,
+  resource_id     integer not null,
   start_time      timestamptz not null,
   end_time        timestamptz not null,
-  status          booking_status not null default 'pending',
-  active_net_url  text not null default '',
+  -- IANA timezone the booking's wall-clock times were entered in.
+  timezone        text not null default 'America/Los_Angeles',
+  status          text not null default 'confirmed'
+                    check (status in ('confirmed', 'cancelled')),
+  -- 'detected' = the booking bridge scraped a checkout confirmation;
+  -- 'manual' = the user confirmed the booking themselves.
+  confirmation    text not null default 'manual'
+                    check (confirmation in ('detected', 'manual')),
+  receipt_number  text,
+  activenet_url   text not null default '',
+  -- Set once "find players" spawns a find_players post from this booking.
+  session_post_id uuid references public.posts (id) on delete set null,
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),
-  constraint bookings_time_order check (end_time > start_time),
-  -- Per-court non-overlap: no two non-cancelled bookings on the same
-  -- court may overlap. tstzrange '[)' is half-open so back-to-back
-  -- bookings (end_time = next start_time) don't collide.
-  constraint bookings_no_overlap_per_court exclude using gist (
-    court_id WITH =,
-    tstzrange(start_time, end_time, '[)') WITH &&
-  ) WHERE (status <> 'cancelled')
+  constraint court_bookings_time_order check (end_time > start_time)
 );
-create index bookings_court_time_idx on public.bookings (court_id, start_time, end_time);
-create index bookings_organizer_idx  on public.bookings (organizer_id);
-
-create table public.booking_players (
-  id         uuid primary key default gen_random_uuid(),
-  booking_id uuid not null references public.bookings (id) on delete cascade,
-  user_id    uuid not null references public.profiles (id) on delete cascade,
-  status     booking_player_status not null default 'invited',
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint booking_players_unique unique (booking_id, user_id)
-);
-create index booking_players_user_idx on public.booking_players (user_id);
+-- Access pattern is "my bookings, newest first" — one index covers it.
+create index court_bookings_user_start_idx
+  on public.court_bookings (user_id, start_time desc);
+-- Guard against double-saving the same slot (e.g. bridge auto-detect fired
+-- AND the user answered the manual confirm prompt).
+create unique index court_bookings_dedupe_idx
+  on public.court_bookings (user_id, resource_id, start_time)
+  where status <> 'cancelled';
 
 -- court_id is text (not uuid) and intentionally has no FK to courts(id):
 -- the app uses two ID namespaces — UUIDs for user-added courts and "tf-N"
@@ -1226,10 +1203,7 @@ create trigger opponent_teams_updated_at          before update on public.oppone
 create trigger practice_series_updated_at         before update on public.practice_series         for each row execute function public.set_updated_at();
 create trigger team_practices_updated_at          before update on public.team_practices          for each row execute function public.set_updated_at();
 create trigger practice_availabilities_updated_at before update on public.practice_availabilities for each row execute function public.set_updated_at();
-create trigger venues_updated_at                  before update on public.venues                  for each row execute function public.set_updated_at();
-create trigger venue_courts_updated_at            before update on public.venue_courts            for each row execute function public.set_updated_at();
-create trigger bookings_updated_at                before update on public.bookings                for each row execute function public.set_updated_at();
-create trigger booking_players_updated_at         before update on public.booking_players         for each row execute function public.set_updated_at();
+create trigger court_bookings_updated_at          before update on public.court_bookings          for each row execute function public.set_updated_at();
 create trigger court_reviews_updated_at           before update on public.court_reviews           for each row execute function public.set_updated_at();
 create trigger device_tokens_updated_at           before update on public.device_tokens           for each row execute function public.set_updated_at();
 
@@ -2466,7 +2440,7 @@ create policy guest_expense_shares_write_payer on public.guest_expense_shares
   );
 
 -- =========================================================================
--- Courts + venues + bookings + reviews
+-- Courts + bookings + reviews
 -- =========================================================================
 
 alter table public.courts enable row level security;
@@ -2485,63 +2459,23 @@ create policy courts_update_self on public.courts
 create policy courts_delete_self on public.courts
   for delete to authenticated using (added_by_id = auth.uid());
 
-alter table public.venues enable row level security;
+-- court_bookings are private to their owner; sharing happens through the
+-- linked find_players post, not the booking row.
+alter table public.court_bookings enable row level security;
 
-create policy venues_select_all on public.venues
-  for select to authenticated using (true);
--- venues + venue_courts are catalog data; writes via service_role only.
+create policy court_bookings_select_own on public.court_bookings
+  for select to authenticated using (user_id = (select auth.uid()));
 
-alter table public.venue_courts enable row level security;
+create policy court_bookings_insert_own on public.court_bookings
+  for insert to authenticated with check (user_id = (select auth.uid()));
 
-create policy venue_courts_select_all on public.venue_courts
-  for select to authenticated using (true);
-
-alter table public.bookings enable row level security;
-
-create policy bookings_select_member on public.bookings
-  for select to authenticated
-  using (
-    organizer_id = auth.uid()
-    or exists(select 1 from public.booking_players bp
-              where bp.booking_id = bookings.id and bp.user_id = auth.uid())
-  );
-
-create policy bookings_insert_organizer on public.bookings
-  for insert to authenticated with check (organizer_id = auth.uid());
-
-create policy bookings_update_organizer on public.bookings
+create policy court_bookings_update_own on public.court_bookings
   for update to authenticated
-  using (organizer_id = auth.uid())
-  with check (organizer_id = auth.uid());
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
 
-create policy bookings_delete_organizer on public.bookings
-  for delete to authenticated using (organizer_id = auth.uid());
-
-alter table public.booking_players enable row level security;
-
-create policy booking_players_select_member on public.booking_players
-  for select to authenticated
-  using (
-    user_id = auth.uid()
-    or exists(select 1 from public.bookings b
-              where b.id = booking_id and b.organizer_id = auth.uid())
-  );
-
-create policy booking_players_write_organizer on public.booking_players
-  for all to authenticated
-  using (
-    exists(select 1 from public.bookings b
-           where b.id = booking_id and b.organizer_id = auth.uid())
-  )
-  with check (
-    exists(select 1 from public.bookings b
-           where b.id = booking_id and b.organizer_id = auth.uid())
-  );
-
-create policy booking_players_update_self on public.booking_players
-  for update to authenticated
-  using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+create policy court_bookings_delete_own on public.court_bookings
+  for delete to authenticated using (user_id = (select auth.uid()));
 
 alter table public.court_reviews enable row level security;
 
@@ -3461,12 +3395,6 @@ COMMENT ON TABLE reminder_sent IS
 
 -- ============== Courts / venues ==============
 
-COMMENT ON TABLE venues IS
-  'Curated facilities (e.g. Seattle Parks ActiveNet locations). venue_courts holds the individual courts within. Separate from the user-added courts table — the curated set has ActiveNet metadata that user-added courts don''t.';
-
-COMMENT ON TABLE venue_courts IS
-  'Individual numbered courts inside a curated venue.';
-
 COMMENT ON TABLE courts IS
   'User-added courts (not from the curated ActiveNet set). Considered for consolidation with venues but kept separate because the schemas (ActiveNet metadata vs. user-supplied notes) diverge.';
 
@@ -3479,11 +3407,8 @@ COMMENT ON TABLE court_review_photos IS
 COMMENT ON TABLE court_availability_reports IS
   'Crowd-sourced "is the court available right now?" reports. Has a rate-limit guard (one report per user per court per N minutes) enforced in the query helper.';
 
-COMMENT ON TABLE bookings IS
-  'Court reservations. Sister to event_participants but with payment / time-slot semantics; not unified because the use cases barely overlap.';
-
-COMMENT ON TABLE booking_players IS
-  'Players included in a court booking. Many-to-many between bookings and profiles.';
+COMMENT ON TABLE court_bookings IS
+  'Record of a court reservation the user completed on Seattle Parks (ActiveNet) via the embedded in-app checkout. ActiveNet owns inventory/payment/cancellation; we only track what was booked, so the user can see upcoming bookings and spawn a find_players post from one.';
 
 -- ============== Albums / files / expenses / polls ==============
 
@@ -3947,7 +3872,7 @@ DROP POLICY expense_shares_update_self_settle ON expense_shares;
 CREATE POLICY expense_shares_update_self_settle ON expense_shares FOR UPDATE TO authenticated
   USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
 
--- ============== courts + court_reviews + court_review_photos + court_availability_reports + bookings + booking_players ==============
+-- ============== courts + court_reviews + court_review_photos + court_availability_reports ==============
 
 DROP POLICY courts_insert_self ON courts;
 CREATE POLICY courts_insert_self ON courts FOR INSERT TO authenticated WITH CHECK (added_by_id = (SELECT auth.uid()));
@@ -3979,37 +3904,6 @@ CREATE POLICY court_availability_reports_insert_self ON court_availability_repor
 
 DROP POLICY court_availability_reports_delete_self ON court_availability_reports;
 CREATE POLICY court_availability_reports_delete_self ON court_availability_reports FOR DELETE TO authenticated USING (user_id = (SELECT auth.uid()));
-
-DROP POLICY bookings_select_member ON bookings;
-CREATE POLICY bookings_select_member ON bookings FOR SELECT TO authenticated
-  USING (organizer_id = (SELECT auth.uid()) OR EXISTS (
-    SELECT 1 FROM booking_players bp WHERE bp.booking_id = bookings.id AND bp.user_id = (SELECT auth.uid())
-  ));
-
-DROP POLICY bookings_insert_organizer ON bookings;
-CREATE POLICY bookings_insert_organizer ON bookings FOR INSERT TO authenticated WITH CHECK (organizer_id = (SELECT auth.uid()));
-
-DROP POLICY bookings_update_organizer ON bookings;
-CREATE POLICY bookings_update_organizer ON bookings FOR UPDATE TO authenticated
-  USING (organizer_id = (SELECT auth.uid())) WITH CHECK (organizer_id = (SELECT auth.uid()));
-
-DROP POLICY bookings_delete_organizer ON bookings;
-CREATE POLICY bookings_delete_organizer ON bookings FOR DELETE TO authenticated USING (organizer_id = (SELECT auth.uid()));
-
-DROP POLICY booking_players_select_member ON booking_players;
-CREATE POLICY booking_players_select_member ON booking_players FOR SELECT TO authenticated
-  USING (user_id = (SELECT auth.uid()) OR EXISTS (
-    SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())
-  ));
-
-DROP POLICY booking_players_update_self ON booking_players;
-CREATE POLICY booking_players_update_self ON booking_players FOR UPDATE TO authenticated
-  USING (user_id = (SELECT auth.uid())) WITH CHECK (user_id = (SELECT auth.uid()));
-
-DROP POLICY booking_players_write_organizer ON booking_players;
-CREATE POLICY booking_players_write_organizer ON booking_players FOR ALL TO authenticated
-  USING (EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())))
-  WITH CHECK (EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())));
 
 -- ============== availabilities + device_tokens ==============
 
@@ -4062,25 +3956,6 @@ CREATE POLICY device_tokens_self ON device_tokens FOR ALL TO authenticated
 --
 -- Fix: split each FOR ALL into separate FOR INSERT / FOR UPDATE / FOR
 -- DELETE policies, and merge any pair that targets the same command.
-
--- ============== booking_players ==============
-
-DROP POLICY booking_players_write_organizer ON booking_players;
-DROP POLICY booking_players_update_self ON booking_players;
-
-CREATE POLICY booking_players_insert_organizer ON booking_players FOR INSERT TO authenticated
-  WITH CHECK (EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())));
-
-CREATE POLICY booking_players_update_self_or_organizer ON booking_players FOR UPDATE TO authenticated
-  USING (user_id = (SELECT auth.uid()) OR EXISTS (
-    SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())
-  ))
-  WITH CHECK (user_id = (SELECT auth.uid()) OR EXISTS (
-    SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())
-  ));
-
-CREATE POLICY booking_players_delete_organizer ON booking_players FOR DELETE TO authenticated
-  USING (EXISTS (SELECT 1 FROM bookings b WHERE b.id = booking_players.booking_id AND b.organizer_id = (SELECT auth.uid())));
 
 -- ============== court_review_photos ==============
 
@@ -4333,9 +4208,6 @@ AS $$
 BEGIN
   DELETE FROM public.album_items WHERE added_by_id = uid;
   DELETE FROM public.albums WHERE created_by_id = uid;
-  DELETE FROM public.booking_players
-    WHERE booking_id IN (SELECT id FROM public.bookings WHERE organizer_id = uid);
-  DELETE FROM public.bookings WHERE organizer_id = uid;
   DELETE FROM public.chat_messages
     WHERE chat_id IN (SELECT id FROM public.chats WHERE creator_id = uid);
   DELETE FROM public.chat_participants
@@ -8917,10 +8789,10 @@ GRANT  EXECUTE ON FUNCTION public.set_expense_cells_settled(jsonb, boolean) TO a
 --
 -- A user subscribes to a Seattle Parks venue (catalog facility id "tf-N") for
 -- a specific day or repeating weekdays, optionally narrowed to a time-of-day
--- window, and is notified (push and/or email) when ANY reservable court at that
--- venue has an open bookable slot. The /api/cron/court-alerts job polls live
--- ActiveNet every ~15 min for just the venues/dates that have active alerts and
--- dispatches; court_alert_sent makes each (alert, date) fire at most once.
+-- window, and receives an in-app notification (with optional push and email)
+-- when ANY reservable court at that venue has an open bookable slot. The
+-- /api/cron/court-alerts job polls live ActiveNet every ~15 min for venues/dates
+-- with active alerts. court_alert_sent makes each (alert, date) fire at most once.
 -- =========================================================================
 
 -- court_id namespace matches court_reviews / court_availability_reports: the
@@ -8945,9 +8817,7 @@ create table if not exists public.court_alerts (
   constraint court_alerts_mode_shape check (
     (mode = 'once'   and target_date is not null and weekdays is null) or
     (mode = 'repeat' and weekdays is not null and array_length(weekdays, 1) > 0 and target_date is null)
-  ),
-  -- At least one delivery channel.
-  constraint court_alerts_has_channel check (notify_push or notify_email)
+  )
 );
 create index if not exists court_alerts_active_idx on public.court_alerts (active) where active;
 create index if not exists court_alerts_user_idx   on public.court_alerts (user_id, created_at desc);
@@ -9993,7 +9863,7 @@ CREATE OR REPLACE FUNCTION public.guest_join_post(
   p_name    text,
   p_contact text DEFAULT NULL,
   p_note    text DEFAULT NULL
-) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO ''
 AS $$
 DECLARE
   v_post    public.posts%ROWTYPE;
@@ -10007,11 +9877,13 @@ BEGIN
     RAISE EXCEPTION 'Please enter your name' USING ERRCODE = 'invalid_parameter_value';
   END IF;
 
-  -- The unguessable post UUID is the capability (same trust model the
-  -- public page relies on). Only find_players posts are shareable/publicly
-  -- viewable, so scope guest RSVPs to that type.
-  SELECT * INTO v_post FROM public.posts WHERE id = p_post_id;
-  IF v_post.id IS NULL OR v_post.post_type <> 'find_players' THEN
+  -- Match the public share page. Keep the visibility check valid until
+  -- the guest request is recorded, including during concurrent edits.
+  SELECT * INTO v_post
+  FROM public.posts
+  WHERE id = p_post_id AND post_type = 'find_players' AND visibility = 'friends'
+  FOR SHARE;
+  IF v_post.id IS NULL THEN
     RAISE EXCEPTION 'This game is no longer available' USING ERRCODE = 'no_data_found';
   END IF;
 
@@ -10435,6 +10307,160 @@ alter table public.team_matches alter column location set default '';
 -- "Scheduled" badge, which must not light up for a merely-created poll).
 alter table public.availability_polls
   add column for_match_id uuid references public.team_matches (id) on delete set null;
+
+-- General team onboarding and account-bound invitations
+-- Additive release SQL. Apply only after reviewing/testing against the current
+-- canonical schema. No production database is changed by creating this file.
+BEGIN;
+CREATE TABLE public.team_onboarding (
+ group_id uuid PRIMARY KEY REFERENCES public.groups(id) ON DELETE CASCADE,
+ config jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE TABLE public.team_onboarding_players (
+ id uuid PRIMARY KEY, group_id uuid NOT NULL REFERENCES public.groups(id) ON DELETE CASCADE,
+ member_id uuid REFERENCES public.group_members(id) ON DELETE SET NULL,
+ name text NOT NULL, phone text, email text,
+ associated_account_id uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
+ accepted_by uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
+ token text NOT NULL UNIQUE DEFAULT replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''),
+ confirmed_at timestamptz, sent_at timestamptz, accepted_at timestamptz,
+ expires_at timestamptz NOT NULL DEFAULT now() + interval '30 days', revoked_at timestamptz, removed_at timestamptz, token_created_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE(group_id, id)
+);
+CREATE UNIQUE INDEX team_onboarding_association_unique ON public.team_onboarding_players(group_id,associated_account_id) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX team_onboarding_phone_unique ON public.team_onboarding_players(group_id,phone) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX team_onboarding_email_unique ON public.team_onboarding_players(group_id,email) WHERE revoked_at IS NULL;
+CREATE INDEX team_onboarding_players_associated_idx ON public.team_onboarding_players(associated_account_id) WHERE revoked_at IS NULL AND accepted_by IS NULL;
+CREATE INDEX team_onboarding_players_group_idx ON public.team_onboarding_players(group_id);
+CREATE TABLE public.team_onboarding_deliveries (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(), player_id uuid NOT NULL REFERENCES public.team_onboarding_players(id) ON DELETE CASCADE,
+ batch_id uuid NOT NULL, channel text NOT NULL CHECK (channel IN ('sms','email','in_app')),
+ status text NOT NULL DEFAULT 'sending' CHECK(status IN ('sending','sent','failed')),
+ provider_id text, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(player_id,batch_id,channel)
+);
+CREATE INDEX team_onboarding_deliveries_player_time_idx ON public.team_onboarding_deliveries(player_id,created_at);
+ALTER TABLE public.team_onboarding ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.team_onboarding_players ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.team_onboarding_deliveries ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.team_onboarding, public.team_onboarding_players, public.team_onboarding_deliveries FROM anon, authenticated;
+GRANT ALL ON public.team_onboarding, public.team_onboarding_players, public.team_onboarding_deliveries TO service_role;
+
+CREATE OR REPLACE FUNCTION public.save_team_onboarding(p_group uuid, p_config jsonb, p_players jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE person jsonb; existing public.team_onboarding_players%ROWTYPE; associated uuid; mid uuid; pid uuid; recipient_changed boolean;
+BEGIN
+ IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in first' USING ERRCODE='42501'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.groups WHERE id=p_group) THEN
+  INSERT INTO public.groups(id,name,owner_id) VALUES(p_group, left(p_config->>'name',100),auth.uid());
+ END IF;
+ IF NOT public.can_admin_group(p_group) THEN RAISE EXCEPTION 'Team manager access required' USING ERRCODE='42501'; END IF;
+ PERFORM 1 FROM public.groups WHERE id=p_group FOR UPDATE;
+ IF coalesce(btrim(p_config->>'name'),'')='' OR jsonb_typeof(p_players)<>'array' OR jsonb_array_length(p_players)>100 THEN RAISE EXCEPTION 'Invalid team details'; END IF;
+ UPDATE public.groups SET name=p_config->>'name' WHERE id=p_group;
+ INSERT INTO public.team_onboarding(group_id,config) VALUES(p_group,p_config-'players') ON CONFLICT(group_id) DO UPDATE SET config=excluded.config;
+ FOR person IN SELECT * FROM jsonb_array_elements(p_players) LOOP
+  pid := (person->>'id')::uuid; associated := nullif(person->>'associatedAccountId','')::uuid;
+  IF associated IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.friendships WHERE status='accepted' AND ((requester_id=auth.uid() AND addressee_id=associated) OR (addressee_id=auth.uid() AND requester_id=associated))) AND NOT EXISTS(SELECT 1 FROM public.team_onboarding_players WHERE id=pid AND group_id=p_group AND associated_account_id=associated) THEN
+   RAISE EXCEPTION 'Only existing friends can be associated' USING ERRCODE='42501';
+  END IF;
+  SELECT * INTO existing FROM public.team_onboarding_players WHERE id=pid FOR UPDATE;
+  IF existing.id IS NOT NULL AND existing.group_id<>p_group THEN RAISE EXCEPTION 'Invalid player' USING ERRCODE='42501'; END IF;
+  IF existing.removed_at IS NOT NULL THEN RAISE EXCEPTION 'This intended player was removed; add a new entry'; END IF;
+ IF existing.accepted_by IS NOT NULL THEN associated := existing.accepted_by; END IF;
+  IF existing.id IS NULL THEN
+   mid := gen_random_uuid();
+   -- No legacy claim token: acceptance must use the new account-bound invitation.
+   INSERT INTO public.group_members(id,group_id,user_id,roles,placeholder_name,placeholder_email,placeholder_phone,placeholder_scope)
+   VALUES(mid,p_group,NULL,'{}'::public.group_member_role[],person->>'name',nullif(person->>'email','')::citext,nullif(person->>'phone',''),'all');
+   INSERT INTO public.team_onboarding_players(id,group_id,member_id,name,phone,email,associated_account_id,confirmed_at)
+   VALUES(pid,p_group,mid,person->>'name',nullif(person->>'phone',''),nullif(lower(person->>'email'),''),associated,(person->>'confirmedAt')::timestamptz);
+  ELSE
+   recipient_changed := existing.phone IS DISTINCT FROM nullif(person->>'phone','') OR existing.email IS DISTINCT FROM nullif(lower(person->>'email'),'') OR existing.associated_account_id IS DISTINCT FROM associated;
+   IF existing.sent_at IS NOT NULL AND existing.revoked_at IS NULL AND recipient_changed THEN
+    RAISE EXCEPTION 'Revoke the sent invitation before changing its recipient';
+   END IF;
+   -- Recipient corrections never revive a revoked link. Rotate the credential
+   -- and require explicit renewal/issuance before it can be shared again.
+   IF existing.revoked_at IS NOT NULL AND recipient_changed THEN
+    UPDATE public.team_onboarding_players SET token=replace(gen_random_uuid()::text||gen_random_uuid()::text,'-',''),token_created_at=now(),sent_at=NULL WHERE id=pid;
+   END IF;
+   UPDATE public.team_onboarding_players SET name=person->>'name',phone=nullif(person->>'phone',''),email=nullif(lower(person->>'email'),''),associated_account_id=associated,confirmed_at=(person->>'confirmedAt')::timestamptz WHERE id=pid;
+   UPDATE public.group_members SET placeholder_name=person->>'name',placeholder_phone=nullif(person->>'phone',''),placeholder_email=nullif(person->>'email','')::citext WHERE id=existing.member_id AND user_id IS NULL;
+  END IF;
+ END LOOP;
+ -- Removing a draft player revokes their invitation; do not erase joined membership/history.
+ FOR existing IN SELECT * FROM public.team_onboarding_players WHERE group_id=p_group AND removed_at IS NULL AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(p_players) x WHERE x->>'id'=team_onboarding_players.id::text) LOOP
+  UPDATE public.team_onboarding_players SET revoked_at=now(),removed_at=now() WHERE id=existing.id;
+  DELETE FROM public.group_members WHERE id=existing.member_id AND user_id IS NULL;
+ END LOOP;
+ RETURN jsonb_build_object('groupId',p_group);
+END; $$;
+
+CREATE FUNCTION public.read_team_onboarding(p_group uuid) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+BEGIN
+ IF auth.uid() IS NULL OR NOT public.can_admin_group(p_group) THEN RAISE EXCEPTION 'Team manager access required' USING ERRCODE='42501'; END IF;
+ RETURN jsonb_build_object('config',(SELECT config FROM public.team_onboarding WHERE group_id=p_group),'players',coalesce((SELECT jsonb_agg(to_jsonb(p)||jsonb_build_object('associated_account_name',a.name)) FROM public.team_onboarding_players p LEFT JOIN public.profiles a ON a.id=p.associated_account_id WHERE p.group_id=p_group AND p.removed_at IS NULL),'[]'::jsonb));
+END; $$;
+CREATE FUNCTION public.view_team_onboarding_invitation(p_token text) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE p public.team_onboarding_players%ROWTYPE; c jsonb; aname text;
+BEGIN
+ SELECT * INTO p FROM public.team_onboarding_players WHERE token=p_token AND (sent_at IS NOT NULL OR EXISTS(SELECT 1 FROM public.team_onboarding_deliveries d WHERE d.player_id=team_onboarding_players.id AND d.status='sent' AND d.created_at>=team_onboarding_players.token_created_at));
+ IF p.id IS NULL THEN RETURN NULL; END IF;
+ SELECT config INTO c FROM public.team_onboarding WHERE group_id=p.group_id;
+ SELECT name INTO aname FROM public.profiles WHERE id=p.associated_account_id;
+ RETURN jsonb_build_object('groupId',p.group_id,'name',c->>'name','description',CASE WHEN coalesce((c->>'includeDescription')::boolean,true) THEN coalesce(c->>'description','') ELSE '' END,'playerName',p.name,'associatedAccountId',p.associated_account_id,'associatedAccountName',aname,'acceptedBy',p.accepted_by,'status',CASE WHEN p.revoked_at IS NOT NULL THEN 'revoked' WHEN p.accepted_at IS NOT NULL THEN 'accepted' WHEN p.expires_at<now() THEN 'expired' ELSE 'pending' END,'includeUsta',coalesce((c->>'includeUsta')::boolean,false),'ustaTeamName',coalesce(c->>'ustaTeamName',c->>'name'),'teamNumber',coalesce(c->>'teamNumber',''),'deadline',coalesce(c->>'deadline',''),'includeRegistrationLink',coalesce((c->>'includeRegistrationLink')::boolean,true));
+END; $$;
+CREATE OR REPLACE FUNCTION public.accept_team_onboarding_invitation(p_token text) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE p public.team_onboarding_players%ROWTYPE; mid uuid;
+BEGIN
+ IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to accept' USING ERRCODE='42501'; END IF;
+ SELECT * INTO p FROM public.team_onboarding_players WHERE token=p_token;
+ IF p.id IS NULL THEN RAISE EXCEPTION 'Invitation unavailable'; END IF;
+ PERFORM 1 FROM public.groups WHERE id=p.group_id FOR UPDATE;
+ SELECT * INTO p FROM public.team_onboarding_players WHERE token=p_token FOR UPDATE;
+ IF p.id IS NULL OR (p.sent_at IS NULL AND NOT EXISTS(SELECT 1 FROM public.team_onboarding_deliveries d WHERE d.player_id=p.id AND d.status='sent' AND d.created_at>=p.token_created_at)) OR p.revoked_at IS NOT NULL OR p.expires_at<now() THEN RAISE EXCEPTION 'Invitation unavailable or expired'; END IF;
+ IF p.accepted_by=auth.uid() THEN RETURN jsonb_build_object('groupId',p.group_id); END IF;
+ IF p.accepted_at IS NOT NULL OR (p.associated_account_id IS NOT NULL AND p.associated_account_id<>auth.uid()) THEN RAISE EXCEPTION 'Switch to the invited account or contact your captain' USING ERRCODE='42501'; END IF;
+ IF EXISTS(SELECT 1 FROM public.team_onboarding_players WHERE group_id=p.group_id AND id<>p.id AND revoked_at IS NULL AND removed_at IS NULL AND (accepted_by=auth.uid() OR associated_account_id=auth.uid())) THEN RAISE EXCEPTION 'Account already associated with another player'; END IF;
+ PERFORM public._merge_placeholder_into_user(p.member_id,auth.uid());
+ SELECT id INTO mid FROM public.group_members WHERE group_id=p.group_id AND user_id=auth.uid();
+ UPDATE public.team_onboarding_players SET member_id=mid,accepted_by=auth.uid(),associated_account_id=auth.uid(),accepted_at=now() WHERE id=p.id;
+ RETURN jsonb_build_object('groupId',p.group_id);
+END; $$;
+CREATE FUNCTION public.revoke_team_onboarding_invitation(p_group uuid,p_player uuid) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+BEGIN
+ IF auth.uid() IS NULL OR NOT public.can_admin_group(p_group) THEN RAISE EXCEPTION 'Team manager access required' USING ERRCODE='42501'; END IF;
+ UPDATE public.team_onboarding_players SET revoked_at=now() WHERE id=p_player AND group_id=p_group AND accepted_by IS NULL;
+
+ RETURN jsonb_build_object('ok',true);
+END; $$;
+REVOKE ALL ON FUNCTION public.save_team_onboarding(uuid,jsonb,jsonb),public.read_team_onboarding(uuid),public.view_team_onboarding_invitation(text),public.accept_team_onboarding_invitation(text),public.revoke_team_onboarding_invitation(uuid,uuid) FROM public,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.save_team_onboarding(uuid,jsonb,jsonb),public.read_team_onboarding(uuid),public.accept_team_onboarding_invitation(text),public.revoke_team_onboarding_invitation(uuid,uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.view_team_onboarding_invitation(text) TO anon,authenticated;
+CREATE FUNCTION public.renew_team_onboarding_invitation(p_group uuid,p_player uuid) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+BEGIN
+ IF auth.uid() IS NULL OR NOT public.can_admin_group(p_group) THEN RAISE EXCEPTION 'Team manager access required' USING ERRCODE='42501'; END IF;
+ PERFORM 1 FROM public.groups WHERE id=p_group FOR UPDATE;
+ UPDATE public.team_onboarding_players SET token=replace(gen_random_uuid()::text||gen_random_uuid()::text,'-',''),token_created_at=now(),expires_at=now()+interval '30 days',revoked_at=NULL,sent_at=NULL
+ WHERE id=p_player AND group_id=p_group AND accepted_at IS NULL AND removed_at IS NULL;
+ IF NOT FOUND THEN RAISE EXCEPTION 'Invitation cannot be renewed'; END IF;
+ RETURN jsonb_build_object('ok',true);
+END; $$;
+REVOKE ALL ON FUNCTION public.renew_team_onboarding_invitation(uuid,uuid) FROM public,anon;
+GRANT EXECUTE ON FUNCTION public.renew_team_onboarding_invitation(uuid,uuid) TO authenticated;
+CREATE FUNCTION public.list_team_onboarding_invitations() RETURNS jsonb
+LANGUAGE sql SECURITY DEFINER SET search_path=public AS $$
+ SELECT coalesce(jsonb_agg(public.view_team_onboarding_invitation(token)||jsonb_build_object('token',token)), '[]'::jsonb)
+ FROM public.team_onboarding_players WHERE auth.uid() IS NOT NULL AND associated_account_id=auth.uid() AND accepted_by IS NULL AND sent_at IS NOT NULL AND revoked_at IS NULL AND expires_at>now();
+$$;
+REVOKE ALL ON FUNCTION public.list_team_onboarding_invitations() FROM public,anon;
+GRANT EXECUTE ON FUNCTION public.list_team_onboarding_invitations() TO authenticated;
+COMMIT;
 
 -- =====================================================================
 -- Private Friend Groups and group chat capacity (20261121192916)

@@ -1,0 +1,60 @@
+# Set up TennisFriends SMS invitations
+
+## Check your Twilio account
+
+1. Open the [Twilio Console](https://console.twilio.com/) and select the intended account. Check for a **Trial** banner or **Upgrade** prompt.
+2. In the legacy Console, open **Phone Numbers → Manage → Active numbers**. Open a number and check its **SMS** capability. If the new Console uses **Numbers & Senders**, inspect its phone-number inventory. A verified personal phone or a Verify service is not an invitation sender.
+3. If using a Messaging Service, check its sender pool contains an SMS-capable number. A Messaging Service SID starts with `MG`; an Account SID starts with `AC`.
+
+Current trials offer verified-recipient tests with predefined message content. A Console trial test does not prove custom invitation messages are enabled; see [Twilio's current SMS trial guide](https://www.twilio.com/docs/usage/trials/try-out-sms). Older accounts can have a different trial experience. Check the account's actual restrictions before upgrading or acquiring a sender.
+
+For US messaging, follow the sender's registration instructions in Twilio: [A2P 10DLC](https://www.twilio.com/docs/messaging/compliance/a2p-10dlc) for local numbers or [toll-free verification](https://www.twilio.com/docs/messaging/compliance/toll-free/console-onboarding) for toll-free numbers. A purchased SMS-capable number alone does not establish registration approval. Complete the applicable setup before testing custom invitations.
+
+## Verbal consent and registration proof
+
+For the personal-project pilot, captains ask each player in person or by phone before sending. The captain reads the complete script at `/sms-consent`, receives an explicit yes, confirms the receiving number, and keeps a private dated record. The consent checkbox confirms this process; the app does not automatically record the verbal conversation or store the captain's separate notes. One invitation is authorized per request, and an additional invitation needs permission.
+
+The Twilio registration screen accepts the full verbal script directly in **Opt-in method proof**, or a public link. A hosted script is optional for that field. The separate Privacy Policy and Terms of Service fields still require live public pages. The `/terms`, `/sms-consent`, and SMS updates to `/privacy` were approved and published separately through PR #33 on November 18, 2026. All three canonical production URLs were verified anonymously at mobile and desktop widths, including with JavaScript disabled. Use `https://mytennisfriends.com/privacy` and `https://mytennisfriends.com/terms` in the campaign fields. The remaining PR #32 onboarding and SMS changes are still unmerged.
+
+## Configured pilot — November 18, 2026
+
+The Account SID and Auth Token were imported into the gitignored, mode-0600 local `.env.development.local` and Vercel Production sensitive variables without printing or committing their values. `TWILIO_MESSAGING_SERVICE_SID` and `ONBOARDING_SMS_PUBLIC_ORIGIN=https://mytennisfriends.com` are also set in both environments. Read-only Twilio API calls authenticated successfully and confirmed the intended **TennisFriends Invitations** service. Its existing SMS-capable number ending **5267** is attached to the sender pool. The temporary credential-entry file was removed after import.
+
+Production variables apply on the next deployment; saving them did not deploy the PR #32 application. Preview credentials were not configured. The campaign's actual status is **IN_PROGRESS** for **SOLE_PROPRIETOR**, so no SMS was sent. A service-level registration flag alone must not be treated as campaign approval.
+
+Advanced Opt-Out is enabled for the Messaging Service, with these saved settings verified again after navigation:
+
+| Action | Keywords | Response |
+| --- | --- | --- |
+| Opt out | STOP, STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT, REVOKE, OPTOUT | TennisFriends: You have opted out and will receive no further messages from this service. Reply START to resume. For help: tennisfriends123@gmail.com. |
+| Opt back in | START, UNSTOP, YES | TennisFriends: You have opted back in to invitation texts. Msg & data rates may apply. Reply HELP for help or STOP to opt out. |
+| Help | HELP, INFO | TennisFriends team invitations. For help, email tennisfriends123@gmail.com. Msg & data rates may apply. Reply STOP to opt out. |
+
+Inbound messages use **Receive the message**, without a service webhook, instead of deferring to the number's old Twilio demo SMS webhook. Messages remain available in Twilio logs/API; configured keywords are handled by Advanced Opt-Out. Voice settings were preserved. See [Twilio Advanced Opt-Out](https://www.twilio.com/docs/messaging/tutorials/advanced-opt-out) for service-wide behavior and the support requirement for disabling the feature.
+
+Configuration checks do not prove handset delivery or actual keyword responses. After campaign approval, use a consenting test recipient to verify HELP, STOP suppression, and START resubscription, then separately obtain invitation consent and run the receipt → sign-in → acceptance → reopen test below. Do not use START as a substitute for permission to send a new invitation. The public terms describe the intended program, not proof that sending is already enabled.
+
+## Connect the local app
+
+Copy the real account's Account SID and Auth Token from Twilio into the gitignored `.env.development.local` file. Use live account credentials, not Twilio test credentials. Never paste tokens into chat or commit them. Set one sender option:
+
+```dotenv
+TWILIO_ACCOUNT_SID=AC_REPLACE_WITH_ACCOUNT_SID
+TWILIO_AUTH_TOKEN=REPLACE_WITH_AUTH_TOKEN
+TWILIO_FROM_NUMBER=+1_REPLACE_WITH_TWILIO_SENDER
+# Or use a Messaging Service instead of TWILIO_FROM_NUMBER:
+# TWILIO_MESSAGING_SERVICE_SID=MG_REPLACE_WITH_SERVICE_SID
+ONBOARDING_SMS_PUBLIC_ORIGIN=https://mytennisfriends.com
+```
+
+The SMS origin makes the phone's personal invitation link open the public app, while the captain can keep using localhost. It must serve `/team-invitations/:token` and use the same database; the current TennisFriends production app supports that route. Other environments should use their own compatible deployment. This setting does not change local email or shared-link origins.
+
+Restart the local dev server after changing environment settings, then reload **Invite players**. The setup note should disappear. Readiness checks confirm credential shape and a public HTTPS link address; they do not verify the Twilio account, sender registration, balance, or carrier delivery. Configure Preview/Production environment variables separately and redeploy when those environments are ready to send.
+
+## Test one invitation
+
+Use a test team and one consenting recipient. Confirm permission in the SMS form, optionally include clearly labeled test USTA instructions, and send once. Re-entering an existing unsent phone number reuses that draft. Issued invitations stay in **Pending invitations**; use their existing controls instead of creating another entry.
+
+If an invitation expires before issuance, use **Renew expired invitation** in Pending invitations. This retains its player/roster entry and registration history, creates a fresh personal credential, and sends nothing until you explicitly send the SMS/email. Unresolved delivery must be reconciled before renewing. The recovery safeguards require follow-up migration `20261119031146_recheck_team_managers_and_recover_expired_drafts.sql`, which is prepared in PR #32 and not yet installed in production.
+
+Check Twilio Messaging logs for the provider status. Provider acceptance is not handset delivery. Have the recipient confirm receipt, open the link, sign in to the intended account, accept, then reopen and verify exactly one team membership. If the app reports an uncertain/pending send, reconcile it in Twilio before retrying. This revision does not enable automatic SMS USTA reminders.

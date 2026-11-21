@@ -65,3 +65,45 @@ describe("searchFacilitiesByName", () => {
     expect(hits.some((f) => f.name.toLowerCase().includes("amy yee"))).toBe(true);
   });
 });
+
+// The token-overlap tier exists for team_matches.location values imported
+// from USTA/tennisrecord, whose venue spellings are reordered or variant
+// relative to the catalog ("Tukwila Sports Center - Gorin" vs catalog
+// "Gorin Sports Tukwila"). These are real strings from the production
+// schedule — keep them verbatim.
+describe("resolveFacilityByName token-overlap tier", () => {
+  it("matches reordered venue names", () => {
+    expect(resolveFacilityByName("Tukwila Sports Center - Gorin")?.name).toBe(
+      "Gorin Sports Tukwila"
+    );
+    expect(resolveFacilityByName("Bellevue Tennis Academy-Gorin")?.name).toBe(
+      "Gorin Sports Bellevue"
+    );
+  });
+
+  it("matches near-synonym club names", () => {
+    expect(resolveFacilityByName("Forest Crest Athletic Club")?.name).toBe(
+      "Forest Crest Tennis Club"
+    );
+    expect(resolveFacilityByName("Boeing Tennis Club")?.name).toBe(
+      "Boeing Employees Tennis Club"
+    );
+  });
+
+  it("punctuation variants hit the exact tier after normalization", () => {
+    expect(resolveFacilityByName("Columbia Athletic Club - Silver Lake")?.name).toBe(
+      "Columbia Athletic Club (Silver lake)"
+    );
+  });
+
+  it("resolves the Harbor Square league venue", () => {
+    const f = resolveFacilityByName("Harbor Square Athletic Club");
+    expect(f?.name).toBe("Harbor Square Athletic Club");
+    expect(f?.address).toContain("Edmonds");
+  });
+
+  it("does not cross-match on a single shared word", () => {
+    // "club" + nothing else meaningful must not resolve.
+    expect(resolveFacilityByName("Chess Club Downtown")).toBeNull();
+  });
+});

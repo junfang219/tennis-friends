@@ -560,11 +560,7 @@ export default function CourtDetailPage() {
               the public "Temporarily closed" chip above already conveys
               status to users. */}
 
-          {/* Primary CTA: booking.
-              Per-venue `bookingLinks` (e.g. Aubrey Davis Park, where each
-              court has its own PerfectMind URL) renders as a row of buttons
-              and replaces the single "Book this court". Otherwise: single
-              button + optional Seattle Parks availability dashboard. */}
+          {/* Some venues, such as Aubrey Davis Park, have one link per court. */}
           {!isClosed && court.bookingLinks && court.bookingLinks.length > 0 && (
             <div className="mb-5 flex flex-col sm:flex-row flex-wrap gap-2">
               {court.bookingLinks.map((link) => (
@@ -593,7 +589,8 @@ export default function CourtDetailPage() {
               ))}
             </div>
           )}
-          {!isClosed && !court.bookingLinks && court.bookingUrl && (
+          {/* Venues with a live time picker book from the grid below. */}
+          {!isClosed && court.activeNetCenterId == null && !court.bookingLinks && court.bookingUrl && (
             <div className="mb-5 flex flex-col sm:flex-row gap-2">
               <a
                 href={court.bookingUrl}
@@ -603,6 +600,7 @@ export default function CourtDetailPage() {
               >
                 {court.bookingLabel ?? "Book this court"}
                 <svg
+                  aria-hidden="true"
                   width="14"
                   height="14"
                   viewBox="0 0 24 24"
@@ -640,6 +638,7 @@ export default function CourtDetailPage() {
               <AvailabilityGrid
                 centerId={court.activeNetCenterId}
                 venueName={court.name}
+                facilityId={court.courtId}
                 bookingUrl={court.bookingUrl}
                 liveViewUrl={court.liveAvailabilityUrl}
                 courtFilter={court.availabilityCourtFilter}
@@ -950,6 +949,7 @@ export default function CourtDetailPage() {
           </div>
         </div>
       )}
+
     </div>
   );
 }

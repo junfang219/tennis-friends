@@ -1,6 +1,17 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import type { Database } from "./lib/database.types";
+import { reviewRosterState, reviewTeamApi, reviewTeamPath } from "./lib/onboarding/review-fixture";
+
+const reviewFlows = new Map([
+  ["/groups/new", "create"],
+  [reviewTeamPath, "team"],
+  [`${reviewTeamPath}/settings`, "settings"],
+  [`${reviewTeamPath}/roster`, "roster"],
+  [`${reviewTeamPath}/invite-players`, "invite"],
+  [`${reviewTeamPath}/registration`, "registration"],
+  [`${reviewTeamPath}/setup-details`, "details"],
+]);
 
 // Supabase-only session refresh middleware.
 //
@@ -30,6 +41,35 @@ const REFRESH_THRESHOLD_SECONDS = 120;
 
 export async function middleware(req: NextRequest) {
   const response = NextResponse.next({ request: req });
+
+  if (process.env.NODE_ENV === "development" && process.env.TEAM_ONBOARDING_REVIEW === "1") {
+    // The review server only serves the isolated flow. Prevent navigation to
+    // live-backed pages and API routes while reviewing with production env files.
+    // Canonical URLs exercise production component navigation with isolated fixtures.
+    const path = req.nextUrl.pathname;
+    const flow = reviewFlows.get(path);
+    if (flow) {
+      const url = req.nextUrl.clone();
+      url.pathname = "/onboarding-preview";
+      url.search = "";
+      url.searchParams.set("flow", flow);
+      if (req.nextUrl.searchParams.get("setup") === "1") url.searchParams.set("setup", "1");
+      if (flow === "invite" && req.nextUrl.searchParams.get("from") === "settings") url.searchParams.set("from", "settings");
+      if (flow === "settings" && req.nextUrl.searchParams.get("tab") === "roster") url.searchParams.set("tab", "roster");
+      return NextResponse.rewrite(url);
+    }
+    if (req.method === "GET") {
+      if (path === reviewTeamApi) return NextResponse.json(reviewRosterState);
+      if (path === `${reviewTeamApi}/shared-link`) return NextResponse.json({ token: null, enabled: false, requests: [] });
+    }
+    if (path.startsWith("/api/")) {
+      return NextResponse.json({ error: "This action is unavailable in the local onboarding preview." }, { status: 404 });
+    }
+    if (path !== "/onboarding-preview") {
+      return new NextResponse("This review server only serves /onboarding-preview.", { status: 404 });
+    }
+    return response;
+  }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;

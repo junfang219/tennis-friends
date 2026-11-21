@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 // Public, auth-free page. The URL (https://mytennisfriends.com/privacy) is
 // listed in App Store Connect → TestFlight → Test Information as the Privacy
@@ -11,7 +12,7 @@ export const metadata: Metadata = {
     "How TennisFriends collects, uses, and protects your information.",
 };
 
-const LAST_UPDATED = "June 7, 2026";
+const LAST_UPDATED = "November 18, 2026";
 const CONTACT_EMAIL = "tennisfriends123@gmail.com";
 
 function Section({
@@ -34,13 +35,13 @@ function Section({
 export default function PrivacyPolicyPage() {
   return (
     <div className="mx-auto max-w-2xl px-5 py-12">
-      <p className="text-sm font-semibold uppercase tracking-wide text-court-green-soft">
+      <p className="text-sm font-semibold uppercase tracking-wide text-court-green-light">
         TennisFriends
       </p>
       <h1 className="mt-2 font-display text-4xl text-court-green">
         Privacy Policy
       </h1>
-      <p className="mt-3 text-sm text-gray-500">Last updated {LAST_UPDATED}</p>
+      <p className="mt-3 text-sm text-gray-600">Last updated {LAST_UPDATED}</p>
 
       <p className="mt-6 text-[15px] leading-relaxed text-gray-700">
         TennisFriends (&ldquo;the app,&rdquo; &ldquo;we,&rdquo; &ldquo;us&rdquo;)
@@ -65,6 +66,11 @@ export default function PrivacyPolicyPage() {
             such as your NTRP rating, playing style, preferred surface, general
             location (ZIP code), availability, age range, bio, and a profile
             photo.
+          </li>
+          <li>
+            <strong>Team invitations.</strong> A team captain may provide your
+            name, email address, or phone number to invite you to a team. For an
+            SMS invitation, the captain must obtain your permission first.
           </li>
           <li>
             <strong>Content you create.</strong> Posts, match results, sessions
@@ -149,6 +155,37 @@ export default function PrivacyPolicyPage() {
             required by law or to protect the rights and safety of our users.
           </li>
         </ul>
+      </Section>
+
+      <Section title="SMS invitations and consent">
+        <p>
+          TennisFriends uses receiving phone numbers, invitation content, the
+          captain&apos;s consent confirmation, and delivery records to send
+          personal team invitations, manage their status, prevent duplicate
+          sends, and address delivery or support issues. Invitations may include
+          optional USTA registration instructions.
+        </p>
+        <p>
+          Captains obtain verbal permission before sending and keep their own
+          dated consent records. We use Twilio and mobile carriers to deliver
+          messages and process messaging requests such as opt-outs. These
+          providers process the information needed to operate messaging.
+        </p>
+        <p>
+          We do not sell or share your SMS opt-in data or personal information
+          with third parties for marketing purposes.
+        </p>
+        <p>
+          Receiving an SMS invitation is optional. Reply STOP to opt out, or
+          contact your captain to request an email invitation or shared link.
+          Reply HELP for help, or email {CONTACT_EMAIL}. Message and data rates
+          may apply. If you were invited without creating an account, you may
+          contact us to request removal of your invitation information.
+        </p>
+        <p>
+          Read our <Link href="/terms" className="font-medium text-court-green underline">Terms of Service</Link>{" "}
+          and <Link href="/sms-consent" className="font-medium text-court-green underline">verbal consent process</Link>.
+        </p>
       </Section>
 
       <Section title="Data retention">

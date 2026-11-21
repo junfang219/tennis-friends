@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import "leaflet/dist/leaflet.css";
 import {
@@ -10,6 +9,7 @@ import {
 } from "@/components/courts/CourtSummaryCard";
 import { AddMissingCourtModal } from "@/components/courts/AddMissingCourtModal";
 import AvailabilityFinder from "@/components/courts/AvailabilityFinder";
+import { CourtsSectionNav } from "@/components/courts/CourtsSectionNav";
 import {
   filterFacilitiesByBbox,
   getFacilityByCourtId,
@@ -964,9 +964,10 @@ export default function CourtsPage() {
       : null;
 
   return (
-    <div className="relative w-full" style={{ height: isNative ? "calc(100vh - 64px - 5rem)" : "calc(100vh - 64px)" }}>
+    <div className="relative flex w-full flex-col" style={{ height: isNative ? "calc(100vh - 64px - 5rem)" : "calc(100vh - 64px)" }}>
+      <CourtsSectionNav active="/courts" />
       {/* Split layout: side panel (left) + map (right) */}
-      <div className="flex h-full">
+      <div className="flex min-h-0 flex-1">
         {/* ── SEATTLE PARKS SIDE PANEL (LEFT) ── */}
         <aside
           className={`flex-shrink-0 h-full bg-white border-r border-court-green-pale/20 flex flex-col transition-all duration-300 ${
@@ -1053,21 +1054,6 @@ export default function CourtsPage() {
               mapView={mapView}
               onMatchesChange={setAvailMatchIds}
             />
-          )}
-
-          {/* My court alerts — quick access to manage availability subscriptions. */}
-          {mapReady && (
-            <Link
-              href="/courts/alerts"
-              aria-label="My court alerts"
-              title="My court alerts"
-              className="absolute top-16 right-4 z-[460] w-10 h-10 rounded-full bg-white shadow-md border border-court-green-pale/30 flex items-center justify-center text-court-green hover:bg-court-green-soft/10"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 01-3.46 0" />
-              </svg>
-            </Link>
           )}
 
           {/* Map search — debounced Nominatim geocoder. Typing pans the map

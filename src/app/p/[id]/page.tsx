@@ -1,15 +1,20 @@
 import { notFound, redirect } from "next/navigation";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { z } from "zod";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getPost } from "@/lib/supabase/queries/posts";
+import { toPostCamel } from "@/lib/supabase/adapters";
 import { publicSiteUrl } from "@/lib/siteUrl";
 import { GuestRsvpForm } from "@/components/GuestRsvpForm";
+import PostCard from "@/components/PostCard";
 
 // Public OG / canonical URL base.
 const SITE_URL = publicSiteUrl();
 
 type Params = { id: string };
+const PostId = z.uuid();
 
 type PublicAuthor = { id: string; name: string | null; profile_image_url: string | null };
 
@@ -29,10 +34,10 @@ type PublicLfpPost = {
   author: PublicAuthor | null;
 };
 
-async function fetchLfpPost(id: string): Promise<PublicLfpPost | null> {
-  // UUIDs identify a post unguessably, so URL = capability. We use the admin
-  // client to bypass RLS for this read-only public view, then gate on
-  // post_type so only "find_players" posts are ever rendered here.
+async function fetchPublicLfpPost(id: string): Promise<PublicLfpPost | null> {
+  if (!PostId.safeParse(id).success) return null;
+  // This share preview and its metadata bypass RLS, so explicitly allow
+  // only Find players posts eligible for the existing guest-link experience.
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("posts")
@@ -41,6 +46,7 @@ async function fetchLfpPost(id: string): Promise<PublicLfpPost | null> {
     )
     .eq("id", id)
     .eq("post_type", "find_players")
+    .eq("visibility", "friends")
     .maybeSingle();
   if (error || !data) return null;
   const row = data as unknown as PublicLfpPost;
@@ -110,7 +116,7 @@ export async function generateMetadata({
   params: Promise<Params>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const post = await fetchLfpPost(id);
+  const post = await fetchPublicLfpPost(id);
   const canonicalUrl = `${SITE_URL}/p/${id}`;
 
   if (!post) {
@@ -149,16 +155,44 @@ export default async function PublicPostPage({
   params: Promise<Params>;
 }) {
   const { id } = await params;
+  if (!PostId.safeParse(id).success) notFound();
 
-  // Signed-in users get the full in-app experience (post modal in the feed)
-  // instead of the stripped public preview.
   const userClient = await createSupabaseServerClient();
   const {
     data: { user },
   } = await userClient.auth.getUser();
-  if (user) redirect(`/?post=${id}`);
+  if (user) {
+    const { data: booking } = await userClient
+      .from("court_bookings")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("session_post_id", id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-  const post = await fetchLfpPost(id);
+    if (booking) {
+      const linkedPost = await getPost(userClient, id);
+      if (linkedPost?.author_id === user.id && linkedPost.post_type === "find_players") {
+        return (
+          <div className="mx-auto max-w-lg px-4 py-6">
+            <Link
+              href={`/bookings?booking=${encodeURIComponent(booking.id)}`}
+              className="btn-secondary mb-4 inline-flex min-h-11 items-center px-4 text-sm"
+            >
+              View saved booking
+            </Link>
+            <PostCard post={toPostCamel(linkedPost)} initialExpanded />
+          </div>
+        );
+      }
+    }
+
+    // Preserve the in-app feed destination for other signed-in post links.
+    redirect(`/?post=${id}`);
+  }
+
+  const post = await fetchPublicLfpPost(id);
   if (!post) notFound();
 
   const headline = buildHeadline(post);

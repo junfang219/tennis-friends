@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  distDir: process.env.TEAM_ONBOARDING_REVIEW === "1" ? ".next-onboarding-review" : ".next",
   eslint: { ignoreDuringBuilds: true },
   // Hide the floating Next.js dev-tools badge (the black "N" pill that
   // mounts bottom-left in `next dev`). On the iPhone WebView it overlaps

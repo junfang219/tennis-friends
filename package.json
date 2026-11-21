@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "dev:onboarding": "TEAM_ONBOARDING_REVIEW=1 NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED=true WATCHPACK_POLLING=true NEXT_PUBLIC_SENTRY_DSN= SENTRY_DSN= next dev --turbopack --hostname 127.0.0.1 --port 3105",
     "dev:clean": "lsof -ti:3000 | xargs kill -9 2>/dev/null ; rm -rf .next && next dev --turbopack",
     "build": "next build",
     "start": "next start",
@@ -18,7 +19,9 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:onboarding": "playwright test --config=playwright.onboarding.config.ts",
+    "dev:onboarding-live": "WATCHPACK_POLLING=true NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED=true TEAM_ONBOARDING_REVIEW=0 ONBOARDING_PUBLIC_ORIGIN=http://127.0.0.1:3110 NEXT_PUBLIC_SENTRY_DSN= SENTRY_DSN= next dev --hostname 127.0.0.1 --port 3110"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.0",
@@ -32,8 +35,8 @@
     "@capacitor/share": "^8.0.1",
     "@capgo/capacitor-social-login": "^8.3.22",
     "@sentry/nextjs": "^10.53.1",
-    "@supabase/ssr": "^0.10.3",
-    "@supabase/supabase-js": "^2.106.1",
+    "@supabase/ssr": "0.10.3",
+    "@supabase/supabase-js": "2.119.0",
     "@types/leaflet": "^1.9.21",
     "autoprefixer": "^10.4.27",
     "leaflet": "^1.9.4",

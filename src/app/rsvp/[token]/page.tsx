@@ -283,6 +283,8 @@ export default function GuestRsvpPage() {
                 key={`m-${ev.id}`}
                 ev={ev}
                 groupName={group.name}
+                teamId={group.id}
+                guestToken={token}
                 accountHref={accountHref}
                 signedIn={!!viewer}
                 save={saveState[evKey(ev)]}
@@ -298,6 +300,8 @@ export default function GuestRsvpPage() {
                 key={`p-${ev.id}`}
                 ev={ev}
                 groupName={group.name}
+                teamId={group.id}
+                guestToken={token}
                 accountHref={accountHref}
                 signedIn={!!viewer}
                 save={saveState[evKey(ev)]}
@@ -427,6 +431,8 @@ function formatDate(date: string): string {
 
 function EventCard({
   ev,
+  guestToken,
+  teamId,
   groupName,
   accountHref,
   signedIn,
@@ -434,6 +440,8 @@ function EventCard({
   onSelect,
 }: {
   ev: GuestEvent;
+  guestToken: string;
+  teamId: string;
   groupName: string;
   accountHref: string;
   signedIn: boolean;
@@ -500,7 +508,7 @@ function EventCard({
         </div>
       </Link>
 
-      <CalendarExportButtons event={eventToExport(ev, groupName)} />
+      <CalendarExportButtons event={eventToExport(ev, groupName)} guestToken={guestToken} teamId={ev.event_kind === "match" ? teamId : undefined} />
     </div>
   );
 }

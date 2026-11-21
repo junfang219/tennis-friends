@@ -20,9 +20,11 @@ import { toGroupCamel, toGroupMemberCamel } from "@/lib/supabase/adapters";
 import { adaptFeedPost, type FeedPostView } from "@/lib/adaptFeedPost";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { errorMessage } from "@/lib/errorMessage";
+import { type TeamRole } from "@/lib/groupRoles";
 
 type Member = {
   id: string;
+  roles: TeamRole[];
   isPlaceholder: boolean; // account-less roster member — no profile to link to
   user: { id: string; name: string; profileImageUrl: string; skillLevel: string };
 };
@@ -73,6 +75,7 @@ export default function GroupPage() {
       const adaptedMembers = members.map((m) => ({
         id: m.id,
         isPlaceholder: m.isPlaceholder,
+        roles: m.roles,
         user: {
           id: m.user.id,
           name: m.user.name,
@@ -163,6 +166,7 @@ export default function GroupPage() {
           </div>
 
           <div className="px-6 pb-6 pt-3">
+
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <h1 className="font-display text-2xl font-bold text-gray-900">
@@ -206,12 +210,14 @@ export default function GroupPage() {
                   </div>
                 )}
               </div>
+              {process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" ? <Link href={`/groups/${group.id}/roster`} className="text-sm font-semibold text-court-green underline underline-offset-4">Roster</Link> : (
               <MembersButton
                 groupId={group.id}
                 ownerId={group.ownerId}
                 members={group.members}
                 currentUserId={session?.user?.id || ""}
               />
+              )}
             </div>
 
             {/* Team actions */}

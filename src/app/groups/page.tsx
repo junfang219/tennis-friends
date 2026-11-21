@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import TeamInvitationInbox from "@/components/groups/TeamInvitationInbox";
 import Avatar from "@/components/Avatar";
 import CommunitiesTabs from "@/components/CommunitiesTabs";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -41,7 +42,14 @@ export default function GroupsPage() {
   const router = useRouter();
   const [showArchived, setShowArchived] = useState(false);
   const [swipedKey, setSwipedKey] = useState<string | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
+  const [showCreate, setShowCreate] = useState<"casual" | "usta" | null>(null);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("setup") === "existing") {
+      // Explicit legacy import entry, preserved alongside the new wizard.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setShowCreate("usta");
+    }
+  }, []);
 
   const groupsQuery = useCachedQuery<GroupsBundle>("groups:my", async () => {
     const supabase = createSupabaseBrowserClient();
@@ -200,6 +208,7 @@ export default function GroupsPage() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <CommunitiesTabs />
+      {process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" && <TeamInvitationInbox />}
       <div className="animate-fade-in-up flex items-start justify-between mb-6 gap-3">
         <div className="min-w-0">
           <h1 className="font-display text-2xl font-bold text-court-green">
@@ -208,7 +217,7 @@ export default function GroupsPage() {
         </div>
         {!showCreate && (
           <button
-            onClick={() => setShowCreate(true)}
+            onClick={() => process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" ? router.push("/groups/new") : setShowCreate("casual")}
             className="btn-primary btn-sm shrink-0"
             aria-label="Create a new team"
           >
@@ -239,8 +248,9 @@ export default function GroupsPage() {
         {showCreate && (
           <CreateGroupForm
             friends={friends}
-            onCreated={() => { setShowCreate(false); void refetchGroups(); }}
-            onCancel={() => setShowCreate(false)}
+            initialTeamType={showCreate}
+            onCreated={() => { setShowCreate(null); void refetchGroups(); }}
+            onCancel={() => setShowCreate(null)}
           />
         )}
 
@@ -557,7 +567,7 @@ function SwipeTeamRow({
 
 /* ───────── Create Group Form ───────── */
 
-function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntry[]; onCreated: () => void; onCancel: () => void }) {
+function CreateGroupForm({ friends, initialTeamType, onCreated, onCancel }: { friends: FriendEntry[]; initialTeamType: "casual" | "usta"; onCreated: () => void; onCancel: () => void }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -570,7 +580,7 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
   // TennisRecord → confirm league settings (season). The team is created at
   // the end of step 1 either way, so "Finish later" is always safe.
   const [step, setStep] = useState<"basics" | "usta-import" | "usta-league">("basics");
-  const [teamType, setTeamType] = useState<"casual" | "usta">("casual");
+  const [teamType, setTeamType] = useState(initialTeamType);
   const [createdGroupId, setCreatedGroupId] = useState<string | null>(null);
   // Roster (owner + added friends) for FindUstaTeam's reconciliation step.
   const [wizardMembers, setWizardMembers] = useState<RosterMember[]>([]);
@@ -781,6 +791,7 @@ function CreateGroupForm({ friends, onCreated, onCancel }: { friends: FriendEntr
             <button
               key={opt.value}
               type="button"
+              aria-pressed={teamType === opt.value}
               onClick={() => setTeamType(opt.value)}
               className={`text-left px-3 py-2.5 rounded-xl border transition-all ${
                 teamType === opt.value
