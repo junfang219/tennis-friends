@@ -3,6 +3,8 @@ import { getContentModerator, reviewableMediaUrl } from "@/lib/moderation/server
 import { reportReasons, targetLabels } from "@/lib/moderation/contracts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import ReviewControls from "./ReviewControls";
+import { decideMediaUpload } from "./actions";
+import { isScreenedMediaBucket, managedMediaUrl } from "@/lib/supabase/storage";
 
 export const metadata = { title: "Moderation | TennisFriend", robots: { index: false, follow: false } };
 
@@ -10,17 +12,37 @@ export default async function ModerationPage() {
   if (!await getContentModerator()) notFound();
 
   const admin = createSupabaseAdminClient();
-  const [queue, cleanup] = await Promise.all([
+  const [queue, cleanup, uploads] = await Promise.all([
     admin.from("content_reports").select("id, target_type, reason, details, evidence_text, evidence_media, created_at")
       .is("decision", null).order("created_at").order("id").limit(50),
     admin.from("moderation_media_cleanup").select("report_id, created_at").order("created_at").limit(50),
+    admin.rpc("pending_media_uploads"),
   ]);
-  if (queue.error || cleanup.error) throw new Error("Couldn’t load the moderation queue.");
+  if (queue.error || cleanup.error || uploads.error) throw new Error("Couldn’t load the moderation queue.");
   const reports = queue.data;
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6">
       <h1 className="font-display text-2xl font-bold text-court-green">Moderation</h1>
+      {uploads.data.length > 0 && (
+        <section className="my-5" aria-labelledby="pending-upload-heading">
+          <h2 id="pending-upload-heading" className="font-semibold">Uploads awaiting screening</h2>
+          <ul className="mt-2 space-y-3">
+            {uploads.data.map(upload => isScreenedMediaBucket(upload.bucket) && (
+              <li key={upload.object_id} className="rounded-xl border border-gray-300 bg-white p-4">
+                <a href={managedMediaUrl(upload.bucket, upload.object_key) + "?review=1"} target="_blank" rel="noopener noreferrer" className="text-court-green underline">
+                  Review upload
+                </a>
+                <form action={decideMediaUpload} className="mt-3 flex flex-wrap gap-2">
+                  <input type="hidden" name="objectId" value={upload.object_id} />
+                  <button name="decision" value="approve" className="btn-primary min-h-11">Approve</button>
+                  <button name="decision" value="reject" className="btn-danger min-h-11">Reject</button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {cleanup.data.length > 0 && (
         <section className="mt-4" aria-labelledby="pending-attachments">
           <h2 id="pending-attachments" className="font-semibold text-gray-900">Pending attachment removal</h2>
@@ -52,7 +74,7 @@ export default async function ModerationPage() {
                   <ul className="mt-3 flex flex-wrap gap-3 text-sm">
                     {media.map((url, index) => (
                       <li key={url + index}>
-                        <a href={url} target="_blank" rel="noopener noreferrer" className="text-court-green underline">
+                        <a href={url + "?review=1"} target="_blank" rel="noopener noreferrer" className="text-court-green underline">
                           Open attachment {index + 1}
                         </a>
                       </li>

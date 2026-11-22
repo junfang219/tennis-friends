@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "eslint",
     "ios:dev": "CAP_ENV=development npx cap sync ios",
-    "ios:prod": "npx cap sync ios",
+    "ios:prod": "node scripts/sync-ios-release.mjs",
     "ios:ip": "node scripts/sync-ios-lan-ip.mjs",
     "geocode:facilities": "node scripts/geocode-facilities.mjs",
     "verify:availability": "node scripts/verify-availability.mjs",

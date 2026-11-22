@@ -5,8 +5,23 @@ import { reviewDecisionSchema } from "@/lib/moderation/contracts";
 import { getContentModerator } from "@/lib/moderation/server";
 import { cleanupModeratedMedia } from "@/lib/moderation/media";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { z } from "zod";
 
 export type ReviewState = { error: string; message: string };
+
+const uploadDecision = z.object({ objectId: z.uuid(), decision: z.enum(["approve", "reject"]) });
+
+export async function decideMediaUpload(form: FormData) {
+  if (!await getContentModerator()) return;
+  const parsed = uploadDecision.safeParse({ objectId: form.get("objectId"), decision: form.get("decision") });
+  if (!parsed.success) return;
+  const { error } = await createSupabaseAdminClient().rpc("decide_media_upload", {
+    p_id: parsed.data.objectId,
+    p_approved: parsed.data.decision === "approve",
+  });
+  if (error) throw new Error("Couldn’t save the media decision.");
+  revalidatePath("/moderation");
+}
 
 export async function decideContentReport(_previous: ReviewState, form: FormData): Promise<ReviewState> {
   const moderator = await getContentModerator();

@@ -1,7 +1,9 @@
 # Content moderation
 
 - Players can report posts and comments with the flag button, or open a direct,
-  group, or team chat message’s actions and choose **Report message**. They can
+  group, or team chat message’s actions and choose **Report message**. Players
+  can also report profiles, album titles and descriptions, individual album
+  attachments, and court reviews. They can
   block the account while reporting. In shared chats, blocked participants'
   messages and push alerts are hidden from each other. Their group membership
   and other members’ views are unaffected.
@@ -22,5 +24,21 @@
   Storage. If a Storage request fails, use **Retry attachment removal** in the
   queue. A player can report a changed item again after a dismissal.
 - The pre-publication database filter checks text in new or edited posts,
-  comments and messages. Staff review reports for context, images, and videos.
-  Apply the content moderation migration before deploying the app changes.
+  comments, messages, profiles, albums, and court reviews. New image and video
+  files stay visible to their uploader and staff until approved. Review
+  **Uploads awaiting screening** in the moderation queue. A rejection keeps
+  the file private to its uploader and staff.
+- The App Store safety migration moves existing managed media links to a
+  same-origin route and makes the underlying buckets private. Coordinate the
+  database and web release so older public links are replaced as the new route
+  becomes available. Existing uploaded media retains its publication status
+  and follows its parent row’s visibility after the migration.
+- For a fresh iOS release, run `npm run ios:prod` before archiving. The command
+  checks that the archive inputs include a packaged entry page and use the
+  production HTTPS URL.
+- Native Sign in with Apple can save an encrypted grant after sign-in for
+  deletion-time revocation. Set `APPLE_NATIVE_CLIENT_SECRET` to an Apple
+  client secret for `com.tennisfriend.app` and set
+  `APPLE_REVOCATION_ENCRYPTION_KEY` to a stable, base64-encoded 32-byte key on
+  the server. Accounts without a revocable grant can still delete and receive
+  instructions for removing Apple authorization in Settings.

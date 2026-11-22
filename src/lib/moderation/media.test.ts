@@ -33,16 +33,19 @@ it("removes only unreferenced, same-project objects under the reported author’
   const key = owner + "/1710-test.png";
   const owned = origin + prefix + key;
   const shared = origin + prefix + owner + "/1711-shared.mp4";
+  const managed = "/api/storage/media/posts/";
   const { admin, remove, rpc, fromBucket, finish } = fixture([
     owned,
     origin + "/storage/v1/render/image/public/posts/" + key + "?width=200",
     shared,
     origin + prefix + reportId + "/other-author.png",
-    origin + "/storage/v1/object/public/avatars/" + key,
+    origin + "/storage/v1/object/public/files/" + key,
     "https://elsewhere.example" + prefix + key,
-  ], [owned]);
+  ], [managed + key]);
   await cleanupModeratedMedia(admin, reportId);
-  expect(rpc).toHaveBeenCalledExactlyOnceWith("moderation_unreferenced_media", { p_urls: [owned, shared] });
+  expect(rpc).toHaveBeenCalledExactlyOnceWith("moderation_unreferenced_media", {
+    p_urls: [managed + key, managed + owner + "/1711-shared.mp4"],
+  });
   expect(fromBucket).toHaveBeenCalledWith("posts");
   expect(remove).toHaveBeenCalledExactlyOnceWith([key]);
   expect(finish).toHaveBeenCalledExactlyOnceWith("report_id", reportId);
@@ -51,7 +54,7 @@ it("removes only unreferenced, same-project objects under the reported author’
 it("keeps the cleanup job available if the storage request fails", async () => {
   vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", origin);
   const url = origin + prefix + owner + "/1710-test.png";
-  const { admin, remove, finish } = fixture([url], [url]);
+  const { admin, remove, finish } = fixture([url], ["/api/storage/media/posts/" + owner + "/1710-test.png"]);
   remove.mockResolvedValueOnce({ error: new Error("temporary storage failure") });
   await expect(cleanupModeratedMedia(admin, reportId)).rejects.toThrow("temporary storage failure");
   expect(finish).not.toHaveBeenCalled();

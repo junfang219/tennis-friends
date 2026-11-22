@@ -114,6 +114,10 @@ export default function PrivacyPolicyPage() {
           its attachments. Authorized moderators use this information to review
           the report and decide whether to remove the content.
         </p>
+        <p className="mt-3">
+          New photos and videos are held for screening before others can see them.
+          Private chat and restricted post attachments follow the same access rules as their messages or posts.
+        </p>
       </Section>
 
       <Section title="How we use your information">

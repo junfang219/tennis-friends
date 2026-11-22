@@ -14,6 +14,18 @@ export type Database = {
   }
   public: {
     Tables: {
+      apple_account_tokens: {
+        Row: { user_id: string; ciphertext: string };
+        Insert: { user_id: string; ciphertext: string };
+        Update: { user_id?: string; ciphertext?: string };
+        Relationships: [];
+      };
+      media_upload_reviews: {
+        Row: { object_id: string; approved: boolean; reviewed_at: string };
+        Insert: { object_id: string; approved: boolean; reviewed_at?: string };
+        Update: { object_id?: string; approved?: boolean; reviewed_at?: string };
+        Relationships: [];
+      };
       album_items: {
         Row: {
           added_by_id: string
@@ -3511,6 +3523,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      pending_media_uploads: {
+        Args: Record<string, never>;
+        Returns: { object_id: string; bucket: string; object_key: string; created_at: string }[];
+      };
+      decide_media_upload: {
+        Args: { p_id: string; p_approved: boolean };
+        Returns: boolean;
+      };
       record_content_report: {
         Args: {
           p_author_id: string

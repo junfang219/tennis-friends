@@ -59,7 +59,7 @@ async function ensureInitialized(): Promise<void> {
     // Enabling Apple here registers the native provider. iOS Sign in with Apple
     // is driven by the app's entitlement + bundle ID, so no clientId/redirect is
     // needed (those fields are only for web/Android).
-    apple: {},
+    apple: { useProperTokenExchange: true },
   });
   initialized = true;
 }
@@ -140,7 +140,7 @@ export async function signInWithAppleNative(
     options: { scopes: ["email", "name"], nonce: hashedNonce },
   });
 
-  const result = res?.result as { idToken?: string | null } | undefined;
+  const result = res.provider === "apple" ? res.result : undefined;
   const idToken = result?.idToken;
   if (!idToken) {
     throw new Error("Apple sign-in didn't return an ID token.");
@@ -152,6 +152,13 @@ export async function signInWithAppleNative(
     nonce: rawNonce,
   });
   if (error) throw error;
+  if (result?.authorizationCode) {
+    await fetch("/api/account/apple-authorization", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: result.authorizationCode }),
+    }).catch(() => undefined);
+  }
 }
 
 /**

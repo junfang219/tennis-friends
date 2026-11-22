@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-export const targetTypes = ["post", "comment", "direct_message", "chat_message", "team_message"] as const;
+export const targetTypes = [
+  "post", "comment", "direct_message", "chat_message", "team_message", "profile", "album", "album_item", "court_review",
+] as const;
 export type ReportTarget = (typeof targetTypes)[number];
 
 const reasonKeys = ["harassment", "hate", "threat", "sexual", "spam", "other"] as const;
@@ -19,6 +21,10 @@ export const targetLabels: Record<ReportTarget, string> = {
   direct_message: "direct message",
   chat_message: "group chat message",
   team_message: "team chat message",
+  profile: "profile",
+  album: "team album",
+  album_item: "album attachment",
+  court_review: "court review",
 };
 
 export const contentReportSchema = z.object({
