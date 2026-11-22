@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 
 export default function SupportPage() {
   return (
-    <main className="mx-auto max-w-2xl px-5 py-12">
+    <article className="mx-auto max-w-2xl px-5 py-12">
       <h1 className="font-display text-4xl text-court-green">TennisFriends Support</h1>
       <p className="mt-4 leading-relaxed text-gray-700">
         Email us for help with your account, courts, teams, or another app feature.
@@ -26,6 +26,6 @@ export default function SupportPage() {
       <Link href="/privacy" className="mt-8 inline-block text-court-green underline">
         Privacy Policy
       </Link>
-    </main>
+    </article>
   );
 }
