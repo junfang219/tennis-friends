@@ -476,9 +476,9 @@ export function toGroupMessageCamel(m: GroupMessage): GroupMessageCamel {
     pollId: m.poll_id,
     createdAt: pgToIso(m.created_at),
     sender: {
-      id: m.sender.id,
-      name: m.sender.name,
-      profileImageUrl: m.sender.profile_image_url,
+      id: m.sender_id,
+      name: m.sender?.name ?? "Player",
+      profileImageUrl: m.sender?.profile_image_url ?? "",
     },
   };
 }
@@ -597,9 +597,9 @@ export function toChatMessageCamel(m: ChatMessage): ChatMessageCamel {
     createdAt: pgToIso(m.created_at),
     expenseId: m.expense_id ?? null,
     sender: {
-      id: m.sender.id,
-      name: m.sender.name,
-      profileImageUrl: m.sender.profile_image_url,
+      id: m.sender_id,
+      name: m.sender?.name ?? "Player",
+      profileImageUrl: m.sender?.profile_image_url ?? "",
     },
   };
 }

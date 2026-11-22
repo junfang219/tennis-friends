@@ -569,4 +569,19 @@ describe("snake_case → camelCase adapters", () => {
       expect(Number.isNaN(new Date(v).getTime())).toBe(false);
     }
   });
+
+  it("shows shared-chat messages when the viewer cannot read the sender’s profile", () => {
+    const message = {
+      id: "message", sender_id: "sender", content: "hello", created_at: "2026-05-22T03:50:35Z",
+      media_url: "", media_type: "", shared_post_id: null, sender: null,
+    };
+    const group = toGroupMessageCamel({
+      ...message, group_id: "team", kind: "chat", notify_email: false, pinned_at: null, poll_id: null,
+    });
+    const chat = toChatMessageCamel({ ...message, chat_id: "chat", expense_id: null });
+    for (const entry of [group, chat]) {
+      expect(entry.content).toBe(message.content);
+      expect(entry.sender).toEqual({ id: "sender", name: "Player", profileImageUrl: "" });
+    }
+  });
 });

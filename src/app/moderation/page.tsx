@@ -9,17 +9,31 @@ export const metadata = { title: "Moderation | TennisFriend", robots: { index: f
 export default async function ModerationPage() {
   if (!await getContentModerator()) notFound();
 
-  const { data: reports, error } = await createSupabaseAdminClient().from("content_reports")
-    .select("id, target_type, reason, details, evidence_text, evidence_media, created_at")
-    .is("decision", null)
-    .order("created_at")
-    .order("id")
-    .limit(50);
-  if (error) throw new Error("Couldn’t load the moderation queue.");
+  const admin = createSupabaseAdminClient();
+  const [queue, cleanup] = await Promise.all([
+    admin.from("content_reports").select("id, target_type, reason, details, evidence_text, evidence_media, created_at")
+      .is("decision", null).order("created_at").order("id").limit(50),
+    admin.from("moderation_media_cleanup").select("report_id, created_at").order("created_at").limit(50),
+  ]);
+  if (queue.error || cleanup.error) throw new Error("Couldn’t load the moderation queue.");
+  const reports = queue.data;
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6">
       <h1 className="font-display text-2xl font-bold text-court-green">Moderation</h1>
+      {cleanup.data.length > 0 && (
+        <section className="mt-4" aria-labelledby="pending-attachments">
+          <h2 id="pending-attachments" className="font-semibold text-gray-900">Pending attachment removal</h2>
+          <ul className="mt-2 space-y-3">
+            {cleanup.data.map(({ report_id }) => (
+              <li key={report_id} className="rounded-xl border border-gray-300 bg-white p-4">
+                <p className="break-all text-sm text-gray-700">Report {report_id}</p>
+                <ReviewControls id={report_id} retryMedia />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {reports.length === 0 ? <p className="mt-4 text-gray-700">No reports awaiting review.</p> : (
         <ul className="mt-4 space-y-3">
           {reports.map((report) => {

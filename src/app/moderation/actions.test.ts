@@ -2,12 +2,13 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { decideContentReport } from "./actions";
 
 const mocked = vi.hoisted(() => ({
-  auth: vi.fn(), admin: vi.fn(), rpc: vi.fn(), revalidate: vi.fn(),
+  auth: vi.fn(), admin: vi.fn(), rpc: vi.fn(), cleanup: vi.fn(), revalidate: vi.fn(),
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: async () => ({ auth: { getUser: mocked.auth } }),
 }));
 vi.mock("@/lib/supabase/admin", () => ({ createSupabaseAdminClient: mocked.admin }));
+vi.mock("@/lib/moderation/media", () => ({ cleanupModeratedMedia: mocked.cleanup }));
 vi.mock("next/cache", () => ({ revalidatePath: mocked.revalidate }));
 
 const staffId = "11111111-1111-4111-8111-111111111111";
@@ -42,4 +43,19 @@ it("validates decisions and uses the authenticated staff ID for the removal", as
     p_report_id: reportId, p_reviewer_id: staffId, p_decision: "removed",
   });
   expect(mocked.revalidate).toHaveBeenCalledWith("/moderation");
+  expect(mocked.cleanup).toHaveBeenCalledWith({ rpc: mocked.rpc }, reportId);
+});
+
+it("surfaces a partial removal, then retries just the attachment cleanup", async () => {
+  mocked.cleanup.mockRejectedValueOnce(new Error("temporary storage failure"));
+  expect((await review("removed")).error).toMatch(/attachment removal is pending/i);
+  expect(await review("retry_media")).toEqual({ error: "", message: "Attachments removed." });
+  expect(mocked.rpc).toHaveBeenCalledTimes(1);
+  expect(mocked.cleanup).toHaveBeenCalledTimes(2);
+  expect(mocked.revalidate).toHaveBeenCalledTimes(2);
+});
+
+it("preserves attachments when a report is dismissed", async () => {
+  expect((await review("dismissed")).error).toBe("");
+  expect(mocked.cleanup).not.toHaveBeenCalled();
 });

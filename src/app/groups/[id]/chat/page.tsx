@@ -8,7 +8,7 @@ import Avatar from "@/components/Avatar";
 import EmojiPicker from "@/components/EmojiPicker";
 import SharedPostCard, { type SharedPost } from "@/components/SharedPostCard";
 import MessageReactionBar from "@/components/MessageReactionBar";
-import { ReportContentButton } from "@/components/ReportContent";
+import { ReportContentDialog, ReportFlag } from "@/components/ReportContent";
 import MessageReactions, { type MessageReaction as MsgReaction } from "@/components/MessageReactions";
 import { useLongPress } from "@/hooks/useLongPress";
 import type { ReactionKey } from "@/lib/reactions";
@@ -84,6 +84,7 @@ export default function GroupChatPage() {
   const router = useRouter();
   const { data: session } = useSession();
   const [messages, setMessages] = useState<Message[]>([]);
+  const blockedSenders = useRef(new Set<string>());
   const [groupInfo, setGroupInfo] = useState<GroupInfo | null>(null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -93,6 +94,7 @@ export default function GroupChatPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [reactionPopover, setReactionPopover] = useState<{ msgId: string; rect: DOMRect } | null>(null);
+  const [reportedAnnouncement, setReportedAnnouncement] = useState<string | null>(null);
   // Announcement composer state — CAPTAIN+ can toggle this on per message.
   const [announcementMode, setAnnouncementMode] = useState(false);
   const [announcementEmail, setAnnouncementEmail] = useState(true);
@@ -258,7 +260,7 @@ export default function GroupChatPage() {
           reactionsByMsg.set(r.target_id, arr);
         }
         setMessages(
-          rows.map((m) => ({
+          rows.filter((m) => !blockedSenders.current.has(m.sender_id)).map((m) => ({
             ...toGroupMessageCamel(m),
             reactions: reactionsByMsg.get(m.id) ?? [],
             poll: m.poll_id ? pollMap.get(m.poll_id) ?? null : null,
@@ -267,6 +269,11 @@ export default function GroupChatPage() {
         );
       })
       .catch(() => {});
+  };
+
+  const hideBlockedSender = (authorId: string) => {
+    blockedSenders.current.add(authorId);
+    setMessages((previous) => previous.filter((message) => message.senderId !== authorId));
   };
 
   // Mark the team chat read whenever we open it or poll for new messages.
@@ -662,7 +669,16 @@ export default function GroupChatPage() {
                         )}
                         <span className="text-[10px] text-gray-400 ml-auto">{formatTime(msg.createdAt)}</span>
                         {myId && !isMe && (
-                          <ReportContentButton targetType="team_message" targetId={msg.id} label="Report announcement" />
+                          <button
+                            type="button"
+                            aria-label="Report announcement"
+                            aria-haspopup="dialog"
+                            title="Report announcement"
+                            className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 focus-visible:outline focus-visible:outline-court-green"
+                            onClick={() => setReportedAnnouncement(msg.id)}
+                          >
+                            <ReportFlag />
+                          </button>
                         )}
                       </div>
                       <div className="flex items-start gap-2">
@@ -997,7 +1013,15 @@ export default function GroupChatPage() {
         }}
         onClose={() => setReactionPopover(null)}
         reportTarget={myId && popoverMsg && popoverMsg.senderId !== myId ? { targetType: "team_message", targetId: popoverMsg.id } : undefined}
+        onAccountBlocked={hideBlockedSender}
       />
+      {reportedAnnouncement && (
+        <ReportContentDialog
+          target={{ targetType: "team_message", targetId: reportedAnnouncement }}
+          onClose={() => setReportedAnnouncement(null)}
+          onAccountBlocked={hideBlockedSender}
+        />
+      )}
     </div>
   );
 }

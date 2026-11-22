@@ -30,7 +30,7 @@ export interface ChatMessage {
   // Set when this message is a "Split a cost" expense announcement — the FK
   // links it to the expenses row, and powers the tap-to-open-balances chip.
   expense_id: string | null;
-  sender: { id: string; name: string; profile_image_url: string };
+  sender: { id: string; name: string; profile_image_url: string } | null;
 }
 
 export interface ChatParticipant {
@@ -172,7 +172,7 @@ export async function listMyChatThreads(
     sender_id: string;
     content: string;
     created_at: string;
-    sender: { id: string; name: string };
+    sender: { id: string; name: string } | null;
   };
   const byChat = new Map<string, MsgRow[]>();
   for (const m of (msgsRes.data ?? []) as unknown as MsgRow[]) {
@@ -206,7 +206,7 @@ export async function listMyChatThreads(
         ? {
             id: last.id,
             sender_id: last.sender_id,
-            sender_name: last.sender.name,
+            sender_name: last.sender?.name ?? "Player",
             content: last.content,
             created_at: last.created_at,
           }

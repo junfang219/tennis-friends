@@ -54,7 +54,7 @@ export async function POST(request: Request) {
       p_target_id: targetId,
       p_reason: reason,
       p_details: details,
-      p_evidence_text: evidence.content.slice(0, 4000),
+      p_evidence_text: evidence.content,
       p_evidence_media: evidence.media.map(reviewableMediaUrl).filter((url): url is string => url !== null),
     });
     if (error) throw error;
@@ -70,7 +70,12 @@ export async function POST(request: Request) {
         blockFailed = true;
       }
     }
-    return NextResponse.json({ ok: true, duplicate: data === "duplicate", blockFailed });
+    return NextResponse.json({
+      ok: true,
+      duplicate: data === "duplicate",
+      blockFailed,
+      blockedAuthorId: blockAuthor && !blockFailed ? evidence.authorId : null,
+    });
   } catch {
     return failure("Couldn’t send the report. Try again.", 500);
   }

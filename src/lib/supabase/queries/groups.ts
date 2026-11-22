@@ -230,7 +230,7 @@ export interface GroupMessage {
   pinned_at: string | null;
   poll_id: string | null;
   created_at: string;
-  sender: { id: string; name: string; profile_image_url: string };
+  sender: { id: string; name: string; profile_image_url: string } | null;
 }
 
 const GROUP_MESSAGE_COLUMNS = `
@@ -329,7 +329,7 @@ export async function listMyTeamThreads(
     sender_id: string;
     content: string;
     created_at: string;
-    sender: { id: string; name: string };
+    sender: { id: string; name: string } | null;
   };
   const byGroup = new Map<string, MsgRow[]>();
   for (const m of (msgsRes.data ?? []) as unknown as MsgRow[]) {
@@ -355,7 +355,7 @@ export async function listMyTeamThreads(
         ? {
             id: last.id,
             sender_id: last.sender_id,
-            sender_name: last.sender.name,
+            sender_name: last.sender?.name ?? "Player",
             content: last.content,
             created_at: last.created_at,
           }

@@ -30,9 +30,11 @@ export async function readReportEvidence(db: Client, target: ReportTarget, id: s
     const { data: post, error } = await db.from("posts").select("author_id, content").eq("id", id).maybeSingle();
     if (error) throw error;
     if (!post) return null;
-    const { data: photos, error: photoError } = await db.from("photos").select("url").eq("post_id", id).order("order").limit(8);
+    const { data: photos, error: photoError } = await db.from("photos").select("url, thumbnail_url").eq("post_id", id).order("order").order("id");
     if (photoError) throw photoError;
-    return { authorId: post.author_id, content: post.content, media: (photos ?? []).map(photo => photo.url) };
+    const attachments = photos ?? [];
+    const media = [...attachments.map(photo => photo.url), ...attachments.map(photo => photo.thumbnail_url).filter(Boolean)];
+    return { authorId: post.author_id, content: post.content, media };
   }
   if (target === "comment") {
     const { data, error } = await db.from("comments").select("author_id, content").eq("id", id).maybeSingle();

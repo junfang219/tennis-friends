@@ -55,7 +55,7 @@ describe("submitting content reports", () => {
   it("reads evidence as the signed-in reporter, then records only trusted evidence", async () => {
     const response = await submit({ ...report, details: "  A detail  ", blockAuthor: true });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, duplicate: false, blockFailed: false });
+    expect(await response.json()).toEqual({ ok: true, duplicate: false, blockFailed: false, blockedAuthorId: author });
     expect(mocked.read).toHaveBeenCalledWith({ auth: { getUser: mocked.user } }, "direct_message", message);
     expect(mocked.rpc).toHaveBeenCalledExactlyOnceWith("record_content_report", {
       p_reporter_id: reporter, p_author_id: author, p_target_type: "direct_message", p_target_id: message,
@@ -87,7 +87,7 @@ describe("submitting content reports", () => {
     mocked.rpc.mockResolvedValue({ data: "duplicate", error: null });
     mocked.block.mockRejectedValue(new Error("failure"));
     const response = await submit({ ...report, blockAuthor: true });
-    expect(await response.json()).toEqual({ ok: true, duplicate: true, blockFailed: true });
+    expect(await response.json()).toEqual({ ok: true, duplicate: true, blockFailed: true, blockedAuthorId: null });
     expect(mocked.after).not.toHaveBeenCalled();
   });
 
@@ -96,5 +96,12 @@ describe("submitting content reports", () => {
     expect((await submit({ ...report, blockAuthor: true })).status).toBe(429);
     expect(mocked.block).not.toHaveBeenCalled();
     expect(mocked.after).not.toHaveBeenCalled();
+  });
+
+  it("passes the complete evidence text so the database can identify changes beyond the excerpt", async () => {
+    const content = "a".repeat(4000) + "edited";
+    mocked.read.mockResolvedValue({ authorId: author, content, media: [] });
+    expect((await submit()).status).toBe(200);
+    expect(mocked.rpc).toHaveBeenCalledWith("record_content_report", expect.objectContaining({ p_evidence_text: content }));
   });
 });

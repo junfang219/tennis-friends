@@ -2,7 +2,9 @@
 
 - Players can report posts and comments with the flag button, or open a direct,
   group, or team chat message’s actions and choose **Report message**. They can
-  block the account while reporting.
+  block the account while reporting. In shared chats, blocked participants'
+  messages and push alerts are hidden from each other. Their group membership
+  and other members’ views are unaffected.
 - Reports preserve the submitted reason, details, text, and links to eligible
   attachments. Only authorized staff can see the queue. It opens at
   /moderation and shows the 50 oldest pending reports.
@@ -16,7 +18,9 @@
   reports that do not warrant removal or confirm **Remove content**. Removal
   deletes the item from the app using its existing database relationships and
   closes other pending reports for that item. The decision records the reviewer
-  and time.
+  and time. Unreferenced attachments uploaded by the author are removed from
+  Storage. If a Storage request fails, use **Retry attachment removal** in the
+  queue. A player can report a changed item again after a dismissal.
 - The pre-publication database filter checks text in new or edited posts,
   comments and messages. Staff review reports for context, images, and videos.
   Apply the content moderation migration before deploying the app changes.

@@ -19,6 +19,7 @@ type Props = {
   // the bar grows by ~56px to fit a divider + trash button.
   onDelete?: () => void;
   reportTarget?: ReportContentTarget;
+  onAccountBlocked?: (authorId: string) => void;
 };
 
 function reactionBarPosition(anchor: DOMRect, width: number, viewportWidth: number, viewportHeight: number) {
@@ -34,7 +35,7 @@ function reactionBarPosition(anchor: DOMRect, width: number, viewportWidth: numb
 // isn't room). Tapping the user's current reaction sends null (toggle off); tapping any other
 // reaction replaces. createPortal mirrors the pattern in EmojiPicker.tsx so the bar escapes
 // the chat scroll container.
-export default function MessageReactionBar({ anchorRect, currentReaction, onSelect, onClose, onDelete, reportTarget }: Props) {
+export default function MessageReactionBar({ anchorRect, currentReaction, onSelect, onClose, onDelete, reportTarget, onAccountBlocked }: Props) {
   const popupRef = useRef<HTMLDivElement>(null);
   const [report, setReport] = useState<ReportContentTarget | null>(null);
   const barWidth = EMOJI_BAR_W + (onDelete || reportTarget ? ACTION_EXTRA_W : 0);
@@ -128,5 +129,7 @@ export default function MessageReactionBar({ anchorRect, currentReaction, onSele
     document.body,
   ) : null;
 
-  return <>{popover}{report && <ReportContentDialog target={report} onClose={() => setReport(null)} />}</>;
+  return <>{popover}{report && (
+    <ReportContentDialog target={report} onClose={() => setReport(null)} onAccountBlocked={onAccountBlocked} />
+  )}</>;
 }

@@ -12,12 +12,18 @@ const responseSchema = z.object({
   ok: z.literal(true),
   duplicate: z.boolean(),
   blockFailed: z.boolean(),
+  blockedAuthorId: z.uuid().nullable().optional(),
 });
 const errorSchema = z.object({ error: z.string() });
 
-export function ReportContentDialog({ target, onClose }: { target: ReportContentTarget; onClose: () => void }) {
+export function ReportContentDialog({ target, onClose, onAccountBlocked }: {
+  target: ReportContentTarget;
+  onClose: () => void;
+  onAccountBlocked?: (authorId: string) => void;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
+  const blockedAuthor = useRef<string | null>(null);
   const titleId = useId();
   const isNative = useIsNative();
   const keyboardHeight = useKeyboardHeight();
@@ -67,6 +73,7 @@ export function ReportContentDialog({ target, onClose }: { target: ReportContent
       const message = parsed.data.duplicate
         ? "You’ve already reported this content."
         : "Report sent. A moderator will review it.";
+      blockedAuthor.current = parsed.data.blockedAuthorId ?? null;
       setResult(message + (parsed.data.blockFailed
         ? " The account couldn’t be blocked. You can try blocking it again."
         : input.data.blockAuthor ? " Account blocked." : ""));
@@ -81,7 +88,10 @@ export function ReportContentDialog({ target, onClose }: { target: ReportContent
     <dialog
       ref={dialog}
       aria-labelledby={titleId}
-      onClose={onClose}
+      onClose={() => {
+        if (blockedAuthor.current) onAccountBlocked?.(blockedAuthor.current);
+        onClose();
+      }}
       onCancel={event => { if (busy) event.preventDefault(); }}
       style={nativeKeyboardHeight > 0 ? {
         bottom: nativeKeyboardHeight,

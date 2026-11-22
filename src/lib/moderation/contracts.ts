@@ -31,5 +31,5 @@ export const contentReportSchema = z.object({
 
 export const reviewDecisionSchema = z.object({
   reportId: z.uuid(),
-  decision: z.enum(["dismissed", "removed"]),
+  decision: z.enum(["dismissed", "removed", "retry_media"]),
 });

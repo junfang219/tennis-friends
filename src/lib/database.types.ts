@@ -653,6 +653,7 @@ export type Database = {
           created_at: string
           decision: string | null
           details: string
+          evidence_fingerprint: string | null
           evidence_media: string[]
           evidence_text: string
           id: string
@@ -668,6 +669,7 @@ export type Database = {
           created_at?: string
           decision?: string | null
           details?: string
+          evidence_fingerprint?: string | null
           evidence_media?: string[]
           evidence_text?: string
           id?: string
@@ -2269,6 +2271,12 @@ export type Database = {
           },
         ]
       }
+      moderation_media_cleanup: {
+        Row: { author_id: string; created_at: string; media_urls: string[]; report_id: string }
+        Insert: { author_id: string; created_at?: string; media_urls: string[]; report_id: string }
+        Update: Partial<Database["public"]["Tables"]["moderation_media_cleanup"]["Insert"]>
+        Relationships: []
+      }
       message_reactions: {
         Row: {
           created_at: string
@@ -3519,6 +3527,10 @@ export type Database = {
       review_content_report: {
         Args: { p_decision: string; p_report_id: string; p_reviewer_id: string }
         Returns: boolean
+      }
+      moderation_unreferenced_media: {
+        Args: { p_urls: string[] }
+        Returns: string[]
       }
       _delete_user_owned_rows: { Args: { uid: string }; Returns: undefined }
       _merge_placeholder_into_user: {
