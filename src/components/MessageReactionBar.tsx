@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { REACTIONS, type ReactionKey } from "@/lib/reactions";
+import { ReportContentDialog, ReportFlag, type ReportContentTarget } from "./ReportContent";
 
 const BAR_H = 56;
 const GAP = 10;
 const EMOJI_BAR_W = 280;
-const DELETE_EXTRA_W = 56; // divider + trash button
+const ACTION_EXTRA_W = 56;
 
 type Props = {
   anchorRect: DOMRect | null;
@@ -17,35 +18,26 @@ type Props = {
   // Optional. Only passed for messages the viewer authored. When provided
   // the bar grows by ~56px to fit a divider + trash button.
   onDelete?: () => void;
+  reportTarget?: ReportContentTarget;
 };
+
+function reactionBarPosition(anchor: DOMRect, width: number, viewportWidth: number, viewportHeight: number) {
+  const above = anchor.top - BAR_H - GAP;
+  const top = above < 8 ? Math.min(anchor.bottom + GAP, viewportHeight - BAR_H - 8) : above;
+  const visibleWidth = Math.min(width, viewportWidth - 16);
+  const centered = anchor.left + (anchor.width - visibleWidth) / 2;
+  const left = Math.max(8, Math.min(centered, viewportWidth - visibleWidth - 8));
+  return { top, left };
+}
 
 // Popover bar of 6 emoji reactions, anchored above the message bubble (flips below when there
 // isn't room). Tapping the user's current reaction sends null (toggle off); tapping any other
 // reaction replaces. createPortal mirrors the pattern in EmojiPicker.tsx so the bar escapes
 // the chat scroll container.
-export default function MessageReactionBar({ anchorRect, currentReaction, onSelect, onClose, onDelete }: Props) {
+export default function MessageReactionBar({ anchorRect, currentReaction, onSelect, onClose, onDelete, reportTarget }: Props) {
   const popupRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; placement: "above" | "below" } | null>(null);
-  const barWidth = EMOJI_BAR_W + (onDelete ? DELETE_EXTRA_W : 0);
-
-  useLayoutEffect(() => {
-    if (!anchorRect) {
-      setPos(null);
-      return;
-    }
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    let placement: "above" | "below" = "above";
-    let top = anchorRect.top - BAR_H - GAP;
-    if (top < 8) {
-      placement = "below";
-      top = Math.min(anchorRect.bottom + GAP, vh - BAR_H - 8);
-    }
-    let left = anchorRect.left + anchorRect.width / 2 - barWidth / 2;
-    if (left < 8) left = 8;
-    if (left + barWidth > vw - 8) left = vw - barWidth - 8;
-    setPos({ top, left, placement });
-  }, [anchorRect, barWidth]);
+  const [report, setReport] = useState<ReportContentTarget | null>(null);
+  const barWidth = EMOJI_BAR_W + (onDelete || reportTarget ? ACTION_EXTRA_W : 0);
 
   useEffect(() => {
     if (!anchorRect) return;
@@ -62,19 +54,22 @@ export default function MessageReactionBar({ anchorRect, currentReaction, onSele
     document.addEventListener("mousedown", handleMouseDown);
     document.addEventListener("keydown", handleKey);
     window.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", handleScroll);
     return () => {
       document.removeEventListener("mousedown", handleMouseDown);
       document.removeEventListener("keydown", handleKey);
       window.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", handleScroll);
     };
   }, [anchorRect, onClose]);
 
-  if (!anchorRect || !pos || typeof window === "undefined") return null;
-
-  return createPortal(
+  const pos = anchorRect && typeof window !== "undefined"
+    ? reactionBarPosition(anchorRect, barWidth, window.innerWidth, window.innerHeight)
+    : null;
+  const popover = pos ? createPortal(
     <div
       ref={popupRef}
-      style={{ position: "fixed", top: pos.top, left: pos.left, width: barWidth, height: BAR_H }}
+      style={{ position: "fixed", top: pos.top, left: pos.left, width: barWidth, maxWidth: "calc(100vw - 16px)", height: BAR_H }}
       className="z-[10001] bg-white rounded-full shadow-2xl border border-gray-200 px-2 flex items-center justify-between animate-fade-in-up"
       onClick={(e) => e.stopPropagation()}
     >
@@ -95,6 +90,21 @@ export default function MessageReactionBar({ anchorRect, currentReaction, onSele
           </button>
         );
       })}
+      {reportTarget && (
+        <button
+          type="button"
+          onClick={() => {
+            setReport(reportTarget);
+            onClose();
+          }}
+          className="inline-flex size-11 items-center justify-center rounded-full text-gray-600 hover:bg-gray-100"
+          aria-label="Report message"
+          aria-haspopup="dialog"
+          title="Report message"
+        >
+          <ReportFlag />
+        </button>
+      )}
       {onDelete && (
         <>
           <span className="h-7 w-px bg-gray-200 mx-1" aria-hidden="true" />
@@ -116,5 +126,7 @@ export default function MessageReactionBar({ anchorRect, currentReaction, onSele
       )}
     </div>,
     document.body,
-  );
+  ) : null;
+
+  return <>{popover}{report && <ReportContentDialog target={report} onClose={() => setReport(null)} />}</>;
 }

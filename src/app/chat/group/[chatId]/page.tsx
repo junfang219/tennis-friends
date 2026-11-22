@@ -1338,6 +1338,7 @@ export default function GroupChatThreadPage() {
           setReactionPopover(null);
         }}
         onClose={() => setReactionPopover(null)}
+        reportTarget={myId && popoverMsg && popoverMsg.senderId !== myId ? { targetType: "chat_message", targetId: popoverMsg.id } : undefined}
       />
     </div>
   );

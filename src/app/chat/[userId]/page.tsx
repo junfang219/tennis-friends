@@ -821,6 +821,7 @@ export default function ChatPage() {
           setReactionPopover(null);
         }}
         onClose={() => setReactionPopover(null)}
+        reportTarget={myId && popoverMsg && popoverMsg.senderId !== myId ? { targetType: "direct_message", targetId: popoverMsg.id } : undefined}
         onDelete={
           popoverIsMine && reactionPopover
             ? () => {

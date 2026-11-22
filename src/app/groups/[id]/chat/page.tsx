@@ -8,6 +8,7 @@ import Avatar from "@/components/Avatar";
 import EmojiPicker from "@/components/EmojiPicker";
 import SharedPostCard, { type SharedPost } from "@/components/SharedPostCard";
 import MessageReactionBar from "@/components/MessageReactionBar";
+import { ReportContentButton } from "@/components/ReportContent";
 import MessageReactions, { type MessageReaction as MsgReaction } from "@/components/MessageReactions";
 import { useLongPress } from "@/hooks/useLongPress";
 import type { ReactionKey } from "@/lib/reactions";
@@ -660,6 +661,9 @@ export default function GroupChatPage() {
                           </span>
                         )}
                         <span className="text-[10px] text-gray-400 ml-auto">{formatTime(msg.createdAt)}</span>
+                        {myId && !isMe && (
+                          <ReportContentButton targetType="team_message" targetId={msg.id} label="Report announcement" />
+                        )}
                       </div>
                       <div className="flex items-start gap-2">
                         <Avatar name={msg.sender.name} image={msg.sender.profileImageUrl} size="sm" />
@@ -992,6 +996,7 @@ export default function GroupChatPage() {
           setReactionPopover(null);
         }}
         onClose={() => setReactionPopover(null)}
+        reportTarget={myId && popoverMsg && popoverMsg.senderId !== myId ? { targetType: "team_message", targetId: popoverMsg.id } : undefined}
       />
     </div>
   );

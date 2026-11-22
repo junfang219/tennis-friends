@@ -12,7 +12,7 @@ export const metadata: Metadata = {
     "How TennisFriends collects, uses, and protects your information.",
 };
 
-const LAST_UPDATED = "November 18, 2026";
+const LAST_UPDATED = "November 21, 2026";
 const CONTACT_EMAIL = "tennisfriends123@gmail.com";
 
 function Section({
@@ -105,6 +105,15 @@ export default function PrivacyPolicyPage() {
             sessions.
           </li>
         </ul>
+      </Section>
+
+      <Section title="Content reports">
+        <p>
+          When someone reports a post, comment, or message, we collect the reason,
+          any details they provide, and a copy of the reported text with links to
+          its attachments. Authorized moderators use this information to review
+          the report and decide whether to remove the content.
+        </p>
       </Section>
 
       <Section title="How we use your information">

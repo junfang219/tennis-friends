@@ -11,12 +11,23 @@ export default function TermsPage() {
     <article className="mx-auto max-w-2xl px-5 py-12 text-gray-700">
       <p className="text-sm font-semibold uppercase tracking-wide text-court-green-light">TennisFriends</p>
       <h1 className="mt-2 font-display text-4xl text-court-green">Terms of Service</h1>
-      <p className="mt-3 text-sm text-gray-600">Last updated November 18, 2026</p>
+      <p className="mt-3 text-sm text-gray-600">Last updated November 21, 2026</p>
       <p className="mt-6 leading-relaxed">TennisFriends is a personal project that helps tennis players organize teams, invitations, and tennis activities. These terms describe use of the service and its optional SMS invitation program.</p>
 
       <section className="mt-10 space-y-3 leading-relaxed">
         <h2 className="font-display text-2xl text-court-green">Using TennisFriends</h2>
         <p>Provide accurate information, respect other players, and use invitation links intended for you. Team captains are responsible for the accuracy of team and registration details they enter and for obtaining permission before requesting an SMS invitation for a player.</p>
+      </section>
+
+      <section className="mt-8 space-y-3">
+        <h2 className="font-display text-2xl text-court-green">Community standards</h2>
+        <p className="text-gray-700">
+          Keep TennisFriends safe for other players. Harassment, bullying, hate
+          speech, threats, sexually explicit content, spam, and scams are prohibited.
+          Use the report control on posts and comments or in the message actions to
+          flag a concern. You can also block the account when submitting a report.
+          We may remove content that violates these standards.
+        </p>
       </section>
 
       <section className="mt-10 space-y-3 leading-relaxed">

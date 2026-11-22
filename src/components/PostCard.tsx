@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { ReportContentButton } from "@/components/ReportContent";
 import Avatar from "./Avatar";
 import EmojiPicker from "./EmojiPicker";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -218,6 +219,8 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
 
   // Post menu
   const [showMenu, setShowMenu] = useState(false);
+  const [commentError, setCommentError] = useState("");
+  const [commentEditError, setCommentEditError] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editContent, setEditContent] = useState(post.content);
@@ -465,6 +468,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
   const handleComment = async () => {
     if (!commentInput.trim() || postingComment) return;
     setPostingComment(true);
+    setCommentError("");
     try {
       const supabase = createSupabaseBrowserClient();
       const c = await addComment(
@@ -477,8 +481,8 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
       setCommentCount((cc) => cc + 1);
       setCommentInput("");
       setReplyTo(null);
-    } catch {
-      // ignore
+    } catch (error) {
+      setCommentError(errorMessage(error, "Couldn’t post the comment."));
     }
     setPostingComment(false);
   };
@@ -506,6 +510,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
 
   // Open the inline-edit textarea for a comment. Closes any open menu.
   const startEditComment = (c: CommentData) => {
+    setCommentEditError("");
     setEditingCommentId(c.id);
     setEditCommentDraft(c.content);
     setMenuForCommentId(null);
@@ -517,6 +522,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
     const trimmed = editCommentDraft.trim();
     if (!trimmed) return;
     setSavingCommentEdit(true);
+    setCommentEditError("");
     try {
       const supabase = createSupabaseBrowserClient();
       const updated = await updateComment(supabase, editingCommentId, trimmed);
@@ -524,8 +530,8 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
       setComments((prev) => prev.map((c) => (c.id === adapted.id ? adapted : c)));
       setEditingCommentId(null);
       setEditCommentDraft("");
-    } catch {
-      // Leave the textarea open so the user can retry / cancel.
+    } catch (error) {
+      setCommentEditError(errorMessage(error, "Couldn’t save the comment."));
     }
     setSavingCommentEdit(false);
   };
@@ -809,6 +815,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
             </div>
 
             <div className="flex items-center gap-0.5">
+              {session?.user?.id && !isAuthor && <ReportContentButton targetType="post" targetId={post.id} label="Report post" />}
               {/* Three-dot menu for author */}
               {isAuthor && (
                 <button
@@ -1319,6 +1326,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                         rows={Math.max(1, Math.min(6, editCommentDraft.split("\n").length))}
                         className="w-full bg-surface/80 rounded-xl px-3.5 py-2.5 text-sm text-gray-700 border border-court-green/30 focus:outline-none focus:border-court-green resize-none"
                       />
+                      {commentEditError && <p role="alert" className="text-sm text-red-700">{commentEditError}</p>}
                       <div className="flex items-center gap-3 text-[11px]">
                         <button
                           onClick={saveCommentEdit}
@@ -1364,6 +1372,9 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                         >
                           Reply
                         </button>
+                        {session?.user?.id && !isAuthor && (
+                          <ReportContentButton targetType="comment" targetId={c.id} label="Report comment" />
+                        )}
                         {isAuthor && (
                           <button
                             onClick={() => setMenuForCommentId(c.id)}
@@ -1418,6 +1429,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                     : undefined
                 }
               >
+                {commentError && <p role="alert" className="mb-2 text-sm text-red-700">{commentError}</p>}
                 {/* "Replying to @X · cancel" pill */}
                 {replyTo && (
                   <div className="flex items-center gap-2 pb-2 text-xs text-gray-500">

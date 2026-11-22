@@ -647,6 +647,44 @@ export type Database = {
           },
         ]
       }
+      content_reports: {
+        Row: {
+          author_id: string
+          created_at: string
+          decision: string | null
+          details: string
+          evidence_media: string[]
+          evidence_text: string
+          id: string
+          reason: string
+          reporter_id: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          target_id: string
+          target_type: string
+        }
+        Insert: {
+          author_id: string
+          created_at?: string
+          decision?: string | null
+          details?: string
+          evidence_media?: string[]
+          evidence_text?: string
+          id?: string
+          reason: string
+          reporter_id: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          target_id: string
+          target_type: string
+        }
+        Update: Partial<Database["public"]["Tables"]["content_reports"]["Insert"]>
+        Relationships: [
+          { foreignKeyName: "content_reports_author_id_fkey"; columns: ["author_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "content_reports_reporter_id_fkey"; columns: ["reporter_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "content_reports_reviewed_by_fkey"; columns: ["reviewed_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+        ]
+      }
       court_alerts: {
         Row: {
           active: boolean
@@ -3465,6 +3503,23 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      record_content_report: {
+        Args: {
+          p_author_id: string
+          p_details: string
+          p_evidence_media: string[]
+          p_evidence_text: string
+          p_reason: string
+          p_reporter_id: string
+          p_target_id: string
+          p_target_type: string
+        }
+        Returns: string
+      }
+      review_content_report: {
+        Args: { p_decision: string; p_report_id: string; p_reviewer_id: string }
+        Returns: boolean
+      }
       _delete_user_owned_rows: { Args: { uid: string }; Returns: undefined }
       _merge_placeholder_into_user: {
         Args: { p_member_id: string; p_target: string }
