@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { authErrorMessage } from "@/lib/supabase/authError";
+import { safeAuthReturnPath } from "@/lib/auth/returnPath";
 import { useIsNative } from "@/hooks/useIsNative";
 import { useIsEmbeddedBrowser } from "@/hooks/useIsEmbeddedBrowser";
 import { EmbeddedBrowserNotice } from "@/components/EmbeddedBrowserNotice";
@@ -36,7 +37,8 @@ export default function SupabaseLoginPage() {
   const showGoogle = (!isNative || googleNativeConfigured) && !embeddedBrowser;
   // Some callers use `?next=...` (e.g. /invite/[token], /register), others
   // use `?redirectTo=...`. Accept either so neither flow drops the return URL.
-  const redirectTo = search.get("redirectTo") ?? search.get("next") ?? "/";
+  const redirectTo = safeAuthReturnPath(search.get("redirectTo") ?? search.get("next"));
+  const returnQuery = redirectTo === "/" ? "" : `?next=${encodeURIComponent(redirectTo)}`;
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -123,7 +125,7 @@ export default function SupabaseLoginPage() {
   }
 
   return (
-    <main className="mx-auto max-w-md p-6 pt-16">
+    <main className={`mx-auto max-w-md p-6 ${showEmailForm ? "pt-8 sm:pt-16" : "pt-16"}`}>
       <h1 className="text-2xl font-semibold text-gray-900 mb-6">Log in</h1>
 
       {showDeletedBanner && (
@@ -145,67 +147,61 @@ export default function SupabaseLoginPage() {
 
       {embeddedBrowser && <EmbeddedBrowserNotice appName={embeddedBrowser.app} />}
 
-      <div className="space-y-2">
-        {showGoogle && (
-          <button
-            type="button"
-            onClick={() => onOAuth("google")}
-            disabled={busy}
-            className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 font-medium"
-          >
-            <GoogleIcon />
-            Continue with Google
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => onOAuth("apple")}
-          disabled={busy}
-          className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-black text-white rounded-lg hover:bg-gray-900 disabled:opacity-50 font-medium"
-        >
-          <AppleIcon />
-          Continue with Apple
-        </button>
-      </div>
-
       {showEmailForm ? (
-        <>
-          <div className="mt-6 flex items-center gap-3 text-xs text-gray-500">
-            <div className="flex-1 h-px bg-gray-200" />
-            <span>or with email</span>
-            <div className="flex-1 h-px bg-gray-200" />
-          </div>
-          <form onSubmit={onSubmit} className="mt-4 space-y-3">
-            <input
-              type="email"
-              required
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-              autoComplete="email"
-            />
-            <input
-              type="password"
-              required
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-              autoComplete="current-password"
-            />
-            {error && <p className="text-sm text-red-600">{error}</p>}
-            <button
-              type="submit"
-              disabled={busy}
-              className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-            >
-              {busy ? "Signing in…" : "Log in"}
-            </button>
-          </form>
-        </>
+        <form onSubmit={onSubmit} className="space-y-3">
+          <input
+            type="email"
+            required
+            aria-label="Email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+            autoComplete="email"
+          />
+          <input
+            type="password"
+            required
+            aria-label="Password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+            autoComplete="current-password"
+          />
+          {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+          <button
+            type="submit"
+            disabled={busy}
+            className="min-h-11 w-full px-4 py-2 bg-court-green text-white rounded-lg hover:bg-court-green-light disabled:opacity-50"
+          >
+            {busy ? "Signing in…" : "Log in"}
+          </button>
+        </form>
       ) : (
         <>
+          <div className="space-y-2">
+            {showGoogle && (
+              <button
+                type="button"
+                onClick={() => onOAuth("google")}
+                disabled={busy}
+                className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 font-medium"
+              >
+                <GoogleIcon />
+                Continue with Google
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onOAuth("apple")}
+              disabled={busy}
+              className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-black text-white rounded-lg hover:bg-gray-900 disabled:opacity-50 font-medium"
+            >
+              <AppleIcon />
+              Continue with Apple
+            </button>
+          </div>
           <div className="mt-6 flex items-center gap-3 text-xs text-gray-500">
             <div className="flex-1 h-px bg-gray-200" />
             <span>or</span>
@@ -223,16 +219,26 @@ export default function SupabaseLoginPage() {
       )}
 
       <div className="mt-6 flex justify-between text-sm text-gray-600">
-        <Link href="/auth/reset" className="text-green-700 hover:underline">
+        <Link href={`/auth/reset${returnQuery}`} className="text-green-700 hover:underline">
           Forgot password?
         </Link>
         <Link
-          href={redirectTo === "/" ? "/register" : `/register?next=${encodeURIComponent(redirectTo)}`}
+          href={`/register${returnQuery}`}
           className="text-green-700 hover:underline"
         >
           Create account
         </Link>
       </div>
+      {showEmailForm && (
+        <button
+          type="button"
+          onClick={() => setShowEmailForm(false)}
+          disabled={busy}
+          className="mt-5 min-h-11 w-full text-sm text-gray-600 underline underline-offset-2 hover:text-gray-900 disabled:opacity-50"
+        >
+          Other sign-in options
+        </button>
+      )}
     </main>
   );
 }

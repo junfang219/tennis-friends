@@ -605,13 +605,13 @@ function LandingPage() {
           </div>
 
           <h1 className="font-display text-5xl sm:text-6xl font-bold text-court-green mb-4 animate-fade-in-up">
-            Tennis<span className="text-ball-yellow">Friends</span>
+            Tennis<span className="text-court-green-light">Friends</span>
           </h1>
 
           <p className="text-xl text-gray-600 mb-3 animate-fade-in-up stagger-1 max-w-md mx-auto leading-relaxed">
             The social network for tennis lovers.
           </p>
-          <p className="text-gray-400 mb-10 animate-fade-in-up stagger-2 text-sm">
+          <p className="text-gray-600 mb-10 animate-fade-in-up stagger-2 text-sm">
             Connect with players, find partners, and share your tennis journey.
           </p>
 
@@ -634,7 +634,7 @@ function LandingPage() {
                 <div className="font-display text-2xl font-bold text-court-green">
                   {stat.value}
                 </div>
-                <div className="text-sm text-gray-400 mt-1">{stat.label}</div>
+                <div className="text-sm text-gray-600 mt-1">{stat.label}</div>
               </div>
             ))}
           </div>

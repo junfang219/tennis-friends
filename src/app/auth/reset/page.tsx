@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { authErrorMessage } from "@/lib/supabase/authError";
+import { safeAuthReturnPath } from "@/lib/auth/returnPath";
 
 // Password reset is OTP-based, not link-based, to match the Supabase
 // "Reset password" email template (uses {{ .Token }}, not
@@ -15,12 +16,21 @@ import { authErrorMessage } from "@/lib/supabase/authError";
 //
 // Flow: enter email → resetPasswordForEmail → enter code + new password →
 // verifyOtp(type: 'recovery') establishes a session → updateUser sets
-// the new password → straight to home.
+// the new password → return to the requested page.
 
 type Step = "email" | "code";
 
 export default function SupabaseResetPage() {
+  return (
+    <Suspense>
+      <ResetPasswordForm />
+    </Suspense>
+  );
+}
+
+function ResetPasswordForm() {
   const router = useRouter();
+  const returnPath = safeAuthReturnPath(useSearchParams().get("next"));
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -72,7 +82,7 @@ export default function SupabaseResetPage() {
         setError(authErrorMessage(updateError));
         return;
       }
-      router.push("/");
+      router.push(returnPath);
       router.refresh();
     } catch (err) {
       setError(authErrorMessage(err));
@@ -196,7 +206,7 @@ export default function SupabaseResetPage() {
         </button>
       </form>
       <p className="mt-6 text-sm text-gray-600">
-        <Link href="/login" className="text-green-700 hover:underline">
+        <Link href={returnPath === "/" ? "/login" : `/login?next=${encodeURIComponent(returnPath)}`} className="text-green-700 hover:underline">
           Back to login
         </Link>
       </p>

@@ -67,7 +67,7 @@ export default function CourtAlertsPage() {
   const alerts = query.data;
 
   useEffect(() => {
-    if (status === "unauthenticated") router.replace("/login");
+    if (status === "unauthenticated") router.replace("/login?next=%2Fcourts%2Falerts");
   }, [status, router]);
 
   const runAlertAction = async (action: () => Promise<void>, fallback: string) => {
