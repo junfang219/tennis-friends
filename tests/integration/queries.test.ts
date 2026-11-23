@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { loadInbox } from "../../src/lib/inboxLoader";
 import {
   adminClient,
   befriend,
@@ -692,6 +693,33 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       const t = threads.find((x) => x.other.id === bob.id);
       expect(t).toBeDefined();
       expect(t!.unread_count).toBeGreaterThanOrEqual(1);
+    });
+
+    it("keeps historical conversations when the other player's profile is private", async () => {
+      const privatePlayer = await makeTestUser("q-private-dm");
+      try {
+        await updateMyProfile(privatePlayer.client, { is_private: true });
+        expect(await getProfile(alice.client, privatePlayer.id)).toBeNull();
+
+        const { error } = await adminClient().from("messages").insert({
+          sender_id: privatePlayer.id,
+          receiver_id: alice.id,
+          content: "Earlier conversation",
+        });
+        expect(error).toBeNull();
+
+        const inbox = await loadInbox(alice.client, alice.id);
+        expect(inbox).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            id: privatePlayer.id,
+            title: "Tennis player",
+            unreadCount: 1,
+            lastMessage: expect.objectContaining({ content: "Earlier conversation" }),
+          }),
+        ]));
+      } finally {
+        await deleteTestUsers([privatePlayer]);
+      }
     });
 
     it("deleteDirectMessage removes the sender's own message", async () => {

@@ -151,8 +151,8 @@ export async function listDmThreads(
   );
 
   type MessageWithProfiles = DirectMessage & {
-    sender: { id: string; name: string; profile_image_url: string };
-    receiver: { id: string; name: string; profile_image_url: string };
+    sender: DMThread["other"] | null;
+    receiver: DMThread["other"] | null;
   };
 
   // Group by partner.
@@ -180,8 +180,10 @@ export async function listDmThreads(
     const unread = visible.filter(
       (m) => m.receiver_id === me && m.created_at > lastReadAt
     ).length;
+    // A historical message can remain visible when the partner's profile is private.
+    const other = last.sender_id === me ? last.receiver : last.sender;
     threads.push({
-      other: last.sender_id === me ? last.receiver : last.sender,
+      other: other ?? { id: partnerId, name: "Tennis player", profile_image_url: "" },
       last_message: last,
       unread_count: unread,
     });
