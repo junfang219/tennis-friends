@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useIsNative } from "@/hooks/useIsNative";
 import { useSession, signOut } from "@/lib/supabase/nextauth-compat";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
@@ -15,19 +16,11 @@ export default function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [isNative, setIsNative] = useState(false);
+  const isNative = useIsNative();
   // Unread notification count, used to badge the mobile hamburger button +
   // the in-menu "Notifications" link on native (where NotificationBell is
   // suppressed and there's no other place to surface unread state).
   const [unreadNotifs, setUnreadNotifs] = useState(0);
-
-  useEffect(() => {
-    // `window.Capacitor` exists in the web bundle too (the @capacitor/core
-    // stub assigns itself when imported). `isNativePlatform()` is the only
-    // reliable way to tell apart the iOS/Android shell from the browser.
-    const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
-    setIsNative(!!cap?.isNativePlatform?.());
-  }, []);
 
   // Poll for unread notifications on native (where NotificationBell, which
   // owns this state on web, isn't rendered). 30s mirrors BottomNav's
@@ -80,13 +73,6 @@ export default function Navbar() {
     { href: "/search", label: "Discover", icon: SearchIcon },
   ];
 
-  // Warm up all top-nav routes once the user is authenticated, so clicking any tab feels instant.
-  useEffect(() => {
-    if (status !== "authenticated") return;
-    navLinks.forEach((link) => router.prefetch(link.href));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status]);
-
   return (
     <nav className="sticky top-0 z-40 bg-court-green court-pattern border-b border-white/10 pt-[env(safe-area-inset-top)]">
       <div className="max-w-5xl mx-auto px-4 sm:px-6">
@@ -125,8 +111,6 @@ export default function Navbar() {
                   prefetch={true}
                   aria-label={link.label}
                   title={link.label}
-                  onMouseEnter={() => router.prefetch(link.href)}
-                  onFocus={() => router.prefetch(link.href)}
                   className={`group relative flex items-center justify-center p-2.5 rounded-xl transition-all ${
                     isActive(link.href)
                       ? "bg-white/15 text-ball-yellow"

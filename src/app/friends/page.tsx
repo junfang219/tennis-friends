@@ -34,7 +34,7 @@ import {
   markTeamRead,
 } from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
-import { loadInbox } from "@/lib/inboxLoader";
+import { inboxCacheKey, loadInbox } from "@/lib/inboxLoader";
 import { errorMessage } from "@/lib/errorMessage";
 import { GROUP_CHAT_MEMBER_LIMIT, isGroupChatCapacityError } from "@/lib/groupChatCapacity";
 import { filterNonmemberFriends } from "@/lib/friendGroupMemberPicker";
@@ -253,14 +253,9 @@ export default function FriendsPage() {
   const friendGroups = friendGroupsQuery.data ?? [];
   const loadFriendGroups = friendGroupsQuery.refetch;
 
-  // Reuses the "chat:inbox" cache populated by src/app/chat/page.tsx, so
-  // bouncing between Friends and Chat doesn't refetch the same data.
-  // The fetcher lives in src/lib/inboxLoader.ts — both pages MUST use the
-  // same loader, otherwise whichever populates the cache first wins and
-  // the other page flashes the wrong list (this is how team chats started
-  // disappearing from /chat after a /friends visit).
-  const chatsQuery = useCachedQuery<InboxItem[]>("chat:inbox", () =>
-    loadInbox(createSupabaseBrowserClient(), myId || undefined)
+  // Share the inbox snapshot with Messages for the current account.
+  const chatsQuery = useCachedQuery<InboxItem[]>(inboxCacheKey(myId), () =>
+    loadInbox(createSupabaseBrowserClient(), myId)
   );
   const chats = chatsQuery.data ?? [];
   const loadChats = chatsQuery.refetch;

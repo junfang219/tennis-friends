@@ -18,14 +18,15 @@ export default function HomePage() {
   const { data: session, status } = useSession();
   const searchParams = useSearchParams();
   const targetPostId = searchParams.get("post");
+  const viewerId = session?.user.id;
   // Cached feed: paints instantly on tab revisit, refetches in background.
   // The cache stores the adapted Post[] shape so consumers (PostCard) don't
   // pay an adapter pass per render — the fetcher does it once per refetch.
   const feed = useCachedQuery<Post[]>(
-    status === "authenticated" ? "feed:limit=50" : null,
+    viewerId ? `feed:${viewerId}:limit=50` : null,
     async () => {
       const supabase = createSupabaseBrowserClient();
-      const rows = await listFeed(supabase, { limit: 50 });
+      const rows = await listFeed(supabase, { limit: 50, viewerId });
       return rows.map(adaptFeedPost);
     },
   );

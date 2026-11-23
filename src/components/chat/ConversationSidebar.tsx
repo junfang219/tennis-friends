@@ -8,7 +8,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useRealtimeTable } from "@/lib/supabase/realtime";
 import { markDmRead, markChatRead, markTeamRead } from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
-import { loadInbox } from "@/lib/inboxLoader";
+import { inboxCacheKey, loadInbox } from "@/lib/inboxLoader";
 import { buildInboxSections } from "@/lib/inboxSections";
 
 // Map the current pathname to the inbox-row key that ConversationRow can match against.
@@ -32,14 +32,14 @@ function selectionKeyFromPath(pathname: string | null): string | null {
 }
 
 export default function ConversationSidebar() {
-  const { status, data: session } = useSession();
+  const { data: session } = useSession();
   const router = useRouter();
   const pathname = usePathname();
   const [openRowKey, setOpenRowKey] = useState<string | null>(null);
   const selectedKey = selectionKeyFromPath(pathname);
 
   const inbox = useCachedQuery<InboxItem[]>(
-    status === "authenticated" ? "chat:inbox" : null,
+    inboxCacheKey(session?.user.id),
     () => loadInbox(createSupabaseBrowserClient(), session?.user?.id),
   );
   const items = useMemo<InboxItem[]>(() => inbox.data ?? [], [inbox.data]);

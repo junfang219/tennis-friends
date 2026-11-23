@@ -143,7 +143,7 @@ const POST_COLUMNS = `
  */
 export async function listFeed(
   supabase: SupabaseClient<Database>,
-  opts: { limit?: number; before?: string } = {}
+  opts: { limit?: number; before?: string; viewerId?: string } = {}
 ): Promise<Post[]> {
   let q = supabase
     .from("posts")
@@ -157,7 +157,7 @@ export async function listFeed(
   if (error) throw error;
   if (!posts || posts.length === 0) return [];
 
-  return enrichPosts(supabase, posts as unknown as PostRow[]);
+  return enrichPosts(supabase, posts as unknown as PostRow[], opts.viewerId);
 }
 
 /**
@@ -258,7 +258,7 @@ export async function loadSharedPosts(
 export async function listPostsByAuthor(
   supabase: SupabaseClient<Database>,
   authorId: string,
-  opts: { limit?: number } = {}
+  opts: { limit?: number; viewerId?: string } = {}
 ): Promise<Post[]> {
   const { data, error } = await supabase
     .from("posts")
@@ -268,7 +268,7 @@ export async function listPostsByAuthor(
     .order("created_at", { ascending: false })
     .limit(opts.limit ?? 50);
   if (error) throw error;
-  return enrichPosts(supabase, (data ?? []) as unknown as PostRow[]);
+  return enrichPosts(supabase, (data ?? []) as unknown as PostRow[], opts.viewerId);
 }
 
 /**
@@ -281,7 +281,7 @@ export async function listPostsByAuthor(
 export async function listPlaybookEntries(
   supabase: SupabaseClient<Database>,
   authorId: string,
-  opts: { limit?: number } = {}
+  opts: { limit?: number; viewerId?: string } = {}
 ): Promise<Post[]> {
   const { data, error } = await supabase
     .from("posts")
@@ -292,19 +292,21 @@ export async function listPlaybookEntries(
     .order("created_at", { ascending: false })
     .limit(opts.limit ?? 100);
   if (error) throw error;
-  return enrichPosts(supabase, (data ?? []) as unknown as PostRow[]);
+  return enrichPosts(supabase, (data ?? []) as unknown as PostRow[], opts.viewerId);
 }
 
 /** Add like_count, comment_count, is_liked to a batch of posts. */
 async function enrichPosts(
   supabase: SupabaseClient<Database>,
-  posts: PostRow[]
+  posts: PostRow[],
+  viewerId?: string,
 ): Promise<Post[]> {
   if (posts.length === 0) return [];
   const ids = posts.map((p) => p.id);
 
-  const { data: auth } = await supabase.auth.getUser();
-  const me = auth.user?.id ?? null;
+  // An already signed-in caller can supply the id for viewer-specific filters.
+  // Supabase RLS still authorizes every read using the request's session.
+  const me = viewerId ?? (await supabase.auth.getUser()).data.user?.id;
 
   // event_id values across this page of posts. Used to batch-fetch the
   // linked events without an N+1. Embedding via the posts_event_id_fkey

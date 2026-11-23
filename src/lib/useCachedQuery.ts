@@ -42,7 +42,8 @@ const noopSubscribe = () => () => {};
 
 export function useCachedQuery<T>(
   key: string | null,
-  fetcher: () => Promise<T>,
+  // A fetcher may publish an initial snapshot before secondary data arrives.
+  fetcher: (publishInitial: (value: T) => void) => Promise<T>,
   options?: {
     /**
      * Mirror the cached value to localStorage so it paints on the first
@@ -73,7 +74,9 @@ export function useCachedQuery<T>(
   useEffect(() => {
     if (!key) return;
     let cancelled = false;
-    fetcherRef.current()
+    fetcherRef.current((initial) => {
+      if (!cancelled && getCached(key, persist) == null) setCached(key, initial, persist);
+    })
       .then((result) => {
         if (cancelled) return;
         setCached(key, result, persist);
@@ -91,7 +94,7 @@ export function useCachedQuery<T>(
   const refetch = useCallback(async () => {
     if (!key) return;
     try {
-      const result = await fetcherRef.current();
+      const result = await fetcherRef.current(() => {});
       setCached(key, result, persist);
       setError(null);
     } catch (err) {

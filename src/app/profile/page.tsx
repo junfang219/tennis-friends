@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSession, signOut } from "@/lib/supabase/nextauth-compat";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
-  getMyProfile,
+  getProfile,
   updateMyProfile,
   addHighlight,
   deleteHighlight,
@@ -28,9 +28,8 @@ import PlaybookEntryCard from "@/components/PlaybookEntryCard";
 import { AGE_LABELS, GENDER_LABELS, formatRating } from "@/lib/profileLabels";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 import { getCached } from "@/lib/queryCache";
+import type { Profile as ProfileRow } from "@/lib/supabase/queries/profiles";
 import { errorMessage } from "@/lib/errorMessage";
-
-const PROFILE_CACHE_KEY = "profile:me";
 
 type Post = {
   id: string;
@@ -89,32 +88,29 @@ type Profile = {
   longitude: number | null;
   createdAt: string;
   highlights: Highlight[];
-  friendCount: number;
+  friendCount: number | null;
+  activityPending: boolean;
+  rawProfile: ProfileRow;
   posts: Post[];
   playbookEntries: PostCamel[];
 };
 
 export default function ProfilePage() {
   const router = useRouter();
-  const { status: authStatus, update: updateSession } = useSession();
+  const { data: session, status: authStatus, update: updateSession } = useSession();
+  const userId = session?.user.id;
+  const profileKey = userId ? `profile:me:${userId}` : null;
   // Lazy-init from the in-memory cache so a tab revisit paints the profile
   // synchronously on the very first render — no skeleton, no flicker.
   const [profile, setProfile] = useState<Profile | null>(
-    () => getCached<Profile>(PROFILE_CACHE_KEY) ?? null,
+    () => (profileKey ? getCached<Profile>(profileKey) ?? null : null),
   );
   const [editing, setEditing] = useState(false);
   const [tab, setTab] = useState<"find_players" | "posts" | "playbook">("find_players");
   const [playbookOpen, setPlaybookOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<PostCamel | null>(null);
   const [form, setForm] = useState(() => {
-    const cached = getCached<Profile>(PROFILE_CACHE_KEY);
-    const raw = (cached as unknown as { __rawProfile?: {
-      name: string; handle: string | null; bio: string; skill_level: string;
-      profile_image_url: string; gender: string; age_range: string;
-      rating_system: string; ntrp_rating: number | null; utr_rating: number | null;
-      venmo_handle: string | null; paypal_handle: string | null;
-      cashapp_handle: string | null; zelle_handle: string | null;
-    }; } | undefined)?.__rawProfile;
+    const raw = profileKey ? getCached<Profile>(profileKey)?.rawProfile : undefined;
     return raw
       ? {
           name: raw.name,
@@ -200,19 +196,20 @@ export default function ProfilePage() {
   // cache when it resolves (or updates), and pause the sync while the user
   // is actively editing/saving so an in-flight background refresh can't
   // clobber their input.
-  const cachedProfile = useCachedQuery<Profile | null>("profile:me", async () => {
+  const cachedProfile = useCachedQuery<Profile | null>(profileKey, async (publishInitial) => {
+    if (!userId) return null;
     const supabase = createSupabaseBrowserClient();
-    const p = await getMyProfile(supabase);
-    if (!p) return null;
-    // Hydrate posts/highlights/friend count in parallel; they're additive
-    // and the page renders fine without any of them.
-    const [postsRes, highlightsRes, friendCountRes, playbookRes] = await Promise.allSettled([
-      listPostsByAuthor(supabase, p.id),
-      listHighlights(supabase, p.id),
-      countUserFriends(supabase, p.id),
-      listPlaybookEntries(supabase, p.id),
+    const profileRequest = getProfile(supabase, userId);
+    const activityRequest = Promise.allSettled([
+      listPostsByAuthor(supabase, userId, { viewerId: userId }),
+      listHighlights(supabase, userId),
+      countUserFriends(supabase, userId),
+      listPlaybookEntries(supabase, userId, { viewerId: userId }),
     ]);
-    const assembled: Profile = {
+    const p = await profileRequest;
+    if (!p) return null;
+
+    const header: Profile = {
       id: p.id,
       name: p.name,
       email: p.email ?? "",
@@ -233,6 +230,19 @@ export default function ProfilePage() {
       latitude: p.latitude,
       longitude: p.longitude,
       createdAt: p.created_at,
+      highlights: [],
+      friendCount: null,
+      posts: [],
+      playbookEntries: [],
+      activityPending: true,
+      rawProfile: p,
+    };
+    publishInitial(header);
+
+    const [postsRes, highlightsRes, friendCountRes, playbookRes] = await activityRequest;
+    return {
+      ...header,
+      activityPending: false,
       highlights:
         highlightsRes.status === "fulfilled"
           ? highlightsRes.value.map((h) => ({
@@ -255,60 +265,35 @@ export default function ProfilePage() {
           ? playbookRes.value.map((r) => toPostCamel(r))
           : [],
     };
-    // Stash form-only fields the local `form` state needs (venmo, paypal,
-    // etc.) on a hidden marker keyed by id so the seed effect below can
-    // grab them without re-fetching. They're not part of the Profile type
-    // the rest of the page uses.
-    (assembled as unknown as { __rawProfile?: typeof p }).__rawProfile = p;
-    return assembled;
   });
 
-  // Seed local state from the cache. Runs once on first load (when cache
-  // resolves) and again whenever the background refresh produces a new
-  // snapshot — except while the user is editing or saving, where overwriting
-  // the form would discard in-progress changes.
   useEffect(() => {
-    if (cachedProfile.data === undefined) return; // still loading
-    if (cachedProfile.data === null) {
-      // getMyProfile() returns null both when the user is genuinely signed out
-      // AND when a getUser()/profile read transiently fails (network blip,
-      // momentarily-invalid token on app resume). Only redirect to /login once
-      // the auth layer has *settled* on unauthenticated — otherwise a transient
-      // failure would feel like a spurious logout even though the session
-      // cookie is still intact. While authenticated/loading we leave the page
-      // on its cached/loading state; useCachedQuery's background refresh retries.
-      if (authStatus === "unauthenticated") router.replace("/login");
-      return;
-    }
-    if (editing || saving) return;
+    if (authStatus === "unauthenticated") router.replace("/login");
+  }, [authStatus, router]);
+
+  // Preserve edits while the rest of the profile finishes loading.
+  useEffect(() => {
     const assembled = cachedProfile.data;
+    if (!assembled || editing || saving) return;
     setProfile(assembled);
-    const raw = (assembled as unknown as { __rawProfile?: {
-      name: string; handle: string | null; bio: string; skill_level: string;
-      profile_image_url: string; gender: string; age_range: string;
-      rating_system: string; ntrp_rating: number | null; utr_rating: number | null;
-      venmo_handle: string | null; paypal_handle: string | null;
-      cashapp_handle: string | null; zelle_handle: string | null;
-    }; }).__rawProfile;
-    if (raw) {
-      setForm({
-        name: raw.name,
-        handle: raw.handle ?? "",
-        bio: raw.bio,
-        skillLevel: raw.skill_level,
-        profileImageUrl: raw.profile_image_url,
-        gender: raw.gender,
-        ageRange: raw.age_range,
-        ratingSystem: raw.rating_system,
-        ntrpRating: raw.ntrp_rating ?? "",
-        utrRating: raw.utr_rating ?? "",
-        venmoHandle: raw.venmo_handle ?? "",
-        paypalHandle: raw.paypal_handle ?? "",
-        cashappHandle: raw.cashapp_handle ?? "",
-        zelleHandle: raw.zelle_handle ?? "",
-      });
-    }
-  }, [cachedProfile.data, authStatus, editing, saving, router]);
+    const raw = assembled.rawProfile;
+    setForm({
+      name: raw.name,
+      handle: raw.handle ?? "",
+      bio: raw.bio,
+      skillLevel: raw.skill_level,
+      profileImageUrl: raw.profile_image_url,
+      gender: raw.gender,
+      ageRange: raw.age_range,
+      ratingSystem: raw.rating_system,
+      ntrpRating: raw.ntrp_rating ?? "",
+      utrRating: raw.utr_rating ?? "",
+      venmoHandle: raw.venmo_handle ?? "",
+      paypalHandle: raw.paypal_handle ?? "",
+      cashappHandle: raw.cashapp_handle ?? "",
+      zelleHandle: raw.zelle_handle ?? "",
+    });
+  }, [cachedProfile.data, editing, saving]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -713,16 +698,28 @@ export default function ProfilePage() {
     }
   };
 
-  if (!profile) {
+  if (cachedProfile.error && (!profile || profile.id !== userId)) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-8">
+        <p role="alert" className="mb-3 text-sm text-red-700">Could not load your profile.</p>
+        <button type="button" className="btn-secondary" onClick={() => { void cachedProfile.refetch(); }}>
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!profile || profile.id !== userId) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-8">
         <div className="bg-white rounded-3xl p-8 shadow-sm">
+          <p role="status" className="sr-only">Loading profile…</p>
           <div className="flex items-center gap-6">
-            <div className="skeleton w-24 h-24 rounded-full" />
+            <div className="skeleton size-20 shrink-0 rounded-full sm:size-24" />
             <div className="space-y-3 flex-1">
-              <div className="skeleton w-48 h-6" />
-              <div className="skeleton w-32 h-4" />
-              <div className="skeleton w-64 h-4" />
+              <div className="skeleton h-6 w-full max-w-48" />
+              <div className="skeleton h-4 w-full max-w-32" />
+              <div className="skeleton h-4 w-full max-w-64" />
             </div>
           </div>
         </div>
@@ -1103,7 +1100,7 @@ export default function ProfilePage() {
                       <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
                       <circle cx="9" cy="7" r="4" />
                     </svg>
-                    {friendCount} {friendCount === 1 ? "friend" : "friends"}
+                    {friendCount == null ? "… friends" : `${friendCount} ${friendCount === 1 ? "friend" : "friends"}`}
                   </span>
                 </div>
                 {tagError && (
@@ -1259,7 +1256,9 @@ export default function ProfilePage() {
                 </button>
               </div>
 
-              {tab === "playbook" ? (
+              {profile.activityPending ? (
+                <p role="status" className="px-4 py-6 text-center text-sm text-gray-600">Loading profile activity…</p>
+              ) : tab === "playbook" ? (
                 <div className="space-y-4">
                   <button
                     onClick={() => {

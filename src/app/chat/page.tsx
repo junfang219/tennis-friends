@@ -8,7 +8,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useRealtimeTable } from "@/lib/supabase/realtime";
 import { markDmRead, markChatRead, markTeamRead } from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
-import { loadInbox } from "@/lib/inboxLoader";
+import { inboxCacheKey, loadInbox } from "@/lib/inboxLoader";
 import { buildInboxSections } from "@/lib/inboxSections";
 import { useIsDesktopChat } from "@/hooks/useIsDesktopChat";
 
@@ -19,31 +19,16 @@ export default function ChatPage() {
   const [openRowKey, setOpenRowKey] = useState<string | null>(null);
 
   // Cached inbox: paints instantly on revisit, refetches in background.
-  // Fetcher lives in src/lib/inboxLoader.ts so this page, /friends, and
-  // MessageBell all populate the same cache key with the same shape.
+  // The native badge can populate this cache before Messages opens.
   const inbox = useCachedQuery<InboxItem[]>(
-    status === "authenticated" ? "chat:inbox" : null,
+    inboxCacheKey(session?.user.id),
     () => loadInbox(createSupabaseBrowserClient(), session?.user?.id),
   );
-  // Memoize so identity is stable when inbox.data is unchanged — keeps the
-  // prefetch effect below from firing on every render.
   const items = useMemo<InboxItem[]>(() => inbox.data ?? [], [inbox.data]);
   const loading = inbox.isLoading;
   const loadError = inbox.error
     ? inbox.error.message || "Couldn't load messages."
     : "";
-
-  // Warm the route cache for every thread visible in the inbox so tapping
-  // one navigates instantly instead of cold-downloading the page chunk.
-  // Required because rows use router.push() (not <Link>) for the swipe
-  // gesture — that path skips Next.js' automatic prefetch.
-  useEffect(() => {
-    for (const it of items) {
-      router.prefetch(it.href);
-    }
-  }, [items, router]);
-
-  // The initial fetch is owned by useCachedQuery — no separate mount effect.
 
   // Realtime: refresh the inbox when an incoming DM, session chat, or
   // group chat message arrives. The polling fallback the SSE stream

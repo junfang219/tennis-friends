@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import TeamInvitationInbox from "@/components/groups/TeamInvitationInbox";
 import Avatar from "@/components/Avatar";
 import CommunitiesTabs from "@/components/CommunitiesTabs";
@@ -23,6 +23,20 @@ const ComposerModal = dynamic(
   () => import("@/components/PostComposer").then((module) => module.ComposerModal),
   { ssr: false },
 );
+
+const newTeamClass = "min-w-0 touch-manipulation rounded-xl bg-court-green p-3 text-left text-white hover:bg-court-green-light active:bg-court-green-light focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-court-green";
+
+function NewTeamLinkLabel() {
+  const { pending } = useLinkStatus();
+  return (
+    <span className="flex items-center gap-2 text-sm font-semibold">
+      New Team
+      {pending && (
+        <span role="status" aria-label="Opening team setup" className="size-3 shrink-0 rounded-full border-2 border-current border-r-transparent motion-safe:animate-spin" />
+      )}
+    </span>
+  );
+}
 
 type FriendEntry = {
   friendshipId: string;
@@ -197,24 +211,6 @@ export default function GroupsPage() {
     void refetchGroups();
   };
 
-  if (loading) {
-    return (
-      <div className="max-w-2xl mx-auto px-4 py-8">
-        <div className="space-y-3">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-white rounded-2xl p-5 shadow-sm flex items-center gap-4">
-              <div className="skeleton w-12 h-12 rounded-xl" />
-              <div className="flex-1 space-y-2">
-                <div className="skeleton w-36 h-4" />
-                <div className="skeleton w-24 h-3" />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <CommunitiesTabs />
@@ -223,16 +219,17 @@ export default function GroupsPage() {
         <h1 className="font-display text-2xl font-bold text-court-green">Your Teams</h1>
         {!showCreate && (
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
-            <button
-              type="button"
-              onClick={() => process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" ? router.push("/groups/new") : setShowCreate("casual")}
-              className="min-w-0 rounded-xl bg-court-green p-3 text-left text-white hover:bg-court-green-light focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-court-green"
-              aria-label="Create a new team"
-              aria-describedby="new-team-description"
-            >
-              <span className="block text-sm font-semibold">New Team</span>
-              <span id="new-team-description" className="mt-1 block text-sm text-white/90">Start with players you already know.</span>
-            </button>
+            {process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" ? (
+              <Link href="/groups/new" className={newTeamClass} aria-label="Create a new team" aria-describedby="new-team-description">
+                <NewTeamLinkLabel />
+                <span id="new-team-description" className="mt-1 block text-sm text-white/90">Start with players you already know.</span>
+              </Link>
+            ) : (
+              <button type="button" onClick={() => setShowCreate("casual")} className={newTeamClass} aria-label="Create a new team" aria-describedby="new-team-description">
+                <span className="block text-sm font-semibold">New Team</span>
+                <span id="new-team-description" className="mt-1 block text-sm text-white/90">Start with players you already know.</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setShowProposal(true)}
@@ -284,8 +281,22 @@ export default function GroupsPage() {
           />
         )}
 
+        {loading && !showCreate && (
+          <div className="space-y-3" role="status" aria-label="Loading teams">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="flex items-center gap-4 rounded-2xl bg-white p-5 shadow-sm" aria-hidden="true">
+                <div className="skeleton size-12 rounded-xl" />
+                <div className="flex-1 space-y-2">
+                  <div className="skeleton h-4 w-36" />
+                  <div className="skeleton h-3 w-24" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Groups list */}
-        {!showCreate && groups.length === 0 && (
+        {!showCreate && !loading && !loadError && groups.length === 0 && (
           <div className="animate-fade-in-up stagger-2 text-center py-16 bg-white rounded-2xl shadow-sm border border-court-green-pale/20">
             <div className="w-14 h-14 bg-ball-yellow/20 rounded-full flex items-center justify-center mx-auto mb-4">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-court-green-soft">

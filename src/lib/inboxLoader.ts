@@ -1,11 +1,6 @@
 // Shared fetcher for the conversations inbox.
 //
-// Used by /chat (Messages tab), /friends (Chats sub-tab), and the
-// MessageBell dropdown. Centralized so all three render the same
-// list — when /friends and /chat had separately maintained fetchers,
-// adding team-chat support to one without the other meant whichever
-// page populated the "chat:inbox" cache first won, and the team
-// chats would flash in or out depending on the user's path.
+// Messages, Friends, and the native unread badge use the same inbox shape.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "./supabase/types";
@@ -17,9 +12,28 @@ import {
 } from "./supabase/queries";
 import { pgToIso } from "./pgDate";
 
-export async function loadInbox(
+export function inboxCacheKey(userId: string | undefined) {
+  return userId ? `chat:inbox:${userId}` : null;
+}
+
+const pendingInboxes = new Map<string, Promise<InboxItem[]>>();
+
+export function loadInbox(
   supabase: SupabaseClient<Database>,
-  userId: string | undefined
+  userId: string | undefined,
+): Promise<InboxItem[]> {
+  if (!userId) return Promise.resolve([]);
+  const pending = pendingInboxes.get(userId);
+  if (pending) return pending;
+
+  const request = fetchInbox(supabase, userId).finally(() => pendingInboxes.delete(userId));
+  pendingInboxes.set(userId, request);
+  return request;
+}
+
+async function fetchInbox(
+  supabase: SupabaseClient<Database>,
+  userId: string,
 ): Promise<InboxItem[]> {
   const [dms, chats, teams] = await Promise.all([
     listDmThreads(supabase),

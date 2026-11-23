@@ -1,109 +1,51 @@
 "use client";
 
 import Link from "next/link";
+import { useIsNative } from "@/hooks/useIsNative";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import { useEffect, useState, useTransition } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import { listDmThreads, listMyTeamThreads } from "@/lib/supabase/queries";
+import { inboxCacheKey, loadInbox } from "@/lib/inboxLoader";
+import { useCachedQuery } from "@/lib/useCachedQuery";
 
-const TAB_ROUTES = ["/", "/groups", "/courts", "/chat", "/profile"] as const;
 const NATIVE_TAB_BAR_HEIGHT = "calc(3.5rem + 1px + env(safe-area-inset-bottom, 0px))";
 
 export default function BottomNav() {
-  const { status } = useSession();
+  const { status, data: session } = useSession();
   const pathname = usePathname();
   const router = useRouter();
-  const [unreadMessages, setUnreadMessages] = useState(0);
-  const [isNative, setIsNative] = useState(false);
-  // Optimistic active tab: set on pointerdown so the tap visibly responds
-  // before the route swap + page render + Supabase fetches complete. The
-  // WKWebView is unreliable about flashing Tailwind's `active:` pseudo on
-  // tap, so we drive the feedback in JS instead. Cleared once the real
-  // pathname catches up (or the gesture is cancelled).
+  const isNative = useIsNative();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
-  const [, startTransition] = useTransition();
-
-  useEffect(() => {
-    // `window.Capacitor` is populated even on the web (the @capacitor/core
-    // module assigns a stub when imported, which PushRegistrar pulls in for
-    // its native-detection check). Use `isNativePlatform()` — it returns
-    // false in the browser and true only inside the iOS/Android shell.
-    const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
-    setIsNative(!!cap?.isNativePlatform?.());
-  }, []);
-
-  // Warm the client-side route cache for every tab once we're logged in, so
-  // tab taps render from cache instead of waiting on a fresh fetch. The
-  // built-in <Link> prefetch is unreliable inside the Capacitor WebView, so
-  // we trigger it imperatively.
-  useEffect(() => {
-    if (status !== "authenticated") return;
-    for (const route of TAB_ROUTES) {
-      router.prefetch(route);
-    }
-  }, [status, router]);
+  const [isNavigating, startTransition] = useTransition();
+  const userId = session?.user.id;
+  const { data: inbox, refetch: refetchInbox } = useCachedQuery(
+    isNative ? inboxCacheKey(userId) : null,
+    () => loadInbox(createSupabaseBrowserClient(), userId),
+  );
+  const unreadMessages = (inbox ?? []).reduce(
+    (total, item) => total + (item.type === "group" || item.muted ? 0 : item.unreadCount),
+    0,
+  );
 
   const isActive = (path: string) => pathname === path || pathname.startsWith(path + "/");
+  const activePendingHref = isNavigating && pendingHref !== pathname ? pendingHref : null;
 
-  // Treat pendingHref as cleared once the router has actually landed on it
-  // (or onto a deeper route under it). Derived in render so we don't need
-  // a clear-on-pathname-change effect — the stale state just stops being
-  // read and gets overwritten by the next tap.
-  const activePendingHref =
-    pendingHref && !(pathname === pendingHref || pathname.startsWith(pendingHref + "/"))
-      ? pendingHref
-      : null;
-
-  const handleTabTap = (href: string) => {
-    if (pathname === href) {
-      // Already at the tab root — no nav.
-      return;
-    }
-    // On a deeper page within this tab's section (e.g. /groups/[id]), tapping
-    // the tab pops back to its root list rather than no-opping. Falls through
-    // to router.push(href).
-    setPendingHref(href);
-    // startTransition keeps the bottom-nav (and the rest of the previous
-    // page) interactive while React renders the new route, so the active
-    // chip's color swap isn't blocked by the new page's mount work.
-    startTransition(() => router.push(href));
-  };
-
-  const fetchUnread = () => {
-    const supabase = createSupabaseBrowserClient();
-    // Sum DM + team-chat unreads. Session chats currently report 0 unread
-    // so they don't contribute. Muted teams are excluded — they're meant
-    // not to pull attention to the badge.
-    Promise.all([listDmThreads(supabase), listMyTeamThreads(supabase)])
-      .then(([dms, teams]) => {
-        const dmUnread = dms.reduce((sum, t) => sum + t.unread_count, 0);
-        const teamUnread = teams.reduce(
-          (sum, t) => sum + (t.muted ? 0 : t.unread_count),
-          0
-        );
-        setUnreadMessages(dmUnread + teamUnread);
-      })
-      .catch(() => {});
-  };
-
-  // Fetch unread message count
+  // The inbox tab and unread badge share the same account-scoped data.
   useEffect(() => {
-    if (status !== "authenticated" || !isNative) return;
-    fetchUnread();
-    const interval = setInterval(fetchUnread, 30000);
+    if (!isNative || !userId) return;
+    const interval = setInterval(() => {
+      if (!document.hidden) void refetchInbox();
+    }, 30_000);
     return () => clearInterval(interval);
-  }, [status, isNative]);
+  }, [isNative, userId, refetchInbox]);
 
-  // Re-fetch when entering a chat route. The chat page marks messages read on
-  // mount, so refetching shortly after lets the tab badge update without
-  // waiting for the 30s poll.
+  // Thread pages mark messages read after mounting.
   useEffect(() => {
-    if (status !== "authenticated" || !isNative) return;
-    if (!pathname.startsWith("/chat")) return;
-    const t = setTimeout(fetchUnread, 500);
-    return () => clearTimeout(t);
-  }, [pathname, status, isNative]);
+    if (!isNative || !userId || !pathname.startsWith("/chat/")) return;
+    const timer = setTimeout(() => { void refetchInbox(); }, 500);
+    return () => clearTimeout(timer);
+  }, [pathname, isNative, userId, refetchInbox]);
 
   // Hide on individual chat threads (1:1 and group). The chat is a
   // dedicated typing surface — the bottom tab strip squeezes the input
@@ -206,7 +148,12 @@ export default function BottomNav() {
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-[env(safe-area-inset-bottom)]" style={{ zIndex: 9999 }}>
+    <nav aria-label="App tabs" className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-[env(safe-area-inset-bottom)]" style={{ zIndex: 9999 }}>
+      {activePendingHref && (
+        <span role="status" className="sr-only">
+          Opening {tabs.find((tab) => tab.href === activePendingHref)?.label}
+        </span>
+      )}
       <div className="flex items-center justify-around h-14">
         {tabs.map((tab) => {
           // While a tab is pending navigation, treat *that* tab as active
@@ -218,20 +165,12 @@ export default function BottomNav() {
             <Link
               key={tab.href}
               href={tab.href}
-              prefetch
-              onPointerDown={() => {
-                if (tab.href !== pathname && !pathname.startsWith(tab.href + "/")) {
-                  setPendingHref(tab.href);
-                }
-              }}
-              onPointerCancel={() => setPendingHref((p) => (p === tab.href ? null : p))}
-              onPointerLeave={() => setPendingHref((p) => (p === tab.href ? null : p))}
-              onClick={(e) => {
-                // Take over from <Link>'s default navigation so we can wrap
-                // the push in startTransition (keeps the nav interactive
-                // while React renders the new route).
-                e.preventDefault();
-                handleTabTap(tab.href);
+              aria-current={tab.active ? "page" : undefined}
+              onNavigate={(event) => {
+                event.preventDefault();
+                if (tab.href === pathname && !isNavigating) return;
+                setPendingHref(tab.href);
+                startTransition(() => router.push(tab.href));
               }}
               style={{
                 // Disable the 300 ms tap-delay heuristic and the gray
@@ -240,8 +179,8 @@ export default function BottomNav() {
                 touchAction: "manipulation",
                 WebkitTapHighlightColor: "transparent",
               }}
-              className={`flex flex-col items-center justify-center flex-1 h-full relative transition-colors select-none ${
-                visuallyActive ? "text-court-green" : "text-gray-400"
+              className={`flex flex-col items-center justify-center flex-1 h-full relative transition-colors active:bg-court-green/10 select-none ${
+                visuallyActive ? "text-court-green" : "text-gray-600"
               }`}
             >
               <div className="relative">
