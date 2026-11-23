@@ -40,10 +40,16 @@ function LoadedInvitations(props: InvitationsProps) {
   const keyboardHeight = useKeyboardHeight();
   const teamHref = `/groups/${props.group.id}`;
   const rosterHref = props.fromSettings ? `${teamHref}/settings?tab=roster` : `${teamHref}/roster`;
-  const setupSafeArea = "max(0px, calc(env(safe-area-inset-bottom, 0px) - var(--native-tab-bar-height, 0px)))";
+  const setupInset = keyboardHeight > 0 ? `${keyboardHeight}px` : "var(--native-tab-bar-height, 0px)";
+  const setupSafeArea = keyboardHeight > 0
+    ? "0px"
+    : "max(0px, calc(env(safe-area-inset-bottom, 0px) - var(--native-tab-bar-height, 0px)))";
+  // Reserve room for the setup bar and what it sits above, even when the
+  // keyboard handler clears the body's own bottom padding.
+  const setupBottomPadding = `calc(6rem + ${setupInset} + ${setupSafeArea})`;
   return <main
     className="max-w-2xl mx-auto p-4 py-6 space-y-5"
-    style={props.setup ? { paddingBottom: `calc(6rem + ${keyboardHeight > 0 ? `${keyboardHeight}px` : setupSafeArea})` } : undefined}
+    style={props.setup ? { paddingBottom: setupBottomPadding } : undefined}
   >
     {!props.setup && <Link href={rosterHref} className="text-sm underline text-court-green">Back to roster</Link>}
     <header><p className="text-sm text-gray-600">{props.group.name}</p><h1 className="font-display text-3xl font-bold text-court-green">Invite players</h1></header>
@@ -63,8 +69,8 @@ function LoadedInvitations(props: InvitationsProps) {
         aria-label="Setup navigation"
         className="fixed inset-x-0 z-30 border-t border-gray-200 bg-white pt-3"
         style={{
-          bottom: keyboardHeight > 0 ? keyboardHeight : "var(--native-tab-bar-height, 0px)",
-          paddingBottom: keyboardHeight > 0 ? "0.75rem" : `calc(0.75rem + ${setupSafeArea})`,
+          bottom: setupInset,
+          paddingBottom: `calc(0.75rem + ${setupSafeArea})`,
         }}
       >
         <div className="mx-auto grid max-w-2xl grid-cols-2 gap-3 px-4">

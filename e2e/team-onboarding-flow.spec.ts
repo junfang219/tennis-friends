@@ -64,6 +64,35 @@ test("Go to Roster stays available if invitation options fail to load", async ({
   await expect(page).toHaveURL(`/groups/${groupId}/roster`);
   expect(fixture.writes).toEqual([]);
 });
+test("the bottom bar leaves room for More ways to add people after the keyboard closes", async ({ context, page }) => {
+  await managementFixture(context);
+  await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+  const more = page.getByText("More ways to add people", { exact: true });
+  await expect(more).toBeVisible();
+  await page.evaluate(() => {
+    // Match the native tab bar after keyboard dismissal clears body padding.
+    document.body.style.setProperty("--native-tab-bar-height", "90px");
+    document.body.style.paddingBottom = "";
+  });
+  const footer = page.getByRole("navigation", { name: "Setup navigation" });
+  const scrollToEnd = () => page.evaluate(() => {
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" });
+  });
+  await scrollToEnd();
+  const footerTop = (await footer.boundingBox())!.y;
+  const summary = (await more.boundingBox())!;
+  expect(summary.y + summary.height).toBeLessThan(footerTop);
+  await more.click();
+  await scrollToEnd();
+  for (const name of ["Add an existing friend", "Track availability without an account"]) {
+    const option = page.getByRole("button", { name, exact: true });
+    const bounds = (await option.boundingBox())!;
+    expect(bounds.y + bounds.height).toBeLessThan(footerTop);
+    await option.click({ trial: true });
+  }
+  await footer.getByRole("link", { name: "Go to Roster", exact: true }).click();
+  await expect(page).toHaveURL(`/groups/${groupId}/roster`);
+});
 test("method switching and Back to roster never write a stale roster", async ({ context, page }) => {
   const fixture = await managementFixture(context, [player()]);
   await page.goto(`/groups/${groupId}/roster`);
