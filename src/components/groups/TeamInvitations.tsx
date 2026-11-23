@@ -35,18 +35,43 @@ export default function TeamInvitations(props: InvitationsProps) {
 }
 function LoadedInvitations(props: InvitationsProps) {
   const management = useTeamManagement(props.group.id, props.initialState);
+  const [busy, setBusy] = useState(false);
   const teamHref = `/groups/${props.group.id}`;
   const rosterHref = props.fromSettings ? `${teamHref}/settings?tab=roster` : `${teamHref}/roster`;
   return <main className="max-w-2xl mx-auto p-4 py-6 space-y-5">
     {!props.setup && <Link href={rosterHref} className="text-sm underline text-court-green">Back to roster</Link>}
     <header><p className="text-sm text-gray-600">{props.group.name}</p><h1 className="font-display text-3xl font-bold text-court-green">Invite players</h1></header>
-    {management.state ? <InvitationsEditor {...props} management={{ ...management, state: management.state }} /> : <>
-      {props.setup && <TeamSetupProgress step={2} />}
+    {props.setup && (
+      <>
+        <TeamSetupProgress step={2} />
+        <p className="text-sm text-gray-600">Your team is ready. You can invite players from the roster later.</p>
+        <nav aria-label="Setup navigation" className="grid grid-cols-2 gap-3">
+          {busy ? (
+            <>
+              <button type="button" disabled className="btn-secondary h-12 w-full">Back</button>
+              <button type="button" disabled className="btn-primary h-12 w-full">Go to Roster</button>
+            </>
+          ) : (
+            <>
+              <Link href={`${teamHref}/setup-details`} className="btn-secondary h-12 w-full text-center">Back</Link>
+              <Link href={`${teamHref}/roster`} className="btn-primary h-12 w-full text-center">Go to Roster</Link>
+            </>
+          )}
+        </nav>
+      </>
+    )}
+    {management.state ? (
+      <InvitationsEditor {...props} management={{ ...management, state: management.state }} busy={busy} setBusy={setBusy} />
+    ) : (
       <p role={management.error ? "alert" : "status"}>{management.error || "Loading invitations…"}</p>
-    </>}
+    )}
   </main>;
 }
-function InvitationsEditor({ group, review = false, setup = false, management }: InvitationsProps & { management: ReturnType<typeof useTeamManagement> & { state: TeamManagementState } }) {
+function InvitationsEditor({ group, review = false, setup = false, management, busy, setBusy }: InvitationsProps & {
+  management: ReturnType<typeof useTeamManagement> & { state: TeamManagementState };
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
+}) {
   const router = useRouter();
   const { state, error: loadError, load, mutate } = management;
   // A roster reload must not replace this tab's draft with another captain's preferences.
@@ -63,7 +88,7 @@ function InvitationsEditor({ group, review = false, setup = false, management }:
   }
   const [message, setMessage] = useState<string | null>(null); const [includeUsta, setIncludeUsta] = useState<boolean | null>(null);
   const [ustaDraft, setUstaDraft] = useState<{ ustaTeamName: string; teamNumber: string; deadline: string; includeRegistrationLink: boolean } | null>(null);
-  const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
+  const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<string | null>(null); const [more, setMore] = useState<"friends" | "availability" | null>(null);
   const batches = useRef<Record<string, string>>({});
   async function action(work: () => Promise<void>) { if (busy) return; setBusy(true); setError(""); setNotice(""); try { await work(); } catch (e) { setError(e instanceof z.ZodError ? e.issues[0]?.message ?? "Check the invitation details" : e instanceof Error ? e.message : "Could not complete action"); } finally { setBusy(false); } }
@@ -125,7 +150,6 @@ function InvitationsEditor({ group, review = false, setup = false, management }:
   }
 
   return <>
-    {setup && <><TeamSetupProgress step={2} /><p className="text-sm text-gray-600">Your team has been created. Invite players now, or choose Go to Roster to invite them later.</p></>}
     {(error || loadError) && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{error || loadError}</p>}{notice && <p role="status" className="rounded-xl bg-green-50 p-3 text-sm text-green-950">{notice}</p>}
     <fieldset disabled={busy} className="min-w-0 space-y-5">
       <div role="group" aria-label="Invitation method" className="grid grid-cols-2 gap-3"><button type="button" aria-pressed={mode === "sms"} className={mode === "sms" ? "btn-primary" : "btn-secondary"} onClick={() => setMode("sms")}>Send by SMS</button><button type="button" aria-pressed={mode === "email"} className={mode === "email" ? "btn-primary" : "btn-secondary"} onClick={() => setMode("email")}>Send by email</button></div>
@@ -188,6 +212,5 @@ function InvitationsEditor({ group, review = false, setup = false, management }:
       </li>)}{state.legacyInvitations.map(i => <li key={i.id} className="py-4 space-y-3"><p className="text-sm break-all">{i.email ?? "Previously shared personal invitation"}</p><p className="text-xs text-gray-600">Existing invitation · {i.roles.length ? i.roles.join(" · ") : "Member"}{i.memberType ? ` · ${i.memberType}` : ""}</p><button className="btn-secondary w-full" type="button" onClick={() => void action(async () => { await navigator.clipboard.writeText(`${window.location.origin}/invite/${i.token}`); setNotice("Existing invitation link copied."); })}>Copy existing invitation link</button><button className="text-sm underline text-red-800" type="button" onClick={() => void action(async () => { await mutate({ action: "cancel-legacy", inviteId: i.id }); })}>Cancel existing invitation</button></li>)}</ul></section>}
       <details className="rounded-xl border bg-white p-4"><summary className="cursor-pointer text-sm font-semibold text-court-green">More ways to add people</summary><div className="space-y-4 pt-4"><div className="grid gap-3"><button type="button" className="btn-secondary" onClick={() => setMore(more === "friends" ? null : "friends")}>Add an existing friend</button><button type="button" className="btn-secondary" onClick={() => setMore(more === "availability" ? null : "availability")}>Track availability without an account</button></div>{more && review && <p className="text-sm text-gray-600">Friend and guest actions are disabled in this isolated preview.</p>}{more === "friends" && !review && <AddFriendsPanel groupId={group.id} existingMemberUserIds={(state?.members ?? group.members).map(m => m.userId).filter((id): id is string => Boolean(id))} onAdded={() => { void load(); }} />}{more === "availability" && !review && <InvitePlayersPanel groupId={group.id} groupName={group.name} scope="all" onChanged={() => { void load(); }} />}</div></details>
     </fieldset>
-    {setup && <nav aria-label="Setup navigation" className="grid grid-cols-2 gap-3">{busy ? <><button disabled className="btn-secondary h-12 w-full">Back</button><button disabled className="btn-primary h-12 w-full">Go to Roster</button></> : <><Link href={`/groups/${group.id}/setup-details`} className="btn-secondary h-12 w-full text-center">Back</Link><Link href={`/groups/${group.id}/roster`} className="btn-primary h-12 w-full text-center">Go to Roster</Link></>}</nav>}
   </>;
 }

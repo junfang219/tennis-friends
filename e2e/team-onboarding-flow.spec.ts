@@ -23,6 +23,7 @@ test("two-step setup defaults to SMS and can finish without sending invitations"
   await expect(page.getByRole("textbox", { name: "Email", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Create shared team link", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Team setup").getByText("2. Invite players", { exact: true })).toHaveAttribute("aria-current", "step");
+  await expect(page.getByRole("link", { name: "Go to Roster", exact: true })).toBeInViewport({ ratio: 1 });
   await page.reload();
   await expect(page.getByRole("navigation", { name: "Setup navigation" })).toBeVisible();
   const nav = page.getByRole("navigation", { name: "Setup navigation" });
@@ -43,6 +44,18 @@ test("two-step setup defaults to SMS and can finish without sending invitations"
   await page.getByRole("link", { name: "Invite players", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Invite players", exact: true })).toBeVisible();
   await expect(page.getByLabel("Team setup")).toHaveCount(0);
+});
+test("Go to Roster stays available if invitation options fail to load", async ({ context, page }) => {
+  await managementFixture(context);
+  await page.route(`**/api/team-onboarding/${groupId}`, (route) => route.fulfill({
+    status: 503,
+    json: { error: "Could not load invitations" },
+  }));
+  await page.goto(`/groups/${groupId}/invite-players?setup=1`);
+  await expect(page.getByRole("alert")).toContainText("Could not load invitations");
+  const rosterLink = page.getByRole("link", { name: "Go to Roster", exact: true });
+  await expect(rosterLink).toBeInViewport({ ratio: 1 });
+  await expect(rosterLink).toHaveAttribute("href", `/groups/${groupId}/roster`);
 });
 test("method switching and Back to roster never write a stale roster", async ({ context, page }) => {
   const fixture = await managementFixture(context, [player()]);
