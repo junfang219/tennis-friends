@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { z } from "zod";
+import { useKeyboardHeight } from "@/hooks/useKeyboardHeight";
 import TeamSharedInvitations from "./TeamSharedInvitations";
 import TeamSetupProgress from "./TeamSetupProgress";
 import AddFriendsPanel from "./AddFriendsPanel";
@@ -36,16 +37,37 @@ export default function TeamInvitations(props: InvitationsProps) {
 function LoadedInvitations(props: InvitationsProps) {
   const management = useTeamManagement(props.group.id, props.initialState);
   const [busy, setBusy] = useState(false);
+  const keyboardHeight = useKeyboardHeight();
   const teamHref = `/groups/${props.group.id}`;
   const rosterHref = props.fromSettings ? `${teamHref}/settings?tab=roster` : `${teamHref}/roster`;
-  return <main className="max-w-2xl mx-auto p-4 py-6 space-y-5">
+  const setupSafeArea = "max(0px, calc(env(safe-area-inset-bottom, 0px) - var(--native-tab-bar-height, 0px)))";
+  return <main
+    className="max-w-2xl mx-auto p-4 py-6 space-y-5"
+    style={props.setup ? { paddingBottom: `calc(6rem + ${keyboardHeight > 0 ? `${keyboardHeight}px` : setupSafeArea})` } : undefined}
+  >
     {!props.setup && <Link href={rosterHref} className="text-sm underline text-court-green">Back to roster</Link>}
     <header><p className="text-sm text-gray-600">{props.group.name}</p><h1 className="font-display text-3xl font-bold text-court-green">Invite players</h1></header>
     {props.setup && (
       <>
         <TeamSetupProgress step={2} />
         <p className="text-sm text-gray-600">Your team is ready. You can invite players from the roster later.</p>
-        <nav aria-label="Setup navigation" className="grid grid-cols-2 gap-3">
+      </>
+    )}
+    {management.state ? (
+      <InvitationsEditor {...props} management={{ ...management, state: management.state }} busy={busy} setBusy={setBusy} />
+    ) : (
+      <p role={management.error ? "alert" : "status"}>{management.error || "Loading invitations…"}</p>
+    )}
+    {props.setup && (
+      <nav
+        aria-label="Setup navigation"
+        className="fixed inset-x-0 z-30 border-t border-gray-200 bg-white pt-3"
+        style={{
+          bottom: keyboardHeight > 0 ? keyboardHeight : "var(--native-tab-bar-height, 0px)",
+          paddingBottom: keyboardHeight > 0 ? "0.75rem" : `calc(0.75rem + ${setupSafeArea})`,
+        }}
+      >
+        <div className="mx-auto grid max-w-2xl grid-cols-2 gap-3 px-4">
           {busy ? (
             <>
               <button type="button" disabled className="btn-secondary h-12 w-full">Back</button>
@@ -57,13 +79,8 @@ function LoadedInvitations(props: InvitationsProps) {
               <Link href={`${teamHref}/roster`} className="btn-primary h-12 w-full text-center">Go to Roster</Link>
             </>
           )}
-        </nav>
-      </>
-    )}
-    {management.state ? (
-      <InvitationsEditor {...props} management={{ ...management, state: management.state }} busy={busy} setBusy={setBusy} />
-    ) : (
-      <p role={management.error ? "alert" : "status"}>{management.error || "Loading invitations…"}</p>
+        </div>
+      </nav>
     )}
   </main>;
 }

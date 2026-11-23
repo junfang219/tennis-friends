@@ -8,6 +8,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listDmThreads, listMyTeamThreads } from "@/lib/supabase/queries";
 
 const TAB_ROUTES = ["/", "/groups", "/courts", "/chat", "/profile"] as const;
+const NATIVE_TAB_BAR_HEIGHT = "calc(3.5rem + 1px + env(safe-area-inset-bottom, 0px))";
 
 export default function BottomNav() {
   const { status } = useSession();
@@ -132,8 +133,13 @@ export default function BottomNav() {
   // the chat container.
   useEffect(() => {
     if (status !== "authenticated" || !isNative || isChatThread || isCourtDetail) return;
-    document.body.style.paddingBottom = "5rem";
-    return () => { document.body.style.paddingBottom = ""; };
+    const style = document.body.style;
+    style.paddingBottom = "5rem";
+    style.setProperty("--native-tab-bar-height", NATIVE_TAB_BAR_HEIGHT);
+    return () => {
+      style.paddingBottom = "";
+      style.removeProperty("--native-tab-bar-height");
+    };
   }, [status, isNative, isChatThread, isCourtDetail]);
 
   // All hooks above — safe to return early now

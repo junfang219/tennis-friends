@@ -31,6 +31,11 @@ test("two-step setup defaults to SMS and can finish without sending invitations"
   const back = await nav.getByRole("link", { name: "Back", exact: true }).boundingBox();
   const finish = await nav.getByRole("link", { name: "Go to Roster", exact: true }).boundingBox();
   expect(back?.height).toBe(finish?.height); expect(back?.y).toBe(finish?.y);
+  const footerBottomGap = () => nav.evaluate(element => window.innerHeight - element.getBoundingClientRect().bottom);
+  expect(await footerBottomGap()).toBeCloseTo(0);
+  await page.getByText("More ways to add people", { exact: true }).scrollIntoViewIfNeeded();
+  expect(await footerBottomGap()).toBeCloseTo(0);
+  await expect(nav.getByRole("link", { name: "Go to Roster", exact: true })).toBeInViewport({ ratio: 1 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: `/tmp/tennis-setup-invite-${test.info().project.name}.png`, fullPage: true });
   await nav.getByRole("link", { name: "Go to Roster", exact: true }).click();
