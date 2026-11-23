@@ -12,6 +12,7 @@ export async function formProposedTeam(postId: string) {
   if (!user) return { error: "Sign in to form a team." };
 
   const { data, error } = await supabase.rpc("form_proposed_team", { p_post_id: parsed.data }).single();
+  if (error?.code === "55P03") return { error: "A request is being updated. Try forming the team again in a moment." };
   if (error?.code === "42501") return { error: "Only the organizer can form this team." };
   if (error || !data) return { error: "Couldn't form the team. Try again." };
 

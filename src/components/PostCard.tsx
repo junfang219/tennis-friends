@@ -2535,6 +2535,7 @@ function ManageRequestsModal({
 }) {
   const [requests, setRequests] = useState<PlayRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [requestLoadFailed, setRequestLoadFailed] = useState(false);
   const [respondingTo, setRespondingTo] = useState<string | null>(null);
   const [formingTeam, setFormingTeam] = useState(false);
   const [respondError, setRespondError] = useState<string>("");
@@ -2551,6 +2552,8 @@ function ManageRequestsModal({
   const [manualNames, setManualNames] = useState<string[]>([""]);
 
   const loadRequests = async () => {
+    setLoading(true);
+    setRequestLoadFailed(false);
     try {
       const supabase = createSupabaseBrowserClient();
       const { data, error } = await supabase
@@ -2613,12 +2616,13 @@ function ManageRequestsModal({
         }) as unknown as typeof requests
       );
     } catch {
-      // ignore
+      setRequestLoadFailed(true);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
-  useEffect(() => { loadRequests(); // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void loadRequests(); // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const approvedCount = requests.filter((r) => r.status === "APPROVED").length;
@@ -2662,7 +2666,7 @@ function ManageRequestsModal({
         .update({ status, note: note || "" })
         .eq("id", requestId);
       if (upErr) throw new Error(upErr.message);
-      loadRequests();
+      await loadRequests();
       if (action === "approve") {
         // play_requests_recount_post trigger recomputes
         // posts.players_confirmed + is_complete from the authoritative
@@ -2694,6 +2698,8 @@ function ManageRequestsModal({
     setRejectNoteFor(null);
     setRejectNote("");
   };
+
+  const requestsBusy = loading || formingTeam || respondingTo !== null || removingId !== null;
 
   const handleFormTeam = async () => {
     setFormingTeam(true);
@@ -2734,8 +2740,8 @@ function ManageRequestsModal({
         )}
         {isProposeTeam ? (
           <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100">
-            <p className="text-sm text-gray-600">Form a team with everyone you’ve approved.</p>
-            <button type="button" onClick={handleFormTeam} disabled={loading || formingTeam || respondingTo !== null || removingId !== null} className="btn-primary btn-sm shrink-0">
+            <p className="text-sm text-gray-600">Form a team with approved players and close any pending requests.</p>
+            <button type="button" onClick={handleFormTeam} disabled={requestsBusy || requestLoadFailed} className="btn-primary btn-sm shrink-0">
               {formingTeam ? "Forming…" : "Form Team"}
             </button>
           </div>
@@ -2961,6 +2967,13 @@ function ManageRequestsModal({
         <div className="max-h-96 overflow-y-auto p-4 space-y-3">
           {loading ? (
             <div className="space-y-3">{[1, 2].map((i) => <div key={i} className="skeleton h-16 rounded-xl" />)}</div>
+          ) : requestLoadFailed ? (
+            <div className="space-y-3 py-4 text-center">
+              <p role="alert" className="text-sm text-red-700">Couldn&apos;t load requests.</p>
+              <button type="button" onClick={() => void loadRequests()} className="btn-secondary btn-sm">
+                Retry loading requests
+              </button>
+            </div>
           ) : requests.length === 0 ? (
             <div className="text-center py-8"><p className="text-gray-400 text-sm">No requests yet</p></div>
           ) : (
@@ -2990,8 +3003,8 @@ function ManageRequestsModal({
                   </div>
                   {req.status === "PENDING" && (
                     <div className="flex items-center gap-2">
-                      <button onClick={() => handleRespond(req.id, "approve")} disabled={formingTeam || respondingTo === req.id || (!isProposeTeam && approvedCount >= playersNeeded)} className="btn-primary btn-sm">{respondingTo === req.id ? "..." : "Approve"}</button>
-                      <button onClick={() => setRejectNoteFor(rejectNoteFor === req.id ? null : req.id)} disabled={formingTeam || respondingTo === req.id} className="btn-danger btn-sm">Decline</button>
+                      <button onClick={() => handleRespond(req.id, "approve")} disabled={requestsBusy || (!isProposeTeam && approvedCount >= playersNeeded)} className="btn-primary btn-sm">{respondingTo === req.id ? "..." : "Approve"}</button>
+                      <button onClick={() => setRejectNoteFor(rejectNoteFor === req.id ? null : req.id)} disabled={requestsBusy} className="btn-danger btn-sm">Decline</button>
                     </div>
                   )}
                   {req.status === "APPROVED" && (
@@ -2999,7 +3012,7 @@ function ManageRequestsModal({
                       <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-100 px-2.5 py-1 rounded-full"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>Approved</span>
                       <button
                         onClick={() => setRemoveNoteFor(removeNoteFor === req.id ? null : req.id)}
-                        disabled={formingTeam}
+                        disabled={requestsBusy}
                         className="text-xs text-gray-400 hover:text-red-500 transition-colors"
                       >
                         Remove
@@ -3021,7 +3034,7 @@ function ManageRequestsModal({
                   <div className="mt-3 pt-3 border-t border-gray-100">
                     <input type="text" value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} placeholder="Add a note (optional)..." className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-2" autoFocus />
                     <div className="flex items-center gap-2">
-                      <button onClick={() => handleRespond(req.id, "reject", rejectNote)} disabled={formingTeam || respondingTo === req.id} className="btn-danger btn-sm">{respondingTo === req.id ? "..." : "Send Decline"}</button>
+                      <button onClick={() => handleRespond(req.id, "reject", rejectNote)} disabled={requestsBusy} className="btn-danger btn-sm">{respondingTo === req.id ? "..." : "Send Decline"}</button>
                       <button onClick={() => { setRejectNoteFor(null); setRejectNote(""); }} className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1">Cancel</button>
                     </div>
                   </div>
@@ -3050,7 +3063,7 @@ function ManageRequestsModal({
                               const next = Math.max(0, approvedCount - 1);
                               onUpdate(next + manualCount, false);
                               setIsMarkedFull(false);
-                              loadRequests();
+                              await loadRequests();
                             }
                           } catch {
                             // ignore
@@ -3059,7 +3072,7 @@ function ManageRequestsModal({
                           setRemoveNoteFor(null);
                           setRemoveNote("");
                         }}
-                        disabled={formingTeam || removingId === req.id}
+                        disabled={requestsBusy}
                         className="btn-danger btn-sm"
                       >
                         {removingId === req.id ? "..." : "Confirm Remove"}

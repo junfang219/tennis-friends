@@ -2604,6 +2604,53 @@ describe.skipIf(!integrationEnvReady)("query helpers (live Supabase)", () => {
       await deletePost(alice.client, post.id);
     });
 
+    it("forms a team with approved applicants and closes outstanding requests", async () => {
+      const admin = adminClient();
+      const post = await createPost(alice.client, {
+        content: "A new team",
+        post_type: "propose_team",
+        court_location: "Recruitment roster test",
+      });
+      let teamId: string | undefined;
+
+      try {
+        const requests = await admin.from("play_requests").insert([
+          { post_id: post.id, user_id: bob.id },
+          { post_id: post.id, user_id: carol.id },
+        ]);
+        expect(requests.error).toBeNull();
+
+        const approval = await alice.client.from("play_requests")
+          .update({ status: "approved" }).eq("post_id", post.id).eq("user_id", bob.id);
+        expect(approval.error).toBeNull();
+
+        const formation = await alice.client.rpc("form_proposed_team", { p_post_id: post.id }).single();
+        teamId = formation.data?.team_group_id;
+        expect(formation.error).toBeNull();
+        expect(formation.data?.players_confirmed).toBe(1);
+        expect(teamId).toBeTruthy();
+
+        const roster = await admin.from("group_members").select("user_id").eq("group_id", teamId!);
+        expect(roster.error).toBeNull();
+        expect(roster.data?.map(({ user_id }) => user_id).sort()).toEqual([alice.id, bob.id].sort());
+
+        const request = await carol.client.from("play_requests").select("status, note")
+          .eq("post_id", post.id).eq("user_id", carol.id).single();
+        expect(request.error).toBeNull();
+        expect(request.data).toEqual({
+          status: "rejected",
+          note: "Recruitment closed before your request was approved.",
+        });
+
+        const retry = await alice.client.rpc("form_proposed_team", { p_post_id: post.id }).single();
+        expect(retry.error).toBeNull();
+        expect(retry.data).toEqual(formation.data);
+      } finally {
+        if (teamId) await admin.from("groups").delete().eq("id", teamId);
+        await deletePost(alice.client, post.id);
+      }
+    });
+
     // L4 — chats.session_end_at follows post timing edits. The trigger
     // recomputes the timestamp when play_date / play_time / duration
     // change.
