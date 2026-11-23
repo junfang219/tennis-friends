@@ -6,6 +6,7 @@ import { useSession } from "@/lib/supabase/nextauth-compat";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ReportContentButton } from "@/components/ReportContent";
+import { formProposedTeam } from "@/app/groups/team-proposal-actions";
 import Avatar from "./Avatar";
 import EmojiPicker from "./EmojiPicker";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -170,8 +171,12 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
   const [showRequests, setShowRequests] = useState(false);
   const approvedCount = post.approvedPlayerNames?.length || 0;
   const manualCount = post.manualPlayers ? post.manualPlayers.split(",").filter((n) => n.trim()).length : 0;
-  const [confirmed, setConfirmed] = useState(Math.max(post.playersConfirmed || 0, approvedCount + manualCount));
-  const [complete, setComplete] = useState(post.isComplete || false);
+  const [confirmed, setConfirmed] = useState(
+    isProposeTeam && post.teamGroupId
+      ? post.playersConfirmed ?? 0
+      : Math.max(post.playersConfirmed || 0, approvedCount + manualCount),
+  );
+  const [complete, setComplete] = useState(Boolean(post.isComplete || (isProposeTeam && post.teamGroupId)));
   const [liveSessionChatId, setLiveSessionChatId] = useState<string | null>(post.sessionChatId || null);
   const [liveTeamGroupId, setLiveTeamGroupId] = useState<string | null>(post.teamGroupId || null);
 
@@ -645,6 +650,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
     const titleText = isProposeTeam
       ? `${isAuthor ? "Your" : `${post.author.name}'s`} Team formed`
       : `${isAuthor ? "Your" : `${post.author.name}'s`} Game confirmed`;
+    const teamMemberCount = confirmed + 1; // The organizer is also on the roster.
     return (
       <div className={`w-full rounded-2xl shadow-md ring-2 px-4 py-3 flex items-center gap-3 ${roleStyles.container}`}>
         <button
@@ -674,10 +680,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                   {liveCourtLocation || titleText}
                 </div>
                 <div className={`text-[11px] truncate mt-0.5 font-medium ${roleStyles.meta}`}>
-                  {[
-                    `${isAuthor ? "Your" : `${post.author.name}'s`} team formed`,
-                    confirmed > 0 && `${confirmed} member${confirmed === 1 ? "" : "s"}`,
-                  ].filter(Boolean).join(" · ")}
+                  {isAuthor ? "Your" : `${post.author.name}'s`} team formed · {teamMemberCount} {teamMemberCount === 1 ? "member" : "members"}
                 </div>
               </>
             ) : (
@@ -752,7 +755,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-green-600 shrink-0"><polyline points="20,6 9,17 4,12" /></svg>
-                <span className="text-xs font-bold text-green-700 uppercase tracking-wide">{isProposeTeam ? "Team Formed — All Members Joined" : "Game Full — All Players Found"}</span>
+                <span className="text-xs font-bold text-green-700 uppercase tracking-wide">{isProposeTeam ? "Team formed" : "Game Full — All Players Found"}</span>
               </div>
             </div>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-green-400 shrink-0"><polyline points="18,15 12,9 6,15" /></svg>
@@ -897,17 +900,17 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
             </div>
           )}
 
-          {/* Propose Team badge */}
+          {/* Team recruitment badge */}
           {isProposeTeam && (
             <div className="mb-3">
-              <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide ${complete ? "bg-green-600 text-white" : "bg-clay text-white"}`}>
+              <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide ${complete ? "bg-green-100 text-green-800" : "bg-orange-100 text-amber-900"}`}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
                   <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
                   <path d="M4 22h16" />
                   <path d="M18 2H6v7a6 6 0 0012 0V2z" />
                 </svg>
-                {complete ? "Team Formed" : "Recruiting Team"}
+                {complete ? "Team formed" : "Recruiting players"}
               </span>
               {liveCourtLocation && (
                 <h3 className="font-display text-xl font-bold text-gray-900 mt-2">
@@ -975,10 +978,12 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
               </div>
               )}
               <div className="mt-3 pt-3 border-t border-court-green-pale/20 flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-3 flex-wrap">
-                  {liveCourtBooked && (<span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-green-100 text-green-700"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>Court Booked</span>)}
-                  {livePlayersNeeded && livePlayersNeeded > 0 && (<span className="text-sm text-gray-600"><span className={`font-bold ${isProposeTeam ? "text-clay" : "text-court-green"}`}>{confirmed}</span>/{livePlayersNeeded} {isProposeTeam ? "members" : "players"}</span>)}
-                </div>
+                {(liveCourtBooked || (isFindPlayers && livePlayersNeeded > 0)) && (
+                  <div className="flex items-center gap-3 flex-wrap">
+                    {liveCourtBooked && (<span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-green-100 text-green-700"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>Court Booked</span>)}
+                    {isFindPlayers && livePlayersNeeded > 0 && (<span className="text-sm text-gray-600"><span className="font-bold text-court-green">{confirmed}</span>/{livePlayersNeeded} players</span>)}
+                  </div>
+                )}
 
                 {/* Players list — approved + manual */}
                 {((post.approvedPlayerNames && post.approvedPlayerNames.length > 0) || liveManualPlayers) && (
@@ -1043,14 +1048,16 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>
                         You&apos;re in!
                       </span>
-                      <button
-                        onClick={() => setShowWithdrawNote(!showWithdrawNote)}
-                        className="text-xs text-gray-400 hover:text-red-500 transition-colors"
-                      >
-                        Withdraw
-                      </button>
+                      {(!isProposeTeam || !complete) && (
+                        <button
+                          onClick={() => setShowWithdrawNote(!showWithdrawNote)}
+                          className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+                        >
+                          Withdraw
+                        </button>
+                      )}
                     </div>
-                    {showWithdrawNote && (
+                    {showWithdrawNote && (!isProposeTeam || !complete) && (
                       <div className="w-full mt-2 bg-white border border-gray-200 rounded-lg p-3">
                         <input
                           type="text"
@@ -1108,7 +1115,10 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                     {myRequest.note && <p className="text-[11px] text-gray-500 mt-1 italic">&quot;{myRequest.note}&quot;</p>}
                   </div>
                 )}
-                {isAuthor && (
+                {isAuthor && isProposeTeam && !complete && (
+                  <p className="basis-full text-sm text-gray-700">Recruitment is open. Review interested players and choose <strong>Form Team</strong> when you’re ready.</p>
+                )}
+                {isAuthor && (!isProposeTeam || !complete) && (
                   <button onClick={() => setShowRequests(true)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-court-green bg-court-green-soft/10 px-3 py-1.5 rounded-lg hover:bg-court-green-soft/20 transition-colors">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /></svg>
                     View Requests
@@ -1614,6 +1624,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
       {showRequests && createPortal(
         <ManageRequestsModal
           postId={post.id}
+          isProposeTeam={isProposeTeam}
           playersNeeded={livePlayersNeeded || 0}
           currentlyComplete={complete}
           onClose={() => setShowRequests(false)}
@@ -1652,7 +1663,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                   setEditCourtLocation(liveCourtLocation);
                   setEditCourtFacilityId(liveCourtFacilityId);
                   setEditGameType(liveGameType);
-                  setEditPlayersNeeded(livePlayersNeeded);
+                  if (isFindPlayers) setEditPlayersNeeded(livePlayersNeeded);
                   setEditCourtBooked(liveCourtBooked);
                   // Parse the propose_team skill range out of livePlayTime
                   // ("NTRP:3.0-4.0" or "UTR:5-8"). Falls back to NTRP 3.0–4.0
@@ -1774,7 +1785,7 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
 
               {/* Propose Team fields. Stored on the same columns as find_players
                   (court_location → team name, game_type → team type, play_date
-                  → free-text schedule, players_needed → members needed). */}
+                  → free-text schedule). */}
               {isProposeTeam && (
                 <div className="bg-gradient-to-br from-clay/5 to-clay-light/10 border border-clay/30 rounded-xl p-4 space-y-3">
                   <h4 className="text-sm font-bold text-clay flex items-center gap-1.5 mb-1">
@@ -1796,33 +1807,19 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">Members Needed</label>
-                      <select
-                        value={editPlayersNeeded}
-                        onChange={(e) => setEditPlayersNeeded(Number(e.target.value))}
-                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none"
-                      >
-                        {[2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20].map((n) => (
-                          <option key={n} value={n}>{n} members</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">Team Type</label>
-                      <select
-                        value={editGameType}
-                        onChange={(e) => setEditGameType(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none"
-                      >
-                        <option value="casual">Casual Practice</option>
-                        <option value="league">Competitive League</option>
-                        <option value="tournament">Tournament Prep</option>
-                        <option value="social">Social / Fun</option>
-                        <option value="drilling">Drilling / Training</option>
-                      </select>
-                    </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Team Type</label>
+                    <select
+                      value={editGameType}
+                      onChange={(e) => setEditGameType(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none"
+                    >
+                      <option value="casual">Casual Practice</option>
+                      <option value="league">Competitive League</option>
+                      <option value="tournament">Tournament Prep</option>
+                      <option value="social">Social / Fun</option>
+                      <option value="drilling">Drilling / Training</option>
+                    </select>
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-gray-600 mb-1">Skill Level</label>
@@ -2007,7 +2004,6 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                     updates.game_type = editGameType; // team type
                     updates.play_date = editPlayDate; // schedule (free text)
                     updates.play_time = `${editSkillSystem}:${editSkillMin}-${editSkillMax}`;
-                    updates.players_needed = editPlayersNeeded; // members needed
                     // Numeric skill columns kept in sync with the encoded
                     // play_time so the level is displayed consistently. These
                     // are display-only metadata — nothing filters or gates on
@@ -2059,7 +2055,6 @@ export default function PostCard({ post, onDelete, onUpdate, onOpenChat, onClose
                       setLiveCourtLocation(editCourtLocation);
                       setLiveCourtFacilityId(null);
                       setLiveGameType(editGameType);
-                      setLivePlayersNeeded(editPlayersNeeded);
                     }
                     const newGroups = availableTeams.filter((g) => editSelectedTeamIds.has(g.id)).map((g) => ({ id: g.id, name: g.name }));
                     const newFriendGroups = availableFriendGroups.filter((g) => editSelectedFriendGroupIds.has(g.id)).map((g) => ({ id: g.id, name: g.name }));
@@ -2531,9 +2526,9 @@ function SendToModal({
 /* ────── Manage Requests Modal ────── */
 
 function ManageRequestsModal({
-  postId, playersNeeded, currentlyComplete, onClose, onUpdate, onManualPlayersUpdate, manualPlayers,
+  postId, isProposeTeam, playersNeeded, currentlyComplete, onClose, onUpdate, onManualPlayersUpdate, manualPlayers,
 }: {
-  postId: string; playersNeeded: number; currentlyComplete: boolean; onClose: () => void;
+  postId: string; isProposeTeam: boolean; playersNeeded: number; currentlyComplete: boolean; onClose: () => void;
   onUpdate: (confirmed: number, complete: boolean, sessionChatId?: string | null, teamGroupId?: string | null) => void;
   onManualPlayersUpdate: (names: string) => void;
   manualPlayers: string;
@@ -2541,6 +2536,7 @@ function ManageRequestsModal({
   const [requests, setRequests] = useState<PlayRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [respondingTo, setRespondingTo] = useState<string | null>(null);
+  const [formingTeam, setFormingTeam] = useState(false);
   const [respondError, setRespondError] = useState<string>("");
   const [rejectNoteFor, setRejectNoteFor] = useState<string | null>(null);
   const [rejectNote, setRejectNote] = useState("");
@@ -2682,7 +2678,7 @@ function ManageRequestsModal({
           .eq("id", postId)
           .single();
         const nextConfirmed = refreshed?.players_confirmed ?? approvedCount + 1 + manualCount;
-        const isComplete = refreshed?.is_complete ?? nextConfirmed >= playersNeeded;
+        const isComplete = refreshed?.is_complete ?? (!isProposeTeam && nextConfirmed >= playersNeeded);
         const { chatId, teamGroupId } = isComplete
           ? await fetchCompletionIds(supabase, postId)
           : { chatId: null, teamGroupId: null };
@@ -2699,31 +2695,60 @@ function ManageRequestsModal({
     setRejectNote("");
   };
 
+  const handleFormTeam = async () => {
+    setFormingTeam(true);
+    setRespondError("");
+    try {
+      const result = await formProposedTeam(postId);
+      if (result.error !== undefined) {
+        setRespondError(result.error);
+        return;
+      }
+      onUpdate(result.confirmed, true, null, result.groupId);
+      onClose();
+    } catch {
+      setRespondError("Couldn't form the team. Try again.");
+    } finally {
+      setFormingTeam(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[10001] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-fade-in-up" onClick={(e) => e.stopPropagation()}>
         <div className="p-4 border-b border-gray-100 flex items-center justify-between">
           <div>
-            <h3 className="font-display text-lg font-bold text-gray-800">Player Requests</h3>
-            <p className="text-xs text-gray-400">{totalConfirmed}/{playersNeeded} players confirmed</p>
+            <h3 className="font-display text-lg font-bold text-gray-800">{isProposeTeam ? "Team Requests" : "Player Requests"}</h3>
+            <p className="text-xs text-gray-600">
+              {isProposeTeam ? `${approvedCount} approved` : `${totalConfirmed}/${playersNeeded} players confirmed`}
+            </p>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-400">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
         {respondError && (
-          <div className="mx-4 mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+          <div role="alert" className="mx-4 mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
             {respondError}
           </div>
         )}
-        <div className="px-4 pt-3">
-          <div className="w-full bg-gray-100 rounded-full h-2">
-            <div className="bg-court-green h-2 rounded-full transition-all" style={{ width: `${Math.min(100, (dropdownValue / playersNeeded) * 100)}%` }} />
+        {isProposeTeam ? (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100">
+            <p className="text-sm text-gray-600">Form a team with everyone you’ve approved.</p>
+            <button type="button" onClick={handleFormTeam} disabled={loading || formingTeam || respondingTo !== null || removingId !== null} className="btn-primary btn-sm shrink-0">
+              {formingTeam ? "Forming…" : "Form Team"}
+            </button>
           </div>
-        </div>
+        ) : (
+          <div className="px-4 pt-3">
+            <div className="w-full bg-gray-100 rounded-full h-2">
+              <div className="bg-court-green h-2 rounded-full transition-all" style={{ width: `${Math.min(100, (dropdownValue / playersNeeded) * 100)}%` }} />
+            </div>
+          </div>
+        )}
 
         {/* Manual controls */}
-        <div className="px-4 pt-3 pb-1 flex items-center justify-between gap-2 flex-wrap border-b border-gray-100 mb-1">
+        {!isProposeTeam && <div className="px-4 pt-3 pb-1 flex items-center justify-between gap-2 flex-wrap border-b border-gray-100 mb-1">
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold text-gray-600">Players found:</label>
             <select
@@ -2836,10 +2861,10 @@ function ManageRequestsModal({
               </button>
             ) : null}
           </div>
-        </div>
+        </div>}
 
         {/* Manual player names form */}
-        {showMarkFullForm && (
+        {!isProposeTeam && showMarkFullForm && (
           <div className="px-4 pt-3 pb-2 border-b border-gray-100">
             <p className="text-xs font-semibold text-gray-600 mb-1">
               {approvedCount > 0
@@ -2965,8 +2990,8 @@ function ManageRequestsModal({
                   </div>
                   {req.status === "PENDING" && (
                     <div className="flex items-center gap-2">
-                      <button onClick={() => handleRespond(req.id, "approve")} disabled={respondingTo === req.id || approvedCount >= playersNeeded} className="btn-primary btn-sm">{respondingTo === req.id ? "..." : "Approve"}</button>
-                      <button onClick={() => setRejectNoteFor(rejectNoteFor === req.id ? null : req.id)} disabled={respondingTo === req.id} className="btn-danger btn-sm">Decline</button>
+                      <button onClick={() => handleRespond(req.id, "approve")} disabled={formingTeam || respondingTo === req.id || (!isProposeTeam && approvedCount >= playersNeeded)} className="btn-primary btn-sm">{respondingTo === req.id ? "..." : "Approve"}</button>
+                      <button onClick={() => setRejectNoteFor(rejectNoteFor === req.id ? null : req.id)} disabled={formingTeam || respondingTo === req.id} className="btn-danger btn-sm">Decline</button>
                     </div>
                   )}
                   {req.status === "APPROVED" && (
@@ -2974,6 +2999,7 @@ function ManageRequestsModal({
                       <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-100 px-2.5 py-1 rounded-full"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20,6 9,17 4,12" /></svg>Approved</span>
                       <button
                         onClick={() => setRemoveNoteFor(removeNoteFor === req.id ? null : req.id)}
+                        disabled={formingTeam}
                         className="text-xs text-gray-400 hover:text-red-500 transition-colors"
                       >
                         Remove
@@ -2995,7 +3021,7 @@ function ManageRequestsModal({
                   <div className="mt-3 pt-3 border-t border-gray-100">
                     <input type="text" value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} placeholder="Add a note (optional)..." className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-2" autoFocus />
                     <div className="flex items-center gap-2">
-                      <button onClick={() => handleRespond(req.id, "reject", rejectNote)} disabled={respondingTo === req.id} className="btn-danger btn-sm">{respondingTo === req.id ? "..." : "Send Decline"}</button>
+                      <button onClick={() => handleRespond(req.id, "reject", rejectNote)} disabled={formingTeam || respondingTo === req.id} className="btn-danger btn-sm">{respondingTo === req.id ? "..." : "Send Decline"}</button>
                       <button onClick={() => { setRejectNoteFor(null); setRejectNote(""); }} className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1">Cancel</button>
                     </div>
                   </div>
@@ -3033,7 +3059,7 @@ function ManageRequestsModal({
                           setRemoveNoteFor(null);
                           setRemoveNote("");
                         }}
-                        disabled={removingId === req.id}
+                        disabled={formingTeam || removingId === req.id}
                         className="btn-danger btn-sm"
                       >
                         {removingId === req.id ? "..." : "Confirm Remove"}

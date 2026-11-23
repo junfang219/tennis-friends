@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useId } from "react";
 import { createPortal } from "react-dom";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import Avatar from "./Avatar";
@@ -67,17 +67,12 @@ export type ComposerInitialSession = {
   courtBooked: boolean;
 };
 
-export default function PostComposer({
-  onPost,
-  hideProposeTeam = false,
-}: {
+export default function PostComposer({ onPost }: {
   onPost: (post: Record<string, unknown>) => void;
-  hideProposeTeam?: boolean;
 }) {
   const { data: session } = useSession();
   const [showModal, setShowModal] = useState(false);
   const [openWithFindPlayers, setOpenWithFindPlayers] = useState(false);
-  const [openWithProposeTeam, setOpenWithProposeTeam] = useState(false);
   const [placeholder] = useState(
     () => PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)]
   );
@@ -86,9 +81,8 @@ export default function PostComposer({
     setIsNative(!!(window as unknown as { Capacitor?: unknown }).Capacitor);
   }, []);
 
-  const openModal = (findPlayers = false, proposeTeam = false) => {
+  const openModal = (findPlayers: boolean) => {
     setOpenWithFindPlayers(findPlayers);
-    setOpenWithProposeTeam(proposeTeam);
     setShowModal(true);
   };
 
@@ -133,12 +127,10 @@ export default function PostComposer({
           </div>
         </div>
 
-        {/* CTA buttons row */}
-        <div className="flex border-t border-court-green-pale/30">
-          {/* Find Players CTA — primary, larger */}
+        <div className="border-t border-court-green-pale/30">
           <button
-            onClick={() => openModal(true, false)}
-            className={`flex items-center justify-center gap-2 px-3 py-3 bg-gradient-to-r from-court-green to-court-green-light text-white font-semibold text-xs sm:text-sm hover:from-court-green-light hover:to-court-green-soft transition-all ${hideProposeTeam ? "w-full" : "flex-[2]"}`}
+            onClick={() => openModal(true)}
+            className="flex w-full items-center justify-center gap-2 px-3 py-3 bg-gradient-to-r from-court-green to-court-green-light text-white font-semibold text-xs sm:text-sm hover:from-court-green-light hover:to-court-green-soft transition-all"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="shrink-0">
               <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
@@ -146,21 +138,6 @@ export default function PostComposer({
             Find Players for a Game
           </button>
 
-          {/* Propose Team CTA — secondary, smaller */}
-          {!hideProposeTeam && (
-            <button
-              onClick={() => openModal(false, true)}
-              className="flex-1 flex items-center justify-center gap-1.5 px-2 py-3 bg-gradient-to-r from-clay to-clay-light text-white font-semibold text-xs hover:opacity-90 transition-all border-l border-white/20"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-                <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
-                <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
-                <path d="M4 22h16" />
-                <path d="M18 2H6v7a6 6 0 0012 0V2z" />
-              </svg>
-              Propose Team
-            </button>
-          )}
         </div>
       </div>
 
@@ -170,12 +147,11 @@ export default function PostComposer({
           session={session}
           placeholder={placeholder}
           initialFindPlayers={openWithFindPlayers}
-          initialProposeTeam={openWithProposeTeam}
           onPost={(post) => {
             onPost(post);
             setShowModal(false);
           }}
-          onClose={() => { setShowModal(false); setOpenWithFindPlayers(false); setOpenWithProposeTeam(false); }}
+          onClose={() => setShowModal(false)}
         />,
         document.body
       )}
@@ -187,18 +163,18 @@ export default function PostComposer({
 
 export function ComposerModal({
   session,
-  placeholder,
+  placeholder = "What's on your mind?",
   initialFindPlayers,
-  initialProposeTeam,
+  recruitForTeam = false,
   initialSession,
   chatTarget,
   onPost,
   onClose,
 }: {
   session: ReturnType<typeof useSession>["data"];
-  placeholder: string;
+  placeholder?: string;
   initialFindPlayers?: boolean;
-  initialProposeTeam?: boolean;
+  recruitForTeam?: boolean;
   // Pre-fill the Find-Players form (e.g. from a court booking). Forces the
   // composer into find-players mode with the court + time already set.
   initialSession?: ComposerInitialSession;
@@ -249,10 +225,8 @@ export function ComposerModal({
   const [emojiOpen, setEmojiOpen] = useState(false);
 
   const insertEmoji = (emoji: string) => {
-    // When propose-team form is active, insert into teamPurpose; otherwise into content
-    const isTeam = proposeTeam;
-    const el = isTeam ? teamPurposeRef.current : textareaRef.current;
-    const setter = isTeam ? setTeamPurpose : setContent;
+    const el = recruitForTeam ? teamPurposeRef.current : textareaRef.current;
+    const setter = recruitForTeam ? setTeamPurpose : setContent;
     if (!el) {
       setter((prev) => prev + emoji);
       return;
@@ -329,11 +303,10 @@ export function ComposerModal({
     setLocationSaving(false);
   };
 
-  // Propose Team fields
-  const [proposeTeam, setProposeTeam] = useState(initialProposeTeam || false);
+  // Team recruitment fields
+  const teamFieldId = useId();
   const [teamName, setTeamName] = useState("");
   const [teamPurpose, setTeamPurpose] = useState("");
-  const [teamSize, setTeamSize] = useState(4);
   const [teamType, setTeamType] = useState("casual");
   const [teamSchedule, setTeamSchedule] = useState("");
   const [skillSystem, setSkillSystem] = useState<"NTRP" | "UTR">("NTRP");
@@ -544,7 +517,7 @@ export function ComposerModal({
 
   const canSubmit = findPlayers
     ? (playDate && playTime && courtLocation)
-    : proposeTeam
+    : recruitForTeam
     ? (teamName.trim() && teamPurpose.trim())
     : (content.trim() || media.length > 0);
 
@@ -597,13 +570,12 @@ export function ComposerModal({
       }
     }
 
-    if (proposeTeam) {
+    if (recruitForTeam) {
       body.postType = "propose_team";
       body.courtLocation = teamName;
       body.gameType = teamType;
       body.playDate = teamSchedule || undefined;
       body.playTime = `${skillSystem}:${skillMin}-${skillMax}`;
-      body.playersNeeded = teamSize;
       body.content = teamPurpose;
     }
 
@@ -770,10 +742,11 @@ export function ComposerModal({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <h2 className="font-display text-xl font-bold text-gray-900">
-            {chatTarget ? "Looking for a player" : "Create Post"}
+            {recruitForTeam ? "Recruit for a Team" : chatTarget ? "Looking for a player" : "Create Post"}
           </h2>
           <button
             onClick={onClose}
+            aria-label="Close composer"
             className="w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 hover:text-gray-700 transition-colors"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -782,6 +755,13 @@ export function ComposerModal({
             </svg>
           </button>
         </div>
+
+        {recruitForTeam && (
+          <section className="mx-5 mt-4 rounded-xl bg-court-green/5 px-4 py-3 text-sm text-gray-700">
+            <h3 className="mb-1 font-semibold text-court-green">After you publish</h3>
+            <p>Players who see your post can tap <strong>I’m interested</strong>. Use <strong>View Requests</strong> on the post to review responses, then choose <strong>Form Team</strong> when you’re ready.</p>
+          </section>
+        )}
 
         {/* Author + audience */}
         <div className="px-5 pt-4 flex items-center gap-3">
@@ -830,20 +810,22 @@ export function ComposerModal({
 
         {/* Textarea */}
         <div className="px-5 py-3">
-          <textarea
-            ref={textareaRef}
-            value={content}
-            onChange={(e) => {
-              if (e.target.value.length <= 280) setContent(e.target.value);
-              const el = e.target;
-              el.style.height = "auto";
-              el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
-            }}
-            maxLength={280}
-            placeholder={placeholder}
-            className="w-full resize-none border-0 text-gray-700 text-base placeholder:text-gray-400 focus:outline-none focus:ring-0 overflow-y-auto"
-            rows={2}
-          />
+          {!recruitForTeam && (
+            <textarea
+              ref={textareaRef}
+              value={content}
+              onChange={(e) => {
+                if (e.target.value.length <= 280) setContent(e.target.value);
+                const el = e.target;
+                el.style.height = "auto";
+                el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
+              }}
+              maxLength={280}
+              placeholder={placeholder}
+              className="w-full resize-none border-0 text-gray-700 text-base placeholder:text-gray-400 focus:outline-none focus:ring-0 overflow-y-auto"
+              rows={2}
+            />
+          )}
 
           {/* Group tags */}
           {selectedGroupIds.size > 0 && (
@@ -1152,27 +1134,14 @@ export function ComposerModal({
             </div>
           )}
 
-          {/* Propose Team form */}
-          {proposeTeam && (
+          {/* Team recruitment details */}
+          {recruitForTeam && (
             <div className="bg-gradient-to-br from-clay/5 to-clay-light/10 border border-clay/30 rounded-xl p-4 mb-3">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-sm font-bold text-clay flex items-center gap-1.5">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
-                    <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
-                    <path d="M4 22h16" />
-                    <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
-                    <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
-                    <path d="M18 2H6v7a6 6 0 0012 0V2z" />
-                  </svg>
-                  Propose a Team
-                </h4>
-                <button onClick={() => setProposeTeam(false)} className="text-xs text-gray-400 hover:text-red-500 transition-colors">Remove</button>
-              </div>
               <div className="space-y-3">
                 <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Team Name</label>
+                  <label htmlFor={`${teamFieldId}-name`} className="block text-xs font-semibold text-gray-600 mb-1">Team Name</label>
                   <input
+                    id={`${teamFieldId}-name`}
                     type="text"
                     value={teamName}
                     onChange={(e) => setTeamName(e.target.value)}
@@ -1181,8 +1150,9 @@ export function ComposerModal({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Team Purpose / Description</label>
+                  <label htmlFor={`${teamFieldId}-purpose`} className="block text-xs font-semibold text-gray-600 mb-1">Team Purpose / Description</label>
                   <textarea
+                    id={`${teamFieldId}-purpose`}
                     ref={teamPurposeRef}
                     value={teamPurpose}
                     onChange={(e) => setTeamPurpose(e.target.value)}
@@ -1192,20 +1162,9 @@ export function ComposerModal({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Members Needed</label>
+                  <label htmlFor={`${teamFieldId}-type`} className="block text-xs font-semibold text-gray-600 mb-1">Team Type</label>
                   <select
-                    value={teamSize}
-                    onChange={(e) => setTeamSize(Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none"
-                  >
-                    {[2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20].map((n) => (
-                      <option key={n} value={n}>{n} members</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Team Type</label>
-                  <select
+                    id={`${teamFieldId}-type`}
                     value={teamType}
                     onChange={(e) => setTeamType(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none"
@@ -1217,12 +1176,13 @@ export function ComposerModal({
                     <option value="drilling">Drilling / Training</option>
                   </select>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Skill Level</label>
+                <fieldset>
+                  <legend className="block text-xs font-semibold text-gray-600 mb-1">Skill Level</legend>
                   <div className="flex items-center gap-2 mb-2">
                     <div className="inline-flex bg-gray-100 rounded-lg p-0.5">
                       <button
                         type="button"
+                        aria-pressed={skillSystem === "NTRP"}
                         onClick={() => { setSkillSystem("NTRP"); setSkillMin("3.0"); setSkillMax("4.0"); }}
                         className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${skillSystem === "NTRP" ? "bg-white text-court-green shadow-sm" : "text-gray-500"}`}
                       >
@@ -1230,6 +1190,7 @@ export function ComposerModal({
                       </button>
                       <button
                         type="button"
+                        aria-pressed={skillSystem === "UTR"}
                         onClick={() => { setSkillSystem("UTR"); setSkillMin("5"); setSkillMax("8"); }}
                         className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${skillSystem === "UTR" ? "bg-white text-court-green shadow-sm" : "text-gray-500"}`}
                       >
@@ -1240,13 +1201,13 @@ export function ComposerModal({
                   <div className="flex items-center gap-2">
                     {skillSystem === "NTRP" ? (
                       <>
-                        <select value={skillMin} onChange={(e) => setSkillMin(e.target.value)} className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none">
+                        <select aria-label="Minimum NTRP" value={skillMin} onChange={(e) => setSkillMin(e.target.value)} className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none">
                           {["2.0", "2.5", "3.0", "3.5", "4.0", "4.5", "5.0", "5.5"].map((v) => (
                             <option key={v} value={v}>{v}</option>
                           ))}
                         </select>
                         <span className="text-xs text-gray-400">to</span>
-                        <select value={skillMax} onChange={(e) => setSkillMax(e.target.value)} className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none">
+                        <select aria-label="Maximum NTRP" value={skillMax} onChange={(e) => setSkillMax(e.target.value)} className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white appearance-none">
                           {["2.5", "3.0", "3.5", "4.0", "4.5", "5.0", "5.5", "6.0+"].map((v) => (
                             <option key={v} value={v}>{v}</option>
                           ))}
@@ -1254,16 +1215,17 @@ export function ComposerModal({
                       </>
                     ) : (
                       <>
-                        <input type="number" value={skillMin} onChange={(e) => setSkillMin(e.target.value)} min="1" max="16" step="0.5" className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" placeholder="Min" />
+                        <input type="number" aria-label="Minimum UTR" value={skillMin} onChange={(e) => setSkillMin(e.target.value)} min="1" max="16" step="0.5" className="min-w-0 flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" placeholder="Min" />
                         <span className="text-xs text-gray-400">to</span>
-                        <input type="number" value={skillMax} onChange={(e) => setSkillMax(e.target.value)} min="1" max="16" step="0.5" className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" placeholder="Max" />
+                        <input type="number" aria-label="Maximum UTR" value={skillMax} onChange={(e) => setSkillMax(e.target.value)} min="1" max="16" step="0.5" className="min-w-0 flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" placeholder="Max" />
                       </>
                     )}
                   </div>
-                </div>
+                </fieldset>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Schedule</label>
+                  <label htmlFor={`${teamFieldId}-schedule`} className="block text-xs font-semibold text-gray-600 mb-1">Schedule</label>
                   <input
+                    id={`${teamFieldId}-schedule`}
                     type="text"
                     value={teamSchedule}
                     onChange={(e) => setTeamSchedule(e.target.value)}
@@ -1310,7 +1272,7 @@ export function ComposerModal({
               />
             </label>
             <EmojiPicker open={emojiOpen} onOpenChange={setEmojiOpen} onSelect={insertEmoji} />
-            {!proposeTeam && !chatTarget && (
+            {!recruitForTeam && !chatTarget && (
               <button
                 onClick={() => setFindPlayers(!findPlayers)}
                 className={`p-2 rounded-lg transition-colors ${
@@ -1364,7 +1326,7 @@ export function ComposerModal({
                 <path d="M12 2a10 10 0 019.95 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
               </svg>
             ) : (
-              chatTarget ? "Send request" : "Post"
+              recruitForTeam ? "Publish recruitment post" : chatTarget ? "Send request" : "Post"
             )}
           </button>
         </div>

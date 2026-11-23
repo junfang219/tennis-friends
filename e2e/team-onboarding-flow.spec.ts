@@ -3,6 +3,9 @@ import { groupId, playerId, managementFixture, player } from "./helpers/team-man
 test("two-step setup defaults to SMS and can finish without sending invitations", async ({ context, page }) => {
   const fixture = await managementFixture(context);
   await page.goto("/groups/new");
+  await expect(page.getByRole("link", { name: "Close team details", exact: true })).toHaveAttribute("href", "/groups");
+  await expect(page.getByRole("textbox", { name: /player names/i })).toHaveCount(0);
+  await expect(page.getByLabel("Team setup").getByText("1. Team details", { exact: true })).toHaveAttribute("aria-current", "step");
   await page.getByLabel("Team name", { exact: true }).fill("Slice Society");
   await page.getByRole("textbox", { name: /^Description/ }).fill("Our tennis team");
   await expect(page.getByLabel("Email", { exact: true })).toHaveCount(0);
@@ -29,7 +32,11 @@ test("two-step setup defaults to SMS and can finish without sending invitations"
   await nav.getByRole("link", { name: "Go to Roster", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
   await expect(page.getByRole("heading", { name: "Roster", exact: true })).toBeVisible();
-  expect(fixture.writes.map(w => w.path)).toEqual([`/api/team-onboarding/${groupId}/create`]);
+  expect(fixture.writes).toEqual([{
+    path: `/api/team-onboarding/${groupId}/create`,
+    method: "POST",
+    body: { name: "Slice Society", description: "Our tennis team" },
+  }]);
   await page.getByRole("link", { name: "Invite players", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Invite players", exact: true })).toBeVisible();
   await expect(page.getByLabel("Team setup")).toHaveCount(0);
@@ -198,6 +205,7 @@ test("Back edits the same team's details without replacing roster, USTA settings
   fixture.state.config = { ...fixture.state.config, includeUsta: true, teamNumber: "0000000000", deadline: "2026-11-24" };
   await page.goto(`/groups/${groupId}/invite-players?setup=1`);
   await page.getByRole("navigation", { name: "Setup navigation" }).getByRole("link", { name: "Back", exact: true }).click();
+  await expect(page.getByRole("link", { name: "Close team details", exact: true })).toHaveAttribute("href", "/groups");
   await expect(page.getByLabel("Team name", { exact: true })).toHaveValue("Shared review");
   await expect(page.getByRole("textbox", { name: /^Description/ })).toHaveValue("Saved description");
   await page.getByLabel("Team name", { exact: true }).fill("Updated team");

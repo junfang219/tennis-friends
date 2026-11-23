@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import TeamInvitationInbox from "@/components/groups/TeamInvitationInbox";
 import Avatar from "@/components/Avatar";
 import CommunitiesTabs from "@/components/CommunitiesTabs";
+import { useSession } from "@/lib/supabase/nextauth-compat";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listMyGroups, listFriends, listGroupMembers } from "@/lib/supabase/queries";
 import { useCachedQuery } from "@/lib/useCachedQuery";
@@ -15,6 +18,11 @@ import LeagueFields from "@/components/groups/LeagueFields";
 import { draftToColumns, emptyLeagueDraft, type LeagueDraft } from "@/lib/leagueDraft";
 import { leagueDraftFromSearchResult } from "@/lib/tennisrecord/leagueMeta";
 import type { RosterMember } from "@/lib/rosterMatch";
+
+const ComposerModal = dynamic(
+  () => import("@/components/PostComposer").then((module) => module.ComposerModal),
+  { ssr: false },
+);
 
 type FriendEntry = {
   friendshipId: string;
@@ -40,9 +48,11 @@ type GroupsBundle = { active: Group[]; archived: Group[] };
 
 export default function GroupsPage() {
   const router = useRouter();
+  const { data: session } = useSession();
   const [showArchived, setShowArchived] = useState(false);
   const [swipedKey, setSwipedKey] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState<"casual" | "usta" | null>(null);
+  const [showProposal, setShowProposal] = useState(false);
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("setup") === "existing") {
       // Explicit legacy import entry, preserved alongside the new wizard.
@@ -209,26 +219,46 @@ export default function GroupsPage() {
     <div className="max-w-2xl mx-auto px-4 py-8">
       <CommunitiesTabs />
       {process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" && <TeamInvitationInbox />}
-      <div className="animate-fade-in-up flex items-start justify-between mb-6 gap-3">
-        <div className="min-w-0">
-          <h1 className="font-display text-2xl font-bold text-court-green">
-            Your Teams
-          </h1>
-        </div>
+      <div className="animate-fade-in-up mb-6 space-y-3">
+        <h1 className="font-display text-2xl font-bold text-court-green">Your Teams</h1>
         {!showCreate && (
-          <button
-            onClick={() => process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" ? router.push("/groups/new") : setShowCreate("casual")}
-            className="btn-primary btn-sm shrink-0"
-            aria-label="Create a new team"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            New Team
-          </button>
+          <div className="grid grid-cols-2 gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={() => process.env.NEXT_PUBLIC_TEAM_ONBOARDING_ENABLED === "true" ? router.push("/groups/new") : setShowCreate("casual")}
+              className="min-w-0 rounded-xl bg-court-green p-3 text-left text-white hover:bg-court-green-light focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-court-green"
+              aria-label="Create a new team"
+              aria-describedby="new-team-description"
+            >
+              <span className="block text-sm font-semibold">New Team</span>
+              <span id="new-team-description" className="mt-1 block text-sm text-white/90">Start with players you already know.</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowProposal(true)}
+              className="min-w-0 rounded-xl border border-court-green/35 bg-white p-3 text-left hover:bg-net-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-court-green"
+              aria-label="Recruit for a Team"
+              aria-describedby="recruitment-description"
+            >
+              <span className="block text-sm font-semibold text-court-green">Recruit for a Team</span>
+              <span id="recruitment-description" className="mt-1 block text-sm text-gray-700">Post to find players for a new team.</span>
+            </button>
+          </div>
         )}
       </div>
+
+      {showProposal && createPortal(
+        <ComposerModal
+          session={session}
+          recruitForTeam
+          onPost={(post) => {
+            setShowProposal(false);
+            router.push(typeof post.id === "string" ? `/?post=${encodeURIComponent(post.id)}` : "/");
+          }}
+          onClose={() => setShowProposal(false)}
+        />,
+        document.body,
+      )}
 
       <div className="space-y-4">
 
