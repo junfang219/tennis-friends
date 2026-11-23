@@ -6,6 +6,9 @@ test("two-step setup defaults to SMS and can finish without sending invitations"
   await expect(page.getByRole("link", { name: "Close team details", exact: true })).toHaveAttribute("href", "/groups");
   await expect(page.getByRole("textbox", { name: /player names/i })).toHaveCount(0);
   await expect(page.getByLabel("Team setup").getByText("1. Team details", { exact: true })).toHaveAttribute("aria-current", "step");
+  await expect(page.getByLabel("Team setup").getByText("2. Invite players", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Is your USTA roster complete?", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Import a USTA team", exact: true })).toHaveAttribute("href", "/groups?setup=existing");
   await page.getByLabel("Team name", { exact: true }).fill("Slice Society");
   await page.getByRole("textbox", { name: /^Description/ }).fill("Our tennis team");
   await expect(page.getByLabel("Email", { exact: true })).toHaveCount(0);
@@ -19,7 +22,7 @@ test("two-step setup defaults to SMS and can finish without sending invitations"
   await expect(page.getByLabel("Team invitation link", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "Email", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Create shared team link", exact: true })).toHaveCount(0);
-  await expect(page.getByLabel("Team setup")).toContainText("2. Invite players (optional)");
+  await expect(page.getByLabel("Team setup").getByText("2. Invite players", { exact: true })).toHaveAttribute("aria-current", "step");
   await page.reload();
   await expect(page.getByRole("navigation", { name: "Setup navigation" })).toBeVisible();
   const nav = page.getByRole("navigation", { name: "Setup navigation" });

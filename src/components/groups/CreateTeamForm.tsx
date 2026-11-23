@@ -42,6 +42,12 @@ export default function CreateTeamForm({ groupId, initialDetails }: { groupId: s
       </fieldset>
       {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
     </form>
-    {!initialDetails && <section className="rounded-2xl border border-court-green/25 bg-court-green/5 p-5 space-y-3"><h2 className="font-semibold text-court-green">Already have a USTA team?</h2><p className="text-sm text-gray-700">Import its schedule and roster through the existing USTA setup.</p><Link href="/groups?setup=existing" className="btn-secondary block text-center">Import a USTA team</Link></section>}
+    {!initialDetails && (
+      <section className="rounded-2xl border border-court-green/25 bg-court-green/5 p-5 space-y-3">
+        <h2 className="font-semibold text-court-green">Is your USTA roster complete?</h2>
+        <p className="text-sm text-gray-700">If all your players are registered on your USTA team, import your roster and any posted matches to track availability.</p>
+        <Link href="/groups?setup=existing" className="btn-secondary block text-center">Import a USTA team</Link>
+      </section>
+    )}
   </main>;
 }
