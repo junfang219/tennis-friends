@@ -27,8 +27,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   const { id } = await ctx.params;
   if (!z.uuid().safeParse(id).success) return NextResponse.json({ error: "Invalid team" }, { status: 400 });
   const db = await createSupabaseServerClient();
-  const { data: auth } = await db.auth.getUser();
-  if (!auth.user) return NextResponse.json({ error: "Sign in first" }, { status: 401 });
+  // The RPC checks current manager access. Verified claims identify the
+  // caller without a separate user lookup when a signing key is cached.
+  const { data: auth } = await db.auth.getClaims();
+  if (!auth?.claims.sub) return NextResponse.json({ error: "Sign in first" }, { status: 401 });
   let input;
   try { input = createTeamSchema.parse(await req.json()); }
   catch { return NextResponse.json({ error: "Enter a team name and a description of at most 2000 characters" }, { status: 400 }); }

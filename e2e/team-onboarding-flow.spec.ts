@@ -270,6 +270,59 @@ test("Back edits the same team's details without replacing roster, USTA settings
   expect(fixture.state.config).toMatchObject({ includeUsta: true, teamNumber: "0000000000", deadline: "2026-11-24" });
   expect(fixture.shared).toMatchObject({ enabled: true, token: "a".repeat(64) });
 });
+test("Save & continue skips the write and shows Invite players while the next page loads when details are unchanged", async ({ context, page }) => {
+  const fixture = await managementFixture(context);
+  await page.goto(`/groups/${groupId}/setup-details`);
+  await expect(page.getByLabel("Team name", { exact: true })).toHaveValue("Shared review");
+
+  const navigation = Promise.withResolvers<void>();
+  await page.route(url => url.pathname === `/groups/${groupId}/invite-players`, async route => {
+    await navigation.promise;
+    await route.fallback();
+  });
+  try {
+    await page.getByRole("button", { name: "Save & continue", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Invite players", exact: true })).toBeVisible();
+    await expect(page.getByText("Loading invitation options…", { exact: true })).toBeVisible();
+    expect(fixture.writes).toEqual([]);
+  } finally {
+    navigation.resolve();
+  }
+
+  await expect(page).toHaveURL(`/groups/${groupId}/invite-players?setup=1`);
+  await expect(page.getByRole("link", { name: "Go to Roster", exact: true })).toBeVisible();
+  expect(fixture.writes).toEqual([]);
+});
+
+test("a failed save keeps the edited details on screen for a retry", async ({ context, page }) => {
+  const fixture = await managementFixture(context);
+  await page.goto(`/groups/${groupId}/setup-details`);
+  await page.getByLabel("Team name", { exact: true }).fill("Edited team");
+  const save = Promise.withResolvers<void>();
+  await page.route(`**/api/team-onboarding/${groupId}/create`, async route => {
+    await save.promise;
+    await route.fulfill({ status: 503, json: { error: "Could not save team details" } });
+  }, { times: 1 });
+
+  try {
+    await page.getByRole("button", { name: "Save & continue", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Saving…", exact: true })).toBeDisabled();
+    await expect(page.getByRole("heading", { name: "Team details", exact: true })).toBeVisible();
+  } finally {
+    save.resolve();
+  }
+
+  await expect(page.locator("form").getByRole("alert")).toHaveText("Could not save team details");
+  await expect(page.getByLabel("Team name", { exact: true })).toHaveValue("Edited team");
+  await page.getByRole("button", { name: "Save & continue", exact: true }).click();
+  await expect(page.getByRole("link", { name: "Go to Roster", exact: true })).toBeVisible();
+  expect(fixture.writes).toEqual([{
+    path: `/api/team-onboarding/${groupId}/create`,
+    method: "PATCH",
+    body: { name: "Edited team", description: "Saved description" },
+  }]);
+});
+
 test("successful setup email sending finishes on Roster and targets only new recipients", async ({ context, page }) => {
   const fixture = await managementFixture(context, [player()]);
   await page.goto(`/groups/${groupId}/invite-players?setup=1`);

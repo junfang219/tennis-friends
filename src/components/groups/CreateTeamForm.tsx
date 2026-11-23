@@ -1,15 +1,58 @@
 "use client";
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { z } from "zod";
 import { createTeamSchema } from "@/lib/onboarding/management";
 import TeamSetupProgress from "./TeamSetupProgress";
+import InvitePlayersLoading from "./InvitePlayersLoading";
 import { teamResponse } from "./useTeamManagement";
-export default function CreateTeamForm({ groupId, initialDetails }: { groupId: string; initialDetails?: { name: string; description: string } }) {
+const savedTeamSchema = z.object({ groupId: z.uuid() });
+
+export default function CreateTeamForm({ groupId, initialDetails }: {
+  groupId: string;
+  initialDetails?: { name: string; description: string };
+}) {
   const router = useRouter();
-  const [name, setName] = useState(initialDetails?.name ?? ""); const [description, setDescription] = useState(initialDetails?.description ?? "");
-  const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const [name, setName] = useState(initialDetails?.name ?? "");
+  const [description, setDescription] = useState(initialDetails?.description ?? "");
+  const [phase, setPhase] = useState<"editing" | "saving" | "continuing">("editing");
+  const [error, setError] = useState("");
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (phase !== "editing") return;
+    setError("");
+
+    try {
+      const body = createTeamSchema.parse({ name, description });
+      const unchanged = initialDetails &&
+        body.name === initialDetails.name.trim() &&
+        body.description === initialDetails.description.trim();
+      let savedId = groupId;
+
+      if (!unchanged) {
+        setPhase("saving");
+        const response = await fetch(`/api/team-onboarding/${groupId}/create`, {
+          method: initialDetails ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        savedId = savedTeamSchema.parse(await teamResponse(response)).groupId;
+      }
+
+      setPhase("continuing");
+      router.replace(`/groups/${savedId}/invite-players?setup=1`);
+    } catch (error) {
+      setError(error instanceof z.ZodError
+        ? error.issues[0]?.message ?? "Check the team details"
+        : error instanceof Error ? error.message : "Could not save team details");
+      setPhase("editing");
+    }
+  }
+
+  if (phase === "continuing") return <InvitePlayersLoading setup />;
+
   return <main className="max-w-2xl mx-auto p-4 py-8 space-y-5">
     <header className="flex items-center justify-between gap-3">
       <h1 className="font-display text-3xl font-bold text-court-green">{initialDetails ? "Team details" : "Create your team"}</h1>
@@ -27,19 +70,13 @@ export default function CreateTeamForm({ groupId, initialDetails }: { groupId: s
     </header>
     <TeamSetupProgress step={1} />
     <p className="text-gray-600">Start with your team’s details, then add players in the next step.</p>
-    <form className="rounded-2xl border border-gray-200 bg-white p-5 space-y-5" onSubmit={event => { event.preventDefault(); if (busy) return; setBusy(true); setError(""); void (async () => {
-      try {
-        const body = createTeamSchema.parse({ name, description });
-        const raw = await teamResponse(await fetch(`/api/team-onboarding/${groupId}/create`, { method: initialDetails ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
-        const result = z.object({ groupId: z.uuid() }).parse(raw);
-        router.replace(`/groups/${result.groupId}/invite-players?setup=1`);
-      } catch (e) { setError(e instanceof Error ? e.message : "Could not create team"); setBusy(false); }
-    })(); }}>
-      <fieldset disabled={busy} className="space-y-5 min-w-0">
+    <form className="rounded-2xl border border-gray-200 bg-white p-5 space-y-5" onSubmit={handleSubmit}>
+      <fieldset disabled={phase === "saving"} className="space-y-5 min-w-0">
         <label className="block text-sm font-semibold">Team name<input required maxLength={100} className="mt-1 w-full rounded-xl border border-gray-300 p-3 text-base" value={name} onChange={e => setName(e.target.value)} /></label>
         <label className="block text-sm font-semibold">Description (optional)<textarea maxLength={2000} rows={4} className="mt-1 w-full rounded-xl border border-gray-300 p-3 text-base" value={description} onChange={e => setDescription(e.target.value)} /></label>
-        <button type="submit" className="btn-primary h-12 w-full">{busy ? "Saving…" : initialDetails ? "Save & continue" : "Create team & continue"}</button>
+        <button type="submit" className="btn-primary h-12 w-full">{phase === "saving" ? "Saving…" : initialDetails ? "Save & continue" : "Create team & continue"}</button>
       </fieldset>
+      {phase === "saving" && <span role="status" className="sr-only">Saving team details…</span>}
       {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
     </form>
     {!initialDetails && (
