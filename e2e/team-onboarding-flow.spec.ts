@@ -46,16 +46,18 @@ test("two-step setup defaults to SMS and can finish without sending invitations"
   await expect(page.getByLabel("Team setup")).toHaveCount(0);
 });
 test("Go to Roster stays available if invitation options fail to load", async ({ context, page }) => {
-  await managementFixture(context);
+  const fixture = await managementFixture(context);
   await page.route(`**/api/team-onboarding/${groupId}`, (route) => route.fulfill({
     status: 503,
     json: { error: "Could not load invitations" },
   }));
   await page.goto(`/groups/${groupId}/invite-players?setup=1`);
-  await expect(page.getByRole("alert")).toContainText("Could not load invitations");
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText("Could not load invitations");
   const rosterLink = page.getByRole("link", { name: "Go to Roster", exact: true });
   await expect(rosterLink).toBeInViewport({ ratio: 1 });
-  await expect(rosterLink).toHaveAttribute("href", `/groups/${groupId}/roster`);
+  await rosterLink.click();
+  await expect(page).toHaveURL(`/groups/${groupId}/roster`);
+  expect(fixture.writes).toEqual([]);
 });
 test("method switching and Back to roster never write a stale roster", async ({ context, page }) => {
   const fixture = await managementFixture(context, [player()]);
