@@ -3597,6 +3597,10 @@ export type Database = {
       delete_expired_game_chats: { Args: never; Returns: number }
       delete_my_account: { Args: never; Returns: undefined }
       email_exists: { Args: { p_email: string }; Returns: boolean }
+      form_proposed_team: {
+        Args: { p_post_id: string }
+        Returns: { team_group_id: string; players_confirmed: number }[]
+      }
       generate_round_robin_schedule: {
         Args: { p_event_id: string; p_schedule: Json }
         Returns: Json

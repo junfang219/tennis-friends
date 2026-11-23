@@ -529,7 +529,7 @@ export default function HomePage() {
             const emptyCopy: Record<string, { title: string; body: string }> = {
               all: {
                 title: "The court is quiet",
-                body: "This is your home feed — every post your community shares lands here. Be the first to post, find a partner, or propose a team.",
+                body: "This is your home feed — every post your community shares lands here. Be the first to post or find a partner.",
               },
               social: {
                 title: "No social posts yet",
@@ -540,8 +540,8 @@ export default function HomePage() {
                 body: "Players post here when they're looking for a partner to hit, drill, or play a match. Tap “Find Players for a Game” above to post one.",
               },
               propose_team: {
-                title: "No team proposals",
-                body: "Players post here when they're forming doubles teams or league rosters. Tap “Propose Team” above to start one.",
+                title: "No team recruitment posts",
+                body: "Find players for a doubles team or league roster. Open Communities and tap “Recruit for a Team” on the Teams tab to publish a post.",
               },
               nearby: {
                 title: "No nearby broadcasts",
