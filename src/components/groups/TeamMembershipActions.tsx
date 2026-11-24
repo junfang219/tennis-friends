@@ -30,7 +30,13 @@ export default function TeamMembershipActions({ groupId, isOwner }: { groupId: s
   }
 
   return (
-    <details className="rounded-xl border border-gray-200 bg-white">
+    <details
+      className="scroll-mb-[calc(var(--native-tab-bar-height,0px)+1rem)] rounded-xl border border-gray-200 bg-white"
+      onToggle={(event) => {
+        const menu = event.currentTarget;
+        if (menu.open) menu.scrollIntoView({ block: "nearest" });
+      }}
+    >
       <summary className="min-h-11 cursor-pointer rounded-xl px-4 py-3 text-sm font-semibold text-court-green focus-visible:outline focus-visible:outline-2 focus-visible:outline-court-green">
         Team actions
       </summary>
