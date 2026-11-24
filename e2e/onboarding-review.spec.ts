@@ -1,51 +1,108 @@
 import { test, expect } from "@playwright/test";
 import { reviewGroup, reviewRosterMemberCookie, reviewTeamApi, reviewTeamPath } from "../src/lib/onboarding/review-fixture";
 
-test("roles and member types update before the roster save responds", async ({ page }) => {
+test("roster dropdown replaces the previous option and restores it if saving fails", async ({ page, baseURL }) => {
   const roleSave = Promise.withResolvers<void>();
-  const typeSave = Promise.withResolvers<void>();
+  const rejectedGuestSave = Promise.withResolvers<void>();
   const rosterApi = `**/api/team-roster/${reviewGroup.id}`;
   const memberId = reviewGroup.members[0].id;
+  const cookieValue = (member: { roles: string[]; memberType: string }) => encodeURIComponent(JSON.stringify(member));
+  await page.context().addCookies([{
+    name: reviewRosterMemberCookie,
+    value: cookieValue({ roles: ["captain", "manager"], memberType: "Guest" }),
+    url: new URL(reviewTeamPath, baseURL).origin,
+  }]);
+  const edits = [
+    { roles: ["captain"], memberType: "" },
+    { roles: ["manager"], memberType: "" },
+    { roles: [], memberType: "Guest" },
+    { roles: [], memberType: "Guest" },
+    { roles: [], memberType: "" },
+  ];
+  let nextEdit = 0;
   await page.route(rosterApi, async route => {
-    const change: unknown = route.request().postDataJSON();
-    if (change && typeof change === "object" && "roles" in change) {
-      expect(change).toEqual({ action: "member", memberId, roles: ["captain"] });
-      await roleSave.promise;
-      const cookie = encodeURIComponent(JSON.stringify({ roles: ["captain"] }));
-      await route.fulfill({ json: { ok: true }, headers: { "Set-Cookie": `${reviewRosterMemberCookie}=${cookie}; Path=/; HttpOnly; SameSite=Strict` } });
+    const index = nextEdit++;
+    const edit = edits[index];
+    expect(route.request().postDataJSON()).toEqual({ action: "member", memberId, ...edit });
+    if (index === 0) await roleSave.promise;
+    if (index === 2) {
+      await rejectedGuestSave.promise;
+      await route.fulfill({ status: 400, json: { error: "Could not save roster change" } });
       return;
     }
-    expect(change).toEqual({ action: "member", memberId, memberType: "Sub" });
-    await typeSave.promise;
-    await route.fulfill({ status: 400, json: { error: "Could not save roster change" } });
+    await route.fulfill({
+      json: { ok: true },
+      headers: { "Set-Cookie": `${reviewRosterMemberCookie}=${cookieValue(edit)}; Path=/; HttpOnly; SameSite=Strict` },
+    });
   });
 
   await page.goto(`${reviewTeamPath}/settings?tab=roster`);
-  const captain = page.getByRole("button", { name: "Captain", exact: true });
-  const type = page.getByRole("combobox", { name: "Member type for Captain", exact: true });
-  await expect(captain).toHaveAttribute("aria-pressed", "false");
+  const dropdown = page.getByLabel(/^Roles for Captain:/);
+  const options = page.getByRole("group", { name: "Roster options for Captain", exact: true });
+  const selected = options.getByRole("button", { pressed: true });
+  const captain = options.getByRole("button", { name: "Captain", exact: true });
+  const coCaptain = options.getByRole("button", { name: "Co-captain", exact: true });
+  const member = options.getByRole("button", { name: "Member", exact: true });
+  const guest = options.getByRole("button", { name: "Guest", exact: true });
+  await expect(dropdown).toHaveAccessibleName("Roles for Captain: Co-captain");
+  await expect(options).toBeHidden();
+  await dropdown.click();
+  await expect(options.getByRole("button")).toHaveText(["Captain", "Co-captain", "Member", "Guest"]);
+  await expect(selected).toHaveText(["Co-captain"]);
   try {
     await captain.click();
-    await expect(captain).toHaveAttribute("aria-pressed", "true");
+    await expect(options).toBeHidden();
+    await expect(dropdown).toBeFocused();
+    await expect(dropdown).toHaveAccessibleName("Roles for Captain: Captain");
+    await dropdown.click();
+    await expect(selected).toHaveText(["Captain"]);
     await expect(captain).toBeDisabled();
   } finally {
     roleSave.resolve();
   }
   await expect(captain).toBeEnabled();
+  await coCaptain.click();
+  await expect(options).toBeHidden();
+  await dropdown.click();
+  await expect(coCaptain).toBeEnabled();
   await page.reload();
-  await expect(captain).toHaveAttribute("aria-pressed", "true");
+  await expect(dropdown).toHaveAccessibleName("Roles for Captain: Co-captain");
+  await dropdown.click();
+  await expect(selected).toHaveText(["Co-captain"]);
 
   try {
-    await type.selectOption("Sub");
-    await expect(type).toHaveValue("Sub");
-    await expect(type).toBeDisabled();
+    await guest.click();
+    await expect(options).toBeHidden();
+    await expect(dropdown).toHaveAccessibleName("Roles for Captain: Guest");
+    await dropdown.click();
+    await expect(selected).toHaveText(["Guest"]);
+    await expect(guest).toBeDisabled();
   } finally {
-    typeSave.resolve();
+    rejectedGuestSave.resolve();
   }
   await expect(page.getByRole("region", { name: "Team members" }).getByRole("alert")).toHaveText("Could not save roster change");
-  await expect(type).toHaveValue("");
-  await expect(captain).toHaveAttribute("aria-pressed", "true");
+  await expect(selected).toHaveText(["Co-captain"]);
+  await guest.click();
+  await expect(options).toBeHidden();
+  await dropdown.click();
+  await expect(guest).toBeEnabled();
+  await page.reload();
+  await expect(dropdown).toHaveAccessibleName("Roles for Captain: Guest");
+  await dropdown.click();
+  await expect(selected).toHaveText(["Guest"]);
+  await member.click();
+  await expect(member).toBeHidden();
+  await dropdown.click();
+  await expect(member).toBeEnabled();
+  await page.reload();
+  await expect(dropdown).toHaveAccessibleName("Roles for Captain: Member");
+  await dropdown.click();
+  await expect(selected).toHaveText(["Member"]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await member.press("Escape");
+  await expect(member).toBeHidden();
+  await expect(dropdown).toBeFocused();
+  expect(nextEdit).toBe(edits.length);
 });
 
 test("Back to team returns to the sample team from its roster", async ({ page }) => {
@@ -55,6 +112,9 @@ test("Back to team returns to the sample team from its roster", async ({ page })
   await page.getByRole("link", { name: "View roster", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Roster", exact: true })).toBeVisible();
   await expect(page.getByText("USTA registration · Not enabled", { exact: true })).toBeVisible();
+  const teamActions = page.locator("main > details:last-child");
+  await teamActions.getByText("Team actions", { exact: true }).click();
+  await expect(teamActions.getByRole("button", { name: "Delete team", exact: true })).toBeInViewport();
   await page.getByRole("link", { name: "Back to team", exact: true }).click();
   await expect(team).toBeVisible();
   await page.getByRole("link", { name: "Team settings", exact: true }).click();

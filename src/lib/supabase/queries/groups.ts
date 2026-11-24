@@ -174,7 +174,9 @@ export async function listGroupMembers(
        user:profiles!group_members_user_id_fkey ( id, name, profile_image_url, ntrp_rating )`
     )
     .eq("group_id", groupId)
-    .is("archived_at", null);
+    .is("archived_at", null)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
   if (error) throw error;
   type RawMember = Omit<GroupMember, "isPlaceholder" | "placeholderScope" | "user"> & {
     placeholder_name: string | null;

@@ -8,7 +8,12 @@ const memberSchema = z.object({ id: z.uuid(), user_id: z.uuid().nullable(), role
 export async function readTeamRoster(db: SupabaseClient<Database>, id: string) {
   const [groupResult, memberResult] = await Promise.all([
     db.from("groups").select("id,name,owner_id,member_types").eq("id", id).maybeSingle(),
-    db.from("group_members").select("id,user_id,roles,member_type,placeholder_name,user:profiles!group_members_user_id_fkey(id,name,profile_image_url)").eq("group_id", id).is("archived_at", null),
+    db.from("group_members")
+      .select("id,user_id,roles,member_type,placeholder_name,user:profiles!group_members_user_id_fkey(id,name,profile_image_url)")
+      .eq("group_id", id)
+      .is("archived_at", null)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true }),
   ]);
   if (groupResult.error || memberResult.error) throw new Error("Could not load team roster");
   if (!groupResult.data) return null;

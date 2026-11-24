@@ -12,7 +12,7 @@ import type { Database } from "../types";
 
 // Minimal fake of the two query shapes these helpers use:
 //   groups:        from().select().eq().maybeSingle()
-//   group_members: from().select().eq().is()  (terminal)
+//   group_members: from().select().eq().is().order().order()
 function makeClient(opts: {
   group: Record<string, unknown> | null;
   members: Record<string, unknown>[];
@@ -25,7 +25,8 @@ function makeClient(opts: {
   const membersQ: Record<string, unknown> = {};
   membersQ.select = () => membersQ;
   membersQ.eq = () => membersQ;
-  membersQ.is = vi.fn(async () => ({ data: opts.members, error: null }));
+  membersQ.is = () => membersQ;
+  membersQ.order = vi.fn().mockReturnValueOnce(membersQ).mockResolvedValue({ data: opts.members, error: null });
 
   const client = {
     from: vi.fn((table: string) => (table === "groups" ? groupQ : membersQ)),

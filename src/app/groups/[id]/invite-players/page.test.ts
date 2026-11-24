@@ -37,8 +37,10 @@ beforeEach(() => {
   vi.stubGlobal("fetch", mocks.fetch);
   mocks.from.mockImplementation((table: string) => {
     const query = { select: () => query, eq: () => query, maybeSingle: async () => ({ data: { id, name: "Current route team", owner_id: owner, member_types: [] }, error: null }),
-      is: async () => ({ data: [{ id: manager, user_id: manager, roles: ["manager"], member_type: "", placeholder_name: null, user: { id: manager, name: "Manager", profile_image_url: null } }], error: null }),
+      is: () => query,
+      order: vi.fn(),
       gt: async () => ({ data: [], error: null }) };
+    query.order.mockReturnValueOnce(query).mockResolvedValue({ data: [{ id: manager, user_id: manager, roles: ["manager"], member_type: "", placeholder_name: null, user: { id: manager, name: "Manager", profile_image_url: null } }], error: null });
     if (!["groups", "group_members", "group_invites"].includes(table)) throw new Error(`Unexpected table: ${table}`);
     return query;
   });
