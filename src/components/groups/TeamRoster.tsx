@@ -220,11 +220,10 @@ export default function TeamRoster({
                                 type="button"
                                 onClick={(event) => {
                                   closeRosterOptions(event.currentTarget.closest("details"));
+                                  if (selected) return;
                                   const roles: TeamRole[] = value === "captain" || value === "manager" ? [value] : [];
                                   const memberType = value === "guest" ? "Guest" : isGuest ? "" : m.memberType;
-                                  if (m.roles.length !== roles.length || !selected || memberType !== m.memberType) {
-                                    void changeRoster(m.id, "member", { roles, memberType });
-                                  }
+                                  void changeRoster(m.id, "member", { roles, memberType });
                                 }}
                                 disabled={Boolean(pending) || lockedCoCaptain}
                                 title={lockedCoCaptain ? "Only the team owner can change Co-captain access" : undefined}

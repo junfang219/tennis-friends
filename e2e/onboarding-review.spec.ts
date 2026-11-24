@@ -49,6 +49,13 @@ test("roster dropdown replaces the previous option and restores it if saving fai
   await dropdown.click();
   await expect(options.getByRole("button")).toHaveText(["Captain", "Co-captain", "Member", "Guest"]);
   await expect(selected).toHaveText(["Co-captain"]);
+  await coCaptain.click();
+  await expect(options).toBeHidden();
+  await expect(dropdown).toBeFocused();
+  await dropdown.click();
+  await expect(coCaptain).toBeEnabled();
+  expect(nextEdit).toBe(0);
+
   try {
     await captain.click();
     await expect(options).toBeHidden();
