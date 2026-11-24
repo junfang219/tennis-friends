@@ -30,9 +30,36 @@ export function ManagedRoster({ group, currentUser, onRosterChanged, embedded = 
 }
 export default function TeamRosterScreen({ group, currentUser }: { group: RosterGroup; currentUser: { id: string; name: string } }) {
   const router = useRouter();
-  const canManage = canAdmin({ isOwner: group.ownerId === currentUser.id, roles: group.members.find(m => m.userId === currentUser.id)?.roles ?? [] });
-  return <main className="max-w-2xl mx-auto p-4 py-6 space-y-5"><Link href={`/groups/${group.id}`} className="text-sm underline text-court-green">Back to team</Link><header><p className="text-sm text-gray-600 break-words">{group.name}</p><h1 className="font-display text-3xl font-bold text-court-green">Roster</h1><p className="text-sm text-gray-600 mt-2">Manage players, invitations, and USTA registration here.</p></header>
-    {canManage ? <ManagedRoster group={group} currentUser={currentUser} onRosterChanged={() => router.refresh()} /> : <section className="rounded-2xl border border-gray-200 bg-white p-5"><TeamRoster group={group} canManage={false} currentUserId={currentUser.id} currentUserName={currentUser.name} onSaved={() => {}} /></section>}
-    <TeamMembershipActions groupId={group.id} isOwner={group.ownerId === currentUser.id} />
-  </main>;
+  const isOwner = group.ownerId === currentUser.id;
+  const canManage = canAdmin({
+    isOwner,
+    roles: group.members.find(member => member.userId === currentUser.id)?.roles ?? [],
+  });
+
+  return (
+    <main className="max-w-2xl mx-auto p-4 py-6 space-y-5">
+      <Link href={`/groups/${group.id}`} className="text-sm underline text-court-green">
+        Back to team
+      </Link>
+      <header>
+        <p className="text-sm text-gray-600 break-words">{group.name}</p>
+        <h1 className="font-display text-3xl font-bold text-court-green">Roster</h1>
+        <p className="text-sm text-gray-600 mt-2">Manage players, invitations, and USTA registration here.</p>
+      </header>
+      <TeamMembershipActions groupId={group.id} isOwner={isOwner} />
+      {canManage ? (
+        <ManagedRoster group={group} currentUser={currentUser} onRosterChanged={() => router.refresh()} />
+      ) : (
+        <section className="rounded-2xl border border-gray-200 bg-white p-5">
+          <TeamRoster
+            group={group}
+            canManage={false}
+            currentUserId={currentUser.id}
+            currentUserName={currentUser.name}
+            onSaved={() => {}}
+          />
+        </section>
+      )}
+    </main>
+  );
 }
