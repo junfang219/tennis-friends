@@ -1,0 +1,92 @@
+import { notFound } from "next/navigation";
+import { getContentModerator, reviewableMediaUrl } from "@/lib/moderation/server";
+import { reportReasons, targetLabels } from "@/lib/moderation/contracts";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import ReviewControls from "./ReviewControls";
+import { decideMediaUpload } from "./actions";
+import { isScreenedMediaBucket, managedMediaUrl } from "@/lib/supabase/storage";
+
+export const metadata = { title: "Moderation | TennisFriend", robots: { index: false, follow: false } };
+
+export default async function ModerationPage() {
+  if (!await getContentModerator()) notFound();
+
+  const admin = createSupabaseAdminClient();
+  const [queue, cleanup, uploads] = await Promise.all([
+    admin.from("content_reports").select("id, target_type, reason, details, evidence_text, evidence_media, created_at")
+      .is("decision", null).order("created_at").order("id").limit(50),
+    admin.from("moderation_media_cleanup").select("report_id, created_at").order("created_at").limit(50),
+    admin.rpc("pending_media_uploads"),
+  ]);
+  if (queue.error || cleanup.error || uploads.error) throw new Error("Couldn’t load the moderation queue.");
+  const reports = queue.data;
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-6">
+      <h1 className="font-display text-2xl font-bold text-court-green">Moderation</h1>
+      {uploads.data.length > 0 && (
+        <section className="my-5" aria-labelledby="pending-upload-heading">
+          <h2 id="pending-upload-heading" className="font-semibold">Uploads awaiting screening</h2>
+          <ul className="mt-2 space-y-3">
+            {uploads.data.map(upload => isScreenedMediaBucket(upload.bucket) && (
+              <li key={upload.object_id} className="rounded-xl border border-gray-300 bg-white p-4">
+                <a href={managedMediaUrl(upload.bucket, upload.object_key) + "?review=1"} target="_blank" rel="noopener noreferrer" className="text-court-green underline">
+                  Review upload
+                </a>
+                <form action={decideMediaUpload} className="mt-3 flex flex-wrap gap-2">
+                  <input type="hidden" name="objectId" value={upload.object_id} />
+                  <button name="decision" value="approve" className="btn-primary min-h-11">Approve</button>
+                  <button name="decision" value="reject" className="btn-danger min-h-11">Reject</button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {cleanup.data.length > 0 && (
+        <section className="mt-4" aria-labelledby="pending-attachments">
+          <h2 id="pending-attachments" className="font-semibold text-gray-900">Pending attachment removal</h2>
+          <ul className="mt-2 space-y-3">
+            {cleanup.data.map(({ report_id }) => (
+              <li key={report_id} className="rounded-xl border border-gray-300 bg-white p-4">
+                <p className="break-all text-sm text-gray-700">Report {report_id}</p>
+                <ReviewControls id={report_id} retryMedia />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {reports.length === 0 ? <p className="mt-4 text-gray-700">No reports awaiting review.</p> : (
+        <ul className="mt-4 space-y-3">
+          {reports.map((report) => {
+            const reason = reportReasons[report.reason as keyof typeof reportReasons];
+            const target = targetLabels[report.target_type as keyof typeof targetLabels];
+            const media = report.evidence_media.map(reviewableMediaUrl).filter((url): url is string => url !== null);
+            return (
+              <li key={report.id} className="rounded-xl border border-gray-300 bg-white p-4">
+                <h2 className="font-semibold text-gray-900">{reason} · {target}</h2>
+                <time className="text-sm text-gray-700" dateTime={report.created_at}>
+                  {new Date(report.created_at).toLocaleString("en-US", { timeZone: "America/Los_Angeles", dateStyle: "medium", timeStyle: "short" })} PT
+                </time>
+                {report.details && <p className="mt-3 whitespace-pre-wrap break-words text-sm text-gray-800">{report.details}</p>}
+                {report.evidence_text && <blockquote className="mt-3 whitespace-pre-wrap break-words rounded-lg bg-surface p-3 text-sm text-gray-900">{report.evidence_text}</blockquote>}
+                {media.length > 0 && (
+                  <ul className="mt-3 flex flex-wrap gap-3 text-sm">
+                    {media.map((url, index) => (
+                      <li key={url + index}>
+                        <a href={url + "?review=1"} target="_blank" rel="noopener noreferrer" className="text-court-green underline">
+                          Open attachment {index + 1}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <ReviewControls id={report.id} />
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}

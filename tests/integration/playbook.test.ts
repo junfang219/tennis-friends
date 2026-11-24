@@ -7,6 +7,7 @@ import {
   makeTestUser,
   type TestUser,
 } from "./_helpers";
+import { managedMediaUrl } from "@/lib/supabase/storage";
 
 import {
   createPost,
@@ -169,24 +170,25 @@ describe.skipIf(!integrationEnvReady)("playbook entries", () => {
   });
 
   it("updatePlaybookEntry replaces the attached media when media is passed", async () => {
+    const asset = (filename: string) => managedMediaUrl("posts", alice.id + "/" + filename);
     const start = await createPost(alice.client, {
       content: "with two photos",
       post_type: "note",
       visibility: "private",
       comments_disabled: true,
       media: [
-        { url: "https://example.com/a.jpg", kind: "image" },
-        { url: "https://example.com/b.jpg", kind: "image" },
+        { url: asset("a.jpg"), kind: "image" },
+        { url: asset("b.jpg"), kind: "image" },
       ],
     });
     expect(start.photos.length).toBe(2);
 
     // Replace with a single different photo.
     const after = await updatePlaybookEntry(alice.client, start.id, {
-      media: [{ url: "https://example.com/c.jpg", kind: "image" }],
+      media: [{ url: asset("c.jpg"), kind: "image" }],
     });
     expect(after.photos.length).toBe(1);
-    expect(after.photos[0].url).toBe("https://example.com/c.jpg");
+    expect(after.photos[0].url).toBe(asset("c.jpg"));
     expect(after.photos[0].order).toBe(0);
 
     // Empty array detaches all media.

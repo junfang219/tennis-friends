@@ -355,6 +355,10 @@ export default function SupabaseRegisterPage() {
           Log in
         </Link>
       </p>
+      <p className="mt-4 flex flex-wrap gap-4 text-sm">
+        <Link href="/privacy" className="text-green-700 underline">Privacy Policy</Link>
+        <Link href="/terms" className="text-green-700 underline">Terms of Service</Link>
+      </p>
     </main>
   );
 }

@@ -17,6 +17,7 @@ import {
 import { toPostCamel, type PostMediaCamel, type PostCamel } from "@/lib/supabase/adapters";
 import { categorizePosts } from "@/lib/postCategorize";
 import Avatar from "@/components/Avatar";
+import { ReportContentButton } from "@/components/ReportContent";
 import FriendRequestButton from "@/components/FriendRequestButton";
 import PostCard from "@/components/PostCard";
 import PlaybookEntryCard from "@/components/PlaybookEntryCard";
@@ -267,6 +268,9 @@ export default function UserProfilePage() {
                   isRequester: user.isRequester,
                 }}
               />
+              {session?.user?.id && session.user.id !== user.id && (
+                <ReportContentButton targetType="profile" targetId={user.id} label="Report profile" />
+              )}
             </div>
 
             {user.bio && (

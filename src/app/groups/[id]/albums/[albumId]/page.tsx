@@ -10,6 +10,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { getGroup, listGroupMembers } from "@/lib/supabase/queries";
 import { uploadToBucket, isUploadError } from "@/lib/supabase/upload";
 import { publicStorageThumbUrl } from "@/lib/supabase/storage";
+import { ReportContentButton } from "@/components/ReportContent";
 
 type Item = {
   id: string;
@@ -251,6 +252,9 @@ export default function AlbumDetailPage() {
         </Link>
         <div className="flex-1 min-w-0">
           <h1 className="font-display text-xl font-bold text-gray-900 truncate">{album.name}</h1>
+          {session?.user?.id && album.createdById !== session.user.id && (
+            <ReportContentButton targetType="album" targetId={album.id} label="Report album" />
+          )}
           <p className="text-xs text-gray-500">
             {album.items.length} {album.items.length === 1 ? "item" : "items"} · by {album.createdBy.name}
           </p>
@@ -299,6 +303,11 @@ export default function AlbumDetailPage() {
             const canRemove = it.addedById === myId || isCaptainOrAbove;
             return (
               <div key={it.id} className="relative group rounded-lg overflow-hidden bg-gray-100 aspect-square">
+                {myId && it.addedById !== myId && (
+                  <div className="absolute left-0 top-0 z-10 rounded-br-lg bg-white/90">
+                    <ReportContentButton targetType="album_item" targetId={it.id} label="Report album attachment" />
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => setOpenIndex(i)}

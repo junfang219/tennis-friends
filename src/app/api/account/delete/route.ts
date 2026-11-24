@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { cleanupUserStorage } from "@/lib/account/cleanup-user-storage";
 import { errorMessage } from "@/lib/errorMessage";
+import { needsManualAppleRevocation } from "@/lib/auth/appleRevocation";
 
 // POST /api/account/delete
 //
@@ -58,6 +59,7 @@ export async function POST() {
     );
   }
 
+  const appleRevocationRequired = await needsManualAppleRevocation(user, admin);
   const { error: deleteUserError } = await admin.auth.admin.deleteUser(userId);
   if (deleteUserError) {
     return NextResponse.json(
@@ -66,5 +68,5 @@ export async function POST() {
     );
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, appleRevocationRequired });
 }

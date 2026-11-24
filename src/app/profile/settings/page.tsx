@@ -53,7 +53,8 @@ export default function SettingsPage() {
       }
       // Don't reset `deleting` — keep the button disabled while signOut
       // tears the page down so the user can't double-submit.
-      await signOut({ callbackUrl: "/login?deleted=1" });
+      const result: { appleRevocationRequired?: boolean } = await res.json();
+      await signOut({ callbackUrl: result.appleRevocationRequired ? "/login?deleted=1&apple=1" : "/login?deleted=1" });
     } catch {
       setDeleteError("Network error. Try again.");
       setDeleting(false);
@@ -325,6 +326,11 @@ export default function SettingsPage() {
         </button>
       </section>
       {/* END BETA FEEDBACK */}
+
+      <section aria-label="Privacy and support" className="flex flex-wrap gap-x-5 gap-y-2 px-4 py-3 text-sm">
+        <Link href="/privacy" className="text-court-green underline">Privacy Policy</Link>
+        <Link href="/terms" className="text-court-green underline">Terms of Service</Link>
+      </section>
 
       {/* Sign out */}
       <section className="bg-white rounded-2xl shadow-sm border border-court-green-pale/20 overflow-hidden">

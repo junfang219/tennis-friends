@@ -10883,3 +10883,744 @@ GRANT EXECUTE ON FUNCTION public.create_standalone_chat(text, uuid[]),
   public.update_standalone_chat(uuid, text, uuid[], uuid[]) TO authenticated;
 
 COMMIT;
+
+-- Content reporting and moderation
+-- Reports are written and reviewed through authenticated server code only.
+create table public.content_reports (
+  id uuid primary key default gen_random_uuid(),
+  reporter_id uuid not null references public.profiles(id) on delete cascade,
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  target_type text not null check (target_type in ('post', 'comment', 'direct_message', 'chat_message', 'team_message')),
+  target_id uuid not null,
+  reason text not null check (reason in ('harassment', 'hate', 'threat', 'sexual', 'spam', 'other')),
+  details text not null default '' check (char_length(details) <= 1000),
+  evidence_text text not null default '' check (char_length(evidence_text) <= 4000),
+  evidence_media text[] not null default '{}' check (cardinality(evidence_media) <= 8),
+  created_at timestamptz not null default now(),
+  decision text check (decision in ('dismissed', 'removed')),
+  reviewed_at timestamptz,
+  reviewed_by uuid references public.profiles(id) on delete set null,
+  check (reporter_id <> author_id),
+  check ((decision is null) = (reviewed_at is null)),
+  unique (reporter_id, target_type, target_id)
+);
+
+alter table public.content_reports enable row level security;
+revoke all on table public.content_reports from public, anon, authenticated, service_role;
+grant select, insert, update on table public.content_reports to service_role;
+
+create index content_reports_pending_idx on public.content_reports (created_at, id) where decision is null;
+create index content_reports_pending_target_idx on public.content_reports (target_type, target_id) where decision is null;
+create index content_reports_reporter_created_idx on public.content_reports (reporter_id, created_at desc);
+create index content_reports_author_idx on public.content_reports (author_id);
+create index content_reports_reviewer_idx on public.content_reports (reviewed_by) where reviewed_by is not null;
+
+create function public.record_content_report(
+  p_reporter_id uuid, p_author_id uuid, p_target_type text, p_target_id uuid,
+  p_reason text, p_details text, p_evidence_text text, p_evidence_media text[]
+)
+returns text
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+  -- Serialize a reporter's submissions so parallel requests cannot exceed the limit.
+  perform pg_advisory_xact_lock(hashtextextended(p_reporter_id::text, 7501));
+  if exists (
+    select 1 from public.content_reports
+    where reporter_id = p_reporter_id and target_type = p_target_type and target_id = p_target_id
+  ) then
+    return 'duplicate';
+  end if;
+  if (
+    select count(*) from public.content_reports
+    where reporter_id = p_reporter_id and created_at > now() - interval '24 hours'
+  ) >= 20 then
+    return 'rate_limited';
+  end if;
+  insert into public.content_reports (
+    reporter_id, author_id, target_type, target_id, reason, details, evidence_text, evidence_media
+  ) values (
+    p_reporter_id, p_author_id, p_target_type, p_target_id, p_reason,
+    p_details, p_evidence_text, p_evidence_media
+  );
+  return 'created';
+end;
+$$;
+
+create function public.review_content_report(p_report_id uuid, p_reviewer_id uuid, p_decision text)
+returns boolean
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  report public.content_reports%rowtype;
+begin
+  if p_decision is null or p_decision not in ('dismissed', 'removed') then
+    raise exception 'Invalid moderation decision';
+  end if;
+  select * into report from public.content_reports where id = p_report_id;
+  if not found then return false; end if;
+
+  -- Lock the target rather than just the report, since several people may report it.
+  perform pg_advisory_xact_lock(hashtextextended(report.target_type || ':' || report.target_id::text, 7502));
+  if not exists (select 1 from public.content_reports where id = p_report_id and decision is null) then
+    return false;
+  end if;
+
+  if p_decision = 'removed' then
+    case report.target_type
+      when 'post' then delete from public.posts where id = report.target_id and author_id = report.author_id;
+      when 'comment' then delete from public.comments where id = report.target_id and author_id = report.author_id;
+      when 'direct_message' then delete from public.messages where id = report.target_id and sender_id = report.author_id;
+      when 'chat_message' then delete from public.chat_messages where id = report.target_id and sender_id = report.author_id;
+      when 'team_message' then delete from public.group_messages where id = report.target_id and sender_id = report.author_id;
+    end case;
+    update public.content_reports set decision = p_decision, reviewed_at = now(), reviewed_by = p_reviewer_id
+    where target_type = report.target_type and target_id = report.target_id and decision is null;
+  else
+    update public.content_reports set decision = p_decision, reviewed_at = now(), reviewed_by = p_reviewer_id
+    where id = p_report_id;
+  end if;
+  return true;
+end;
+$$;
+
+revoke execute on function public.record_content_report(uuid, uuid, text, uuid, text, text, text, text[]),
+  public.review_content_report(uuid, uuid, text) from public, anon, authenticated;
+grant execute on function public.record_content_report(uuid, uuid, text, uuid, text, text, text, text[]),
+  public.review_content_report(uuid, uuid, text) to service_role;
+
+create schema if not exists private;
+
+create function private.filter_objectionable_text()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  normalized text;
+begin
+  if tg_op = 'UPDATE' then
+    if new.content is not distinct from old.content then return new; end if;
+  end if;
+  normalized := lower(translate(normalize(new.content, NFKC), U&'\200B\200C\200D\2060\FEFF', ''));
+  normalized := regexp_replace(normalized, '[^[:alnum:]]+', ' ', 'g');
+  -- High-confidence threats, self-harm harassment, and severe slurs. Human review
+  -- handles context, other abuse, and visual media.
+  if normalized ~ $pattern$\m(kill yourself|i will kill you|i m going to kill you|k[i1]ke|n[i1]gg[e3]rs?|f[a4]gg[o0]ts?|sp[i1]cs?)\M$pattern$ then
+    raise exception using errcode = 'P0001', message = 'This text can’t be posted. Remove abusive language or threats and try again.';
+  end if;
+  return new;
+end;
+$$;
+
+revoke execute on function private.filter_objectionable_text() from public, anon, authenticated;
+create trigger filter_post_text before insert or update of content on public.posts
+  for each row execute function private.filter_objectionable_text();
+create trigger filter_comment_text before insert or update of content on public.comments
+  for each row execute function private.filter_objectionable_text();
+create trigger filter_direct_message_text before insert or update of content on public.messages
+  for each row execute function private.filter_objectionable_text();
+create trigger filter_chat_message_text before insert or update of content on public.chat_messages
+  for each row execute function private.filter_objectionable_text();
+create trigger filter_team_message_text before insert or update of content on public.group_messages
+  for each row execute function private.filter_objectionable_text();
+
+-- Moderation follow-up for shared-chat blocking, removals, and repeat reports.
+alter policy chat_messages_select_member on public.chat_messages
+  using (public.is_chat_participant(chat_id) and not public.is_blocked((select auth.uid()), sender_id));
+alter policy group_messages_select_member on public.group_messages
+  using (public.is_group_member(group_id) and not public.is_blocked((select auth.uid()), sender_id));
+
+CREATE OR REPLACE FUNCTION public.push_on_chat_message_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_sender_name text;
+  v_chat_name   text;
+  v_recipients  uuid[];
+  v_body        text;
+BEGIN
+  SELECT name INTO v_sender_name FROM public.profiles WHERE id = NEW.sender_id;
+  SELECT name INTO v_chat_name   FROM public.chats    WHERE id = NEW.chat_id;
+  SELECT array_agg(user_id) INTO v_recipients
+  FROM public.chat_participants
+  WHERE chat_id = NEW.chat_id
+    AND user_id <> NEW.sender_id
+    AND NOT public.is_blocked(user_id, NEW.sender_id);
+
+  IF v_recipients IS NULL OR cardinality(v_recipients) = 0 THEN
+    RETURN NEW;
+  END IF;
+
+  v_body := COALESCE(v_sender_name, 'A player')
+         || ': '
+         || left(COALESCE(NULLIF(trim(NEW.content), ''), '[media]'), 180);
+
+  PERFORM public.invoke_edge_function(
+    'push-fanout',
+    jsonb_build_object(
+      'user_ids',  to_jsonb(v_recipients),
+      'title',     COALESCE(v_chat_name, 'Session chat'),
+      'body',      v_body,
+      'thread_id', 'chat:' || NEW.chat_id::text,
+      'data',      jsonb_build_object(
+                     'kind',       'chat',
+                     'chat_id',    NEW.chat_id::text,
+                     'message_id', NEW.id::text
+                   )
+    )
+  );
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.push_on_group_message_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_sender_name text;
+  v_group_name  text;
+  v_recipients  uuid[];
+  v_body        text;
+BEGIN
+  SELECT name INTO v_sender_name FROM public.profiles WHERE id = NEW.sender_id;
+  SELECT name INTO v_group_name  FROM public.groups   WHERE id = NEW.group_id;
+  SELECT array_agg(user_id) INTO v_recipients
+  FROM public.group_members
+  WHERE group_id = NEW.group_id
+    AND user_id <> NEW.sender_id
+    AND NOT public.is_blocked(user_id, NEW.sender_id)
+    AND muted = false
+    AND archived_at IS NULL;
+
+  IF v_recipients IS NULL OR cardinality(v_recipients) = 0 THEN
+    RETURN NEW;
+  END IF;
+
+  v_body := COALESCE(v_sender_name, 'A teammate')
+         || ': '
+         || left(COALESCE(NULLIF(trim(NEW.content), ''), '[media]'), 180);
+
+  PERFORM public.invoke_edge_function(
+    'push-fanout',
+    jsonb_build_object(
+      'user_ids',  to_jsonb(v_recipients),
+      'title',     COALESCE(v_group_name, 'Team chat'),
+      'body',      v_body,
+      'thread_id', 'group:' || NEW.group_id::text,
+      'data',      jsonb_build_object(
+                     'kind',       'group',
+                     'group_id',   NEW.group_id::text,
+                     'message_id', NEW.id::text
+                   )
+    )
+  );
+  RETURN NEW;
+END;
+$$;
+
+-- Retain historical decisions. The same viewer may report a changed item
+-- after dismissal, while retries still resolve to the existing pending report.
+alter table public.content_reports add column evidence_fingerprint text;
+alter table public.content_reports drop constraint content_reports_reporter_id_target_type_target_id_key;
+create unique index content_reports_one_pending_per_reporter
+  on public.content_reports (reporter_id, target_type, target_id) where decision is null;
+create index content_reports_reporter_target_history_idx
+  on public.content_reports (reporter_id, target_type, target_id, created_at desc, id desc);
+
+create or replace function public.record_content_report(
+  p_reporter_id uuid, p_author_id uuid, p_target_type text, p_target_id uuid,
+  p_reason text, p_details text, p_evidence_text text, p_evidence_media text[]
+)
+returns text
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  prior public.content_reports%rowtype;
+  fingerprint text := encode(sha256(convert_to(jsonb_build_array(p_evidence_text, p_evidence_media)::text, 'UTF8')), 'hex');
+begin
+  perform pg_advisory_xact_lock(hashtextextended(p_reporter_id::text, 7501));
+  perform pg_advisory_xact_lock(hashtextextended(p_target_type || ':' || p_target_id::text, 7502));
+
+  select * into prior from public.content_reports
+  where reporter_id = p_reporter_id and target_type = p_target_type and target_id = p_target_id
+  order by (decision is null) desc, created_at desc, id desc limit 1;
+  if found and (
+    prior.decision is null or prior.decision = 'removed'
+    or coalesce(prior.evidence_fingerprint = fingerprint,
+      prior.evidence_text = p_evidence_text and prior.evidence_media = p_evidence_media)
+  ) then
+    return 'duplicate';
+  end if;
+
+  if (
+    select count(*) from public.content_reports
+    where reporter_id = p_reporter_id and created_at > now() - interval '24 hours'
+  ) >= 20 then
+    return 'rate_limited';
+  end if;
+  insert into public.content_reports (
+    reporter_id, author_id, target_type, target_id, reason, details, evidence_text, evidence_media, evidence_fingerprint
+  ) values (
+    p_reporter_id, p_author_id, p_target_type, p_target_id, p_reason, p_details,
+    left(p_evidence_text, 4000), p_evidence_media[1:8], fingerprint
+  );
+  return 'created';
+end;
+$$;
+
+-- Keep removal work durable if the Storage API fails after the DB commits.
+-- Keep it independent of account/report deletion so unfinished work survives.
+create table public.moderation_media_cleanup (
+  report_id uuid primary key,
+  author_id uuid not null,
+  media_urls text[] not null,
+  created_at timestamptz not null default now()
+);
+alter table public.moderation_media_cleanup enable row level security;
+revoke all on table public.moderation_media_cleanup from public, anon, authenticated, service_role;
+grant select, insert, delete on table public.moderation_media_cleanup to service_role;
+
+create or replace function public.review_content_report(p_report_id uuid, p_reviewer_id uuid, p_decision text)
+returns boolean
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  report public.content_reports%rowtype;
+  attached_urls text[];
+  cleanup_urls text[];
+begin
+  if p_decision is null or p_decision not in ('dismissed', 'removed') then
+    raise exception 'Invalid moderation decision';
+  end if;
+  select * into report from public.content_reports where id = p_report_id;
+  if not found then return false; end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(report.target_type || ':' || report.target_id::text, 7502));
+  if not exists (select 1 from public.content_reports where id = p_report_id and decision is null) then
+    return false;
+  end if;
+
+  if p_decision = 'removed' then
+    case report.target_type
+      when 'post' then
+        -- Lock the parent before reading attachments so a concurrent insert
+        -- cannot add a child which the cascading delete would miss here.
+        perform 1 from public.posts where id = report.target_id and author_id = report.author_id for update;
+        with locked_media as (
+          select photo.url, photo.thumbnail_url
+          from public.posts post join public.photos photo on photo.post_id = post.id
+          where post.id = report.target_id and post.author_id = report.author_id
+          for update of photo
+        )
+        select array_agg(files.url) into attached_urls
+        from locked_media
+        cross join lateral (values (locked_media.url), (locked_media.thumbnail_url)) files(url);
+        delete from public.posts where id = report.target_id and author_id = report.author_id;
+      when 'comment' then
+        delete from public.comments where id = report.target_id and author_id = report.author_id;
+      when 'direct_message' then
+        delete from public.messages where id = report.target_id and sender_id = report.author_id
+        returning array[media_url] into attached_urls;
+      when 'chat_message' then
+        delete from public.chat_messages where id = report.target_id and sender_id = report.author_id
+        returning array[media_url] into attached_urls;
+      when 'team_message' then
+        delete from public.group_messages where id = report.target_id and sender_id = report.author_id
+        returning array[media_url] into attached_urls;
+    end case;
+
+    -- Reports can include a former attachment that the author has since edited
+    -- out. Preserve it as a candidate as well as the URLs on the deleted row.
+    select array_agg(distinct url) into cleanup_urls
+    from (
+      select unnest(attached_urls) as url
+      union all
+      select unnest(evidence_media)
+      from public.content_reports
+      where target_type = report.target_type and target_id = report.target_id
+        and author_id = report.author_id and decision is null
+    ) files
+    where url <> '';
+    if cleanup_urls is not null then
+      insert into public.moderation_media_cleanup (report_id, author_id, media_urls)
+      values (p_report_id, report.author_id, cleanup_urls);
+    end if;
+
+    update public.content_reports set decision = p_decision, reviewed_at = now(), reviewed_by = p_reviewer_id
+    where target_type = report.target_type and target_id = report.target_id and decision is null;
+  else
+    update public.content_reports set decision = p_decision, reviewed_at = now(), reviewed_by = p_reviewer_id
+    where id = p_report_id;
+  end if;
+  return true;
+end;
+$$;
+
+-- Check the structured references in the feed, Playbook, and all chat types.
+-- A public object and its rendered thumbnail are references to the same file.
+create function public.moderation_unreferenced_media(p_urls text[])
+returns text[]
+language sql
+security invoker
+set search_path = ''
+as $$
+  with referenced as (
+    select regexp_replace(replace(url, '/storage/v1/render/image/public/', '/storage/v1/object/public/'), '[?#].*$', '') as url
+    from (
+      select url from public.photos
+      union all select thumbnail_url from public.photos
+      union all select media_url from public.messages
+      union all select media_url from public.chat_messages
+      union all select media_url from public.group_messages
+    ) media
+    where url <> ''
+  )
+  select array(select candidate.url from unnest(p_urls) candidate(url)
+    where not exists (select 1 from referenced where referenced.url = candidate.url));
+$$;
+revoke execute on function public.moderation_unreferenced_media(text[]) from public, anon, authenticated;
+grant execute on function public.moderation_unreferenced_media(text[]) to service_role;
+
+-- App Store account revocation, media access, and moderation coverage.
+create table public.apple_account_tokens (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  ciphertext text not null
+);
+alter table public.apple_account_tokens enable row level security;
+revoke all on public.apple_account_tokens from public, anon, authenticated, service_role;
+grant select, insert, update on public.apple_account_tokens to service_role;
+
+-- A replacement object receives a new ID and must pass its own review.
+create table public.media_upload_reviews (
+  object_id uuid primary key,
+  approved boolean not null,
+  reviewed_at timestamptz not null default now()
+);
+alter table public.media_upload_reviews enable row level security;
+revoke all on public.media_upload_reviews from public, anon, authenticated, service_role;
+grant select, insert on public.media_upload_reviews to service_role;
+
+-- Existing uploads were published before screening. Preserve them while
+-- changing delivery to enforce the current audience of their parent row.
+insert into public.media_upload_reviews(object_id, approved)
+select id, true from storage.objects where bucket_id in ('avatars', 'posts', 'albums', 'court-reviews');
+
+create function private.media_upload_approved(p_id uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists(select 1 from public.media_upload_reviews where object_id = p_id and approved);
+$$;
+revoke execute on function private.media_upload_approved(uuid) from public;
+grant execute on function private.media_upload_approved(uuid) to anon, authenticated;
+
+create function public.pending_media_uploads() returns table(object_id uuid, bucket text, object_key text, created_at timestamptz)
+language sql stable security invoker set search_path = '' as $$
+  select o.id, o.bucket_id, o.name, o.created_at from storage.objects o
+  where o.bucket_id in ('avatars', 'posts', 'albums', 'court-reviews')
+    and not exists(select 1 from public.media_upload_reviews r where r.object_id = o.id)
+  order by o.created_at, o.id limit 50;
+$$;
+create function public.decide_media_upload(p_id uuid, p_approved boolean) returns boolean
+language sql security invoker set search_path = '' as $$
+  with saved as (
+    insert into public.media_upload_reviews(object_id, approved)
+    select id, p_approved from storage.objects
+    where id = p_id and bucket_id in ('avatars','posts','albums','court-reviews')
+    on conflict (object_id) do nothing returning 1
+  )
+  select exists(select 1 from saved);
+$$;
+revoke execute on function public.pending_media_uploads(), public.decide_media_upload(uuid, boolean) from public, anon, authenticated;
+grant execute on function public.pending_media_uploads(), public.decide_media_upload(uuid, boolean) to service_role;
+
+-- Existing app-owned URLs are replaced in place, including thumbnails and
+-- evidence already in the queue. External media links are left alone.
+create function private.protect_media_url(value text) returns text
+language sql immutable set search_path = '' as $$
+  select regexp_replace(value,
+    '^https?://(fqopzafmnaviipumsmfm[.]supabase[.]co|localhost(:[0-9]+)?|127[.]0[.]0[.]1(:[0-9]+)?)/storage/v1/(object|render/image)/public/(avatars|posts|albums|court-reviews)/([^?#]+)([?#].*)?$',
+    '/api/storage/media/\5/\6', 'i');
+$$;
+
+update public.photos set url = private.protect_media_url(url), thumbnail_url = private.protect_media_url(thumbnail_url)
+where url is distinct from private.protect_media_url(url) or thumbnail_url is distinct from private.protect_media_url(thumbnail_url);
+update public.messages set media_url = private.protect_media_url(media_url)
+where media_url is distinct from private.protect_media_url(media_url);
+update public.chat_messages set media_url = private.protect_media_url(media_url)
+where media_url is distinct from private.protect_media_url(media_url);
+update public.group_messages set media_url = private.protect_media_url(media_url)
+where media_url is distinct from private.protect_media_url(media_url);
+update public.album_items set url = private.protect_media_url(url)
+where url is distinct from private.protect_media_url(url);
+update public.court_review_photos set url = private.protect_media_url(url)
+where url is distinct from private.protect_media_url(url);
+update public.profiles set profile_image_url = private.protect_media_url(profile_image_url), cover_image_url = private.protect_media_url(cover_image_url)
+where profile_image_url is distinct from private.protect_media_url(profile_image_url) or cover_image_url is distinct from private.protect_media_url(cover_image_url);
+update public.groups set image_url = private.protect_media_url(image_url), cover_image_url = private.protect_media_url(cover_image_url)
+where image_url is distinct from private.protect_media_url(image_url) or cover_image_url is distinct from private.protect_media_url(cover_image_url);
+update public.events set cover_image_url = private.protect_media_url(cover_image_url)
+where cover_image_url is distinct from private.protect_media_url(cover_image_url);
+
+update storage.buckets set public = false where id in ('avatars', 'posts', 'albums', 'court-reviews');
+
+drop policy storage_avatars_read on storage.objects;
+drop policy storage_posts_read on storage.objects;
+drop policy storage_albums_read on storage.objects;
+drop policy storage_court_reviews_read on storage.objects;
+alter policy storage_authenticated_update on storage.objects
+  using (bucket_id = 'files' and (storage.foldername(name))[1] = (select auth.uid())::text)
+  with check (bucket_id = 'files' and (storage.foldername(name))[1] = (select auth.uid())::text);
+create policy storage_managed_media_read on storage.objects
+  for select to anon, authenticated using (
+    bucket_id in ('avatars', 'posts', 'albums', 'court-reviews')
+    and (
+      (storage.foldername(name))[1] = (select auth.uid())::text
+      or (private.media_upload_approved(id) and case bucket_id
+        when 'posts' then
+          exists(select 1 from public.photos p join public.posts post on post.id = p.post_id
+            where post.author_id::text = split_part(storage.objects.name, '/', 1)
+              and '/api/storage/media/posts/' || storage.objects.name in (p.url, p.thumbnail_url))
+          or exists(select 1 from public.messages m where m.sender_id::text = split_part(storage.objects.name, '/', 1) and m.media_url = '/api/storage/media/posts/' || storage.objects.name)
+          or exists(select 1 from public.chat_messages m where m.sender_id::text = split_part(storage.objects.name, '/', 1) and m.media_url = '/api/storage/media/posts/' || storage.objects.name)
+          or exists(select 1 from public.group_messages m where m.sender_id::text = split_part(storage.objects.name, '/', 1) and m.media_url = '/api/storage/media/posts/' || storage.objects.name)
+        when 'albums' then exists(select 1 from public.album_items a where a.added_by_id::text = split_part(storage.objects.name, '/', 1) and a.url = '/api/storage/media/albums/' || storage.objects.name)
+        when 'court-reviews' then exists(select 1 from public.court_review_photos p join public.court_reviews r on r.id = p.review_id
+          where r.user_id::text = split_part(storage.objects.name, '/', 1) and p.url = '/api/storage/media/court-reviews/' || storage.objects.name)
+        when 'avatars' then
+          exists(select 1 from public.profiles p where '/api/storage/media/avatars/' || storage.objects.name in (p.profile_image_url, p.cover_image_url))
+          or exists(select 1 from public.groups g where '/api/storage/media/avatars/' || storage.objects.name in (g.image_url, g.cover_image_url))
+          or exists(select 1 from public.events e where e.cover_image_url = '/api/storage/media/avatars/' || storage.objects.name)
+        else false end)
+    )
+  );
+
+create index photos_storage_url_idx on public.photos(url);
+create index photos_storage_thumbnail_idx on public.photos(thumbnail_url) where thumbnail_url <> '';
+create index messages_storage_url_idx on public.messages(media_url) where media_url <> '';
+create index chat_messages_storage_url_idx on public.chat_messages(media_url) where media_url <> '';
+create index group_messages_storage_url_idx on public.group_messages(media_url) where media_url <> '';
+create index album_items_storage_url_idx on public.album_items(url);
+create index court_review_photos_storage_url_idx on public.court_review_photos(url);
+
+alter table public.content_reports drop constraint content_reports_target_type_check;
+alter table public.content_reports add constraint content_reports_target_type_check
+  check (target_type in ('post', 'comment', 'direct_message', 'chat_message', 'team_message', 'profile', 'album', 'album_item', 'court_review'));
+
+-- The prior report text remains useful; legacy evidence URLs map to the
+-- same objects after this change.
+update public.content_reports r set
+  evidence_media = array(select private.protect_media_url(u) from unnest(r.evidence_media) u),
+  evidence_fingerprint = null
+where exists(select 1 from unnest(r.evidence_media) u where u <> private.protect_media_url(u));
+
+update public.moderation_media_cleanup r set
+  media_urls = array(select private.protect_media_url(u) from unnest(r.media_urls) u)
+where exists(select 1 from unnest(r.media_urls) u where u <> private.protect_media_url(u));
+
+grant usage on schema private to service_role;
+
+create or replace function public.review_content_report(p_report_id uuid, p_reviewer_id uuid, p_decision text)
+returns boolean
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  report public.content_reports%rowtype;
+  attached_urls text[];
+  cleanup_urls text[];
+begin
+  if p_decision is null or p_decision not in ('dismissed', 'removed') then
+    raise exception 'Invalid moderation decision';
+  end if;
+  select * into report from public.content_reports where id = p_report_id;
+  if not found then return false; end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(report.target_type || ':' || report.target_id::text, 7502));
+  if not exists (select 1 from public.content_reports where id = p_report_id and decision is null) then
+    return false;
+  end if;
+
+  if p_decision = 'removed' then
+    case report.target_type
+      when 'post' then
+        -- Lock the parent before reading attachments so a concurrent insert
+        -- cannot add a child which the cascading delete would miss here.
+        perform 1 from public.posts where id = report.target_id and author_id = report.author_id for update;
+        with locked_media as (
+          select photo.url, photo.thumbnail_url
+          from public.posts post join public.photos photo on photo.post_id = post.id
+          where post.id = report.target_id and post.author_id = report.author_id
+          for update of photo
+        )
+        select array_agg(files.url) into attached_urls
+        from locked_media
+        cross join lateral (values (locked_media.url), (locked_media.thumbnail_url)) files(url);
+        delete from public.posts where id = report.target_id and author_id = report.author_id;
+      when 'profile' then
+        select array[profile_image_url, cover_image_url] into attached_urls
+        from public.profiles where id = report.target_id and id = report.author_id for update;
+        update public.profiles set name = 'Tennis Player', bio = '', handle = null,
+          profile_image_url = '', cover_image_url = ''
+        where id = report.target_id and id = report.author_id;
+      when 'album' then
+        update public.albums set name = 'Team album', description = ''
+        where id = report.target_id and created_by_id = report.author_id;
+      when 'album_item' then
+        delete from public.album_items where id = report.target_id and added_by_id = report.author_id
+        returning array[url] into attached_urls;
+      when 'court_review' then
+        perform 1 from public.court_reviews where id = report.target_id and user_id = report.author_id for update;
+        with photos as (
+          select p.url from public.court_review_photos p join public.court_reviews r on r.id = p.review_id
+          where r.id = report.target_id and r.user_id = report.author_id for update of p
+        )
+        select array_agg(url) into attached_urls from photos;
+        delete from public.court_reviews where id = report.target_id and user_id = report.author_id;
+      when 'comment' then
+        delete from public.comments where id = report.target_id and author_id = report.author_id;
+      when 'direct_message' then
+        delete from public.messages where id = report.target_id and sender_id = report.author_id
+        returning array[media_url] into attached_urls;
+      when 'chat_message' then
+        delete from public.chat_messages where id = report.target_id and sender_id = report.author_id
+        returning array[media_url] into attached_urls;
+      when 'team_message' then
+        delete from public.group_messages where id = report.target_id and sender_id = report.author_id
+        returning array[media_url] into attached_urls;
+    end case;
+
+    -- Reports can include a former attachment that the author has since edited
+    -- out. Preserve it as a candidate as well as the URLs on the deleted row.
+    select array_agg(distinct url) into cleanup_urls
+    from (
+      select unnest(attached_urls) as url
+      union all
+      select unnest(evidence_media)
+      from public.content_reports
+      where target_type = report.target_type and target_id = report.target_id
+        and author_id = report.author_id and decision is null
+    ) files
+    where url <> '';
+    if cleanup_urls is not null then
+      insert into public.moderation_media_cleanup (report_id, author_id, media_urls)
+      values (p_report_id, report.author_id, cleanup_urls);
+    end if;
+
+    update public.content_reports set decision = p_decision, reviewed_at = now(), reviewed_by = p_reviewer_id
+    where target_type = report.target_type and target_id = report.target_id and decision is null;
+  else
+    update public.content_reports set decision = p_decision, reviewed_at = now(), reviewed_by = p_reviewer_id
+    where id = p_report_id;
+  end if;
+  return true;
+end;
+$$;
+
+create or replace function public.moderation_unreferenced_media(p_urls text[])
+returns text[]
+language sql security invoker set search_path = '' as $$
+  with refs(url) as (
+    select url from public.photos
+    union all select thumbnail_url from public.photos
+    union all select media_url from public.messages
+    union all select media_url from public.chat_messages
+    union all select media_url from public.group_messages
+    union all select url from public.album_items
+    union all select url from public.court_review_photos
+    union all select profile_image_url from public.profiles
+    union all select cover_image_url from public.profiles
+    union all select image_url from public.groups
+    union all select cover_image_url from public.groups
+    union all select cover_image_url from public.events
+  )
+  select array(select candidate from unnest(p_urls) candidate
+    where not exists(select 1 from refs where url <> '' and private.protect_media_url(url) = private.protect_media_url(candidate)));
+$$;
+
+-- New writes on these surfaces use the same narrow abusive-text filter
+-- already used on posts, comments and messages.
+create function private.filter_additional_content() returns trigger
+language plpgsql set search_path = '' as $$
+declare
+  field text;
+  normalized text;
+begin
+  foreach field in array tg_argv loop
+    if tg_op = 'UPDATE' and to_jsonb(new)->>field is not distinct from to_jsonb(old)->>field then
+      continue;
+    end if;
+    normalized := lower(translate(normalize(to_jsonb(new)->>field, NFKC), U&'\200B\200C\200D\2060\FEFF', ''));
+    normalized := regexp_replace(normalized, '[^[:alnum:]]+', ' ', 'g');
+    if normalized ~ $pattern$\m(kill yourself|i will kill you|i m going to kill you|k[i1]ke|n[i1]gg[e3]rs?|f[a4]gg[o0]ts?|sp[i1]cs?)\M$pattern$ then
+      raise exception using errcode = 'P0001', message = 'This text can’t be posted. Remove abusive language or threats and try again.';
+    end if;
+  end loop;
+  return new;
+end;
+$$;
+revoke execute on function private.filter_additional_content() from public, anon, authenticated;
+create trigger filter_profile_text before insert or update of name, bio, handle on public.profiles
+  for each row execute function private.filter_additional_content('name','bio','handle');
+create trigger filter_album_text before insert or update of name, description on public.albums
+  for each row execute function private.filter_additional_content('name','description');
+create trigger filter_album_item_text before insert or update of caption on public.album_items
+  for each row execute function private.filter_additional_content('caption');
+create trigger filter_court_review_text before insert or update of content on public.court_reviews
+  for each row execute function private.filter_additional_content('content');
+
+-- Signed-in clients can attach only uploads belonging to their own
+-- storage prefix. Privileged migrations and provider-created profiles keep
+-- existing imported data.
+create function private.require_owned_media_url() returns trigger
+language plpgsql set search_path = '' as $$
+declare
+  field text;
+  value text;
+  prefix text := '/api/storage/media/' || tg_argv[0] || '/' || (select auth.uid())::text || '/';
+begin
+  if current_user <> 'authenticated' then return new; end if;
+  foreach field in array tg_argv[1:] loop
+    value := to_jsonb(new)->>field;
+    if tg_op = 'UPDATE' and value is not distinct from to_jsonb(old)->>field then continue; end if;
+    if coalesce(value, '') <> '' and (
+      not starts_with(value, prefix)
+      or substring(value from length(prefix) + 1) !~ '^[a-zA-Z0-9][a-zA-Z0-9._-]*$'
+    ) then
+      raise exception using errcode = '22023', message = 'Choose a file to upload before attaching it.';
+    end if;
+  end loop;
+  return new;
+end;
+$$;
+revoke execute on function private.require_owned_media_url() from public, anon, authenticated;
+create trigger photos_managed_urls before insert or update of url, thumbnail_url on public.photos
+  for each row execute function private.require_owned_media_url('posts','url','thumbnail_url');
+create trigger dm_managed_urls before insert or update of media_url on public.messages
+  for each row execute function private.require_owned_media_url('posts','media_url');
+create trigger group_chat_managed_urls before insert or update of media_url on public.chat_messages
+  for each row execute function private.require_owned_media_url('posts','media_url');
+create trigger team_chat_managed_urls before insert or update of media_url on public.group_messages
+  for each row execute function private.require_owned_media_url('posts','media_url');
+create trigger album_item_managed_urls before insert or update of url on public.album_items
+  for each row execute function private.require_owned_media_url('albums','url');
+create trigger court_review_managed_urls before insert or update of url on public.court_review_photos
+  for each row execute function private.require_owned_media_url('court-reviews','url');
+create trigger profile_managed_urls before update of profile_image_url, cover_image_url on public.profiles
+  for each row execute function private.require_owned_media_url('avatars','profile_image_url','cover_image_url');
+create trigger group_managed_urls before insert or update of image_url, cover_image_url on public.groups
+  for each row execute function private.require_owned_media_url('avatars','image_url','cover_image_url');

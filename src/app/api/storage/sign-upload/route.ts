@@ -7,6 +7,8 @@ import {
   BUCKET_MAX_BYTES,
   bucketAcceptsMime,
   buildObjectKey,
+  isScreenedMediaBucket,
+  managedMediaUrl,
   type StorageBucket,
 } from "@/lib/supabase/storage";
 
@@ -73,13 +75,15 @@ export async function POST(req: NextRequest) {
 
   // Return both the signed URL (for the client to PUT to) and the eventual
   // public URL (for the client to store in the row pointing at this file).
-  const { data: publicData } = supabase.storage.from(bucket).getPublicUrl(objectKey);
+  const publicUrl = isScreenedMediaBucket(bucket)
+    ? managedMediaUrl(bucket, objectKey)
+    : supabase.storage.from(bucket).getPublicUrl(objectKey).data.publicUrl;
 
   return NextResponse.json({
     bucket,
     objectKey,
     token: data.token,
     signedUrl: data.signedUrl,
-    publicUrl: publicData.publicUrl,
+    publicUrl,
   });
 }

@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 import { KeyboardResize } from '@capacitor/keyboard';
 
 // The native WebView loads the web app over the network — Next.js isn't a
-// static export, so there's nothing meaningful in `out/` to bundle. Which URL
+// static export. The packaged iOS entry file is required by Capacitor. Which URL
 // it loads depends on CAP_ENV at `cap sync`/`cap copy` time:
 //
 //   • DEFAULT (production): loads the deployed site. This is what Archive →
@@ -24,7 +24,7 @@ const useDevServer = process.env.CAP_ENV === 'development';
 const config: CapacitorConfig = {
   appId: 'com.tennisfriend.app',
   appName: 'TennisFriend',
-  webDir: 'out',
+    webDir: 'ios/web',
   plugins: {
     Keyboard: {
       // None: don't touch the WebView when the keyboard opens. We do

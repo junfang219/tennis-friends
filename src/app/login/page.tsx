@@ -50,10 +50,12 @@ export default function SupabaseLoginPage() {
   const [showDeletedBanner, setShowDeletedBanner] = useState(
     () => search.get("deleted") === "1"
   );
+  const [appleRevocationRequired] = useState(() => search.get("deleted") === "1" && search.get("apple") === "1");
   useEffect(() => {
     if (search.get("deleted") === "1") {
       const next = new URLSearchParams(search.toString());
       next.delete("deleted");
+      next.delete("apple");
       const qs = next.toString();
       router.replace(qs ? `/login?${qs}` : "/login");
     }
@@ -133,7 +135,12 @@ export default function SupabaseLoginPage() {
           role="status"
           className="mb-4 flex items-start gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800"
         >
-          <span className="flex-1">Your account has been deleted.</span>
+          <span className="flex-1">
+            Your account has been deleted.
+            {appleRevocationRequired && (
+              <> To remove the remaining Sign in with Apple authorization, open Settings → Apple Account → Sign in with Apple, select TennisFriend, then tap Delete.</>
+            )}
+          </span>
           <button
             type="button"
             onClick={() => setShowDeletedBanner(false)}

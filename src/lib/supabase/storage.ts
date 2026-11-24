@@ -9,6 +9,22 @@ export const STORAGE_BUCKETS = {
 } as const;
 
 export type StorageBucket = (typeof STORAGE_BUCKETS)[keyof typeof STORAGE_BUCKETS];
+export const screenedMediaBuckets = ["avatars", "posts", "albums", "court-reviews"] as const;
+export type ScreenedMediaBucket = (typeof screenedMediaBuckets)[number];
+
+export function isScreenedMediaBucket(value: string): value is ScreenedMediaBucket {
+  return screenedMediaBuckets.some(bucket => bucket === value);
+}
+
+export function managedMediaUrl(bucket: ScreenedMediaBucket, key: string) {
+  return "/api/storage/media/" + bucket + "/" + key.split("/").map(encodeURIComponent).join("/");
+}
+
+export function parseManagedMediaPath(value: string) {
+  const match = /^\/api\/storage\/media\/(avatars|posts|albums|court-reviews)\/([0-9a-f-]{36})\/([a-z0-9][a-z0-9._-]*)$/i.exec(value);
+  if (!match || !isScreenedMediaBucket(match[1])) return null;
+  return { bucket: match[1], key: match[2] + "/" + match[3], owner: match[2] };
+}
 
 // Per-bucket max size in bytes. Mirrored from the storage_buckets SQL migration
 // so the client can fail fast before round-tripping a too-big file.

@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { StarRating } from "./StarRating";
+import { useSession } from "@/lib/supabase/nextauth-compat";
+import { ReportContentButton } from "@/components/ReportContent";
 
 export type Review = {
   id: string;
@@ -20,6 +22,7 @@ type Props = {
 };
 
 export function ReviewList({ reviews, onEdit, onDelete }: Props) {
+  const { data: session } = useSession();
   const [lightbox, setLightbox] = useState<{ photos: string[]; index: number } | null>(null);
 
   if (reviews.length === 0) {
@@ -55,6 +58,7 @@ export function ReviewList({ reviews, onEdit, onDelete }: Props) {
                       </span>
                     </div>
                   </div>
+                  {session?.user?.id && !r.isMine && <ReportContentButton targetType="court_review" targetId={r.id} label="Report court review" />}
                   {r.isMine && (onEdit || onDelete) && (
                     <div className="flex items-center gap-1 flex-shrink-0">
                       {onEdit && (

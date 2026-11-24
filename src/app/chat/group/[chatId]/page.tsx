@@ -79,6 +79,7 @@ export default function GroupChatThreadPage() {
   const { data: session } = useSession();
   const isDesktop = useIsDesktopChat();
   const [messages, setMessages] = useState<Message[]>([]);
+  const blockedSenders = useRef(new Set<string>());
   const [chatInfo, setChatInfo] = useState<ChatInfo | null>(null);
   // Court-availability prompt context — set only for confirmed find_players
   // games at a report-eligible venue. Drives the in-thread GameCourtPrompt.
@@ -318,7 +319,7 @@ export default function GroupChatThreadPage() {
           reactionsByMsg.set(r.target_id, arr);
         }
         setMessages(
-          msgs.map((m) => ({
+          msgs.filter((m) => !blockedSenders.current.has(m.sender_id)).map((m) => ({
             ...toChatMessageCamel(m),
             reactions: reactionsByMsg.get(m.id) ?? [],
             sharedPost: m.shared_post_id ? sharedMap.get(m.shared_post_id) ?? null : null,
@@ -390,6 +391,7 @@ export default function GroupChatThreadPage() {
             created_at: string;
             expense_id: string | null;
           };
+          if (blockedSenders.current.has(row.sender_id)) return;
           // If a message arrives from someone else while the thread is open,
           // bump last_read_at so the badge clears immediately instead of
           // waiting for the next tab focus / re-open.
@@ -483,7 +485,7 @@ export default function GroupChatThreadPage() {
   // reflects the new content — no rAF dance, no clobbering.
   // Start anchored to the bottom UNLESS a ?msg= deep-link is active — then the
   // deep-link effect below scrolls to that bubble instead.
-  const stickToBottomRef = useRef(!focusTargetRef.current);
+  const stickToBottomRef = useRef(!searchParams.get("msg"));
 
   // Re-anchor on chat switch so a fresh thread always opens at the bottom
   // (but never override a pending deep-link).
@@ -1338,6 +1340,11 @@ export default function GroupChatThreadPage() {
           setReactionPopover(null);
         }}
         onClose={() => setReactionPopover(null)}
+        reportTarget={myId && popoverMsg && popoverMsg.senderId !== myId ? { targetType: "chat_message", targetId: popoverMsg.id } : undefined}
+        onAccountBlocked={(authorId) => {
+          blockedSenders.current.add(authorId);
+          setMessages((previous) => previous.filter((message) => message.senderId !== authorId));
+        }}
       />
     </div>
   );
