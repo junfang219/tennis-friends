@@ -15,7 +15,7 @@ import { useKeyboardHeight } from "@/hooks/useKeyboardHeight";
 //      keyboardDismissMode = .onDrag).
 //   2. Focus-into-view — a freshly focused field scrolls to center once the
 //      keyboard has opened.
-//   3. Bottom scroll room — body gets padding-bottom = keyboard height so the
+//   3. Bottom scroll room — the layout reserves the keyboard height so the
 //      LAST field in a page-flow form can rise above the keyboard.
 //
 // Anything inside a [data-keyboard-dismiss="off"] subtree is skipped — chat
@@ -96,9 +96,9 @@ export default function KeyboardAssist() {
   useEffect(() => {
     if (typeof document === "undefined") return;
     const body = document.body;
-    body.style.paddingBottom = keyboardHeight > 0 ? `${keyboardHeight}px` : "";
+    body.style.setProperty("--keyboard-height", `${keyboardHeight}px`);
     return () => {
-      body.style.paddingBottom = "";
+      body.style.removeProperty("--keyboard-height");
     };
   }, [keyboardHeight]);
 

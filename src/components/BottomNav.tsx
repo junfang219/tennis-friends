@@ -69,17 +69,15 @@ export default function BottomNav() {
   // itself keeps the nav.
   const isCourtDetail = /^\/courts\/[^/]+/.test(pathname);
 
-  // Add bottom padding to body so content isn't hidden behind the nav —
+  // Reserve the tab bar's height in the page layout —
   // but only when the nav is actually rendered. On chat threads the nav
   // is hidden and the extra padding would just open a dead gap under
   // the chat container.
   useEffect(() => {
     if (status !== "authenticated" || !isNative || isChatThread || isCourtDetail) return;
     const style = document.body.style;
-    style.paddingBottom = "5rem";
     style.setProperty("--native-tab-bar-height", NATIVE_TAB_BAR_HEIGHT);
     return () => {
-      style.paddingBottom = "";
       style.removeProperty("--native-tab-bar-height");
     };
   }, [status, isNative, isChatThread, isCourtDetail]);

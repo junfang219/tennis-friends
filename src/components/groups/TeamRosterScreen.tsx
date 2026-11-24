@@ -46,7 +46,6 @@ export default function TeamRosterScreen({ group, currentUser }: { group: Roster
         <h1 className="font-display text-3xl font-bold text-court-green">Roster</h1>
         <p className="text-sm text-gray-600 mt-2">Manage players, invitations, and USTA registration here.</p>
       </header>
-      <TeamMembershipActions groupId={group.id} isOwner={isOwner} />
       {canManage ? (
         <ManagedRoster group={group} currentUser={currentUser} onRosterChanged={() => router.refresh()} />
       ) : (
@@ -60,6 +59,7 @@ export default function TeamRosterScreen({ group, currentUser }: { group: Roster
           />
         </section>
       )}
+      <TeamMembershipActions groupId={group.id} isOwner={isOwner} />
     </main>
   );
 }
