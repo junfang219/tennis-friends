@@ -26,6 +26,8 @@ body {
   font-family: var(--font-body);
   background-color: var(--color-surface);
   color: #1a1a1a;
+  /* The keyboard covers the tab bar, so only the larger obstruction needs room. */
+  padding-bottom: max(var(--native-tab-bar-height, 0px), var(--keyboard-height, 0px));
 }
 
 .court-pattern {

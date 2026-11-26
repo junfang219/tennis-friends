@@ -1,19 +1,40 @@
 "use client";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
-import { parseMemberTypes, TEAM_ROLES, type TeamRole } from "@/lib/groupRoles";
+import { parseMemberTypes, type TeamRole } from "@/lib/groupRoles";
 import { teamResponse } from "./useTeamManagement";
 import LinkMemberModal from "./LinkMemberModal";
 import AddPeopleChooser from "./AddPeopleChooser";
 export type RosterMember = { id: string; userId: string | null; roles: TeamRole[]; memberType: string; isPlaceholder: boolean; user: { id: string; name: string; profileImageUrl: string } };
 export type RosterGroup = { id: string; name: string; ownerId: string; memberTypes: string[]; members: RosterMember[] };
 type MemberEdit = Partial<Pick<RosterMember, "roles" | "memberType">>;
-// Human label for a role set: "Manager · Captain", or "Member" when empty.
-function rolesLabel(roles: TeamRole[]): string {
-  if (roles.length === 0) return "Member";
-  return TEAM_ROLES.filter((r) => roles.includes(r.value)).map((r) => r.label).join(" · ");
+const ROSTER_OPTION_LABELS = {
+  captain: "Captain",
+  manager: "Co-captain",
+  member: "Member",
+  guest: "Guest",
+} as const;
+type RosterOption = keyof typeof ROSTER_OPTION_LABELS;
+const ROSTER_OPTION_ROWS = [["captain", "manager"], ["member", "guest"]] as const;
+
+function rosterOptionClass(selected: boolean): string {
+  return `whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-court-green disabled:opacity-50 ${
+    selected ? "border-court-green bg-court-green text-white" : "border-gray-200 bg-white text-gray-500 hover:border-court-green"
+  }`;
+}
+
+function selectedRosterOption(roles: TeamRole[], isGuest: boolean): RosterOption {
+  if (roles.includes("manager")) return "manager";
+  if (roles.includes("captain")) return "captain";
+  return isGuest ? "guest" : "member";
+}
+
+function closeRosterOptions(dropdown: HTMLDetailsElement | null) {
+  if (!dropdown) return;
+  dropdown.open = false;
+  dropdown.querySelector("summary")?.focus({ preventScroll: true });
 }
 
 export default function TeamRoster({
@@ -35,6 +56,7 @@ export default function TeamRoster({
 }) {
   const types = parseMemberTypes(group.memberTypes);
   const callerIsOwner = currentUserId === group.ownerId;
+  const rosterOptionsName = useId();
   const [roster, setRoster] = useState({ source: group.members, members: group.members });
   const [pendingChanges, setPendingChanges] = useState<Record<string, { patch?: MemberEdit }>>({});
   const [err, setErr] = useState("");
@@ -84,19 +106,11 @@ export default function TeamRoster({
     }
   }
 
-  // Add/remove one role from a member's set. Manager is owner-gated below.
-  const toggleRole = (m: RosterMember, role: TeamRole) => {
-    const next = m.roles.includes(role)
-      ? m.roles.filter((r) => r !== role)
-      : [...m.roles, role];
-    void changeRoster(m.id, "member", { roles: next });
-  };
-
   const transferOwnership = async (m: RosterMember) => {
     if (!m.userId) return;
     if (
       !window.confirm(
-        `Make ${m.user.name} the owner of this team? You'll stay on as a manager and captain, but ${m.user.name} will control the team and can remove anyone.`
+        `Make ${m.user.name} the owner of this team? You'll keep Captain and Co-captain access. ${m.user.name} will control the team and can remove anyone.`
       )
     )
       return;
@@ -134,14 +148,14 @@ export default function TeamRoster({
           Invite players
         </button>
       )}
-      <p className="text-xs text-gray-500 mb-3">
-        Promote managers and captains, or label members by type.
-      </p>
       <div className="divide-y divide-gray-100">
         {roster.members.map((member) => {
           const pending = pendingChanges[member.id];
           const m = pending?.patch ? { ...member, ...pending.patch } : member;
           const isOwnerRow = m.userId === group.ownerId;
+          const isGuest = m.memberType.trim().toLowerCase() === "guest";
+          const currentOption = selectedRosterOption(m.roles, isGuest);
+          const currentLabel = ROSTER_OPTION_LABELS[currentOption];
           const tracked = registration?.players.find(p => p.member_id === m.id || (m.userId && p.accepted_by === m.userId));
           const registrationEligible = Boolean(tracked || (m.userId && registration?.members.some(member => member.id === m.id)));
           const isSavingConfirmation = pendingConfirmation?.memberId === m.id;
@@ -174,56 +188,59 @@ export default function TeamRoster({
                 </div>
 
                 {canManage ? (
-                  <>
-                    {/* Role toggles + member-type wrap onto their own line so the
-                        name keeps full width. Manager = admin, Captain = ops;
-                        both independent. The owner always has both but their row
-                        stays editable. Manager is owner-gated. */}
-                    <div className="flex flex-wrap items-center gap-2 mt-2">
-                      {TEAM_ROLES.map((r) => {
-                        const on = m.roles.includes(r.value);
-                        const lockedManager = r.value === "manager" && !callerIsOwner;
-                        return (
-                          <button
-                            key={r.value}
-                            type="button"
-                            onClick={() => toggleRole(m, r.value)}
-                            disabled={Boolean(pending) || lockedManager}
-                            title={lockedManager ? "Only the team owner can assign Manager" : undefined}
-                            aria-pressed={on}
-                            className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${
-                              on
-                                ? "bg-court-green text-white border-court-green"
-                                : "bg-white text-gray-500 border-gray-200 hover:border-court-green"
-                            } ${lockedManager ? "opacity-40 cursor-not-allowed" : ""}`}
-                          >
-                            {r.label}
-                          </button>
-                        );
-                      })}
-                      <select
-                        value={m.memberType}
-                        aria-label={`Member type for ${m.user.name}`}
-                        onChange={(e) => void changeRoster(m.id, "member", { memberType: e.currentTarget.value })}
-                        disabled={Boolean(pending) || types.length === 0}
-                        className="text-xs px-2 py-1 border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-court-green"
-                      >
-                        <option value="">—</option>
-                        {types.map((t) => (
-                          <option key={t} value={t}>{t}</option>
-                        ))}
-                        {/* Preserve a label removed from the team's list but still
-                            assigned to this member, so the picker isn't blank. */}
-                        {m.memberType && !types.includes(m.memberType) && (
-                          <option value={m.memberType}>{m.memberType} (removed)</option>
-                        )}
-                      </select>
+                  <details
+                    name={rosterOptionsName}
+                    className="group/roster-options mt-2"
+                    onKeyDown={(event) => {
+                      const dropdown = event.currentTarget;
+                      if (event.key !== "Escape" || !dropdown.open) return;
+                      event.stopPropagation();
+                      closeRosterOptions(dropdown);
+                    }}
+                  >
+                    <summary
+                      aria-label={`Roles for ${m.user.name}: ${currentLabel}`}
+                      className={`${rosterOptionClass(true)} inline-flex max-w-full cursor-pointer list-none items-center gap-1.5 [&::-webkit-details-marker]:hidden`}
+                    >
+                      <span className="truncate">{currentLabel}</span>
+                      <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" className="shrink-0 group-open/roster-options:rotate-180">
+                        <path d="m3 4.5 3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </summary>
+                    <div role="group" aria-label={`Roster options for ${m.user.name}`} className="mt-2 w-fit max-w-full space-y-2 rounded-xl border border-gray-200 bg-white p-2">
+                      {ROSTER_OPTION_ROWS.map(row => (
+                        <div key={row[0]} className="flex flex-wrap gap-2">
+                          {row.map(value => {
+                            const selected = currentOption === value;
+                            const changesCoCaptain = (value === "manager") !== m.roles.includes("manager");
+                            const lockedCoCaptain = changesCoCaptain && !callerIsOwner;
+                            return (
+                              <button
+                                key={value}
+                                type="button"
+                                onClick={(event) => {
+                                  closeRosterOptions(event.currentTarget.closest("details"));
+                                  if (selected) return;
+                                  const roles: TeamRole[] = value === "captain" || value === "manager" ? [value] : [];
+                                  const memberType = value === "guest" ? "Guest" : isGuest ? "" : m.memberType;
+                                  void changeRoster(m.id, "member", { roles, memberType });
+                                }}
+                                disabled={Boolean(pending) || lockedCoCaptain}
+                                title={lockedCoCaptain ? "Only the team owner can change Co-captain access" : undefined}
+                                aria-pressed={selected}
+                                className={rosterOptionClass(selected)}
+                              >
+                                {ROSTER_OPTION_LABELS[value]}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ))}
                     </div>
-                  </>
+                  </details>
                 ) : (
                   <p className="text-[11px] text-gray-500 mt-0.5">
-                    {isOwnerRow ? "Owner" : rolesLabel(m.roles)}
-                    {m.memberType ? ` · ${m.memberType}` : ""}
+                    {currentLabel}
                   </p>
                 )}
                 {registrationEligible && (canManage ? (
