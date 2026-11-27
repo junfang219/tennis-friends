@@ -1,14 +1,12 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { registerDeviceToken } from "@/lib/supabase/queries";
 
 // Registers the device for APNs (or FCM on Android) and POSTs the token to the
-// backend whenever a user is authenticated. Routes the user to the right place
-// when they tap a banner. No-op on web — Capacitor is only present in the
+// backend whenever a user is authenticated. No-op on web — Capacitor is only present in the
 // native iOS/Android shell.
 
 type CapacitorPushModule = typeof import("@capacitor/push-notifications").PushNotifications;
@@ -27,7 +25,6 @@ async function loadCapacitor(): Promise<{ Push: CapacitorPushModule; Core: CoreM
 
 export default function PushRegistrar() {
   const { status } = useSession();
-  const router = useRouter();
 
   useEffect(() => {
     if (status !== "authenticated") return;
@@ -71,33 +68,9 @@ export default function PushRegistrar() {
 
         await cap.Push.register();
 
-        // Tap on a banner from background/killed → route to the relevant chat.
-        const onTap = await cap.Push.addListener("pushNotificationActionPerformed", (action) => {
-          const data = action.notification.data || {};
-          const kind = data.kind as string | undefined;
-          if (kind === "dm" && data.from) {
-            router.push(`/chat/${data.from}`);
-          } else if (kind === "message_reaction" && data.from) {
-            const target = data.messageId ? `/chat/${data.from}?msg=${data.messageId}` : `/chat/${data.from}`;
-            router.push(target);
-          } else if (kind === "group" && data.groupId) {
-            router.push(`/groups/${data.groupId}/chat`);
-          } else if (kind === "chat" && data.chatId) {
-            router.push(`/chat/group/${data.chatId}`);
-          } else if (kind === "availability_poll" && data.groupId && data.pollId) {
-            router.push(`/groups/${data.groupId}/availability/polls/${data.pollId}`);
-          } else if (kind === "club_invite") {
-            // Accept/Decline lives on the requests page.
-            router.push("/friends/requests");
-          } else if (kind === "court_available" && data.courtId) {
-            router.push(`/courts/${encodeURIComponent(data.courtId as string)}`);
-          }
-        });
-
         cleanup = () => {
           onRegistered.remove();
           onError.remove();
-          onTap.remove();
         };
       } catch (err) {
         // Capacitor plugin rejections (especially APNs on the iOS Simulator,
@@ -112,7 +85,7 @@ export default function PushRegistrar() {
     return () => {
       if (cleanup) cleanup();
     };
-  }, [status, router]);
+  }, [status]);
 
   return null;
 }

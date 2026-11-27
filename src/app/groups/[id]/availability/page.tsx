@@ -38,6 +38,7 @@ import ActionMenu from "@/components/ActionMenu";
 import { closePoll, seedPollAvailability } from "@/lib/supabase/queries/availabilityPolls";
 import { buildLineupText, formatDateHeader } from "@/lib/lineupMessage";
 import { nativeShare } from "@/lib/lfpShare";
+import { saveMatchResponse } from "./actions";
 
 type Member = {
   id: string; // group_members row id — the universal RSVP key (member_id)
@@ -119,6 +120,8 @@ export default function AvailabilityPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const focusMatchId = searchParams.get("focus");
+  const focusResponse = searchParams.get("respond") === "1";
+  const myMobileResponseRow = useRef<HTMLDivElement | null>(null);
   // Poll → match handoff: when the captain converts a winning poll window
   // into a real match, the poll page navigates here with these query params.
   // We open the Add Match form prefilled, then on successful insert close
@@ -481,6 +484,16 @@ export default function AvailabilityPage() {
     });
   }, [focusMatchId, loading, matches.length]);
 
+  const myMemberId = myMember?.id;
+  useEffect(() => {
+    if (!focusResponse || !focusMatchId || activeMatchId !== focusMatchId || !myMemberId || loading) return;
+    const frame = requestAnimationFrame(() => {
+      const row = myMobileResponseRow.current;
+      if (row?.getClientRects().length) row.scrollIntoView({ block: "center" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusResponse, focusMatchId, activeMatchId, myMemberId, loading]);
+
   const resetMatchForm = () => {
     setShowAdd(false);
     setEditingMatchId(null);
@@ -690,35 +703,12 @@ export default function AvailabilityPage() {
     status: string,
     matchTypes: string
   ) => {
-    const supabase = createSupabaseBrowserClient();
-    const { data, error: upErr } = await supabase
-      .from("availabilities")
-      .upsert(
-        {
-          event_kind: "match",
-          match_id: matchId,
-          member_id: memberId,
-          user_id: userId,
-          status,
-          match_types: matchTypes,
-        },
-        { onConflict: "match_id,member_id" }
-      )
-      .select(`id, member_id, user_id, status, match_types, lineup_slot`)
-      .single();
-    if (upErr) {
-      alert(errorMessage(upErr, "Failed to set availability"));
-      return;
-    }
-    if (data) {
-      const a = data as unknown as {
-        id: string;
-        member_id: string;
-        user_id: string | null;
-        status: string;
-        match_types: string;
-        lineup_slot: string;
-      };
+    try {
+      const { response: a, error } = await saveMatchResponse({ matchId, memberId, userId, status, matchTypes });
+      if (!a) {
+        alert(error);
+        return;
+      }
       const upserted: Availability = {
         id: a.id,
         matchId,
@@ -735,6 +725,8 @@ export default function AvailabilityPage() {
           return { ...m, availabilities: [...others, upserted] as Availability[] };
         })
       );
+    } catch (err) {
+      alert(errorMessage(err, "Failed to set availability"));
     }
   };
 
@@ -1216,6 +1208,7 @@ export default function AvailabilityPage() {
       <div className="flex flex-wrap items-center gap-3 mb-5">
         <Link
           href={`/groups/${groupId}`}
+          aria-label="Back to team"
           className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500"
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -1655,7 +1648,7 @@ export default function AvailabilityPage() {
                   const isCapRow = !m.isPlaceholder && m.user.id === team.ownerId;
                   const a = getAvail(activeMatch, m.id);
                   return (
-                    <div key={m.id} className="p-3">
+                    <div key={m.id} ref={isMe ? myMobileResponseRow : undefined} className="p-3">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="relative shrink-0">
                           <span className={`block ${m.isPlaceholder ? "opacity-60" : ""}`}>

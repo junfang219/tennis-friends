@@ -10,11 +10,37 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listFeed, getMyProfile, updateMyProfile } from "@/lib/supabase/queries";
 import { adaptFeedPost, type FeedPostView as Post } from "@/lib/adaptFeedPost";
 import { getCurrentPosition, isPositionError } from "@/lib/getCurrentPosition";
+import { useNativeFeedReady } from "@/lib/nativeLaunch";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 
 const SEEN_KEY = "tennisfriend_seen_posts";
 
+function FeedLoading() {
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-8">
+      <div className="space-y-4">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="bg-white rounded-2xl p-6 shadow-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="skeleton w-10 h-10 rounded-full" />
+              <div className="space-y-2">
+                <div className="skeleton w-32 h-4" />
+                <div className="skeleton w-20 h-3" />
+              </div>
+            </div>
+            <div className="skeleton w-full h-16" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function HomePage() {
+  return useNativeFeedReady() ? <HomeFeed /> : <FeedLoading />;
+}
+
+function HomeFeed() {
   const { data: session, status } = useSession();
   const searchParams = useSearchParams();
   const targetPostId = searchParams.get("post");
@@ -240,24 +266,7 @@ export default function HomePage() {
   }
 
   if (status === "loading") {
-    return (
-      <div className="max-w-2xl mx-auto px-4 py-8">
-        <div className="space-y-4">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-white rounded-2xl p-6 shadow-sm">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="skeleton w-10 h-10 rounded-full" />
-                <div className="space-y-2">
-                  <div className="skeleton w-32 h-4" />
-                  <div className="skeleton w-20 h-3" />
-                </div>
-              </div>
-              <div className="skeleton w-full h-16" />
-            </div>
-          ))}
-        </div>
-      </div>
-    );
+    return <FeedLoading />;
   }
 
   return (

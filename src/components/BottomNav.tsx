@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { finishNativeLaunch, nativeLaunchPending } from "@/lib/nativeLaunch";
 import { useIsNative } from "@/hooks/useIsNative";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "@/lib/supabase/nextauth-compat";
@@ -166,7 +167,9 @@ export default function BottomNav() {
               aria-current={tab.active ? "page" : undefined}
               onNavigate={(event) => {
                 event.preventDefault();
-                if (tab.href === pathname && !isNavigating) return;
+                const wasCheckingLaunch = nativeLaunchPending();
+                finishNativeLaunch();
+                if (tab.href === pathname && !isNavigating && !wasCheckingLaunch) return;
                 setPendingHref(tab.href);
                 startTransition(() => router.push(tab.href));
               }}

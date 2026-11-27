@@ -7,6 +7,8 @@ import CreateTeamForm from "@/components/groups/CreateTeamForm";
 import TeamRosterScreen from "@/components/groups/TeamRosterScreen";
 import { GroupSettingsPreview } from "@/components/groups/GroupSettings";
 import TeamInvitations from "@/components/groups/TeamInvitations";
+import TeamNextActionCard from "@/components/groups/TeamNextActionCard";
+import { teamLanding } from "@/lib/teamLanding";
 import TeamRegistration from "@/components/groups/TeamRegistration";
 import SetupDetailsPreview from "@/components/groups/SetupDetailsPreview";
 import SharedTeamInvitation from "@/components/groups/SharedTeamInvitation";
@@ -49,15 +51,25 @@ export default async function OnboardingPreviewPage({ searchParams }: {
       ? <TeamRosterScreen group={rosterGroup} currentUser={reviewUser} />
       : <GroupSettingsPreview group={rosterGroup} currentUser={reviewUser} initialTab={query.data.tab ?? "team"} />;
   }
-  if (query.data.flow === "team") return (
-    <main className="mx-auto max-w-lg p-4 py-8">
-      <section className="space-y-4 rounded-2xl border border-gray-200 bg-white p-5">
-        <h1 className="font-display text-2xl font-bold text-court-green">{group.name}</h1>
-        <Link className="btn-primary block text-center" href={`${reviewTeamPath}/roster`}>View roster</Link>
-        <Link className="btn-secondary block text-center" href={`${reviewTeamPath}/settings`}>Team settings</Link>
-      </section>
-    </main>
-  );
+  if (query.data.flow === "team") {
+    const landing = teamLanding({
+      groupId: group.id, ownerId: group.ownerId, userId: reviewUser.id, onboardingEnabled: true, now: new Date(),
+      members: group.members.map(member => ({
+        id: member.id, user_id: member.userId, roles: member.roles, placeholder_scope: null,
+      })),
+      matches: [],
+    });
+    return (
+      <main className="mx-auto max-w-lg p-4 py-8">
+        <section className="space-y-4 rounded-2xl border border-gray-200 bg-white p-5">
+          <h1 className="font-display text-2xl font-bold text-court-green">{group.name}</h1>
+          {landing && <TeamNextActionCard landing={landing} />}
+          <Link className="btn-secondary block text-center" href={`${reviewTeamPath}/roster`}>View roster</Link>
+          <Link className="btn-secondary block text-center" href={`${reviewTeamPath}/settings`}>Team settings</Link>
+        </section>
+      </main>
+    );
+  }
   if (query.data.flow === "invite") return <TeamInvitations group={group} currentUserName="Captain" setup={query.data.setup === "1"} fromSettings={query.data.from === "settings"} review />;
   // Fixed, fictional server snapshot for hydration/performance regressions only.
   if (query.data.flow === "invite-ready") return <TeamInvitations group={group} currentUserName="Captain" setup review initialState={{ config: { name: group.name, description: "Saved description", includeUsta: false, teamNumber: "", deadline: "" }, players: [], members: [], legacyInvitations: [], delivery: { sms: { configured: true, publicOrigin: true } } }} />;

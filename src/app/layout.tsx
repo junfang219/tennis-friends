@@ -6,7 +6,7 @@ import PushRegistrar from "@/components/PushRegistrar";
 import KeyboardInit from "@/components/KeyboardInit";
 import KeyboardAssist from "@/components/KeyboardAssist";
 import LastActiveHeartbeat from "@/components/LastActiveHeartbeat";
-import AppUrlOpenListener from "@/components/AppUrlOpenListener";
+import NativeNavigation from "@/components/NativeNavigation";
 import AuthRefreshController from "@/components/AuthRefreshController";
 
 // SessionProvider is gone: Supabase's auth state is hydrated per-component
@@ -51,7 +51,7 @@ export default function RootLayout({
         <KeyboardAssist />
         <AuthRefreshController />
         <LastActiveHeartbeat />
-        <AppUrlOpenListener />
+        <NativeNavigation />
         <Navbar />
         <main className="flex-1">{children}</main>
         <BottomNav />

@@ -57,6 +57,7 @@ it("renders the real Invite players page ready from its server snapshot", async 
   expect(html).toContain("Server-loaded invitation message");
   expect(html).toContain("Current route team");
   expect(html).toContain("Send invitations &amp; finish");
+  expect(html).toContain(`href="/groups/${id}">Go to team</a>`);
   expect(html).not.toContain("Loading invitations");
   expect(html).not.toContain("test-secret-that-must-stay-server-only");
   expect(mocks.getUser).toHaveBeenCalledTimes(1);
