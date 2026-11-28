@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import Avatar from "@/components/Avatar";
 import TeamSwitcher from "@/components/groups/TeamSwitcher";
+import TeamShortcuts from "@/components/groups/TeamShortcuts";
 import CoverEditMenu from "@/components/CoverEditMenu";
 import PostCard from "@/components/PostCard";
 import EmojiPicker from "@/components/EmojiPicker";
@@ -139,8 +140,8 @@ export default function TeamPageClient({ id, nextAction }: { id: string; nextAct
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       {/* Group header */}
-      <div className="animate-fade-in-up">
-        <div className="bg-white rounded-3xl shadow-sm border border-court-green-pale/20 overflow-hidden">
+      <div className="animate-fade-in-up max-sm:relative max-sm:z-10">
+        <div className="bg-white rounded-3xl shadow-sm border border-court-green-pale/20 sm:overflow-hidden">
           {/* Banner */}
           <TeamCoverEditor
             groupId={group.id}
@@ -216,100 +217,7 @@ export default function TeamPageClient({ id, nextAction }: { id: string; nextAct
               )}
             </div>
 
-            {/* Team actions */}
-            <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <Link
-                href={`/groups/${group.id}/calendar`}
-                className="btn-secondary flex items-center justify-center gap-1.5"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="4" width="18" height="18" rx="2" />
-                  <line x1="16" y1="2" x2="16" y2="6" />
-                  <line x1="8" y1="2" x2="8" y2="6" />
-                  <line x1="3" y1="10" x2="21" y2="10" />
-                  <line x1="8" y1="14" x2="10" y2="14" />
-                  <line x1="14" y1="14" x2="16" y2="14" />
-                  <line x1="8" y1="18" x2="10" y2="18" />
-                  <line x1="14" y1="18" x2="16" y2="18" />
-                </svg>
-                Schedule
-              </Link>
-              <Link
-                href={`/groups/${group.id}/chat`}
-                className="btn-secondary flex items-center justify-center gap-1.5"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-                </svg>
-                Chat
-              </Link>
-              <Link
-                href={`/groups/${group.id}/availability`}
-                className="btn-secondary flex items-center justify-center gap-1.5"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="4" width="18" height="18" rx="2" />
-                  <line x1="16" y1="2" x2="16" y2="6" />
-                  <line x1="8" y1="2" x2="8" y2="6" />
-                  <line x1="3" y1="10" x2="21" y2="10" />
-                </svg>
-                Matches
-              </Link>
-              <Link
-                href={`/groups/${group.id}/practice`}
-                className="btn-secondary flex items-center justify-center gap-1.5"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <polyline points="12 6 12 12 16 14" />
-                </svg>
-                Practice
-              </Link>
-              <Link
-                href={`/groups/${group.id}/albums`}
-                className="btn-secondary flex items-center justify-center gap-1.5"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <circle cx="8.5" cy="8.5" r="1.5" />
-                  <polyline points="21 15 16 10 5 21" />
-                </svg>
-                Albums
-              </Link>
-              <Link
-                href={`/groups/${group.id}/files`}
-                className="btn-secondary flex items-center justify-center gap-1.5"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                  <line x1="16" y1="13" x2="8" y2="13" />
-                  <line x1="16" y1="17" x2="8" y2="17" />
-                  <polyline points="10 9 9 9 8 9" />
-                </svg>
-                Files
-              </Link>
-              <Link
-                href={`/groups/${group.id}/scouting`}
-                className="btn-secondary flex items-center justify-center gap-1.5"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="11" cy="11" r="8" />
-                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                </svg>
-                Scouting
-              </Link>
-              <Link
-                href={`/groups/${group.id}/expenses`}
-                className="btn-secondary flex items-center justify-center gap-1.5"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="12" y1="1" x2="12" y2="23" />
-                  <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-                </svg>
-                Expenses
-              </Link>
-            </div>
+            <TeamShortcuts groupId={group.id} />
             <p className="text-[11px] text-gray-400 mt-1.5">
               Team Chat also appears in your Friends → Chats inbox
             </p>
@@ -521,7 +429,7 @@ function TeamCoverEditor({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        className={`h-28 relative overflow-hidden select-none ${repositioning ? "cursor-grabbing" : ""} ${coverImageUrl ? "" : "bg-gradient-to-br from-court-green via-court-green-light to-court-green-soft court-pattern"}`}
+        className={`h-28 relative overflow-hidden max-sm:rounded-t-[calc(1.5rem-1px)] select-none ${repositioning ? "cursor-grabbing" : ""} ${coverImageUrl ? "" : "bg-gradient-to-br from-court-green via-court-green-light to-court-green-soft court-pattern"}`}
         style={{ touchAction: repositioning ? "none" : undefined }}
       >
         {coverImageUrl ? (
