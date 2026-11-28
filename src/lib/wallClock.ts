@@ -3,10 +3,9 @@
 // to interpret wall-clock match_date/match_time and practice_date/
 // practice_time strings as moments in the row's IANA timezone.
 //
-// JS Date doesn't take a timezone in its constructor; the technique
-// here mirrors Postgres' `::timestamp AT TIME ZONE tz` semantics by
-// computing the offset between the candidate UTC instant and the
-// same wall-clock rendered in the target zone, then shifting.
+// Resolve the UTC instant by comparing against the wall clock in the
+// event's timezone, following Postgres' `::timestamp AT TIME ZONE tz`
+// rules for skipped and repeated local times.
 
 export function combineDateAndTime(
   dateStr: string,
@@ -28,31 +27,39 @@ export function combineDateAndTime(
     return null;
   }
 
-  // First pass: treat the inputs as if they were UTC.
-  const candidateUtcMs = Date.UTC(yyyy, mm - 1, dd, hh, mi);
-  // What hour/minute does that UTC instant land at in the target zone?
-  let parts: Intl.DateTimeFormatPart[];
+  const wallTime = Date.UTC(yyyy, mm - 1, dd, hh, mi);
+  if (!Number.isFinite(wallTime)) return null;
+
+  let formatter: Intl.DateTimeFormat;
   try {
-    parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz, hour12: false,
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, hourCycle: "h23",
       year: "numeric", month: "2-digit", day: "2-digit",
       hour: "2-digit", minute: "2-digit", second: "2-digit",
-    }).formatToParts(new Date(candidateUtcMs));
+    });
   } catch {
     // Invalid IANA — fall back to interpreting as UTC.
-    return new Date(candidateUtcMs);
+    return new Date(wallTime);
   }
-  const get = (t: Intl.DateTimeFormatPartTypes) =>
-    parseInt(parts.find((p) => p.type === t)?.value ?? "NaN", 10);
-  const tzMs = Date.UTC(
-    get("year"), get("month") - 1, get("day"),
-    get("hour") === 24 ? 0 : get("hour"), get("minute")
-  );
-  // candidateUtcMs - tzMs = the zone offset at that instant.
-  // The true UTC instant = candidateUtcMs + (candidateUtcMs - tzMs).
-  const trueUtcMs = candidateUtcMs + (candidateUtcMs - tzMs);
-  const out = new Date(trueUtcMs);
-  return Number.isFinite(out.getTime()) ? out : null;
+
+  const localTimeAt = (utcTime: number) => {
+    const parts = formatter.formatToParts(new Date(utcTime));
+    const get = (type: Intl.DateTimeFormatPartTypes) =>
+      Number(parts.find((part) => part.type === type)?.value);
+    return Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
+  };
+  const offsetAt = (utcTime: number) => localTimeAt(utcTime) - utcTime;
+
+  // Sample either side of any nearby offset change. Prefer the later offset
+  // if it round-trips, resolving overlaps to the post-transition instant.
+  // A time skipped by a clock jump uses the pre-transition offset.
+  const day = 86_400_000;
+  const beforeOffset = offsetAt(wallTime - day);
+  const afterOffset = offsetAt(wallTime + day);
+  const afterCandidate = wallTime - afterOffset;
+  return new Date(beforeOffset === afterOffset || localTimeAt(afterCandidate) === wallTime
+    ? afterCandidate
+    : wallTime - beforeOffset);
 }
 
 // Render a UTC instant back to the event's local wall clock for reminder

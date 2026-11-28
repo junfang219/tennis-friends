@@ -28,6 +28,16 @@ describe("combineDateAndTime", () => {
     expect(d!.toISOString()).toBe("2026-07-15T18:00:00.000Z");
   });
 
+  it.each([
+    ["2027-03-14", "08:30", "2027-03-14T15:30:00.000Z"],
+    ["2027-11-07", "08:30", "2027-11-07T16:30:00.000Z"],
+    ["2027-03-14", "00:30", "2027-03-14T08:30:00.000Z"],
+    ["2027-03-14", "02:30", "2027-03-14T10:30:00.000Z"],
+    ["2027-11-07", "01:30", "2027-11-07T09:30:00.000Z"],
+  ])("resolves Pacific time on a DST transition: %s %s", (date, time, expected) => {
+    expect(combineDateAndTime(date, time, "America/Los_Angeles")?.toISOString()).toBe(expected);
+  });
+
   it("falls back to America/Los_Angeles when the timezone is empty/null", () => {
     const a = combineDateAndTime("2026-07-15", "18:00", "");
     const b = combineDateAndTime("2026-07-15", "18:00", null);

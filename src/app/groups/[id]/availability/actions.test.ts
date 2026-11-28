@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { saveMatchResponse } from "./actions";
+import { saveMatchLineupSlot, saveMatchResponse } from "./actions";
 
 const mocks = vi.hoisted(() => ({ getUser: vi.fn(), upsert: vi.fn(), save: vi.fn(), revalidatePath: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
@@ -38,5 +38,23 @@ it("invalidates the saved match's team overview and preserves the response row",
 it("leaves the team overview alone if the RSVP is rejected", async () => {
   mocks.save.mockResolvedValue({ data: null, error: { message: "Response update denied" } });
   expect(await saveMatchResponse(input)).toEqual({ error: "Response update denied" });
+  expect(mocks.revalidatePath).not.toHaveBeenCalled();
+});
+
+it.each(["D1", ""])("revalidates after setting the lineup slot to %j and preserves the RSVP", async (slot) => {
+  const response = { ...saved, lineup_slot: slot };
+  mocks.save.mockResolvedValue({ data: { ...response, team_matches: { group_id: teamId } }, error: null });
+  expect(await saveMatchLineupSlot({ matchId: input.matchId, memberId: input.memberId, userId: null, slot }))
+    .toEqual({ response });
+  expect(mocks.upsert).toHaveBeenCalledWith({
+    event_kind: "match", match_id: input.matchId, member_id: input.memberId, user_id: null, lineup_slot: slot,
+  }, { onConflict: "match_id,member_id" });
+  expect(mocks.revalidatePath).toHaveBeenCalledWith(`/groups/${teamId}`);
+});
+
+it("leaves the team overview alone if the lineup save is rejected", async () => {
+  mocks.save.mockResolvedValue({ data: null, error: { message: "Lineup update denied" } });
+  expect(await saveMatchLineupSlot({ matchId: input.matchId, memberId: input.memberId, userId: null, slot: "D1" }))
+    .toEqual({ error: "Lineup update denied" });
   expect(mocks.revalidatePath).not.toHaveBeenCalled();
 });

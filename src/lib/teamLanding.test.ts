@@ -53,6 +53,18 @@ describe("team landing", () => {
       });
   });
 
+  it("shows the scheduled local time and stops prompting after a match on the spring transition", () => {
+    const transitionMatch = { ...match, match_date: "2027-03-14", match_time: "08:30" };
+    const input = { ...group, userId: "player", members: [owner, player], matches: [transitionMatch] };
+    expect(teamLanding({ ...input, now: new Date("2027-03-14T15:00:00Z") })).toMatchObject({
+      details: "Sun, Mar 14, 8:30 AM · Green Lake",
+      action: { label: "Set my availability" },
+    });
+    expect(teamLanding({ ...input, now: new Date("2027-03-14T16:00:00Z") })).toEqual({
+      role: "Member", title: "No upcoming matches",
+    });
+  });
+
   it.each([
     { other: null, label: "Review availability", status: "1 of 2 players responded" },
     { other: "maybe", label: "Review availability", status: "All 2 responded · 1 available · 1 more needed for the lineup" },
