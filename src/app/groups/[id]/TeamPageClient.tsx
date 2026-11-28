@@ -253,7 +253,7 @@ export default function TeamPageClient({ id, nextAction }: { id: string; nextAct
                   <line x1="8" y1="2" x2="8" y2="6" />
                   <line x1="3" y1="10" x2="21" y2="10" />
                 </svg>
-                Availability
+                Matches
               </Link>
               <Link
                 href={`/groups/${group.id}/practice`}
