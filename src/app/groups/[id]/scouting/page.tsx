@@ -154,7 +154,7 @@ export default function ScoutingPage() {
       setImportResult(
         skipped > 0
           ? `Imported ${imported} match${imported === 1 ? "" : "es"} · ${skipped} already on the calendar`
-          : `Imported ${imported} match${imported === 1 ? "" : "es"} to Availability`,
+          : `Imported ${imported} match${imported === 1 ? "" : "es"} to Matches`,
       );
     } catch (err) {
       setImportResult(errorMessage(err, "Could not import the schedule."));
@@ -363,7 +363,7 @@ export default function ScoutingPage() {
             <div>
               <div className="text-sm font-semibold text-gray-800">League schedule found</div>
               <p className="text-[11px] text-gray-400">
-                {schedule.length} match{schedule.length === 1 ? "" : "es"} — add them to your Availability tab.
+                {schedule.length} match{schedule.length === 1 ? "" : "es"} — add them to your Matches tab.
               </p>
             </div>
             <button

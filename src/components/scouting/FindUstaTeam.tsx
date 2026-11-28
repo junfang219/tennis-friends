@@ -397,7 +397,7 @@ export default function FindUstaTeam({
         <p className="text-xs text-gray-500 mt-1">
           {scheduling === "window"
             ? "Imported as play-week windows — use Find a time on each match to poll your team, then confirm the slot with the opposing captain."
-            : "Find them on the Availability tab — edit times, locations or home/away there as needed."}
+            : "Find them on the Matches tab — edit times, locations or home/away there as needed."}
         </p>
         {done.added > 0 && (
           <p className="text-xs text-gray-500 mt-1">

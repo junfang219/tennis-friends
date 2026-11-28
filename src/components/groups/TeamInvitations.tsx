@@ -77,12 +77,12 @@ function LoadedInvitations(props: InvitationsProps) {
           {busy ? (
             <>
               <button type="button" disabled className="btn-secondary h-12 w-full">Back</button>
-              <button type="button" disabled className="btn-primary h-12 w-full">Go to Roster</button>
+              <button type="button" disabled className="btn-primary h-12 w-full">Go to team</button>
             </>
           ) : (
             <>
               <Link href={`${teamHref}/setup-details`} className="btn-secondary h-12 w-full text-center">Back</Link>
-              <Link href={`${teamHref}/roster`} className="btn-primary h-12 w-full text-center">Go to Roster</Link>
+              <Link href={teamHref} replace prefetch={false} className="btn-primary h-12 w-full text-center">Go to team</Link>
             </>
           )}
         </div>
@@ -157,8 +157,12 @@ function InvitationsEditor({ group, review = false, setup = false, management, b
       delete batches.current[batchKey];
       if (finish) { setDrafts(all => ({ ...all, [delivery]: [blankRow()] })); setSmsConsent(false); }
     }
+    if (setup && finish && !report.failed && !report.pending) {
+      router.replace(`/groups/${group.id}`);
+      router.refresh();
+      return;
+    }
     await load();
-    if (setup && finish && !report.failed && !report.pending) { router.replace(`/groups/${group.id}/roster`); router.refresh(); }
   }
   function setRecipientConsent(player: Player, checked: boolean) {
     setPendingSmsConsent(previous => ({

@@ -543,7 +543,7 @@ export default function TeamCalendarPage() {
             <p className="text-xs text-gray-400 mt-2">
               Add matches via{" "}
               <Link href={`/groups/${groupId}/availability`} className="text-court-green font-semibold hover:underline">
-                Availability
+                Matches
               </Link>{" "}
               or add practices via{" "}
               <Link href={`/groups/${groupId}/practice`} className="text-court-green font-semibold hover:underline">

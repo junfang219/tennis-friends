@@ -11,6 +11,7 @@ import CommunitiesTabs from "@/components/CommunitiesTabs";
 import { useSession } from "@/lib/supabase/nextauth-compat";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { listMyGroups, listFriends, listGroupMembers } from "@/lib/supabase/queries";
+import { availabilityRequestLabel, fetchActiveTeams } from "@/lib/teamNavigation";
 import { useCachedQuery } from "@/lib/useCachedQuery";
 import { errorMessage } from "@/lib/errorMessage";
 import FindUstaTeam from "@/components/scouting/FindUstaTeam";
@@ -160,6 +161,11 @@ export default function GroupsPage() {
   });
 
   const groups = groupsQuery.data?.active ?? [];
+  const userId = session?.user.id;
+  const { data: availability } = useCachedQuery(
+    userId && groups.length > 1 ? `team-availability:${userId}` : null,
+    () => fetchActiveTeams({ availability: true }),
+  );
   const archivedGroups = groupsQuery.data?.archived ?? [];
   const loading = groupsQuery.isLoading;
   const loadError = groupsQuery.error
@@ -334,7 +340,8 @@ export default function GroupsPage() {
               </svg>
             }
           >
-            <TeamCardBody group={group} />
+            <TeamCardBody group={group} pendingAvailability={availability?.viewerId === userId
+              ? availability?.teams.find(team => team.id === group.id)?.pendingAvailability : undefined} />
           </SwipeTeamRow>
         ))}
 
@@ -405,7 +412,7 @@ export default function GroupsPage() {
 }
 
 /* ───────── Team card body (shared between active and archived lists) ───────── */
-function TeamCardBody({ group }: { group: Group }) {
+function TeamCardBody({ group, pendingAvailability }: { group: Group; pendingAvailability?: number }) {
   return (
     <div className="bg-white p-5 pb-4">
       <div className="flex items-center justify-between mb-3">
@@ -432,6 +439,9 @@ function TeamCardBody({ group }: { group: Group }) {
               </svg>
               Captain · {group.owner.name}
             </p>
+            {pendingAvailability ? (
+              <p className="mt-1 text-xs font-semibold text-court-green">{availabilityRequestLabel(pendingAvailability)}</p>
+            ) : null}
           </div>
         </div>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-gray-300 shrink-0">
@@ -694,6 +704,7 @@ function CreateGroupForm({ friends, initialTeamType, onCreated, onCancel }: { fr
       }
       setCreating(false);
       onCreated();
+      router.push(`/groups/${g.id}`);
     } catch (err) {
       setCreateError(
         errorMessage(err, "Couldn't create the team.")
@@ -703,7 +714,7 @@ function CreateGroupForm({ friends, initialTeamType, onCreated, onCancel }: { fr
   };
 
   // Step 3 → save the league season, attach the imported matches (they were
-  // inserted before the season existed), and land on the availability matrix.
+  // inserted before the season existed), and open the team page.
   const finishUsta = async () => {
     if (!createdGroupId || finishing) return;
     setFinishing(true);
@@ -735,7 +746,7 @@ function CreateGroupForm({ friends, initialTeamType, onCreated, onCancel }: { fr
         console.warn("Could not attach imported matches to season:", tagErr.message);
       }
       onCreated();
-      router.push(`/groups/${createdGroupId}/availability`);
+      router.push(`/groups/${createdGroupId}`);
     } catch (err) {
       setCreateError(errorMessage(err, "Couldn't save league settings."));
       setFinishing(false);

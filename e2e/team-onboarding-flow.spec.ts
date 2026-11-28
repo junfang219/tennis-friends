@@ -23,24 +23,26 @@ test("two-step setup defaults to SMS and can finish without sending invitations"
   await expect(page.getByRole("textbox", { name: "Email", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Create shared team link", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Team setup").getByText("2. Invite players", { exact: true })).toHaveAttribute("aria-current", "step");
-  await expect(page.getByRole("link", { name: "Go to Roster", exact: true })).toBeInViewport({ ratio: 1 });
+  await expect(page.getByRole("link", { name: "Go to team", exact: true })).toBeInViewport({ ratio: 1 });
   await page.reload();
   await expect(page.getByRole("navigation", { name: "Setup navigation" })).toBeVisible();
   const nav = page.getByRole("navigation", { name: "Setup navigation" });
   await expect(page.getByRole("textbox", { name: "Phone number", exact: true })).toBeVisible();
   const back = await nav.getByRole("link", { name: "Back", exact: true }).boundingBox();
-  const finish = await nav.getByRole("link", { name: "Go to Roster", exact: true }).boundingBox();
+  const finish = await nav.getByRole("link", { name: "Go to team", exact: true }).boundingBox();
   expect(back?.height).toBe(finish?.height); expect(back?.y).toBe(finish?.y);
   const footerBottomGap = () => nav.evaluate(element => window.innerHeight - element.getBoundingClientRect().bottom);
   expect(await footerBottomGap()).toBeCloseTo(0);
   await page.getByText("More ways to add people", { exact: true }).scrollIntoViewIfNeeded();
   expect(await footerBottomGap()).toBeCloseTo(0);
-  await expect(nav.getByRole("link", { name: "Go to Roster", exact: true })).toBeInViewport({ ratio: 1 });
+  await expect(nav.getByRole("link", { name: "Go to team", exact: true })).toBeInViewport({ ratio: 1 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: `/tmp/tennis-setup-invite-${test.info().project.name}.png`, fullPage: true });
-  await nav.getByRole("link", { name: "Go to Roster", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
-  await expect(page.getByRole("heading", { name: "Roster", exact: true })).toBeVisible();
+  await nav.getByRole("link", { name: "Go to team", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}$`));
+  const nextStep = page.getByRole("region", { name: "Team next step" });
+  await expect(nextStep.getByRole("heading", { name: "Build your roster" })).toBeInViewport();
+  await expect(nextStep.getByRole("link", { name: "Invite players", exact: true })).toBeVisible();
   expect(fixture.writes).toEqual([{
     path: `/api/team-onboarding/${groupId}/create`,
     method: "POST",
@@ -50,7 +52,7 @@ test("two-step setup defaults to SMS and can finish without sending invitations"
   await expect(page.getByRole("heading", { name: "Invite players", exact: true })).toBeVisible();
   await expect(page.getByLabel("Team setup")).toHaveCount(0);
 });
-test("Go to Roster stays available if invitation options fail to load", async ({ context, page }) => {
+test("Go to team stays available if invitation options fail to load", async ({ context, page }) => {
   const fixture = await managementFixture(context);
   await page.route(`**/api/team-onboarding/${groupId}`, (route) => route.fulfill({
     status: 503,
@@ -58,10 +60,10 @@ test("Go to Roster stays available if invitation options fail to load", async ({
   }));
   await page.goto(`/groups/${groupId}/invite-players?setup=1`);
   await expect(page.getByRole("main").getByRole("alert")).toHaveText("Could not load invitations");
-  const rosterLink = page.getByRole("link", { name: "Go to Roster", exact: true });
-  await expect(rosterLink).toBeInViewport({ ratio: 1 });
-  await rosterLink.click();
-  await expect(page).toHaveURL(`/groups/${groupId}/roster`);
+  const teamLink = page.getByRole("link", { name: "Go to team", exact: true });
+  await expect(teamLink).toBeInViewport({ ratio: 1 });
+  await teamLink.click();
+  await expect(page).toHaveURL(`/groups/${groupId}`);
   expect(fixture.writes).toEqual([]);
 });
 test("the bottom bar leaves room for More ways to add people after the keyboard closes", async ({ context, page }) => {
@@ -90,8 +92,8 @@ test("the bottom bar leaves room for More ways to add people after the keyboard 
     expect(bounds.y + bounds.height).toBeLessThan(footerTop);
     await option.click({ trial: true });
   }
-  await footer.getByRole("link", { name: "Go to Roster", exact: true }).click();
-  await expect(page).toHaveURL(`/groups/${groupId}/roster`);
+  await footer.getByRole("link", { name: "Go to team", exact: true }).click();
+  await expect(page).toHaveURL(`/groups/${groupId}`);
 });
 test("method switching and Back to roster never write a stale roster", async ({ context, page }) => {
   const fixture = await managementFixture(context, [player()]);
@@ -290,7 +292,7 @@ test("Save & continue skips the write and shows Invite players while the next pa
   }
 
   await expect(page).toHaveURL(`/groups/${groupId}/invite-players?setup=1`);
-  await expect(page.getByRole("link", { name: "Go to Roster", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Go to team", exact: true })).toBeVisible();
   expect(fixture.writes).toEqual([]);
 });
 
@@ -315,7 +317,7 @@ test("a failed save keeps the edited details on screen for a retry", async ({ co
   await expect(page.locator("form").getByRole("alert")).toHaveText("Could not save team details");
   await expect(page.getByLabel("Team name", { exact: true })).toHaveValue("Edited team");
   await page.getByRole("button", { name: "Save & continue", exact: true }).click();
-  await expect(page.getByRole("link", { name: "Go to Roster", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Go to team", exact: true })).toBeVisible();
   expect(fixture.writes).toEqual([{
     path: `/api/team-onboarding/${groupId}/create`,
     method: "PATCH",
@@ -323,7 +325,7 @@ test("a failed save keeps the edited details on screen for a retry", async ({ co
   }]);
 });
 
-test("successful setup email sending finishes on Roster and targets only new recipients", async ({ context, page }) => {
+test("successful setup email sending finishes on the team page and targets only new recipients", async ({ context, page }) => {
   const fixture = await managementFixture(context, [player()]);
   await page.goto(`/groups/${groupId}/invite-players?setup=1`);
   await page.getByRole("button", { name: "Send by email", exact: true }).click();
@@ -333,7 +335,7 @@ test("successful setup email sending finishes on Roster and targets only new rec
   await expect(page.getByRole("textbox", { name: "Email", exact: true })).toHaveValue("new@example.com");
   expect(fixture.writes).toHaveLength(0);
   await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}$`));
   const send = fixture.writes.find(w => w.path.endsWith("/send"))?.body as { playerIds: string[] };
   expect(send.playerIds).toHaveLength(1); expect(send.playerIds).not.toContain(playerId);
 });
@@ -349,7 +351,7 @@ for (const result of ["failed", "pending"] as const) test(`setup email ${result}
   await expect(page.getByRole("textbox", { name: "Email", exact: true })).toHaveValue("retry@example.com");
 });
 
-test("SMS is sent automatically to normalized phone-only recipients and finishes on Roster", async ({ context, page }) => {
+test("SMS is sent automatically to normalized phone-only recipients and finishes on the team page", async ({ context, page }) => {
  const fixture = await managementFixture(context, [player()]);
  await page.goto(`/groups/${groupId}/invite-players?setup=1`);
  await page.getByRole("textbox", {name:"Phone number",exact:true}).fill("(206) 555-0101");
@@ -358,7 +360,7 @@ test("SMS is sent automatically to normalized phone-only recipients and finishes
  await page.getByLabel("These players agreed to receive this team invitation by text.",{exact:true}).check();
  await page.screenshot({path:`/tmp/tennis-sms-invitations-${test.info().project.name}.png`,fullPage:true});
  await page.getByRole("button",{name:"Send invitations & finish",exact:true}).click();
- await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+ await expect(page).toHaveURL(new RegExp(`/groups/${groupId}$`));
  const request=fixture.writes.find(w=>w.path.endsWith("/send"))?.body as {mode:string;smsConsent:boolean;playerIds:string[]};
  expect(request).toMatchObject({mode:"sms",smsConsent:true});expect(request.playerIds).toHaveLength(2);expect(request.playerIds).not.toContain(playerId);
  expect(fixture.state.players.slice(1).map(p=>p.phone)).toEqual(["+12065550101","+442079460018"]);
@@ -413,7 +415,7 @@ for (const delivery of ["sms", "email"] as const) test(`include USTA details wit
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: `/tmp/tennis-invite-usta-${delivery}-${test.info().project.name}.png`, fullPage: true });
   await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}$`));
   expect(fixture.state.config).toMatchObject({ includeUsta: true, includeUstaInInvitations: true, ustaTeamName: "TEST ONLY — USTA details", teamNumber: "0000000000", deadline: "2026-11-24", includeRegistrationLink: false });
   expect(fixture.state.players[0].confirmed_at).toBe("2026-11-17T00:00:00Z");
   const registration = fixture.writes.findIndex(w => (w.body as { action?: string }).action === "registration");
@@ -431,7 +433,7 @@ test("USTA details are required only when included and incomplete details never 
   await expect(page.getByLabel("USTA team number", { exact: true })).toHaveAttribute("required", "");
   await page.getByLabel("Include USTA registration instructions", { exact: true }).uncheck();
   await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}$`));
   expect(fixture.state.config.includeUsta).toBe(false);
   expect(fixture.writes.some(w => (w.body as { action?: string }).action === "registration")).toBe(false);
 });
@@ -443,7 +445,7 @@ test("omitting USTA instructions keeps existing registration tracking enabled", 
   await page.getByRole("button", { name: "Send by email", exact: true }).click();
   await page.getByRole("textbox", { name: "Email", exact: true }).fill("omit@example.com");
   await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}$`));
   expect(fixture.state.config).toMatchObject({ includeUsta: true, includeUstaInInvitations: false, teamNumber: "0000000000", deadline: "2026-11-24" });
   expect(fixture.writes.some(w => (w.body as { action?: string }).action === "registration")).toBe(false);
 });
@@ -462,7 +464,7 @@ test("an unsent SMS draft can be corrected in the same form after a configuratio
   fixture.controls.smsConfigured = true;
   await page.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
   await page.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+  await expect(page).toHaveURL(new RegExp(`/groups/${groupId}$`));
   expect(fixture.state.players).toHaveLength(1); expect(fixture.state.players[0]).toMatchObject({ id: originalId, name: "Corrected player", phone: "+12065550102" });
   expect(fixture.messages).toMatchObject([{ address: "+12065550102", playerId: originalId }]);
 });
@@ -501,8 +503,8 @@ test("two tabs retain their own USTA choice when invitation requests overlap", a
   await other.getByRole("textbox", { name: "Phone number", exact: true }).fill("2065550102");
   await other.getByLabel("These players agreed to receive this team invitation by text.", { exact: true }).check();
   await other.getByRole("button", { name: "Send invitations & finish", exact: true }).click();
-  await expect(other).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
-  release(); await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+  await expect(other).toHaveURL(new RegExp(`/groups/${groupId}$`));
+  release(); await expect(page).toHaveURL(new RegExp(`/groups/${groupId}$`));
   expect(fixture.messages.find(m => m.address === "+12065550101")?.message).not.toContain("USTA team:");
   expect(fixture.messages.find(m => m.address === "+12065550102")?.message).toContain("Team number: 2222222222");
 });
@@ -532,7 +534,7 @@ test("re-entering a saved unissued phone after reload reuses its existing draft 
  await page.getByRole("textbox", {name:"Phone number",exact:true}).fill("(206) 555-0101");
  await page.getByLabel("These players agreed to receive this team invitation by text.",{exact:true}).check();
  await page.getByRole("button",{name:"Send invitations & finish",exact:true}).click();
- await expect(page).toHaveURL(new RegExp(`/groups/${groupId}/roster$`));
+ await expect(page).toHaveURL(new RegExp(`/groups/${groupId}$`));
  expect(fixture.state.players).toHaveLength(1);expect(fixture.state.players[0]).toMatchObject({id:playerId,name:"Saved player"});
  expect(fixture.messages).toHaveLength(1);expect(fixture.messages[0].playerId).toBe(playerId);
 });
